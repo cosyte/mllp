@@ -149,12 +149,17 @@ Filled in by `ROADMAP.md` — each REQ-ID maps to exactly one phase.
 | SETUP-01..06 | Phase 1 | Pending |
 | FRAME-01..10 | Phase 2 | Pending |
 | WARN-01..08 | Phase 2 | Pending |
-| ERR-01..04 | Phase 2 / 5 | Pending |
+| ERR-01 (`MllpFramingError`) | Phase 2 | Pending |
 | TRANS-01..04 | Phase 3 | Pending |
 | LIFE-01..05 | Phase 3 | Pending |
+| ERR-03 (`MllpConnectionError`) | Phase 3 | Pending |
 | SERVER-01..07 | Phase 4 | Pending |
 | CLIENT-01..09 | Phase 5 | Pending |
+| ERR-02 (`MllpTimeoutError`) | Phase 5 | Pending |
+| ERR-04 (`MllpBackpressureError`) | Phase 5 | Pending |
 | ACK-01..05 | Phase 6 | Pending |
 | TLS-01..04 | Phase 6 | Pending |
 | TEST-01..06 | Phase 7 | Pending |
 | DOCS-01..05 | Phase 8 | Pending |
+
+**Coverage check:** 6 + 10 + 8 + 1 + 4 + 5 + 1 + 7 + 9 + 1 + 1 + 5 + 4 + 6 + 5 = **73 / 73 v1 REQ-IDs mapped to exactly one phase.**
