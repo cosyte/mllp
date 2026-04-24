@@ -89,10 +89,10 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   4. A developer writing `const server = createStarterServer({ port, onMessage })` gets a listening server in three lines with auto-ACK `AA`, 30 s drain, `Symbol.asyncDispose`, and opt-in SIGTERM handling out of the box; every event payload (`connection`, `message`, `error`, `stateChange`, `disconnect`, `close`) is `Object.freeze`'d.
   5. A developer calling `server.getStats()` receives a JSON-serializable object with `listening`, `port`, `host`, `connections`, `activeConnections`, `totalBytesIn/Out`, `acceptedTotal`, `closedTotal`; per-connection idle-keepalive (`keepaliveIntervalMs` / `deadPeerTimeoutMs`) works as configured.
 **Plans**: 4 plans
-  - 04-PLAN-01: `createServer` + `listen`/`close` + per-connection wiring (`Connection` from Phase 3 + `FrameReader` from Phase 2) + `meta` payload contract
-  - 04-PLAN-02: auto-ACK synthesis (plain-object-MSH path without peer dep + parser-coupled path when available) + manual-ACK pass-through contract
-  - 04-PLAN-03: graceful shutdown with drain timeout + server-side keepalive + dead-peer detection + barrel updates
-  - 04-PLAN-04: `createStarterServer` helper + `AbortSignal` + `Symbol.asyncDispose` + frozen event payloads + `framing: FrameReaderOptions` pass-through + `server.getStats()` (OBS-02) + SIGTERM opt-in
+  - [ ] 04-01-PLAN.md — `createServer` + `listen`/`close` skeleton + per-connection wiring (`Connection` from Phase 3 + `FrameReader` from Phase 2) + `MessageMeta` type + `src/server/index.ts` barrel
+  - [ ] 04-02-PLAN.md — auto-ACK synthesis (`_buildAutoAck` plain-object-MSH path without peer dep) + `autoAck: fn` custom builder + manual-ACK pass-through
+  - [ ] 04-03-PLAN.md — graceful shutdown with drain timeout (`_drainAll`) + `AbortSignal` on `listen`/`close` + idle-keepalive wiring + `src/index.ts` Phase 4 barrel block
+  - [ ] 04-04-PLAN.md — `createStarterServer` helper + `Symbol.asyncDispose` + frozen-event audit + full `server.getStats()` with live byte aggregation (OBS-02) + SIGTERM opt-in
 **UI hint**: no
 
 ### Phase 5: MLLP Client
