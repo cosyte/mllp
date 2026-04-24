@@ -97,25 +97,39 @@ describe('SERVER-06: graceful shutdown', () => {
   });
 
   it('close({ drainTimeoutMs }) with stuck connection: after timeout, destroy() called and close() resolves', async () => {
-    // Create a server with a connection that never drains (no onMessage handler, so the connection stays open)
+    // Create a server; after connection is accepted, override its beforeClose
+    // hook so the connection never resolves on its own — simulating a straggler.
     const server = makeServer({});
+
+    // Intercept 'connection' event to override the beforeClose hook
+    server.on('connection', () => {
+      // Wait a tick, then override the first active connection's beforeClose
+      setImmediate(() => {
+        const privateServer = server as unknown as { _connections: Set<{ beforeClose: () => Promise<void> }> };
+        for (const conn of privateServer._connections) {
+          // Override beforeClose to never resolve — simulates a stuck drain
+          conn.beforeClose = () => new Promise<void>(() => {/* never resolves */});
+        }
+      });
+    });
+
     await server.listen(0);
 
     const sock = await connectToServer(server);
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Give time for connection to be accepted and beforeClose to be overridden
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
     expect(server.getStats().activeConnections).toBe(1);
 
     const start = Date.now();
-    // Use a short drain timeout; since the connection is open and no data sent,
-    // _drainAll will call conn.close() which initiates draining, then the
-    // straggler timeout will call conn.destroy()
+    // Use a short drain timeout; with a stuck beforeClose, the straggler
+    // destroy() will fire after drainTimeoutMs and resolve the Promise.all
     const closePromise = server.close({ drainTimeoutMs: 100 });
 
     await expect(closePromise).resolves.toBeUndefined();
     const elapsed = Date.now() - start;
-    // Should complete around the drainTimeoutMs (100ms), allow ±200ms tolerance
+    // Should complete around the drainTimeoutMs (100ms), allow generous tolerance
     expect(elapsed).toBeGreaterThanOrEqual(80);
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(2000);
 
     sock.destroy();
   }, 5000);

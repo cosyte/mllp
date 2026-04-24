@@ -265,20 +265,21 @@ export class MllpServer extends EventEmitter {
       ? hostOrOpts.signal
       : undefined;
 
+    // AbortSignal: reject immediately if already aborted
+    if (signal?.aborted) {
+      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    }
+
     return new Promise<void>((resolve, reject) => {
       let aborted = false;
 
       const abortHandler = () => {
         aborted = true;
         this._netServer.close();
-        reject(new Error('listen() aborted'));
+        reject(new DOMException('Aborted', 'AbortError'));
       };
 
       if (signal !== undefined) {
-        if (signal.aborted) {
-          reject(new Error('listen() aborted'));
-          return;
-        }
         signal.addEventListener('abort', abortHandler, { once: true });
       }
 
@@ -313,31 +314,98 @@ export class MllpServer extends EventEmitter {
   /**
    * Stop accepting new connections and gracefully close all active connections.
    *
-   * At Plan 01 scope this is a skeleton: stops the net.Server and resolves immediately.
-   * Plan 03 adds the full drain-with-timeout coordination.
+   * Sequence (D-06):
+   * 1. `net.Server.close()` — stops accepting new connections immediately
+   * 2. If `_connections` is empty: resolves immediately (no drain needed)
+   * 3. Calls `_drainAll(drainTimeoutMs)` — Promise.all + side-effect setTimeout
+   *    that force-destroys stragglers after the drain window
    *
    * @param opts.drainTimeoutMs - Override drain timeout (default: `opts.drainTimeoutMs ?? 30_000`).
-   * @param opts.signal - AbortSignal to cancel the close operation.
+   * @param opts.signal - AbortSignal to cancel the close operation. On abort, all
+   *   active connections are destroyed and the promise rejects with AbortError.
    *
    * @example
    * ```typescript
    * await server.close({ drainTimeoutMs: 5_000 });
    * ```
    */
-  // Plan 03 fills in drain coordination; opts param used then
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async close(opts?: { drainTimeoutMs?: number; signal?: AbortSignal }): Promise<void> {
-    // Plan 03 will add: drain all active connections with timeout
-    // For now: stop accepting and mark not listening
-    await new Promise<void>((resolve) => {
-      if (!this._listening) {
-        resolve();
-        return;
-      }
-      this._netServer.close(() => resolve());
-    });
+    const signal = opts?.signal;
+
+    // AbortSignal: reject immediately if already aborted
+    if (signal?.aborted) {
+      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    }
+
+    // Stop accepting new connections
+    this._netServer.close();
     this._listening = false;
-    return Promise.resolve();
+
+    // If no active connections, we're done
+    if (this._connections.size === 0) {
+      signal?.removeEventListener('abort', () => {/* no handler registered yet */});
+      return Promise.resolve();
+    }
+
+    // Wire AbortSignal — abort during drain force-destroys all connections
+    let abortHandler: (() => void) | undefined;
+    const abortPromise = signal !== undefined
+      ? new Promise<'aborted'>((_resolve, reject) => {
+          abortHandler = () => {
+            // Force-destroy all active connections on abort
+            for (const conn of this._connections) {
+              conn.destroy();
+            }
+            reject(new DOMException('Aborted', 'AbortError'));
+          };
+          signal.addEventListener('abort', abortHandler, { once: true });
+        })
+      : null;
+
+    try {
+      const drainTimeoutMs = opts?.drainTimeoutMs ?? this._opts.drainTimeoutMs ?? 30_000;
+      if (abortPromise !== null) {
+        await Promise.race([this._drainAll(drainTimeoutMs), abortPromise]);
+      } else {
+        await this._drainAll(drainTimeoutMs);
+      }
+    } finally {
+      if (abortHandler !== undefined && signal !== undefined) {
+        signal.removeEventListener('abort', abortHandler);
+      }
+    }
+  }
+
+  /**
+   * Drain all active connections with a shared timeout.
+   *
+   * Uses Promise.all (not Promise.race) for coordination — the timeout is a
+   * side effect that calls `conn.destroy()` on stragglers after `drainTimeoutMs`.
+   * Promise.all resolves when all `conn.close()` promises settle (which happens
+   * because `conn.destroy()` transitions connections to CLOSED).
+   *
+   * @param drainTimeoutMs - Maximum time to wait for connections to drain.
+   */
+  private async _drainAll(drainTimeoutMs: number): Promise<void> {
+    // Snapshot connections for the close() call map (fixed at call time)
+    const snapshot = [...this._connections];
+    const closePromises = snapshot.map((conn) => conn.close({ drainTimeoutMs }));
+
+    // Side-effect timeout: iterate LIVE this._connections (not snapshot) to only
+    // destroy() connections that haven't already closed during the drain window
+    const timeoutHandle = setTimeout(() => {
+      for (const conn of this._connections) {
+        conn.destroy();
+      }
+    }, drainTimeoutMs);
+    // Do not keep the process alive just for this drain timer
+    timeoutHandle.unref();
+
+    try {
+      await Promise.all(closePromises);
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
   }
 
   /**
