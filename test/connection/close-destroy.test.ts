@@ -128,6 +128,69 @@ describe('Connection close/destroy semantics (LIFE-05)', () => {
     });
   });
 
+  describe('RECONNECTING state transitions (WR-01, WR-02, WR-03 coverage)', () => {
+    it('close() during RECONNECTING transitions to CLOSED', async () => {
+      const [clientT] = InMemoryTransport.pair();
+      const conn = new Connection({ transport: clientT });
+      // Force to RECONNECTING via internal _transition (CONNECTING → RECONNECTING is legal)
+      (conn as unknown as { _transition: (s: string, r?: string) => void })
+        ._transition('RECONNECTING', 'test setup');
+      expect(conn.state).toBe('RECONNECTING');
+
+      await conn.close();
+      expect(conn.state).toBe('CLOSED');
+    });
+
+    it('transport close during RECONNECTING transitions to CLOSED (WR-01)', () => {
+      const [clientT] = InMemoryTransport.pair();
+      const conn = new Connection({ transport: clientT });
+      (conn as unknown as { _transition: (s: string, r?: string) => void })
+        ._transition('RECONNECTING', 'test setup');
+
+      let closeFired = false;
+      conn.on('close', () => { closeFired = true; });
+
+      // Simulate peer close by destroying clientT (triggers onClose callback)
+      clientT.destroy();
+      expect(conn.state).toBe('CLOSED');
+      expect(closeFired).toBe(true);
+    });
+
+    it('transport error during RECONNECTING transitions to CLOSED with phase=reconnect (WR-02)', () => {
+      const [clientT] = InMemoryTransport.pair();
+      const conn = new Connection({ transport: clientT });
+      (conn as unknown as { _transition: (s: string, r?: string) => void })
+        ._transition('RECONNECTING', 'test setup');
+
+      let errorPayload: { error: { phase?: string } } | undefined;
+      conn.on('error', (e: unknown) => { errorPayload = e as { error: { phase?: string } }; });
+
+      clientT.destroy(new Error('simulated reconnect error'));
+      expect(conn.state).toBe('CLOSED');
+      expect(errorPayload?.error?.phase).toBe('reconnect');
+    });
+
+    it('second close() during DRAINING joins first drain — beforeClose called once (WR-03)', async () => {
+      const [clientT] = InMemoryTransport.pair();
+      const conn = new Connection({ transport: clientT });
+      conn.notifyConnect(null, null);
+
+      let beforeCloseCallCount = 0;
+      conn.beforeClose = () => {
+        beforeCloseCallCount++;
+        return new Promise<void>((resolve) => setTimeout(resolve, 50));
+      };
+
+      // Fire two concurrent close() calls
+      const p1 = conn.close();
+      const p2 = conn.close(); // must join p1, not call beforeClose again
+      await Promise.all([p1, p2]);
+
+      expect(beforeCloseCallCount).toBe(1);
+      expect(conn.state).toBe('DISCONNECTED');
+    });
+  });
+
   describe('destroy()', () => {
     it('transitions CONNECTING → CLOSED directly', () => {
       const [clientT] = InMemoryTransport.pair();

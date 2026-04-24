@@ -95,11 +95,8 @@ describe('Connection', () => {
       expect(conn.state).toBe('CLOSED');
     });
 
-    it('stateChange includes reason when provided', () => {
-      let lastEvent: { from: string; to: string; reason?: string } | undefined;
-      conn.on('stateChange', (e) => { lastEvent = e; });
-      mock.emit.close(); // peer closed — reason 'peer closed'
-      // CONNECTING -> DISCONNECTED is illegal (via _onTransportClose); let's check via destroy
+    it('stateChange includes reason when provided (CONNECTED peer drop)', () => {
+      // Verify that transport close from CONNECTED state fires 'peer closed' reason
       const m2 = makeMockTransport();
       const c2 = new Connection({ transport: m2.transport });
       c2.notifyConnect(null, null);
@@ -107,6 +104,15 @@ describe('Connection', () => {
       c2.on('stateChange', (e) => { evt = e; });
       m2.emit.close();
       expect(evt?.reason).toBe('peer closed');
+    });
+
+    it('transport close from CONNECTING transitions to CLOSED (WR-01)', () => {
+      // conn starts in CONNECTING (notifyConnect never called)
+      let closeFired = false;
+      conn.on('close', () => { closeFired = true; });
+      mock.emit.close();
+      expect(conn.state).toBe('CLOSED');
+      expect(closeFired).toBe(true);
     });
 
     it('stateChange reason is omitted when not provided (CONNECTING → CONNECTED)', () => {
