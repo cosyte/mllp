@@ -12,10 +12,41 @@
   },
   "keywords": ["hl7", "mllp", "healthcare", "hl7v2", "tcp"],
   "files": ["dist", "README.md", "LICENSE", "CHANGELOG.md"],
-  "exports": {},
-  "main": "",
-  "module": "",
-  "types": "",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./testing": {
+      "import": {
+        "types": "./dist/testing/index.d.ts",
+        "default": "./dist/testing/index.js"
+      },
+      "require": {
+        "types": "./dist/testing/index.d.cts",
+        "default": "./dist/testing/index.cjs"
+      }
+    },
+    "./ack-from-hl7": {
+      "import": {
+        "types": "./dist/ack-from-hl7/index.d.ts",
+        "default": "./dist/ack-from-hl7/index.js"
+      },
+      "require": {
+        "types": "./dist/ack-from-hl7/index.d.cts",
+        "default": "./dist/ack-from-hl7/index.cjs"
+      }
+    }
+  },
   "dependencies": {},
   "peerDependencies": {
     "@cosyte/hl7": ">=0.1.0"
