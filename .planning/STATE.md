@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 4 planned 2026-04-24 — 5 plans ready to execute (MLLP Server + gap-closure 04-05).
-last_updated: "2026-04-24T19:00:00.000Z"
+status: Phase 4 complete 2026-04-24 — 5 plans executed, 306 tests, 0 TS errors, all 13 REQ-IDs delivered.
+last_updated: "2026-04-24T19:30:00.000Z"
 progress:
   total_phases: 8
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 36
-  completed_plans: 14
-  percent: 37
+  completed_plans: 19
+  percent: 50
 ---
 
 # @cosyte/hl7-mllp — STATE
@@ -22,23 +22,23 @@ Project memory for session-to-session continuity. Updated at phase/plan boundari
 
 - **Name:** `@cosyte/hl7-mllp`
 - **Core value:** A developer can send and receive HL7 v2 messages over a production-grade MLLP connection with three lines of code, and trust framing, ACKs, reconnects, and backpressure under load and on flaky networks — without reading the MLLP spec.
-- **Current focus:** Phase 4 (MLLP Server) — `createServer`, `listen`, per-connection message emission as `Buffer`, auto-ACK / manual-ACK, graceful shutdown, idle keepalive, `createStarterServer`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, server-level framing tolerance opts, `server.getStats()`.
+- **Current focus:** Phase 5 (MLLP Client) — `createClient`, `connect`, `send` with ACK-awaiting, exponential-backoff reconnect, backpressure, `createStarterClient`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, `client.getStats()`.
 - **Workflow config:** standard granularity, yolo mode, parallelization enabled, plan-check + verifier + Nyquist validation on, auto-advance on, commit_docs on, research off-by-default (but invoked on-demand for this milestone).
 - **Sibling package:** `@cosyte/hl7` (at `../hl7-parser`) — peer dep, not runtime dep. ACK-helper subpath `@cosyte/hl7-mllp/ack-from-hl7` is the only module that references it.
 
 ## Current Position
 
-Phase: 3 complete 2026-04-24 — all 5 plans executed, all gaps closed.
-Next Step: `/gsd-execute-phase 4` — 4 plans planned, ready to execute
+Phase: 4 complete 2026-04-24 — all 5 plans executed, all gaps closed.
+Next Step: `/gsd-discuss-phase 5` or `/gsd-plan-phase 5`
 Resume file: None
 
 - **Milestone:** v1 (initial release — transport-only MLLP client + server)
-- **Phase:** 3 complete — Transport, Connection FSM, InMemoryTransport, getStats(), close/destroy, gap closure (CR-01/WR-01/WR-02/WR-03)
-- **Plans (milestone total):** 14 / ~35 complete
-- **Status:** Phase 3 complete 2026-04-24 — 230 tests, 0 TS errors, all 14 REQ-IDs delivered
+- **Phase:** 4 complete — MllpServer, createServer(), createStarterServer(), auto-ACK, graceful shutdown, keepalive, AbortSignal, Symbol.asyncDispose, frozen events, server.getStats(), byteOffset/warnings threading, _closedTotal guard
+- **Plans (milestone total):** 19 / ~36 complete
+- **Status:** Phase 4 complete 2026-04-24 — 306 tests, 0 TS errors, all 13 REQ-IDs delivered
 
 ```
-[#####               ] 37 %   (3 / 8 phases shipped)
+[##########          ] 50 %   (4 / 8 phases shipped)
 ```
 
 ## Phase Summary
@@ -48,12 +48,12 @@ Resume file: None
 | 1 | Project Foundation | 7 | 5 | Complete 2026-04-24 |
 | 2 | Framing Codec & Warnings | 21 | 4 | Complete 2026-04-24 |
 | 3 | Transport, Connection FSM & Observability | 14 | 5 | Complete 2026-04-24 |
-| 4 | MLLP Server | 13 | 4 | Pending |
+| 4 | MLLP Server | 13 | 5 | Complete 2026-04-24 |
 | 5 | MLLP Client | 22 | 6 | Pending |
 | 6 | ACK Helpers & TLS | 10 | 4 | Pending |
 | 7 | Testing, Fixtures & Coverage | 7 | 4 | Pending |
 | 8 | Examples, README & Publish | 7 | 3 | Pending |
-| **Total** | | **101** | **33** | |
+| **Total** | | **101** | **36** | |
 
 ## Key Decisions Log
 

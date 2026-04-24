@@ -15,7 +15,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
 - [x] **Phase 1: Project Foundation** — Scaffold the repo, build, lint, and TypeScript toolchain (Node 20+ floor, 3×3 OS×Node CI matrix, `selfsigned` cert-gen, `.subarray`-only lint rule) so any subsequent phase can iterate. *(Complete 2026-04-24)*
 - [ ] **Phase 2: Framing Codec & Warnings** — Canonical `VT…FS+CR` encoder, stateful chunked-stream decoder with `maxFrameSizeBytes` DoS cap, tolerance opt-ins, stable warning-code union (incl. `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_*`), and `MllpFramingError`.
 - [x] **Phase 3: Transport Abstraction, Connection FSM & Observability** *(Complete 2026-04-24)* — `Transport` interface (`net.Socket` wrapper + `InMemoryTransport` for tests), `Connection` in its own module with a **6-state FSM** (`CONNECTING` / `CONNECTED` / `DRAINING` / `RECONNECTING` / `DISCONNECTED` / `CLOSED`), per-connection warning stream, `connection.getStats()`, and `MllpConnectionError`.
-- [ ] **Phase 4: MLLP Server** — `createServer`, `listen`, per-connection message emission as `Buffer`, auto-ACK mode, manual-ACK mode, graceful shutdown with drain timeout, idle keepalive, `createStarterServer`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, server-level framing tolerance opts, `server.getStats()`.
+- [x] **Phase 4: MLLP Server** *(Complete 2026-04-24)* — `createServer`, `listen`, per-connection message emission as `Buffer`, auto-ACK mode, manual-ACK mode, graceful shutdown with drain timeout, idle keepalive, `createStarterServer`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, server-level framing tolerance opts, `server.getStats()`.
 - [ ] **Phase 5: MLLP Client** — `createClient`, `connect`, `send` with ACK-awaiting (FIFO + controlId correlation), exponential-backoff reconnect (with backoff reset + retryStrategy callback + transient/permanent classification), backpressure (count + byte watermarks, wait/reject policy, drain event), dead-peer detection, `pipeline: false` serialization mode, unmatched-ACK + late-ACK semantics, queued-sends-across-reconnect policy, `createStarterClient`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, `client.getStats()`, `MllpTimeoutError` + `MllpBackpressureError`.
 - [ ] **Phase 6: ACK Helpers & TLS** — `buildAckAA/AE/AR` plain-object builders (depend on Phase 2 only), `@cosyte/hl7-mllp/ack-from-hl7` peer-dep adapter, `TlsTransport` class with SNI default (depends on Phase 3 only), and end-to-end integration test (depends on Phases 2 / 3 / 4 / 5). Plan-split (was 3 plans → now 4) exposes true parallelism.
 - [ ] **Phase 7: Testing, Fixtures & Coverage** — Canonical round-trip fixtures, chunked-read fuzz suite, one fixture per warning code (11 codes), byte-fidelity round-trip test, lifecycle sequencing asserts across 6-state FSM, failure-mode fixtures (incl. reconnect / pipeline / TLS SNI / byte-watermark), and the ≥ 90 % per-directory coverage gate.
@@ -174,12 +174,12 @@ North star: **A developer can send and receive HL7 v2 messages over a production
 | 1. Project Foundation | 7 | 5 | Complete 2026-04-24 |
 | 2. Framing Codec & Warnings | 21 | 4 | Complete 2026-04-24 |
 | 3. Transport, Connection FSM & Observability | 14 | 5 | Complete 2026-04-24 |
-| 4. MLLP Server | 13 | 4 | Pending |
+| 4. MLLP Server | 13 | 5 | Complete 2026-04-24 |
 | 5. MLLP Client | 22 | 6 | Pending |
 | 6. ACK Helpers & TLS | 10 | 4 | Pending |
 | 7. Testing, Fixtures & Coverage | 7 | 4 | Pending |
 | 8. Examples, README & Publish | 7 | 3 | Pending |
-| **Total** | **101** | **35** | **37 % (3/8 phases)** |
+| **Total** | **101** | **36** | **50 % (4/8 phases)** |
 
 ## Coverage Validation
 
