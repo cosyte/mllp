@@ -219,7 +219,7 @@ export class Connection extends EventEmitter {
 
     this._reader = new FrameReader({
       ...(opts.framing ?? {}),
-      onFrame: (payload) => { this._onFrameDecoded(payload); },
+      onFrame: (payload, byteOffset, warnings) => { this._onFrameDecoded(payload, byteOffset, warnings); },
       onWarning: (w) => { this._onFramingWarning(w); },
     });
 
@@ -496,10 +496,10 @@ export class Connection extends EventEmitter {
     this._transition(target, `error: ${err.message}`);
   }
 
-  private _onFrameDecoded(payload: Buffer): void {
+  private _onFrameDecoded(payload: Buffer, byteOffset: number, warnings: readonly MllpWarning[]): void {
     // Only deliver messages when in an active state (CONNECTED or DRAINING)
     if (this._state !== 'CONNECTED' && this._state !== 'DRAINING') return;
-    const event = Object.freeze({ payload, connectionId: this.connectionId });
+    const event = Object.freeze({ payload, connectionId: this.connectionId, byteOffset, warnings });
     this.emit('message', event);
     this._opts.onMessage?.(payload);
   }

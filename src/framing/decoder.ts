@@ -44,7 +44,7 @@ const INITIAL_ACCUMULATOR_SIZE = 4096;
  * @example
  * ```typescript
  * const opts: FrameReaderOptions = {
- *   onFrame: (p) => process(p),
+ *   onFrame: (payload, byteOffset, warnings) => process(payload, byteOffset, warnings),
  *   onWarning: (w) => logger.warn(w),
  *   maxFrameSizeBytes: 4 * 1024 * 1024, // 4 MiB limit
  *   allowFsOnly: true,
@@ -53,8 +53,16 @@ const INITIAL_ACCUMULATOR_SIZE = 4096;
  * ```
  */
 export interface FrameReaderOptions {
-  /** Called synchronously during `push()` for each complete MLLP payload. */
-  onFrame: (payload: Buffer) => void;
+  /**
+   * Called synchronously during `push()` for each complete MLLP payload.
+   *
+   * @param payload - Raw MLLP payload bytes (framing stripped).
+   * @param byteOffset - Stream byte offset of the VT byte that opened this frame.
+   *   Monotonic across the connection lifetime; reset to 0 by `reset()`.
+   * @param warnings - Framing warnings emitted during decoding of this specific frame.
+   *   Empty array when no tolerance deviations were detected.
+   */
+  onFrame: (payload: Buffer, byteOffset: number, warnings: readonly MllpWarning[]) => void;
   /**
    * Called for each tolerated framing deviation. Wrapped in try/catch per WARN-06.
    * A throwing handler will not corrupt FSM state.
@@ -105,7 +113,7 @@ export interface FrameReaderOptions {
  * @example
  * ```typescript
  * const reader = new FrameReader({
- *   onFrame: (payload) => process(payload),
+ *   onFrame: (payload, byteOffset, warnings) => process(payload, byteOffset, warnings),
  *   onWarning: (w) => logger.warn(w),
  * });
  * socket.on('data', (chunk) => reader.push(chunk));
@@ -126,6 +134,10 @@ export class FrameReader {
   private _wsStart = 0;
   /** Count of leading whitespace bytes accumulated in current run (FRAME-10). */
   private _wsCount = 0;
+  /** Byte offset of the VT byte that started the current frame. */
+  private _frameStartOffset = 0;
+  /** Per-frame warning accumulator — cleared after each _deliverFrame(). */
+  private _frameWarnings: MllpWarning[] = [];
 
   constructor(opts: FrameReaderOptions) {
     this._opts = opts;
@@ -171,6 +183,8 @@ export class FrameReader {
     this._byteOffset = 0;
     this._wsStart = 0;
     this._wsCount = 0;
+    this._frameStartOffset = 0;
+    this._frameWarnings = [];
   }
 
   private _processByte(byte: number): void {
@@ -199,6 +213,7 @@ export class FrameReader {
         this._wsStart = 0;
         this._wsCount = 0;
       }
+      this._frameStartOffset = this._byteOffset;
       this._state = 'READING_PAYLOAD';
       return;
     }
@@ -263,6 +278,7 @@ export class FrameReader {
         this._byteOffset,
         `Missing leading VT (0x0B) — treating byte 0x${byte.toString(16).padStart(2, '0')} at offset ${this._byteOffset} as payload start`,
       );
+      this._frameStartOffset = this._byteOffset;
       this._state = 'READING_PAYLOAD';
       this._appendByte(byte);
       return;
@@ -448,7 +464,10 @@ export class FrameReader {
   private _deliverFrame(): void {
     const payload = Buffer.from(this._accumulator.subarray(0, this._writePos));
     this._writePos = 0;
-    this._opts.onFrame(payload);
+    const frameStart = this._frameStartOffset;
+    const frameWarnings: readonly MllpWarning[] = this._frameWarnings;
+    this._frameWarnings = []; // reset for next frame
+    this._opts.onFrame(payload, frameStart, frameWarnings);
   }
 
   /** Emit a warning via the `onWarning` callback, swallowing any handler exceptions (WARN-06). */
@@ -457,8 +476,10 @@ export class FrameReader {
     byteOffset: number,
     message: string,
   ): void {
+    const warning = createWarning(code, byteOffset, message);
+    // Accumulate per-frame warnings unconditionally (independent of onWarning handler presence)
+    this._frameWarnings.push(warning);
     if (this._opts.onWarning !== undefined) {
-      const warning = createWarning(code, byteOffset, message);
       try {
         this._opts.onWarning(warning);
       } catch {
