@@ -22,14 +22,14 @@ Project memory for session-to-session continuity. Updated at phase/plan boundari
 
 - **Name:** `@cosyte/hl7-mllp`
 - **Core value:** A developer can send and receive HL7 v2 messages over a production-grade MLLP connection with three lines of code, and trust framing, ACKs, reconnects, and backpressure under load and on flaky networks — without reading the MLLP spec.
-- **Current focus:** v1 milestone initialized 2026-04-22; research-phase revision applied same day (73 → 101 REQ-IDs, ~30 → ~33 plans, 4-state → 6-state FSM, Node 18 → Node 20). Nothing built yet. Next step is Phase 1 (Project Foundation) — scaffold pnpm + tsup dual-build (3 subpath entries) + strict TypeScript + Vitest + ESLint (incl. SETUP-07 no-`.slice()` rule) + CI on 3×3 OS × Node matrix.
+- **Current focus:** Phase 4 (MLLP Server) — `createServer`, `listen`, per-connection message emission as `Buffer`, auto-ACK / manual-ACK, graceful shutdown, idle keepalive, `createStarterServer`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, server-level framing tolerance opts, `server.getStats()`.
 - **Workflow config:** standard granularity, yolo mode, parallelization enabled, plan-check + verifier + Nyquist validation on, auto-advance on, commit_docs on, research off-by-default (but invoked on-demand for this milestone).
 - **Sibling package:** `@cosyte/hl7` (at `../hl7-parser`) — peer dep, not runtime dep. ACK-helper subpath `@cosyte/hl7-mllp/ack-from-hl7` is the only module that references it.
 
 ## Current Position
 
 Phase: 3 complete 2026-04-24 — all 5 plans executed, all gaps closed.
-Next Step: `/gsd-execute-phase 4`
+Next Step: `/gsd-discuss-phase 4` (no CONTEXT.md yet for Phase 4)
 Resume file: None
 
 - **Milestone:** v1 (initial release — transport-only MLLP client + server)
