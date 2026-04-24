@@ -108,16 +108,12 @@ export interface ServerOptions {
   /**
    * Called for each decoded MLLP message.
    *
-   * Return a `Buffer` or `Promise<Buffer>` to send as the ACK payload (auto-framed).
-   * Return `void` to handle ACKing manually via `conn.send()`.
+   * Return value is not used. For manual ACK, call `conn.send(encodeFrame(ackPayload))` directly.
+   * For automatic ACK generation, set `autoAck: 'AA'` instead.
    *
-   * NOTE: If `autoAck` is also set, do NOT call `conn.send()` here — two ACKs will be sent.
+   * NOTE: If `autoAck` is also set, do NOT call `conn.send()` from here — two ACKs will be sent.
    */
-  onMessage?: (
-    payload: Buffer,
-    meta: MessageMeta,
-    conn: Connection,
-  ) => void | Buffer | Promise<Buffer>;
+  onMessage?: (payload: Buffer, meta: MessageMeta, conn: Connection) => void;
 
   /**
    * FrameReader tolerance options applied to every accepted connection (SERVER-12).
@@ -364,8 +360,8 @@ export class MllpServer extends EventEmitter {
     this._listening = false;
 
     // If no active connections, we're done — emit 'close' and resolve
+    // No abort handler registered on this path — nothing to remove.
     if (this._connections.size === 0) {
-      signal?.removeEventListener('abort', () => {/* no handler registered yet */});
       this.emit('close', Object.freeze({}));
       return Promise.resolve();
     }
@@ -599,7 +595,11 @@ export class MllpServer extends EventEmitter {
     // Connection transitions to DISCONNECTED when peer closes gracefully (CONNECTED → DISCONNECTED).
     // It reaches CLOSED on destroy() / drain timeout / CONNECTING or RECONNECTING close.
     // We remove on either terminal-ish state to avoid leaking connections in _connections.
+    // Single-fire guard prevents double-counting when both 'disconnect' and 'close' fire.
+    let ended = false;
     const _onConnEnded = () => {
+      if (ended) return;
+      ended = true;
       this._connections.delete(conn);
       this._closedTotal++;
     };
@@ -633,12 +633,12 @@ export class MllpServer extends EventEmitter {
     // Wire message handler: emit 'message' event, then invoke onMessage callback, then autoAck.
     // The handler is async to support awaiting the autoAck fn; unhandled rejection is suppressed
     // by the internal try/catch — D-04 guarantee.
-    conn.on('message', (event: { payload: Buffer; connectionId: string }) => {
-      const { payload, connectionId } = event;
+    conn.on('message', (event: { payload: Buffer; connectionId: string; byteOffset: number; warnings: readonly MllpWarning[] }) => {
+      const { payload, connectionId, byteOffset, warnings } = event;
       const meta: MessageMeta = Object.freeze({
         connectionId,
-        byteOffset: 0, // Plan 04 will thread actual byte offsets from FrameReader
-        warnings: [] as readonly MllpWarning[],
+        byteOffset,
+        warnings,
       });
 
       // D-03: emit 'message' BEFORE auto-ACK dispatch
@@ -686,18 +686,15 @@ export class MllpServer extends EventEmitter {
   ): Promise<void> {
     try {
       let ackPayload: Buffer;
+      const autoAck = this._opts.autoAck;
 
-      if (this._opts.autoAck === 'AA') {
+      if (autoAck === 'AA') {
         ackPayload = this._buildAutoAck(payload);
+      } else if (autoAck !== undefined) {
+        // autoAck is the function branch — TypeScript narrows to fn type after the 'AA' check
+        ackPayload = await Promise.resolve(autoAck(payload, meta, conn));
       } else {
-        // autoAck is a function — await its result (covers both sync and async builders)
-        ackPayload = await Promise.resolve(
-          (this._opts.autoAck as (p: Buffer, m: MessageMeta, c: Connection) => Buffer | Promise<Buffer>)(
-            payload,
-            meta,
-            conn,
-          ),
-        );
+        return; // autoAck was undefined (should not reach here; _sendAutoAck is only called when autoAck !== undefined)
       }
 
       // Connection.send() writes raw bytes — encodeFrame adds VT + payload + FS + CR
