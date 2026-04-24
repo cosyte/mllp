@@ -73,6 +73,24 @@ export interface FrameReaderOptions {
   allowMissingLeadingVt?: boolean;
   /** FRAME-10: Tolerate SP/TAB/LF/CR before VT; emits `MLLP_LEADING_WHITESPACE`. */
   allowLeadingWhitespace?: boolean;
+  /**
+   * When `true`, escalates the following tolerances to thrown `MllpFramingError`
+   * even if individual opt-ins (`allowFsOnly`, `allowLfAfterFs`, `allowMissingLeadingVt`,
+   * `allowLeadingWhitespace`) are enabled (WARN-08):
+   * - `MLLP_MISSING_LEADING_VT`
+   * - `MLLP_FS_WITHOUT_CR`
+   * - `MLLP_LF_AFTER_FS`
+   * - `MLLP_LEADING_WHITESPACE` (leading whitespace escalates as `MLLP_MISSING_LEADING_VT`)
+   *
+   * `MLLP_EMPTY_PAYLOAD` and `MLLP_TRAILING_BYTES` remain warnings even in strict mode.
+   *
+   * @example
+   * ```typescript
+   * // Hardened enforcement — no tolerance, all violations throw
+   * const reader = new FrameReader({ onFrame: fn, strict: true });
+   * ```
+   */
+  strict?: boolean;
 }
 
 /**
@@ -190,6 +208,16 @@ export class FrameReader {
 
     if (isWhitespace) {
       if (this._opts.allowLeadingWhitespace === true) {
+        // Strict mode escalates leading whitespace to an error (WARN-08)
+        if (this._opts.strict === true) {
+          const snippet = Buffer.from([byte]);
+          throw new MllpFramingError(
+            'MLLP_MISSING_LEADING_VT',
+            this._byteOffset,
+            snippet,
+            `Strict mode: leading whitespace before VT at offset ${this._byteOffset}`,
+          );
+        }
         if (this._wsCount === 0) {
           this._wsStart = this._byteOffset;
         }
@@ -219,6 +247,16 @@ export class FrameReader {
     }
 
     if (this._opts.allowMissingLeadingVt === true) {
+      // Strict mode escalates missing leading VT to an error (WARN-08)
+      if (this._opts.strict === true) {
+        const snippet = Buffer.from([byte]);
+        throw new MllpFramingError(
+          'MLLP_MISSING_LEADING_VT',
+          this._byteOffset,
+          snippet,
+          `Strict mode: missing leading VT at offset ${this._byteOffset}`,
+        );
+      }
       // Treat this non-VT byte as the first payload byte
       this._emitWarning(
         'MLLP_MISSING_LEADING_VT',
@@ -294,6 +332,16 @@ export class FrameReader {
 
     if (byte === LF) {
       if (this._opts.allowLfAfterFs === true) {
+        // Strict mode escalates LF after FS to an error (WARN-08)
+        if (this._opts.strict === true) {
+          const snippet = Buffer.from([byte]);
+          throw new MllpFramingError(
+            'MLLP_LF_AFTER_FS',
+            this._byteOffset,
+            snippet,
+            `Strict mode: LF after FS at offset ${this._byteOffset}`,
+          );
+        }
         this._emitWarning(
           'MLLP_LF_AFTER_FS',
           this._byteOffset,
@@ -315,6 +363,16 @@ export class FrameReader {
     if (byte === VT) {
       // Next frame starts immediately after FS — no CR between frames
       if (this._opts.allowFsOnly === true) {
+        // Strict mode escalates FS without CR to an error (WARN-08)
+        if (this._opts.strict === true) {
+          const snippet = Buffer.from([byte]);
+          throw new MllpFramingError(
+            'MLLP_FS_WITHOUT_CR',
+            this._byteOffset,
+            snippet,
+            `Strict mode: FS without CR at offset ${this._byteOffset}`,
+          );
+        }
         this._emitWarning(
           'MLLP_FS_WITHOUT_CR',
           this._byteOffset,
@@ -336,6 +394,16 @@ export class FrameReader {
 
     // Any other non-CR byte after FS (not LF, not VT)
     if (this._opts.allowFsOnly === true) {
+      // Strict mode escalates FS without CR to an error (WARN-08)
+      if (this._opts.strict === true) {
+        const snippet = Buffer.from([byte]);
+        throw new MllpFramingError(
+          'MLLP_FS_WITHOUT_CR',
+          this._byteOffset,
+          snippet,
+          `Strict mode: FS without CR at offset ${this._byteOffset}`,
+        );
+      }
       // Deliver the frame, emit FS_WITHOUT_CR, then treat the stray byte as trailing
       this._emitWarning(
         'MLLP_FS_WITHOUT_CR',

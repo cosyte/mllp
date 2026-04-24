@@ -15,3 +15,8 @@
 
 // Populated in Phase 2+. Stub barrel — do not remove this file.
 export const VERSION = '0.1.0';
+
+// Phase 2: framing codec public surface
+export type { WarningCode, MllpWarning } from './framing/index.js';
+export { MllpFramingError, encodeFrame, FrameReader, createWarning } from './framing/index.js';
+export type { FrameReaderOptions, EncoderOptions } from './framing/index.js';
