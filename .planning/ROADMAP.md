@@ -12,7 +12,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
 
 ## Phases
 
-- [ ] **Phase 1: Project Foundation** — Scaffold the repo, build, lint, and TypeScript toolchain (Node 20+ floor, 3×3 OS×Node CI matrix, `selfsigned` cert-gen, `.subarray`-only lint rule) so any subsequent phase can iterate.
+- [x] **Phase 1: Project Foundation** — Scaffold the repo, build, lint, and TypeScript toolchain (Node 20+ floor, 3×3 OS×Node CI matrix, `selfsigned` cert-gen, `.subarray`-only lint rule) so any subsequent phase can iterate. *(Complete 2026-04-24)*
 - [ ] **Phase 2: Framing Codec & Warnings** — Canonical `VT…FS+CR` encoder, stateful chunked-stream decoder with `maxFrameSizeBytes` DoS cap, tolerance opt-ins, stable warning-code union (incl. `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_*`), and `MllpFramingError`.
 - [ ] **Phase 3: Transport Abstraction, Connection FSM & Observability** — `Transport` interface (`net.Socket` wrapper + `InMemoryTransport` for tests), `Connection` in its own module with a **6-state FSM** (`CONNECTING` / `CONNECTED` / `DRAINING` / `RECONNECTING` / `DISCONNECTED` / `CLOSED`), per-connection warning stream, `connection.getStats()`, and `MllpConnectionError`.
 - [ ] **Phase 4: MLLP Server** — `createServer`, `listen`, per-connection message emission as `Buffer`, auto-ACK mode, manual-ACK mode, graceful shutdown with drain timeout, idle keepalive, `createStarterServer`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, server-level framing tolerance opts, `server.getStats()`.
@@ -36,11 +36,11 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   4. A developer editing any `.ts` file gets strict-mode errors for `any`, unchecked index access, missing types, and attempts to use `Buffer.prototype.slice()` inside `src/framing|server|client` (forbidden by the SETUP-07 ESLint rule).
   5. CI runs the test job on Ubuntu / macOS / Windows × Node 20 / 22 / 24 (9 cells); lint / typecheck / coverage run on Ubuntu only.
 **Plans**: 5 plans
-  - [ ] 01-01-PLAN.md — package scaffold (package.json, tsconfig.json, LICENSE, README stub, stub barrels)
-  - [ ] 01-02-PLAN.md — dual ESM+CJS build via tsup with .d.ts, three subpath entries, sourcemaps, external:@cosyte/hl7
-  - [ ] 01-03-PLAN.md — ESLint flat config (SETUP-07 no-buffer-slice rule), Prettier, Vitest + coverage-v8 with 90% gates
-  - [ ] 01-04-PLAN.md — GitHub Actions CI workflow (3x3 matrix), @arethetypeswrong/cli step, TLS cert gen script, pipeline smoke test
-  - [ ] 01-05-PLAN.md — gap closure: delete .eslintignore (redundant in ESLint v9 flat config) to satisfy SETUP-06 zero-warnings
+  - [x] 01-01-PLAN.md — package scaffold (package.json, tsconfig.json, LICENSE, README stub, stub barrels)
+  - [x] 01-02-PLAN.md — dual ESM+CJS build via tsup with .d.ts, three subpath entries, sourcemaps, external:@cosyte/hl7
+  - [x] 01-03-PLAN.md — ESLint flat config (SETUP-07 no-buffer-slice rule), Prettier, Vitest + coverage-v8 with 90% gates
+  - [x] 01-04-PLAN.md — GitHub Actions CI workflow (3x3 matrix), @arethetypeswrong/cli step, TLS cert gen script, pipeline smoke test
+  - [x] 01-05-PLAN.md — gap closure: delete .eslintignore (redundant in ESLint v9 flat config) to satisfy SETUP-06 zero-warnings
 **UI hint**: no
 
 ### Phase 2: Framing Codec & Warnings
