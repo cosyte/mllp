@@ -70,11 +70,12 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer inspecting any `Connection` sees `.state` as one of exactly the 6 states, subscribes to `'stateChange'` with `{ from, to, reason }`, and sees transitions fire along the LIFE-02 edge graph with a stable `connectionId` on every event. Events `onConnect` / `onMessage` / `onAck` / `onWarning` / `onError` / `onReconnecting` / `onDrain` / `onDisconnect` / `onClose` fire in the documented order.
   4. A developer calling `close()` during `CONNECTING` or `RECONNECTING` cancels the attempt without leaking timers; during `CONNECTED` it transitions through `DRAINING` and resolves once in-flight work completes or the drain timeout elapses; `destroy()` from any non-terminal state transitions directly to `CLOSED`.
   5. A developer calling `connection.getStats()` receives a JSON-serializable object with `state`, `connectionId`, `remoteAddress`/`Port`, `warningsByCode`, byte counters, timestamps, and `warningsTruncated` when the per-connection warning buffer has exceeded 100 entries; the `warningsByCode` count map remains accurate regardless of truncation. Per-connection `onWarning(fn)` receives only that connection's warnings.
-**Plans**: 4 plans
+**Plans**: 5 plans
   - [x] 03-PLAN-01: `Transport` interface + `NetTransport` wrapper around `net.Socket` with event plumbing + `MllpConnectionError` typed error (now with `'reconnect'` in the `phase` union)
   - [x] 03-PLAN-02: `InMemoryTransport` with `pair()` / `split()` / `pause()` / `destroy()` and deterministic event-queue semantics
   - [x] 03-PLAN-03: `Connection` class in `src/connection/` — 6-state FSM with full LIFE-02 transition graph, `connectionId` generator, lifecycle events (incl. `'drain'` / `'reconnecting'` / `'close'`), `stateChange` event, per-connection `onWarning` (WARN-10), `getStats()` (OBS-03/04/05) with capped warning buffer
   - [x] 03-PLAN-04: `close()` / `destroy()` semantics across the 6 states, drain timeout, CONNECTING-cancellation + RECONNECTING-cancellation with timer cleanup, barrel updates
+  - [ ] 03-05-PLAN.md — gap closure: fix CR-01 (ReconnectingEvent interface), WR-01/WR-02 (FSM stuck on transport close/error in CONNECTING/RECONNECTING), WR-03 (concurrent drain idempotency), plus RECONNECTING test coverage
 **UI hint**: no
 
 ### Phase 4: MLLP Server
@@ -171,13 +172,13 @@ North star: **A developer can send and receive HL7 v2 messages over a production
 |-------|-----:|------:|--------|
 | 1. Project Foundation | 7 | 5 | Pending |
 | 2. Framing Codec & Warnings | 21 | 4 | Pending |
-| 3. Transport, Connection FSM & Observability | 14 | 4 | Pending |
+| 3. Transport, Connection FSM & Observability | 14 | 5 | Pending |
 | 4. MLLP Server | 13 | 4 | Pending |
 | 5. MLLP Client | 22 | 6 | Pending |
 | 6. ACK Helpers & TLS | 10 | 4 | Pending |
 | 7. Testing, Fixtures & Coverage | 7 | 4 | Pending |
 | 8. Examples, README & Publish | 7 | 3 | Pending |
-| **Total** | **101** | **34** | **0 %** |
+| **Total** | **101** | **35** | **0 %** |
 
 ## Coverage Validation
 
