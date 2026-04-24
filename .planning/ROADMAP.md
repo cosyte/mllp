@@ -53,11 +53,11 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer opting into a tolerance (`allowFsOnly`, `allowLfAfterFs`, `allowMissingLeadingVt`, `allowLeadingWhitespace`) sees the matching behavior emit a frozen `MllpWarning` with the correct `code`, `byteOffset`, and a stable `message`; without the opt-in, the same input throws `MllpFramingError` with the same code.
   4. A developer enabling `{ strict: true }` on the reader has every leading-VT / FS-CR / LF-after-FS tolerance escalated to a thrown `MllpFramingError` regardless of individual opt-ins; `MLLP_EMPTY_PAYLOAD` / `MLLP_TRAILING_BYTES` remain warnings even in strict mode.
   5. A developer feeding a frame whose payload exceeds `maxFrameSizeBytes` (default 16 MB) receives `MllpFramingError('MLLP_FRAME_TOO_LARGE')` at the byte offset where the cap was reached; the reader does not further accumulate bytes. Subscribing via `{ onWarning: fn }` receives every warning as it is emitted; a throwing handler does not corrupt reader state.
-**Plans**: 4 plans (anticipated)
-  - 02-PLAN-01: warning registry (11 codes incl. `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_UNMATCHED_CONTROL_ID`, `MLLP_ACK_AFTER_TIMEOUT`) + `MllpFramingError` with `{ code, byteOffset, snippet }` + `MllpWarning` frozen factory
-  - 02-PLAN-02: `encodeFrame()` + payload-byte guard (`allowDelimiterBytesInPayload`) + round-trip encoder tests
-  - 02-PLAN-03: `FrameReader` state machine — `SCANNING_FOR_VT` / `READING_PAYLOAD` / `EXPECTING_CR` — with byte-offset tracking, chunked-input accumulator, `maxFrameSizeBytes` enforcement, and tolerance opt-ins
-  - 02-PLAN-04: strict-mode escalation chokepoint + `onWarning` try/catch wrapper + `src/index.ts` barrel update
+**Plans**: 4 plans
+  - [ ] 02-01-PLAN.md — warning registry (11 codes incl. `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_UNMATCHED_CONTROL_ID`, `MLLP_ACK_AFTER_TIMEOUT`) + `MllpFramingError` with `{ code, byteOffset, snippet }` + `MllpWarning` frozen factory
+  - [ ] 02-02-PLAN.md — `encodeFrame()` + payload-byte guard (`allowDelimiterBytesInPayload`) + round-trip encoder tests
+  - [ ] 02-03-PLAN.md — `FrameReader` state machine — `SCANNING_FOR_VT` / `READING_PAYLOAD` / `EXPECTING_CR` — with byte-offset tracking, chunked-input accumulator, `maxFrameSizeBytes` enforcement, and tolerance opt-ins
+  - [ ] 02-04-PLAN.md — strict-mode escalation chokepoint + `onWarning` try/catch wrapper + `src/index.ts` barrel update
 **UI hint**: no
 
 ### Phase 3: Transport Abstraction, Connection FSM & Observability
@@ -70,7 +70,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer inspecting any `Connection` sees `.state` as one of exactly the 6 states, subscribes to `'stateChange'` with `{ from, to, reason }`, and sees transitions fire along the LIFE-02 edge graph with a stable `connectionId` on every event. Events `onConnect` / `onMessage` / `onAck` / `onWarning` / `onError` / `onReconnecting` / `onDrain` / `onDisconnect` / `onClose` fire in the documented order.
   4. A developer calling `close()` during `CONNECTING` or `RECONNECTING` cancels the attempt without leaking timers; during `CONNECTED` it transitions through `DRAINING` and resolves once in-flight work completes or the drain timeout elapses; `destroy()` from any non-terminal state transitions directly to `CLOSED`.
   5. A developer calling `connection.getStats()` receives a JSON-serializable object with `state`, `connectionId`, `remoteAddress`/`Port`, `warningsByCode`, byte counters, timestamps, and `warningsTruncated` when the per-connection warning buffer has exceeded 100 entries; the `warningsByCode` count map remains accurate regardless of truncation. Per-connection `onWarning(fn)` receives only that connection's warnings.
-**Plans**: 4 plans (anticipated)
+**Plans**: 4 plans
   - 03-PLAN-01: `Transport` interface + `NetTransport` wrapper around `net.Socket` with event plumbing + `MllpConnectionError` typed error (now with `'reconnect'` in the `phase` union)
   - 03-PLAN-02: `InMemoryTransport` with `pair()` / `split()` / `pause()` / `destroy()` and deterministic event-queue semantics
   - 03-PLAN-03: `Connection` class in `src/connection/` — 6-state FSM with full LIFE-02 transition graph, `connectionId` generator, lifecycle events (incl. `'drain'` / `'reconnecting'` / `'close'`), `stateChange` event, per-connection `onWarning` (WARN-10), `getStats()` (OBS-03/04/05) with capped warning buffer
@@ -87,7 +87,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer calling `server.close({ drainTimeoutMs: 5000 })` sees the server stop accepting new connections immediately, in-flight messages and their ACKs complete, and any connection that has not drained within 5 s is forcibly closed with `MllpConnectionError({ phase: 'close' })`; `await using server = createServer(...)` invokes the same path via `Symbol.asyncDispose`.
   4. A developer writing `const server = createStarterServer({ port, onMessage })` gets a listening server in three lines with auto-ACK `AA`, 30 s drain, `Symbol.asyncDispose`, and opt-in SIGTERM handling out of the box; every event payload (`connection`, `message`, `error`, `stateChange`, `disconnect`, `close`) is `Object.freeze`'d.
   5. A developer calling `server.getStats()` receives a JSON-serializable object with `listening`, `port`, `host`, `connections`, `activeConnections`, `totalBytesIn/Out`, `acceptedTotal`, `closedTotal`; per-connection idle-keepalive (`keepaliveIntervalMs` / `deadPeerTimeoutMs`) works as configured.
-**Plans**: 4 plans (anticipated)
+**Plans**: 4 plans
   - 04-PLAN-01: `createServer` + `listen`/`close` + per-connection wiring (`Connection` from Phase 3 + `FrameReader` from Phase 2) + `meta` payload contract
   - 04-PLAN-02: auto-ACK synthesis (plain-object-MSH path without peer dep + parser-coupled path when available) + manual-ACK pass-through contract
   - 04-PLAN-03: graceful shutdown with drain timeout + server-side keepalive + dead-peer detection + barrel updates
@@ -123,7 +123,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer configuring `createServer({ tls: { key, cert } })` or `createClient({ tls: { host, ca, servername, rejectUnauthorized } })` sees TCP replaced by TLS transparently; the `Connection` FSM fires `CONNECTING → CONNECTED` only after the TLS handshake completes; handshake failures surface as `MllpConnectionError({ phase: 'connect', cause: <TLS error> })`.
   4. A developer configuring `createClient({ tls: { host: 'mllp.example.com', ca } })` without an explicit `servername` sees `tls.servername` default to `'mllp.example.com'`; configuring `createClient({ tls: { ca } })` with neither `host` nor `servername` set refuses to connect with `MllpConnectionError({ phase: 'connect', cause: new Error('TLS servername required') })`.
   5. A developer handling `'message'` manually and calling `conn.send(rawAckBuffer)` sees their exact bytes framed and sent — the server never rewrites a caller-supplied ACK payload; the end-to-end integration test spins up a real (or in-memory) TLS-wrapped server, a real TLS client, and round-trips a message with an auto-ACK.
-**Plans**: 4 plans (anticipated) — **split from 3 per ARCHITECTURE research**
+**Plans**: 4 plans — **split from 3 per ARCHITECTURE research**
   - 06-PLAN-01 (*needs Phase 2 only*): plain-object ACK builders — `buildAckAA` / `buildAckAE` / `buildAckAR` from plain-object MSH descriptor + `ERR` segment builder; no peer dep
   - 06-PLAN-02 (*needs 06-PLAN-01 + peer-dep type shape*): `@cosyte/hl7-mllp/ack-from-hl7` adapter that accepts `@cosyte/hl7`'s `Hl7Message` and delegates to Plan 01 builders
   - 06-PLAN-03 (*needs Phase 3 only*): `TlsTransport` wrapping `tls.Socket` + SNI default (TLS-05) + TLS handshake-error mapping to `MllpConnectionError`
@@ -140,7 +140,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer reviewing `test/framing/chunked-read.test.ts` finds a fuzz-style suite that partitions every canonical fixture byte-stream into 1-byte chunks, random chunk sizes, and chunks deliberately splitting delimiter bytes — every partition yields the exact same sequence of payload `Buffer`s.
   4. A developer reviewing `test/framing/tolerance.test.ts` finds one fixture per `WarningCode` (11 codes including `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_UNMATCHED_CONTROL_ID`, `MLLP_ACK_AFTER_TIMEOUT`) that (a) fires with the matching opt-in / path and produces exactly one matching warning, (b) throws `MllpFramingError` with the same code under `{ strict: true }` where applicable, and (c) produces no warning at all when the deviation is absent.
   5. A developer reviewing `test/lifecycle.test.ts` + `test/failure-modes.test.ts` finds fixtures for: the full 6-state transition sweep (`CONNECTING → CONNECTED → RECONNECTING → CONNECTING → CONNECTED → DRAINING → DISCONNECTED` and a separate `… → CLOSED` path via `destroy()`); abrupt mid-frame disconnect; ACK timeout; ACK-controlId mismatch (`MLLP_ACK_UNMATCHED_CONTROL_ID`); late-arriving ACK after timeout (`MLLP_ACK_AFTER_TIMEOUT`); backpressure overflow (both count-mode and byte-mode); FIFO-unsafe reject on reconnect; controlId resume on reconnect; transient-vs-permanent classification (tight-loop guard); `pipeline: false` serialization; TLS handshake failure (expired cert + missing-SNI).
-**Plans**: 4 plans (anticipated)
+**Plans**: 4 plans
   - 07-PLAN-01: canonical message fixtures + round-trip harness over `InMemoryTransport` + lifecycle sequencing asserts across full 6-state FSM
   - 07-PLAN-02: chunked-read fuzz suite (1-byte, random, delimiter-splitting partitions) across all canonical fixtures + FRAME-12 byte-fidelity sweep
   - 07-PLAN-03: tolerance fixtures (one per 11 `WarningCode`s) × strict-mode sweep
