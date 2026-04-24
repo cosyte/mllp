@@ -78,6 +78,7 @@
     "test:watch": "vitest",
     "certs:gen": "node scripts/generate-test-certs.mjs",
     "bench": "vitest bench",
+    "attw": "attw",
     "prepublishOnly": "pnpm build && attw --pack"
   }
 }
