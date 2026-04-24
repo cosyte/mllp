@@ -24,6 +24,7 @@ import type { Transport } from '../transport/index.js';
 import { FrameReader } from '../framing/index.js';
 import type { FrameReaderOptions, MllpWarning } from '../framing/index.js';
 import { MllpConnectionError } from './error.js';
+import type { ConnectionErrorPhase } from './error.js';
 
 /**
  * The 6 connection states from LIFE-01.
@@ -58,16 +59,20 @@ export interface StateChangeEvent {
 /**
  * Payload for the 'reconnecting' event. Always `Object.freeze`'d.
  *
+ * Phase 5 will populate `attempt` and `delayMs` once the reconnect backoff loop
+ * is implemented. For now only `connectionId` is present at the point of emission.
+ *
  * @example
  * ```typescript
- * conn.on('reconnecting', ({ attempt, delayMs }) => {
- *   logger.info(`Reconnect attempt ${attempt}, delay ${delayMs}ms`);
+ * conn.on('reconnecting', ({ connectionId }) => {
+ *   logger.info(`Reconnecting connection ${connectionId}`);
  * });
  * ```
  */
 export interface ReconnectingEvent {
-  readonly attempt: number;
-  readonly delayMs: number;
+  readonly connectionId: string;
+  readonly attempt?: number;   // Phase 5 will populate
+  readonly delayMs?: number;   // Phase 5 will populate
 }
 
 /**
@@ -191,6 +196,7 @@ export class Connection extends EventEmitter {
   private _warningsTruncated = false;
 
   private _onWarningFn: ((w: MllpWarning) => void) | null = null;
+  private _drainPromise: Promise<void> | null = null;
 
   /**
    * beforeClose hook — no-op default that resolves immediately.
@@ -328,15 +334,17 @@ export class Connection extends EventEmitter {
       return;
     }
 
-    // DRAINING already — wait for beforeClose (idempotent re-entry guard)
+    // DRAINING already — join the in-progress drain rather than starting a second beforeClose call
     if (this._state === 'DRAINING') {
-      await this._drainWithTimeout(timeout);
-      return;
+      return this._drainPromise ?? Promise.resolve();
     }
 
     // CONNECTED → DRAINING
     this._transition('DRAINING');
-    await this._drainWithTimeout(timeout);
+    this._drainPromise = this._drainWithTimeout(timeout).finally(() => {
+      this._drainPromise = null;
+    });
+    return this._drainPromise;
   }
 
   /**
@@ -460,32 +468,31 @@ export class Connection extends EventEmitter {
       this._transition('DISCONNECTED');
       return;
     }
-    if (
-      this._state === 'CONNECTING' ||
-      this._state === 'CONNECTED' ||
-      this._state === 'RECONNECTING'
-    ) {
-      // Unexpected peer drop — Phase 5 Client will layer RECONNECTING handling
+    if (this._state === 'CONNECTED') {
       this._transition('DISCONNECTED', 'peer closed');
+      return;
+    }
+    if (this._state === 'CONNECTING' || this._state === 'RECONNECTING') {
+      // Neither CONNECTING nor RECONNECTING has a path to DISCONNECTED.
+      // Use CLOSED (terminal) for unexpected peer close here.
+      this._transition('CLOSED', 'peer closed');
     }
   }
 
   private _onTransportError(err: Error): void {
-    const phase =
-      this._state === 'CONNECTING' ? 'connect' :
-      this._state === 'DRAINING'   ? 'close'   :
+    const phase: ConnectionErrorPhase =
+      this._state === 'CONNECTING'    ? 'connect'   :
+      this._state === 'RECONNECTING'  ? 'reconnect' :
+      this._state === 'DRAINING'      ? 'close'     :
       'receive';
 
-    const connErr = new MllpConnectionError(err.message, {
-      cause: err,
-      phase,
-    });
+    const connErr = new MllpConnectionError(err.message, { cause: err, phase });
     this.emit('error', Object.freeze({ connectionId: this.connectionId, error: connErr }));
     if (this._state === 'CLOSED' || this._state === 'DISCONNECTED') return;
 
-    // CONNECTING has no path to DISCONNECTED — must go to CLOSED (terminal) on error
-    // All other active states transition to DISCONNECTED
-    const target: ConnectionState = this._state === 'CONNECTING' ? 'CLOSED' : 'DISCONNECTED';
+    // CONNECTING and RECONNECTING have no path to DISCONNECTED — use CLOSED
+    const target: ConnectionState =
+      (this._state === 'CONNECTING' || this._state === 'RECONNECTING') ? 'CLOSED' : 'DISCONNECTED';
     this._transition(target, `error: ${err.message}`);
   }
 
