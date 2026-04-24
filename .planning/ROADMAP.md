@@ -88,11 +88,12 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer calling `server.close({ drainTimeoutMs: 5000 })` sees the server stop accepting new connections immediately, in-flight messages and their ACKs complete, and any connection that has not drained within 5 s is forcibly closed with `MllpConnectionError({ phase: 'close' })`; `await using server = createServer(...)` invokes the same path via `Symbol.asyncDispose`.
   4. A developer writing `const server = createStarterServer({ port, onMessage })` gets a listening server in three lines with auto-ACK `AA`, 30 s drain, `Symbol.asyncDispose`, and opt-in SIGTERM handling out of the box; every event payload (`connection`, `message`, `error`, `stateChange`, `disconnect`, `close`) is `Object.freeze`'d.
   5. A developer calling `server.getStats()` receives a JSON-serializable object with `listening`, `port`, `host`, `connections`, `activeConnections`, `totalBytesIn/Out`, `acceptedTotal`, `closedTotal`; per-connection idle-keepalive (`keepaliveIntervalMs` / `deadPeerTimeoutMs`) works as configured.
-**Plans**: 4 plans
+**Plans**: 5 plans
   - [ ] 04-01-PLAN.md — `createServer` + `listen`/`close` skeleton + per-connection wiring (`Connection` from Phase 3 + `FrameReader` from Phase 2) + `MessageMeta` type + `src/server/index.ts` barrel
   - [ ] 04-02-PLAN.md — auto-ACK synthesis (`_buildAutoAck` plain-object-MSH path without peer dep) + `autoAck: fn` custom builder + manual-ACK pass-through
   - [ ] 04-03-PLAN.md — graceful shutdown with drain timeout (`_drainAll`) + `AbortSignal` on `listen`/`close` + idle-keepalive wiring + `src/index.ts` Phase 4 barrel block
   - [ ] 04-04-PLAN.md — `createStarterServer` helper + `Symbol.asyncDispose` + frozen-event audit + full `server.getStats()` with live byte aggregation (OBS-02) + SIGTERM opt-in
+  - [ ] 04-05-PLAN.md — gap closure: byteOffset/warnings threading through FrameReader + Connection + Server; _closedTotal single-fire guard; onMessage void type narrowing; dead anonymous removeEventListener removed; autoAck as-cast eliminated
 **UI hint**: no
 
 ### Phase 5: MLLP Client
