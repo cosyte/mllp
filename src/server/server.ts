@@ -166,14 +166,36 @@ export interface ServerOptions {
 }
 
 /**
- * Options for `createStarterServer()` (stub — Plan 04 fills in the implementation).
+ * Options for `createStarterServer()` — the "three lines of code" factory (SERVER-08).
+ *
+ * Extends `ServerOptions` with `port`, `host`, and `handleSignals`. Defaults:
+ * `autoAck: 'AA'`, `drainTimeoutMs: 30_000`, `Symbol.asyncDispose` wired.
+ *
+ * @example
+ * ```typescript
+ * import { createStarterServer } from '@cosyte/hl7-mllp';
+ *
+ * const server = await createStarterServer({
+ *   port: 2575,
+ *   onMessage: (buf) => buildAckBuffer(buf),
+ * });
+ * // server is listening, auto-ACK enabled, Symbol.asyncDispose wired
+ * await using _ = server; // closes on scope exit
+ * ```
  */
 export interface StarterServerOptions extends ServerOptions {
   /** Port to listen on. */
   port: number;
   /** Host to bind to (default '0.0.0.0'). */
   host?: string;
-  /** Register SIGTERM/SIGINT handlers that call `server.close()` (default: false). */
+  /**
+   * Register `process.once('SIGTERM')` and `process.once('SIGINT')` handlers that
+   * call `server.close()` then `process.exit(0)` (D-09). Default: `false`.
+   *
+   * Handlers are automatically removed when `server.close()` is called, so
+   * `process.listenerCount('SIGTERM') === 0` after close() completes — preventing
+   * handler accumulation across test instances or multiple server restarts.
+   */
   handleSignals?: boolean;
 }
 
@@ -341,9 +363,10 @@ export class MllpServer extends EventEmitter {
     this._netServer.close();
     this._listening = false;
 
-    // If no active connections, we're done
+    // If no active connections, we're done — emit 'close' and resolve
     if (this._connections.size === 0) {
       signal?.removeEventListener('abort', () => {/* no handler registered yet */});
+      this.emit('close', Object.freeze({}));
       return Promise.resolve();
     }
 
@@ -374,6 +397,8 @@ export class MllpServer extends EventEmitter {
         signal.removeEventListener('abort', abortHandler);
       }
     }
+    // Emit 'close' after all connections have drained (SERVER-10: frozen payload)
+    this.emit('close', Object.freeze({}));
   }
 
   /**
@@ -435,15 +460,22 @@ export class MllpServer extends EventEmitter {
    * ```
    */
   getStats(): ServerStats {
-    // Plan 04 will aggregate bytesIn/Out from connections — stub at 0 for now
+    // Aggregate totalBytesIn/Out from live connections at call time (OBS-02, D-13)
+    let totalBytesIn = 0;
+    let totalBytesOut = 0;
+    for (const conn of this._connections) {
+      const s = conn.getStats();
+      totalBytesIn += s.bytesIn;
+      totalBytesOut += s.bytesOut;
+    }
     return {
       listening: this._listening,
       port: this._port,
       host: this._host,
       connections: this._connections.size,
       activeConnections: this._connections.size,
-      totalBytesIn: 0,
-      totalBytesOut: 0,
+      totalBytesIn,
+      totalBytesOut,
       acceptedTotal: this._acceptedTotal,
       closedTotal: this._closedTotal,
     };
@@ -743,6 +775,29 @@ export async function createStarterServer(opts: StarterServerOptions): Promise<M
     autoAck: opts.autoAck ?? 'AA',
     drainTimeoutMs: opts.drainTimeoutMs ?? 30_000,
   });
-  await server.listen(opts.port, opts.host);
+
+  if (opts.handleSignals === true) {
+    // D-09: register process.once('SIGTERM'/'SIGINT') so signal fires close() + exit(0).
+    // Use once() (not on()) so handlers self-remove after first fire, preventing accumulation
+    // across multiple server instances.
+    const sigHandler = (): void => {
+      void server
+        .close()
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
+    };
+    process.once('SIGTERM', sigHandler);
+    process.once('SIGINT', sigHandler);
+
+    // Clean up handlers on server close so tests do not accumulate listeners.
+    // process.once handlers self-remove on first fire; this removes them early when
+    // close() is called before any signal fires (the common test path).
+    server.once('close', () => {
+      process.removeListener('SIGTERM', sigHandler);
+      process.removeListener('SIGINT', sigHandler);
+    });
+  }
+
+  await server.listen(opts.port, opts.host ?? '0.0.0.0');
   return server;
 }
