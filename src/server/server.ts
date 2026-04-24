@@ -23,8 +23,11 @@
 import { createServer as netCreateServer } from 'node:net';
 import type { Server as NetServer, Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { Connection } from '../connection/index.js';
+import { MllpConnectionError } from '../connection/index.js';
 import { NetTransport } from '../transport/index.js';
+import { encodeFrame } from '../framing/index.js';
 import type { FrameReaderOptions, MllpWarning } from '../framing/index.js';
 
 /**
@@ -379,6 +382,82 @@ export class MllpServer extends EventEmitter {
   }
 
   // ---------------------------------------------------------------------------
+  // Private: ACK builder
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build a minimal AA acknowledgement from raw HL7 payload bytes without a parser.
+   *
+   * Splits payload on CR (`\r`) to find the MSH segment, then splits on `|` to extract
+   * fields. Swaps sendingApp/receivingApp and sendingFacility/receivingFacility per HL7 v2
+   * ACK rules. Uses a new `randomUUID`-based control ID in MSH-10.
+   *
+   * Never throws — returns a fallback buffer on malformed or missing MSH.
+   *
+   * @param payload - Raw decoded HL7 v2 payload bytes (framing stripped).
+   * @returns MLLP ACK payload (without framing — `Connection.send` adds `encodeFrame`).
+   *
+   * @example
+   * ```typescript
+   * const ack = this._buildAutoAck(payload);
+   * const sent = conn.send(encodeFrame(ack));
+   * ```
+   */
+  private _buildAutoAck(payload: Buffer): Buffer {
+    const str = payload.toString('ascii');
+    // Split on CR to find segments; HL7 v2 uses CR (0x0D) as segment separator
+    const segments = str.split('\r');
+    const mshSegment = segments.find((seg) => seg.startsWith('MSH'));
+
+    // Fallback buffer when MSH is missing or payload is malformed
+    const fallback = Buffer.from('MSH|^~\\&|||||||ACK||P|2.3\rMSA|AA|\r', 'ascii');
+
+    if (mshSegment === undefined) {
+      return fallback;
+    }
+
+    const fields = mshSegment.split('|');
+
+    // MSH field indices (after splitting on '|'):
+    //   [0] = 'MSH'
+    //   [1] = '^~\&' (encoding chars)
+    //   [2] = sendingApp      → receivingApp in ACK
+    //   [3] = sendingFacility → receivingFacility in ACK
+    //   [4] = receivingApp    → sendingApp in ACK
+    //   [5] = receivingFacility → sendingFacility in ACK
+    //   [9] = controlId (MSH-10) → used as MSA-2 (inbound control ID)
+    //   [10] = processingId
+    //   [11] = version
+    const sendingApp = fields[2] ?? '';
+    const sendingFacility = fields[3] ?? '';
+    const receivingApp = fields[4] ?? '';
+    const receivingFacility = fields[5] ?? '';
+    const inboundControlId = fields[9] ?? '';
+    const processingId = fields[10] ?? 'P';
+    const version = fields[11] ?? '2.3';
+
+    // Build a 14-char timestamp (YYYYMMDDHHmmss) without .slice() (SETUP-07)
+    const d = new Date();
+    const pad = (n: number, w = 2): string => String(n).padStart(w, '0');
+    const now =
+      String(d.getUTCFullYear()) +
+      pad(d.getUTCMonth() + 1) +
+      pad(d.getUTCDate()) +
+      pad(d.getUTCHours()) +
+      pad(d.getUTCMinutes()) +
+      pad(d.getUTCSeconds());
+
+    // New control ID: randomUUID with dashes removed, truncated to 20 chars (MSH-10 field width)
+    const newControlId = randomUUID().replace(/-/g, '').substring(0, 20);
+
+    const ackStr =
+      `MSH|^~\\&|${receivingApp}|${receivingFacility}|${sendingApp}|${sendingFacility}|${now}||ACK|${newControlId}|${processingId}|${version}\r` +
+      `MSA|AA|${inboundControlId}\r`;
+
+    return Buffer.from(ackStr, 'ascii');
+  }
+
+  // ---------------------------------------------------------------------------
   // Private: per-socket setup
   // ---------------------------------------------------------------------------
 
@@ -402,6 +481,16 @@ export class MllpServer extends EventEmitter {
 
     // Set beforeClose no-op hook (Plan 04 will wire autoAck drain here if needed)
     conn.beforeClose = () => Promise.resolve();
+
+    // Default 'error' handler on connection — prevents ERR_UNHANDLED_ERROR when
+    // auto-ACK or transport errors are emitted on a connection with no user-attached
+    // error listener. Forwards to server's 'error' event only when listeners exist;
+    // otherwise silently swallows (D-04: server never crashes on connection errors).
+    conn.on('error', (errEvent: unknown) => {
+      if (this.listenerCount('error') > 0) {
+        this.emit('error', errEvent);
+      }
+    });
 
     this._acceptedTotal++;
     this._connections.add(conn);
@@ -441,8 +530,9 @@ export class MllpServer extends EventEmitter {
     // Notify the connection that the socket is connected (server-side — already connected)
     conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
 
-    // Wire message handler: emit 'message' event, then invoke onMessage callback, then autoAck
-    // Explicitly type the event argument to avoid unsafe-assignment from EventEmitter any
+    // Wire message handler: emit 'message' event, then invoke onMessage callback, then autoAck.
+    // The handler is async to support awaiting the autoAck fn; unhandled rejection is suppressed
+    // by the internal try/catch — D-04 guarantee.
     conn.on('message', (event: { payload: Buffer; connectionId: string }) => {
       const { payload, connectionId } = event;
       const meta: MessageMeta = Object.freeze({
@@ -451,18 +541,19 @@ export class MllpServer extends EventEmitter {
         warnings: [] as readonly MllpWarning[],
       });
 
+      // D-03: emit 'message' BEFORE auto-ACK dispatch
       const frozenEvent = Object.freeze({ payload, meta });
       this.emit('message', frozenEvent);
 
-      // Invoke optional onMessage callback (D-03: fires before auto-ACK)
-      const callbackResult = this._opts.onMessage?.(payload, meta, conn);
+      // Invoke optional onMessage callback (D-03: fires before auto-ACK).
+      // Return value is intentionally ignored here — auto-ACK is handled via
+      // _sendAutoAck, and manual-ACK mode uses conn.send() directly.
+      void this._opts.onMessage?.(payload, meta, conn);
 
-      // Handle auto-ACK (D-03/D-04)
+      // Handle auto-ACK (D-03/D-04). Async dispatch wrapped in void to suppress
+      // unhandled-rejection; errors are caught inside _sendAutoAck and re-emitted on conn.
       if (this._opts.autoAck !== undefined) {
-        void this._sendAutoAck(payload, meta, conn, callbackResult);
-      } else if (callbackResult instanceof Promise || callbackResult instanceof Buffer) {
-        // If onMessage returned a Buffer/Promise<Buffer>, send it as the ACK
-        void this._sendCallbackAck(callbackResult, conn);
+        void this._sendAutoAck(payload, meta, conn);
       }
     });
 
@@ -478,90 +569,65 @@ export class MllpServer extends EventEmitter {
   }
 
   /**
-   * Send the auto-ACK response (D-03/D-04).
-   * Auto-ACK errors are emitted on the connection, never crash the server.
+   * Resolve and send the auto-ACK response (D-03/D-04, SERVER-04).
+   *
+   * Wraps the ACK payload in `encodeFrame()` before passing to `conn.send()`, since
+   * `Connection.send()` writes raw bytes without framing. Checks the boolean return
+   * from `conn.send()`: `false` indicates backpressure and causes a
+   * `MllpConnectionError({ phase: 'send' })` to be emitted on the connection (D-04).
+   *
+   * Any error (from the `autoAck` fn or from send) is caught and re-emitted as
+   * `'error'` on the connection — the server never crashes (D-04).
    */
   private async _sendAutoAck(
     payload: Buffer,
     meta: MessageMeta,
     conn: Connection,
-    callbackResult: void | Buffer | Promise<Buffer> | undefined,
   ): Promise<void> {
     try {
       let ackPayload: Buffer;
 
       if (this._opts.autoAck === 'AA') {
-        // If onMessage returned a Buffer, use it; otherwise build minimal AA
-        if (callbackResult instanceof Buffer) {
-          ackPayload = callbackResult;
-        } else if (callbackResult instanceof Promise) {
-          ackPayload = await callbackResult;
-        } else {
-          ackPayload = _buildMinimalAA(payload);
-        }
+        ackPayload = this._buildAutoAck(payload);
       } else {
-        // autoAck is a function
-        ackPayload = await (this._opts.autoAck as (p: Buffer, m: MessageMeta, c: Connection) => Buffer | Promise<Buffer>)(payload, meta, conn);
+        // autoAck is a function — await its result (covers both sync and async builders)
+        ackPayload = await Promise.resolve(
+          (this._opts.autoAck as (p: Buffer, m: MessageMeta, c: Connection) => Buffer | Promise<Buffer>)(
+            payload,
+            meta,
+            conn,
+          ),
+        );
       }
 
-      conn.send(ackPayload);
+      // Connection.send() writes raw bytes — encodeFrame adds VT + payload + FS + CR
+      const sent = conn.send(encodeFrame(ackPayload));
+      if (!sent) {
+        // D-04: socket write buffer full (backpressure). Emit error on the connection;
+        // server does not crash; peer will timeout waiting for ACK and may retry.
+        conn.emit(
+          'error',
+          Object.freeze({
+            connectionId: conn.connectionId,
+            error: new MllpConnectionError('auto-ACK dropped: socket backpressure', {
+              cause: new Error('backpressure'),
+              phase: 'send',
+            }),
+          }),
+        );
+      }
     } catch (err: unknown) {
       // D-04: auto-ACK errors are emitted as 'error' on connection — server continues
+      const connErr = err instanceof Error ? err : new Error(String(err));
       conn.emit(
         'error',
         Object.freeze({
           connectionId: conn.connectionId,
-          error: err instanceof Error ? err : new Error(String(err)),
+          error: connErr,
         }),
       );
     }
   }
-
-  /**
-   * Send the ACK payload returned by the onMessage callback (non-autoAck path).
-   */
-  private async _sendCallbackAck(
-    result: Buffer | Promise<Buffer>,
-    conn: Connection,
-  ): Promise<void> {
-    try {
-      const ackPayload = result instanceof Buffer ? result : await result;
-      conn.send(ackPayload);
-    } catch {
-      // Swallow errors in non-autoAck callback ACK path — caller handles via conn events
-    }
-  }
-}
-
-/**
- * Build a minimal AA acknowledgement from raw HL7 payload bytes without a parser.
- *
- * Extracts MSH-10 (message control ID) by splitting on `|` and using index 9.
- * The result is a best-effort AA — callers that need a standards-compliant ACK
- * should use `@cosyte/hl7-mllp/ack-from-hl7` (Phase 6) or supply their own builder.
- */
-function _buildMinimalAA(payload: Buffer): Buffer {
-  const str = payload.toString('ascii');
-  const fields = str.split('|');
-  const sendingApp = fields[2] ?? '';
-  const sendingFacility = fields[3] ?? '';
-  const receivingApp = fields[4] ?? '';
-  const receivingFacility = fields[5] ?? '';
-  const msgControlId = fields[9] ?? '';
-  // Build a 14-char timestamp (YYYYMMDDHHmmss) without .slice() (SETUP-07)
-  const d = new Date();
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  const now =
-    String(d.getUTCFullYear()) +
-    pad(d.getUTCMonth() + 1) +
-    pad(d.getUTCDate()) +
-    pad(d.getUTCHours()) +
-    pad(d.getUTCMinutes()) +
-    pad(d.getUTCSeconds());
-
-  const ack =
-    `MSH|^~\\&|${receivingApp}|${receivingFacility}|${sendingApp}|${sendingFacility}|${now}||ACK|${now}|P|2.5\rMSA|AA|${msgControlId}\r`;
-  return Buffer.from(ack, 'ascii');
 }
 
 /**
