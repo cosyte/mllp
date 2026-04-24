@@ -16,6 +16,8 @@ The package is both a credibility asset for Cosyte's healthcare integration prac
 
 **Phase 1 — Project Foundation (2026-04-24):** SETUP-01, SETUP-02, SETUP-03, SETUP-04, SETUP-05, SETUP-06, SETUP-07 — all satisfied. Toolchain scaffold (dual ESM+CJS build, strict TypeScript, ESLint flat-config with no-buffer-slice rule, Vitest 90% gates, 3×3 CI matrix, TLS cert-gen script) verified green on a clean clone.
 
+**Phase 3 — Transport, Connection FSM & Observability (2026-04-24):** TRANS-01, TRANS-02, TRANS-03, TRANS-04, LIFE-01, LIFE-02, LIFE-03, LIFE-04, LIFE-05, WARN-10, OBS-03, OBS-04, OBS-05, ERR-03 — all satisfied. Transport interface + NetTransport + InMemoryTransport delivered; 6-state FSM (CONNECTING/CONNECTED/DRAINING/RECONNECTING/DISCONNECTED/CLOSED) with correct terminal-state routing; connection.getStats() + MllpConnectionError; 230 tests, 0 TS errors. Gap-closure plan fixed CR-01 (ReconnectingEvent interface), WR-01/WR-02 (FSM dead-state transitions), WR-03 (drain idempotency).
+
 ### Active
 
 See `REQUIREMENTS.md` for the full categorized list with REQ-IDs.
@@ -109,4 +111,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-22 after research-phase revision — 28 new REQ-IDs + 10 amendments accepted, 73 → 101 REQ-IDs, 8 phases unchanged, ~30 → ~33 plans. New OBS observability category. Node floor bumped 18 → 20.*
+*Last updated: 2026-04-24 — Phase 3 complete (Transport, Connection FSM & Observability). 14/14 must-haves verified. Phase 4 (MLLP Server) is next.*
