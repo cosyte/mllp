@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v1
+milestone: v1.0
 milestone_name: milestone
-status: "Phase 2 planned 2026-04-24 — 4 plans in 3 waves. Ready to execute."
-last_updated: "2026-04-24T12:00:00Z"
+status: Phase 2 complete 2026-04-24 — 99 tests, 93.88% coverage, all 21 REQ-IDs verified
+last_updated: "2026-04-24T16:00:00.000Z"
 progress:
   total_phases: 8
-  completed_phases: 1
-  total_plans: 33
-  completed_plans: 5
-  percent: 13
+  completed_phases: 2
+  total_plans: 9
+  completed_plans: 9
+  percent: 25
 ---
 
 # @cosyte/hl7-mllp — STATE
@@ -28,16 +28,16 @@ Project memory for session-to-session continuity. Updated at phase/plan boundari
 
 ## Current Position
 
-Phase: 2 planned. Ready to execute.
-Next Step: Run `/clear` then `/gsd-execute-phase 2`.
+Phase: 2 complete. Ready to plan Phase 3.
+Next Step: `/gsd-plan-phase 3`
 
 - **Milestone:** v1 (initial release — transport-only MLLP client + server)
-- **Phase:** 2 planned (4 plans in 3 waves), ready to execute
-- **Plans (milestone total):** 5 / ~33 complete
-- **Status:** Phase 2 planned 2026-04-24 — 4 plans, all 21 REQ-IDs covered, checker passed
+- **Phase:** 2 complete — encoder, decoder, strict mode, barrels all shipped
+- **Plans (milestone total):** 9 / ~33 complete
+- **Status:** Phase 2 complete 2026-04-24 — 99 tests, 93.88% coverage, all 21 REQ-IDs verified
 
 ```
-[##                  ] 13 %   (1 / 8 phases shipped)
+[####                ] 25 %   (2 / 8 phases shipped)
 ```
 
 ## Phase Summary
@@ -45,7 +45,7 @@ Next Step: Run `/clear` then `/gsd-execute-phase 2`.
 | # | Phase | REQs | Plans | Status |
 |---|-------|-----:|------:|--------|
 | 1 | Project Foundation | 7 | 5 | Complete 2026-04-24 |
-| 2 | Framing Codec & Warnings | 21 | 4 | Pending |
+| 2 | Framing Codec & Warnings | 21 | 4 | Complete 2026-04-24 |
 | 3 | Transport, Connection FSM & Observability | 14 | 4 | Pending |
 | 4 | MLLP Server | 13 | 4 | Pending |
 | 5 | MLLP Client | 22 | 6 | Pending |
@@ -57,6 +57,7 @@ Next Step: Run `/clear` then `/gsd-execute-phase 2`.
 ## Key Decisions Log
 
 **2026-04-22 — Research-phase acceptance (post-init)**
+
 - Accepted all 28 new REQ-IDs, 10 amendments, and Phase 6 plan-split from `.planning/research/SUMMARY.md`.
 - Bumped Node floor 18 → 20 (SETUP-05 amendment); Node 18 EOL 2025-04-30.
 - Expanded FSM from 4 → 6 states: added `RECONNECTING` (hosts auto-reconnect backoff) and `CLOSED` (terminal, distinct from transient `DISCONNECTED`).
