@@ -28,8 +28,9 @@ Project memory for session-to-session continuity. Updated at phase/plan boundari
 
 ## Current Position
 
-Phase: 2 complete. Ready to plan Phase 3.
+Phase: 3 context gathered 2026-04-24. Ready to plan Phase 3.
 Next Step: `/gsd-plan-phase 3`
+Resume file: `.planning/phases/03-transport-connection-fsm-observability/03-CONTEXT.md`
 
 - **Milestone:** v1 (initial release — transport-only MLLP client + server)
 - **Phase:** 2 complete — encoder, decoder, strict mode, barrels all shipped
