@@ -236,3 +236,174 @@ describe('createServer / MllpServer skeleton', () => {
     });
   });
 });
+
+describe('Gap closure — byteOffset/warnings threading, closedTotal accuracy, onMessage void type', () => {
+  const servers: MllpServer[] = [];
+
+  afterEach(async () => {
+    for (const s of servers) {
+      await s.close().catch(() => {/* ignore cleanup errors */});
+    }
+    servers.length = 0;
+  });
+
+  function makeServer(opts: Parameters<typeof createServer>[0] = {}) {
+    const s = createServer(opts);
+    servers.push(s);
+    return s;
+  }
+
+  describe('Gap 1: meta.byteOffset reflects actual frame-start stream offset', () => {
+    it('meta.byteOffset is 0 for the first frame at stream start', async () => {
+      const received: Array<{ payload: Buffer; meta: { byteOffset: number } }> = [];
+      const server = makeServer({
+        onMessage: (payload, meta) => {
+          received.push({ payload, meta: meta as { byteOffset: number } });
+        },
+      });
+      await server.listen(0);
+
+      const sock = await connectToServer(server);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const msg = 'MSH|^~\\&|A|B|C|D|20260424||ADT^A01|CTRL001|P|2.5';
+      sock.write(frameMessage(msg));
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      expect(received.length).toBe(1);
+      expect(received[0]!.meta.byteOffset).toBe(0);
+
+      sock.destroy();
+    });
+
+    it('meta.byteOffset is > 0 when frame does not start at byte 0', async () => {
+      // Server must allow leading whitespace so the 5-byte preamble is tolerated.
+      // Note: SERVER_DEFAULT_FRAMING already includes allowLeadingWhitespace: true,
+      // so no extra framing opt is needed here — but we set it explicitly for clarity.
+      const received: Array<{ byteOffset: number }> = [];
+      const server = makeServer({
+        framing: { allowLeadingWhitespace: true },
+        onMessage: (_payload, meta) => {
+          received.push({ byteOffset: meta.byteOffset });
+        },
+      });
+      await server.listen(0);
+
+      const sock = await connectToServer(server);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      // Send 5 SP bytes (leading whitespace) followed by a canonical MLLP frame
+      const msg = 'MSH|^~\\&|A|B|C|D|20260424||ADT^A01|CTRL002|P|2.5';
+      const preamble = Buffer.alloc(5, 0x20); // 5 SP bytes
+      const framed = frameMessage(msg);
+      sock.write(Buffer.concat([preamble, framed]));
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      expect(received.length).toBe(1);
+      // VT is the 6th byte in the stream (offsets 0-4 are SP, offset 5 is VT)
+      expect(received[0]!.byteOffset).toBe(5);
+
+      sock.destroy();
+    });
+  });
+
+  describe('Gap 1: meta.warnings contains per-frame framing warnings', () => {
+    it('meta.warnings is empty for a well-formed canonical frame', async () => {
+      const received: Array<{ warnings: readonly unknown[] }> = [];
+      const server = makeServer({
+        onMessage: (_payload, meta) => {
+          received.push({ warnings: meta.warnings });
+        },
+      });
+      await server.listen(0);
+
+      const sock = await connectToServer(server);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      sock.write(frameMessage('MSH|^~\\&|A|B|C|D|20260424||ADT^A01|CTRL003|P|2.5'));
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      expect(received.length).toBe(1);
+      expect(Array.isArray(received[0]!.warnings)).toBe(true);
+      expect(received[0]!.warnings.length).toBe(0);
+
+      sock.destroy();
+    });
+
+    it('meta.warnings contains MLLP_LF_AFTER_FS when FS+LF frame received (allowLfAfterFs enabled)', async () => {
+      const received: Array<{ warnings: readonly { code: string }[] }> = [];
+      const server = makeServer({
+        framing: { allowLfAfterFs: true },
+        onMessage: (_payload, meta) => {
+          received.push({ warnings: meta.warnings as readonly { code: string }[] });
+        },
+      });
+      await server.listen(0);
+
+      const sock = await connectToServer(server);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      // Build a FS+LF terminated frame manually
+      const msgPayload = Buffer.from('MSH|^~\\&|A|B|C|D|20260424||ADT^A01|CTRL004|P|2.5', 'ascii');
+      const fsLfFrame = Buffer.allocUnsafe(msgPayload.length + 3);
+      fsLfFrame[0] = VT;
+      msgPayload.copy(fsLfFrame, 1);
+      fsLfFrame[msgPayload.length + 1] = FS;
+      fsLfFrame[msgPayload.length + 2] = 0x0a; // LF not CR
+      sock.write(fsLfFrame);
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      expect(received.length).toBe(1);
+      expect(received[0]!.warnings.length).toBe(1);
+      expect(received[0]!.warnings[0]!.code).toBe('MLLP_LF_AFTER_FS');
+
+      sock.destroy();
+    });
+  });
+
+  describe('Gap 2: _closedTotal does not double-count on disconnect + close', () => {
+    it('closedTotal increments exactly once even when both disconnect and close fire', async () => {
+      // This tests the single-fire guard (let ended = false) on _onConnEnded.
+      // When a peer closes, 'disconnect' fires; if the drain straggler timeout then calls
+      // conn.destroy(), 'close' fires too. Without the guard both events increment closedTotal.
+      const server = makeServer({});
+      await server.listen(0);
+
+      expect(server.getStats().closedTotal).toBe(0);
+
+      const sock = await connectToServer(server);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(server.getStats().activeConnections).toBe(1);
+
+      // Destroy the client socket — server sees peer close, transitions CONNECTED → DISCONNECTED,
+      // then DISCONNECTED → CLOSED when destroyed during _drainAll straggler path.
+      sock.destroy();
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      expect(server.getStats().activeConnections).toBe(0);
+      // Single-fire guard ensures closedTotal === 1, not 2
+      expect(server.getStats().closedTotal).toBe(1);
+    });
+  });
+
+  describe('Gap 3: onMessage void return type is accepted without TypeScript error', () => {
+    it('void-returning onMessage callback is accepted by createServer', () => {
+      // This confirms the narrowed void type is runtime-compatible.
+      // The compile-time check is enforced by pnpm typecheck passing.
+      const received: Buffer[] = [];
+      const server = makeServer({
+        onMessage: (payload: Buffer) => {
+          received.push(payload);
+          // No return value — void
+        },
+      });
+      expect(server).toBeDefined();
+      expect(typeof server.listen).toBe('function');
+    });
+  });
+});
