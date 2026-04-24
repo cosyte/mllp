@@ -300,9 +300,13 @@ export class Connection extends EventEmitter {
   /**
    * Initiate graceful close of the connection.
    *
-   * Transitions `CONNECTED → DRAINING`, calls `beforeClose(drainTimeoutMs)`, then
-   * `DRAINING → DISCONNECTED` once the hook resolves. Timer-enforced drain logic
-   * is added in Plan 04 via the `beforeClose` hook.
+   * - If `CONNECTING` or `RECONNECTING`: cancels the pending attempt, transitions
+   *   directly to `CLOSED`, and calls `transport.destroy()` (LIFE-05).
+   * - If `CONNECTED`: transitions to `DRAINING`, calls `beforeClose(drainTimeoutMs)`,
+   *   then `DRAINING → DISCONNECTED` once the hook resolves, or `DRAINING → CLOSED`
+   *   if the drain timeout elapses first.
+   * - If `DRAINING`: waits for the existing drain to complete (idempotent).
+   * - If `CLOSED` or `DISCONNECTED`: no-op.
    *
    * @param opts.drainTimeoutMs - Override drain timeout (default: `opts.drainTimeoutMs ?? 30_000`).
    *
@@ -313,14 +317,58 @@ export class Connection extends EventEmitter {
    */
   async close(opts?: { drainTimeoutMs?: number }): Promise<void> {
     const timeout = opts?.drainTimeoutMs ?? this._opts.drainTimeoutMs ?? 30_000;
+
+    // Terminal states — nothing to do
     if (this._state === 'CLOSED' || this._state === 'DISCONNECTED') return;
-    if (this._state === 'CONNECTED') {
-      this._transition('DRAINING');
+
+    // CONNECTING or RECONNECTING — cancel the pending attempt (LIFE-05)
+    if (this._state === 'CONNECTING' || this._state === 'RECONNECTING') {
+      this._transition('CLOSED', 'close() during ' + this._state);
+      this._transport.destroy();
+      return;
     }
-    await this.beforeClose(timeout);
+
+    // DRAINING already — wait for beforeClose (idempotent re-entry guard)
     if (this._state === 'DRAINING') {
-      this._transition('DISCONNECTED');
-      this._transport.close();
+      await this._drainWithTimeout(timeout);
+      return;
+    }
+
+    // CONNECTED → DRAINING
+    this._transition('DRAINING');
+    await this._drainWithTimeout(timeout);
+  }
+
+  /**
+   * Race `beforeClose()` against the drain timeout.
+   *
+   * On normal completion: `DRAINING → DISCONNECTED` + `transport.close()`.
+   * On timeout: `DRAINING → CLOSED` + `transport.destroy()` (T-03-04-01).
+   */
+  private async _drainWithTimeout(timeoutMs: number): Promise<void> {
+    const drainPromise = this.beforeClose(timeoutMs);
+    const timeoutPromise = new Promise<'timeout'>((resolve) => {
+      const handle = setTimeout(() => { resolve('timeout'); }, timeoutMs);
+      // Unref so this timer does not keep the process alive (T-03-04-01)
+      if (typeof handle === 'object' && handle !== null && 'unref' in handle) {
+        (handle as NodeJS.Timeout).unref();
+      }
+    });
+
+    const result = await Promise.race([drainPromise.then(() => 'done' as const), timeoutPromise]);
+
+    if (result === 'timeout') {
+      // Drain timed out — force to CLOSED (DRAINING → CLOSED per LIFE-02)
+      if (this._state === 'DRAINING') {
+        this._transition('CLOSED', 'drain timeout');
+        this._transport.destroy();
+      }
+    } else {
+      // Drain completed — DRAINING → DISCONNECTED (LIFE-02)
+      if (this._state === 'DRAINING') {
+        this._transition('DISCONNECTED');
+        this._transport.close();
+      }
     }
   }
 
