@@ -35,11 +35,12 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer inspecting `package.json` sees zero runtime `dependencies`, `@cosyte/hl7` listed under `peerDependencies` with `peerDependenciesMeta.optional = true`, `"type": "module"`, dual-build artifacts declared, and `"engines": { "node": ">=20.0.0" }`.
   4. A developer editing any `.ts` file gets strict-mode errors for `any`, unchecked index access, missing types, and attempts to use `Buffer.prototype.slice()` inside `src/framing|server|client` (forbidden by the SETUP-07 ESLint rule).
   5. CI runs the test job on Ubuntu / macOS / Windows × Node 20 / 22 / 24 (9 cells); lint / typecheck / coverage run on Ubuntu only.
-**Plans**: 4 plans
+**Plans**: 5 plans
   - [ ] 01-01-PLAN.md — package scaffold (package.json, tsconfig.json, LICENSE, README stub, stub barrels)
   - [ ] 01-02-PLAN.md — dual ESM+CJS build via tsup with .d.ts, three subpath entries, sourcemaps, external:@cosyte/hl7
   - [ ] 01-03-PLAN.md — ESLint flat config (SETUP-07 no-buffer-slice rule), Prettier, Vitest + coverage-v8 with 90% gates
   - [ ] 01-04-PLAN.md — GitHub Actions CI workflow (3x3 matrix), @arethetypeswrong/cli step, TLS cert gen script, pipeline smoke test
+  - [ ] 01-05-PLAN.md — gap closure: delete .eslintignore (redundant in ESLint v9 flat config) to satisfy SETUP-06 zero-warnings
 **UI hint**: no
 
 ### Phase 2: Framing Codec & Warnings
@@ -168,7 +169,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
 
 | Phase | REQs | Plans | Status |
 |-------|-----:|------:|--------|
-| 1. Project Foundation | 7 | 4 | Pending |
+| 1. Project Foundation | 7 | 5 | Pending |
 | 2. Framing Codec & Warnings | 21 | 4 | Pending |
 | 3. Transport, Connection FSM & Observability | 14 | 4 | Pending |
 | 4. MLLP Server | 13 | 4 | Pending |
@@ -176,7 +177,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
 | 6. ACK Helpers & TLS | 10 | 4 | Pending |
 | 7. Testing, Fixtures & Coverage | 7 | 4 | Pending |
 | 8. Examples, README & Publish | 7 | 3 | Pending |
-| **Total** | **101** | **33** | **0 %** |
+| **Total** | **101** | **34** | **0 %** |
 
 ## Coverage Validation
 
