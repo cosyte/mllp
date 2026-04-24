@@ -9,3 +9,5 @@ coverage/
 .vscode/
 .idea/
 *.tsbuildinfo
+examples/tls/certs/
+bench/results/

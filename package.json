@@ -1,0 +1,52 @@
+{
+  "name": "@cosyte/hl7-mllp",
+  "version": "0.1.0",
+  "description": "Production-grade MLLP client and server for Node.js — transport-only sibling to @cosyte/hl7",
+  "type": "module",
+  "engines": { "node": ">=20.0.0" },
+  "license": "MIT",
+  "author": "Cosyte",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cosyte/hl7-mllp.git"
+  },
+  "keywords": ["hl7", "mllp", "healthcare", "hl7v2", "tcp"],
+  "files": ["dist", "README.md", "LICENSE", "CHANGELOG.md"],
+  "exports": {},
+  "main": "",
+  "module": "",
+  "types": "",
+  "dependencies": {},
+  "peerDependencies": {
+    "@cosyte/hl7": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@cosyte/hl7": { "optional": true }
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.17.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "eslint": "^9.0.0",
+    "mitata": "^0.1.0",
+    "prettier": "^3.0.0",
+    "selfsigned": "^2.4.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "certs:gen": "node scripts/generate-test-certs.mjs",
+    "bench": "vitest bench",
+    "prepublishOnly": "pnpm build && attw --pack"
+  }
+}
