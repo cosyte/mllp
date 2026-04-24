@@ -435,9 +435,12 @@ export class Connection extends EventEmitter {
       phase,
     });
     this.emit('error', Object.freeze({ connectionId: this.connectionId, error: connErr }));
-    if (this._state !== 'CLOSED' && this._state !== 'DISCONNECTED') {
-      this._transition('DISCONNECTED', `error: ${err.message}`);
-    }
+    if (this._state === 'CLOSED' || this._state === 'DISCONNECTED') return;
+
+    // CONNECTING has no path to DISCONNECTED — must go to CLOSED (terminal) on error
+    // All other active states transition to DISCONNECTED
+    const target: ConnectionState = this._state === 'CONNECTING' ? 'CLOSED' : 'DISCONNECTED';
+    this._transition(target, `error: ${err.message}`);
   }
 
   private _onFrameDecoded(payload: Buffer): void {
