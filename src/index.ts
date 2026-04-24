@@ -20,3 +20,17 @@ export const VERSION = '0.1.0';
 export type { WarningCode, MllpWarning } from './framing/index.js';
 export { MllpFramingError, encodeFrame, FrameReader, createWarning } from './framing/index.js';
 export type { FrameReaderOptions, EncoderOptions } from './framing/index.js';
+
+// Phase 3: transport abstraction, connection FSM, and observability
+export type { Transport } from './transport/index.js';
+export { NetTransport } from './transport/index.js';
+export {
+  Connection,
+  type ConnectionOptions,
+  type ConnectionState,
+  type ConnectionStats,
+  type StateChangeEvent,
+  type ReconnectingEvent,
+  MllpConnectionError,
+  type ConnectionErrorPhase,
+} from './connection/index.js';

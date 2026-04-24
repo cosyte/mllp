@@ -33,6 +33,8 @@
  * }
  * ```
  */
+export { NetTransport } from './net-transport.js';
+
 export interface Transport {
   /**
    * Write `buf` to the underlying transport.

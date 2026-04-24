@@ -350,9 +350,7 @@ export class Connection extends EventEmitter {
     const timeoutPromise = new Promise<'timeout'>((resolve) => {
       const handle = setTimeout(() => { resolve('timeout'); }, timeoutMs);
       // Unref so this timer does not keep the process alive (T-03-04-01)
-      if (typeof handle === 'object' && handle !== null && 'unref' in handle) {
-        (handle as NodeJS.Timeout).unref();
-      }
+      handle.unref();
     });
 
     const result = await Promise.race([drainPromise.then(() => 'done' as const), timeoutPromise]);
