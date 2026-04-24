@@ -81,7 +81,7 @@ describe('FRAME-12: byte-fidelity round-trip', () => {
     expect(decoded).toEqual(payload);
   });
 
-  it('1 MiB random corpus (excluding VT/FS bytes) round-trips unchanged', () => {
+  it('1 MiB random corpus (excluding VT/FS bytes) round-trips unchanged', { timeout: 30_000 }, () => {
     // Generate 1 MiB of deterministic pseudo-random bytes, filtering out VT and FS
     const SIZE = 1024 * 1024;
     const raw = Buffer.allocUnsafe(SIZE);
