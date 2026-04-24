@@ -74,7 +74,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   - [x] 03-PLAN-01: `Transport` interface + `NetTransport` wrapper around `net.Socket` with event plumbing + `MllpConnectionError` typed error (now with `'reconnect'` in the `phase` union)
   - [x] 03-PLAN-02: `InMemoryTransport` with `pair()` / `split()` / `pause()` / `destroy()` and deterministic event-queue semantics
   - [x] 03-PLAN-03: `Connection` class in `src/connection/` — 6-state FSM with full LIFE-02 transition graph, `connectionId` generator, lifecycle events (incl. `'drain'` / `'reconnecting'` / `'close'`), `stateChange` event, per-connection `onWarning` (WARN-10), `getStats()` (OBS-03/04/05) with capped warning buffer
-  - [ ] 03-PLAN-04: `close()` / `destroy()` semantics across the 6 states, drain timeout, CONNECTING-cancellation + RECONNECTING-cancellation with timer cleanup, barrel updates
+  - [x] 03-PLAN-04: `close()` / `destroy()` semantics across the 6 states, drain timeout, CONNECTING-cancellation + RECONNECTING-cancellation with timer cleanup, barrel updates
 **UI hint**: no
 
 ### Phase 4: MLLP Server
