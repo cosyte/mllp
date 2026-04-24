@@ -34,3 +34,14 @@ export {
   MllpConnectionError,
   type ConnectionErrorPhase,
 } from './connection/index.js';
+
+// Phase 4: server
+export {
+  MllpServer,
+  createServer,
+  createStarterServer,
+  type ServerOptions,
+  type StarterServerOptions,
+  type ServerStats,
+  type MessageMeta,
+} from './server/index.js';
