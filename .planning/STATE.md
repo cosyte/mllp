@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1
 milestone_name: milestone
-status: "v1 milestone initialized 2026-04-22; research-revised same day — 4 parallel researchers (STACK/FEATURES/ARCHITECTURE/PITFALLS) + synthesizer landed SUMMARY.md with 28 new REQ-IDs + 10 amendments, all accepted. 8 phases, 101 v1 REQ-IDs, ~33 plans. Node floor bumped 18 → 20. Phase 6 split 3→4 plans. New OBS observability category. Next: /gsd-plan-phase 1 (Project Foundation)."
-last_updated: "2026-04-22T00:00:00Z"
+status: "Phase 1 context gathered 2026-04-24. Decisions: ESLint recommended-type-checked + projectService, CI push-main+PRs+concurrency-cancel+fail-fast:false+pnpm-cache, tsup sourcemap:true+dts:true+clean:true. Resume: /gsd-plan-phase 1"
+last_updated: "2026-04-24T00:00:00Z"
 progress:
   total_phases: 8
   completed_phases: 0
