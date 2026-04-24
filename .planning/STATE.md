@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 3 gap-closure planned 2026-04-24 — 5 plans, ready to execute.
-last_updated: "2026-04-24T18:30:00.000Z"
+status: Phase 3 complete 2026-04-24 — 5 plans executed, all gaps closed. Ready to execute Phase 4 (MLLP Server).
+last_updated: "2026-04-24T17:43:00.000Z"
 progress:
   total_phases: 8
-  completed_phases: 2
-  total_plans: 14
-  completed_plans: 9
-  percent: 25
+  completed_phases: 3
+  total_plans: 35
+  completed_plans: 14
+  percent: 37
 ---
 
 # @cosyte/hl7-mllp — STATE
@@ -28,17 +28,17 @@ Project memory for session-to-session continuity. Updated at phase/plan boundari
 
 ## Current Position
 
-Phase: 3 context gathered 2026-04-24. Ready to plan Phase 3.
-Next Step: `/gsd-plan-phase 3`
+Phase: 3 complete 2026-04-24 — all 5 plans executed, all gaps closed.
+Next Step: `/gsd-execute-phase 4`
 Resume file: None
 
 - **Milestone:** v1 (initial release — transport-only MLLP client + server)
-- **Phase:** 2 complete — encoder, decoder, strict mode, barrels all shipped
-- **Plans (milestone total):** 9 / ~33 complete
-- **Status:** Phase 2 complete 2026-04-24 — 99 tests, 93.88% coverage, all 21 REQ-IDs verified
+- **Phase:** 3 complete — Transport, Connection FSM, InMemoryTransport, getStats(), close/destroy, gap closure (CR-01/WR-01/WR-02/WR-03)
+- **Plans (milestone total):** 14 / ~35 complete
+- **Status:** Phase 3 complete 2026-04-24 — 230 tests, 0 TS errors, all 14 REQ-IDs delivered
 
 ```
-[####                ] 25 %   (2 / 8 phases shipped)
+[#####               ] 37 %   (3 / 8 phases shipped)
 ```
 
 ## Phase Summary
@@ -47,7 +47,7 @@ Resume file: None
 |---|-------|-----:|------:|--------|
 | 1 | Project Foundation | 7 | 5 | Complete 2026-04-24 |
 | 2 | Framing Codec & Warnings | 21 | 4 | Complete 2026-04-24 |
-| 3 | Transport, Connection FSM & Observability | 14 | 4 | Pending |
+| 3 | Transport, Connection FSM & Observability | 14 | 5 | Complete 2026-04-24 |
 | 4 | MLLP Server | 13 | 4 | Pending |
 | 5 | MLLP Client | 22 | 6 | Pending |
 | 6 | ACK Helpers & TLS | 10 | 4 | Pending |
@@ -67,6 +67,13 @@ Resume file: None
 - Added `AbortSignal` + `Symbol.asyncDispose` + frozen event payloads across client and server (2026 Node baseline).
 - Added `maxFrameSizeBytes` cap (FRAME-11) with `MLLP_FRAME_TOO_LARGE` warning code — DoS prevention.
 - Split Phase 6 from 3 → 4 plans exposing parallelism (ACK builders need only Phase 2; TlsTransport needs only Phase 3).
+
+**2026-04-24 — Phase 3 gap closure (03-05)**
+
+- CR-01: `ReconnectingEvent.connectionId` is the required field; `attempt` and `delayMs` are optional (Phase 5 will populate). Interface now matches runtime emission.
+- WR-01/WR-02: Both CONNECTING and RECONNECTING route to CLOSED (terminal) on unexpected peer close or transport error — not DISCONNECTED, which has no incoming edge from these states in LEGAL_TRANSITIONS.
+- WR-03: `_drainPromise` field caches in-flight drain; second concurrent `close()` call joins existing promise without invoking `beforeClose` a second time.
+- 230 tests passing, 0 TypeScript errors after gap closure; Phase 4 unblocked.
 
 ## Deviations Log
 

@@ -14,7 +14,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
 
 - [x] **Phase 1: Project Foundation** — Scaffold the repo, build, lint, and TypeScript toolchain (Node 20+ floor, 3×3 OS×Node CI matrix, `selfsigned` cert-gen, `.subarray`-only lint rule) so any subsequent phase can iterate. *(Complete 2026-04-24)*
 - [ ] **Phase 2: Framing Codec & Warnings** — Canonical `VT…FS+CR` encoder, stateful chunked-stream decoder with `maxFrameSizeBytes` DoS cap, tolerance opt-ins, stable warning-code union (incl. `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_*`), and `MllpFramingError`.
-- [ ] **Phase 3: Transport Abstraction, Connection FSM & Observability** — `Transport` interface (`net.Socket` wrapper + `InMemoryTransport` for tests), `Connection` in its own module with a **6-state FSM** (`CONNECTING` / `CONNECTED` / `DRAINING` / `RECONNECTING` / `DISCONNECTED` / `CLOSED`), per-connection warning stream, `connection.getStats()`, and `MllpConnectionError`.
+- [x] **Phase 3: Transport Abstraction, Connection FSM & Observability** *(Complete 2026-04-24)* — `Transport` interface (`net.Socket` wrapper + `InMemoryTransport` for tests), `Connection` in its own module with a **6-state FSM** (`CONNECTING` / `CONNECTED` / `DRAINING` / `RECONNECTING` / `DISCONNECTED` / `CLOSED`), per-connection warning stream, `connection.getStats()`, and `MllpConnectionError`.
 - [ ] **Phase 4: MLLP Server** — `createServer`, `listen`, per-connection message emission as `Buffer`, auto-ACK mode, manual-ACK mode, graceful shutdown with drain timeout, idle keepalive, `createStarterServer`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, server-level framing tolerance opts, `server.getStats()`.
 - [ ] **Phase 5: MLLP Client** — `createClient`, `connect`, `send` with ACK-awaiting (FIFO + controlId correlation), exponential-backoff reconnect (with backoff reset + retryStrategy callback + transient/permanent classification), backpressure (count + byte watermarks, wait/reject policy, drain event), dead-peer detection, `pipeline: false` serialization mode, unmatched-ACK + late-ACK semantics, queued-sends-across-reconnect policy, `createStarterClient`, `AbortSignal` + `Symbol.asyncDispose`, frozen event payloads, `client.getStats()`, `MllpTimeoutError` + `MllpBackpressureError`.
 - [ ] **Phase 6: ACK Helpers & TLS** — `buildAckAA/AE/AR` plain-object builders (depend on Phase 2 only), `@cosyte/hl7-mllp/ack-from-hl7` peer-dep adapter, `TlsTransport` class with SNI default (depends on Phase 3 only), and end-to-end integration test (depends on Phases 2 / 3 / 4 / 5). Plan-split (was 3 plans → now 4) exposes true parallelism.
@@ -75,7 +75,7 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   - [x] 03-PLAN-02: `InMemoryTransport` with `pair()` / `split()` / `pause()` / `destroy()` and deterministic event-queue semantics
   - [x] 03-PLAN-03: `Connection` class in `src/connection/` — 6-state FSM with full LIFE-02 transition graph, `connectionId` generator, lifecycle events (incl. `'drain'` / `'reconnecting'` / `'close'`), `stateChange` event, per-connection `onWarning` (WARN-10), `getStats()` (OBS-03/04/05) with capped warning buffer
   - [x] 03-PLAN-04: `close()` / `destroy()` semantics across the 6 states, drain timeout, CONNECTING-cancellation + RECONNECTING-cancellation with timer cleanup, barrel updates
-  - [ ] 03-05-PLAN.md — gap closure: fix CR-01 (ReconnectingEvent interface), WR-01/WR-02 (FSM stuck on transport close/error in CONNECTING/RECONNECTING), WR-03 (concurrent drain idempotency), plus RECONNECTING test coverage
+  - [x] 03-05-PLAN.md — gap closure: fix CR-01 (ReconnectingEvent interface), WR-01/WR-02 (FSM stuck on transport close/error in CONNECTING/RECONNECTING), WR-03 (concurrent drain idempotency), plus RECONNECTING test coverage
 **UI hint**: no
 
 ### Phase 4: MLLP Server
@@ -170,15 +170,15 @@ North star: **A developer can send and receive HL7 v2 messages over a production
 
 | Phase | REQs | Plans | Status |
 |-------|-----:|------:|--------|
-| 1. Project Foundation | 7 | 5 | Pending |
-| 2. Framing Codec & Warnings | 21 | 4 | Pending |
-| 3. Transport, Connection FSM & Observability | 14 | 5 | Pending |
+| 1. Project Foundation | 7 | 5 | Complete 2026-04-24 |
+| 2. Framing Codec & Warnings | 21 | 4 | Complete 2026-04-24 |
+| 3. Transport, Connection FSM & Observability | 14 | 5 | Complete 2026-04-24 |
 | 4. MLLP Server | 13 | 4 | Pending |
 | 5. MLLP Client | 22 | 6 | Pending |
 | 6. ACK Helpers & TLS | 10 | 4 | Pending |
 | 7. Testing, Fixtures & Coverage | 7 | 4 | Pending |
 | 8. Examples, README & Publish | 7 | 3 | Pending |
-| **Total** | **101** | **35** | **0 %** |
+| **Total** | **101** | **35** | **37 % (3/8 phases)** |
 
 ## Coverage Validation
 
