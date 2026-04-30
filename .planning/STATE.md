@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 4 complete 2026-04-24 — 5 plans executed, 306 tests, 0 TS errors, all 13 REQ-IDs delivered.
-last_updated: "2026-04-24T19:30:00.000Z"
+status: Phase 5 context gathered 2026-04-30 — 4 gray areas decided via advisor mode (unified correlator, hybrid in-flight reconnect, mirror-server dead-peer split, rich RetryContext). Ready for planning.
+last_updated: "2026-04-30T00:00:00.000Z"
 progress:
   total_phases: 8
   completed_phases: 4
@@ -28,14 +28,14 @@ Project memory for session-to-session continuity. Updated at phase/plan boundari
 
 ## Current Position
 
-Phase: 4 complete 2026-04-24 — all 5 plans executed, all gaps closed.
-Next Step: `/gsd-discuss-phase 5` or `/gsd-plan-phase 5`
-Resume file: None
+Phase: 5 context gathered 2026-04-30 — all 4 selected gray areas locked in 05-CONTEXT.md.
+Next Step: `/gsd-plan-phase 5`
+Resume file: `.planning/phases/05-mllp-client/05-CONTEXT.md`
 
 - **Milestone:** v1 (initial release — transport-only MLLP client + server)
 - **Phase:** 4 complete — MllpServer, createServer(), createStarterServer(), auto-ACK, graceful shutdown, keepalive, AbortSignal, Symbol.asyncDispose, frozen events, server.getStats(), byteOffset/warnings threading, _closedTotal guard
 - **Plans (milestone total):** 19 / ~36 complete
-- **Status:** Phase 4 complete 2026-04-24 — 306 tests, 0 TS errors, all 13 REQ-IDs delivered
+- **Status:** Phase 4 complete 2026-04-24 — 306 tests, 0 TS errors, all 13 REQ-IDs delivered. Phase 5 context locked 2026-04-30 — ready for `/gsd-plan-phase 5`
 
 ```
 [##########          ] 50 %   (4 / 8 phases shipped)
@@ -67,6 +67,13 @@ Resume file: None
 - Added `AbortSignal` + `Symbol.asyncDispose` + frozen event payloads across client and server (2026 Node baseline).
 - Added `maxFrameSizeBytes` cap (FRAME-11) with `MLLP_FRAME_TOO_LARGE` warning code — DoS prevention.
 - Split Phase 6 from 3 → 4 plans exposing parallelism (ACK builders need only Phase 2; TlsTransport needs only Phase 3).
+
+**2026-04-30 — Phase 5 context (advisor mode, full_maturity tier)**
+
+- D-03/A1: Unified `Map<key, PendingAck>` correlator with ES2015 insertion-order iteration; FIFO uses synthetic monotonic seq, controlId uses MSH-10. `pipeline:false` = `maxInFlight=1` guard on same store. ioredis/redis-py prior art.
+- D-08/A2: Hybrid asymmetric in-flight reconnect rule. controlId mode resends in-flight (idempotent via MSH-10); FIFO mode rejects in-flight with NEW stable cause `'in-flight-orphan'` (distinct from queued's existing `'fifo-unsafe'`). Adds one new public-API cause code.
+- D-11/A3: Mirror Phase 4 server's two-independent-options approach for dead-peer detection (`keepaliveIntervalMs` for TCP keepalive, `deadPeerTimeoutMs` for app-idle keyed on bytes/ACK received). FSM honors `autoReconnect` on trip; error phase `'receive'` matches server symmetry.
+- D-15/A4: Rich `RetryContext` object signature for `retryStrategy` hook with `{attempt, lastError, lastDelayMs, totalElapsedMs, sinceLastSuccessMs, classifiedAs, signal}`. Composition A — CLIENT-18 classifier runs FIRST; hook only sees transient errors by default. `null`-return → terminal CLOSED. `ctx.signal: AbortSignal` from day one.
 
 **2026-04-24 — Phase 3 gap closure (03-05)**
 
