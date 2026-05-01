@@ -198,6 +198,7 @@ describe('Correlator (PLAN-02 FIFO mode)', () => {
       queueBytes: 30,
       graveyardSize: 0,
       sendSeq: 2,
+      inFlight: 0,
     });
     // Round-trip through JSON to verify serializable
     expect(JSON.parse(JSON.stringify(stats))).toEqual(stats);

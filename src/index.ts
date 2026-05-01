@@ -47,11 +47,12 @@ export {
   type MessageMeta,
 } from './server/index.js';
 
-// Phase 5: client (PLAN-01 scaffold; later plans add error types, retry, stats, starter)
+// Phase 5: client
 export {
   MllpClient,
   createClient,
   type ClientOptions,
+  type ClientStats,
   type RetryContext,
   type RetryStrategy,
   MllpTimeoutError,

@@ -37,7 +37,11 @@ import { MllpConnectionError } from '../connection/index.js';
 import { NetTransport } from '../transport/index.js';
 import { encodeFrame } from '../framing/index.js';
 import { MllpFramingError } from '../framing/index.js';
-import type { FrameReaderOptions, MllpWarning } from '../framing/index.js';
+import type {
+  FrameReaderOptions,
+  MllpWarning,
+  WarningCode,
+} from '../framing/index.js';
 import {
   Correlator,
   extractMshControlId,
@@ -246,6 +250,60 @@ export interface ClientOptions {
 }
 
 /**
+ * Observability snapshot returned by {@link MllpClient.getStats} (OBS-01, D-26).
+ *
+ * All fields are JSON-serializable (OBS-04) — no Buffers, no class instances,
+ * no Maps, no circular references. `lastConnectedAt` and `lastAckAt` are
+ * **epoch milliseconds** (numbers), NOT `Date` instances — log-pipeline
+ * friendly per D-26.
+ *
+ * `warningsByCode` keys are constrained to the public {@link WarningCode}
+ * union — adding/removing a code is a breaking change (CLAUDE.md
+ * stable-codes guardrail enforced at the type boundary, B-05).
+ *
+ * @example
+ * ```typescript
+ * const stats = client.getStats();
+ * logger.info(JSON.stringify(stats));
+ * // {"state":"CONNECTED","connectionId":"…","queueDepth":0, … }
+ * ```
+ */
+export interface ClientStats {
+  /** Current FSM state — mirrors `client.state`. */
+  readonly state: ConnectionState;
+  /** Live Connection's id, or `null` before the first connect (or post-CLOSED). */
+  readonly connectionId: string | null;
+  /** Total live correlator entries (in-flight + pre-flush + serialization-queued). */
+  readonly queueDepth: number;
+  /** Sum of `frame.length` across live correlator entries. */
+  readonly queueBytes: number;
+  /** Entries with `sentAt !== null` — actually written to the wire / awaiting ACK. */
+  readonly inFlight: number;
+  /**
+   * Aggregated warning counts. Keys are constrained to the public
+   * {@link WarningCode} union (B-05). Connection-level warnings + Correlator
+   * `MLLP_ACK_*` warnings are merged.
+   */
+  readonly warningsByCode: Partial<Record<WarningCode, number>>;
+  /** Bytes received from the peer (current Connection). */
+  readonly totalBytesIn: number;
+  /** Bytes written to the peer (current Connection). */
+  readonly totalBytesOut: number;
+  /** Total successful `connection.send()` calls since construction. */
+  readonly sentTotal: number;
+  /** Total ACKs matched + resolved since construction. */
+  readonly ackedTotal: number;
+  /** Total ACK timeouts since construction. */
+  readonly timedOutTotal: number;
+  /** Total reconnect attempts since construction (W-02). */
+  readonly reconnectAttempts: number;
+  /** Epoch ms of the last `CONNECTED` transition. `null` until first connect. */
+  readonly lastConnectedAt: number | null;
+  /** Epoch ms of the most recent successful ACK. `null` until first ACK. */
+  readonly lastAckAt: number | null;
+}
+
+/**
  * MLLP client — composes a single Phase 3 {@link Connection} over a {@link NetTransport}
  * (production) or any other `Transport` (testing via {@link InMemoryTransport}).
  *
@@ -348,6 +406,24 @@ export class MllpClient extends EventEmitter {
   private _reconnectFactory:
     | (() => { conn: Connection; arm: () => void })
     | null = null;
+
+  // ── PLAN-06 — observability counters for getStats (OBS-01, D-26) ─────────
+  /** Total successful `conn.send()` flushes since construction. */
+  private _sentTotal = 0;
+  /** Total ACKs resolved since construction. */
+  private _ackedTotal = 0;
+  /** Total ACK timeouts since construction. */
+  private _timedOutTotal = 0;
+  /** Epoch ms of the most recent CONNECTED transition (null until first). */
+  private _lastConnectedAt: number | null = null;
+  /** Epoch ms of the most recent successful ACK (null until first). */
+  private _lastAckAt: number | null = null;
+  /**
+   * Aggregated Correlator-emitted warning counts (MLLP_ACK_*). Connection-level
+   * warnings are read directly from `_connection.getStats().warningsByCode`
+   * at observation time and merged into the snapshot (D-26).
+   */
+  private _aggregatedWarningsByCode: Partial<Record<WarningCode, number>> = {};
 
   constructor(opts: ClientOptions) {
     super();
@@ -535,6 +611,9 @@ export class MllpClient extends EventEmitter {
         // Plan 05 — pipeline:false collapses the in-flight set to ≤1 (D-06).
         maxInFlight: this._pipeline ? Number.POSITIVE_INFINITY : 1,
         onWarning: (code, ctx) => {
+          // PLAN-06 (OBS-01, D-26) — aggregate Correlator-emitted warning counts.
+          this._aggregatedWarningsByCode[code] =
+            (this._aggregatedWarningsByCode[code] ?? 0) + 1;
           this.emit(
             'warning',
             Object.freeze({
@@ -570,6 +649,8 @@ export class MllpClient extends EventEmitter {
           );
         },
         onTimeout: (entry, elapsedMs) => {
+          // PLAN-06 (OBS-01, D-26) — observability counter.
+          this._timedOutTotal += 1;
           entry.reject(
             new MllpTimeoutError(`ACK timeout after ${elapsedMs}ms`, {
               messageControlId: entry.controlId ?? undefined,
@@ -1059,7 +1140,9 @@ export class MllpClient extends EventEmitter {
     // ACK so the next disconnect resets attempt counter to 0 if it's the
     // first disconnect AFTER a successful exchange on the prior session.
     this._lastSuccessAt = Date.now();
-    // PLAN-06 inserts: this._ackedTotal += 1; this._lastAckAt = Date.now();
+    // PLAN-06 (OBS-01, D-26) — observability counters.
+    this._ackedTotal += 1;
+    this._lastAckAt = Date.now();
     matched.resolve(ackPayload);
     // Plan 05 — emit 'drain' when queue depth crosses below high-water mark
     // (D-24). Fires once per ACK that brings the queue under both caps.
@@ -1104,6 +1187,8 @@ export class MllpClient extends EventEmitter {
     // transition OUT of CONNECTED; re-armed on entry TO CONNECTED.
     if (e.to === 'CONNECTED') {
       this._armDeadPeerTimer();
+      // PLAN-06 (OBS-01, D-26) — record CONNECTED epoch for getStats.
+      this._lastConnectedAt = Date.now();
     }
     if (e.from === 'CONNECTED' && e.to !== 'CONNECTED') {
       this._clearDeadPeerTimer();
@@ -1276,6 +1361,10 @@ export class MllpClient extends EventEmitter {
       // high-water mark is what the gate above enforces.
       conn.send(frame);
       correlator.markFlushed(key, Date.now());
+      // PLAN-06 (OBS-01, D-26) — count flushed sends. Synchronous post-send
+      // increment per T-05-06-05 (counter race is bounded; observability is
+      // "good enough" per D-26).
+      this._sentTotal += 1;
     });
   }
 
@@ -1489,6 +1578,53 @@ export class MllpClient extends EventEmitter {
     const conn = this._connection;
     if (conn === null) return;
     conn.destroy(reason);
+  }
+
+  /**
+   * Returns a JSON-serializable observability snapshot (OBS-01, D-26).
+   *
+   * All fields are plain values — no Buffers, no class instances, no Maps,
+   * no circular refs. Safe to `JSON.stringify` directly.
+   *
+   * `inFlight` is the count of correlator entries with `sentAt !== null`
+   * (entries actually written to the wire and awaiting ACK), distinct from
+   * `queueDepth` which counts ALL live correlator entries (including
+   * pre-flush and serialization-queued sends).
+   *
+   * @example
+   * ```typescript
+   * setInterval(() => logger.info(JSON.stringify(client.getStats())), 60_000);
+   * ```
+   */
+  getStats(): ClientStats {
+    const connStats = this._connection?.getStats();
+    const corrStats = this._correlator?.getStats();
+    // Merge warningsByCode: Connection-level + Client-aggregated (Correlator-emitted).
+    const merged: Partial<Record<WarningCode, number>> = {
+      ...this._aggregatedWarningsByCode,
+    };
+    if (connStats !== undefined) {
+      for (const [k, v] of Object.entries(connStats.warningsByCode)) {
+        const code = k as WarningCode;
+        merged[code] = (merged[code] ?? 0) + v;
+      }
+    }
+    return {
+      state: this.state,
+      connectionId: connStats?.connectionId ?? null,
+      queueDepth: corrStats?.size ?? 0,
+      queueBytes: corrStats?.queueBytes ?? 0,
+      inFlight: corrStats?.inFlight ?? 0,
+      warningsByCode: merged,
+      totalBytesIn: connStats?.bytesIn ?? 0,
+      totalBytesOut: connStats?.bytesOut ?? 0,
+      sentTotal: this._sentTotal,
+      ackedTotal: this._ackedTotal,
+      timedOutTotal: this._timedOutTotal,
+      reconnectAttempts: this._reconnectAttempts,
+      lastConnectedAt: this._lastConnectedAt,
+      lastAckAt: this._lastAckAt,
+    };
   }
 
   /**

@@ -182,6 +182,15 @@ export interface CorrelatorStats {
   readonly queueBytes: number;
   readonly graveyardSize: number;
   readonly sendSeq: number;
+  /**
+   * Count of live entries with `sentAt !== null` (PLAN-06 / D-26).
+   *
+   * Distinct from `size`. `size` includes pre-flush entries (an entry was
+   * `enqueue()`'d but `markFlushed()` has not been called yet) AND
+   * serialization-queued entries (`pipeline:false`'s deferred sends). A
+   * pre-flush entry contributes to `size` but NOT to `inFlight`.
+   */
+  readonly inFlight: number;
 }
 
 /** Constructor options. INTERNAL callback-bag pattern (mirrors `FrameReaderOptions`). */
@@ -244,6 +253,12 @@ export class Correlator {
   private readonly _graveyard: Map<CorrelationKey, GraveyardEntry> = new Map();
   private _sendSeq = 0;
   private _queueBytes = 0;
+  /**
+   * PLAN-06 — count of pending entries with `sentAt !== null` (D-26 / B-01).
+   * Maintained at every site that mutates `entry.sentAt` or removes a
+   * flushed entry: `markFlushed`, `remove`, `matchAck`, `expireDue`, `clear`.
+   */
+  private _inFlight = 0;
 
   constructor(opts: CorrelatorOptions) {
     this._opts = {
@@ -304,7 +319,11 @@ export class Correlator {
    */
   markFlushed(key: CorrelationKey, now?: number): void {
     const entry = this._pending.get(key);
-    if (entry !== undefined) entry.sentAt = now ?? this._opts.now();
+    if (entry === undefined) return;
+    // PLAN-06: only the first flush bumps _inFlight. Subsequent re-flush
+    // (e.g. PLAN-04's controlId reflushAll on reconnect) is idempotent.
+    if (entry.sentAt === null) this._inFlight += 1;
+    entry.sentAt = now ?? this._opts.now();
   }
 
   /**
@@ -337,6 +356,8 @@ export class Correlator {
       const entry = iter.value;
       this._pending.delete(entry.key);
       this._queueBytes -= entry.byteCount;
+      // PLAN-06 (D-26): only flushed entries count toward _inFlight.
+      if (entry.sentAt !== null) this._inFlight -= 1;
       return entry;
     }
     // controlId mode (PLAN-03)
@@ -352,6 +373,8 @@ export class Correlator {
     if (live !== undefined) {
       this._pending.delete(controlIdFromAck);
       this._queueBytes -= live.byteCount;
+      // PLAN-06 (D-26): only flushed entries count toward _inFlight.
+      if (live.sentAt !== null) this._inFlight -= 1;
       return live;
     }
     const grave = this._graveyard.get(controlIdFromAck);
@@ -389,6 +412,8 @@ export class Correlator {
         const elapsed = t - entry.sentAt;
         this._pending.delete(key);
         this._queueBytes -= entry.byteCount;
+        // PLAN-06: expired entry was flushed by the guard above.
+        this._inFlight -= 1;
         this._graveyard.set(key, {
           timedOutAt: t,
           controlId: entry.controlId,
@@ -408,6 +433,9 @@ export class Correlator {
     for (const entry of this._pending.values()) entry.reject(reason);
     this._pending.clear();
     this._queueBytes = 0;
+    // PLAN-06: reset _inFlight unconditionally — clear() drops every entry,
+    // flushed or not. Avoids any over-decrement edge case.
+    this._inFlight = 0;
   }
 
   /** Iterate live entries in insertion order (PLAN-04 reconnect-resend, D-07). */
@@ -426,6 +454,8 @@ export class Correlator {
     if (entry === undefined) return null;
     this._pending.delete(key);
     this._queueBytes -= entry.byteCount;
+    // PLAN-06: only flushed entries count toward _inFlight.
+    if (entry.sentAt !== null) this._inFlight -= 1;
     return entry;
   }
 
@@ -436,6 +466,7 @@ export class Correlator {
       queueBytes: this._queueBytes,
       graveyardSize: this._graveyard.size,
       sendSeq: this._sendSeq,
+      inFlight: this._inFlight,
     };
   }
 

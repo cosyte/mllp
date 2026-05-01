@@ -8,6 +8,7 @@ export {
   MllpClient,
   createClient,
   type ClientOptions,
+  type ClientStats,
   type RetryContext,
   type RetryStrategy,
 } from './client.js';
@@ -17,4 +18,4 @@ export {
   isTransientConnectionError,
 } from './error.js';
 // PLAN-02 adds: type AckEvent
-// PLAN-06 adds: createStarterClient, type StarterClientOptions, type ClientStats
+// PLAN-06 adds: createStarterClient, type StarterClientOptions (Task 2 below)
