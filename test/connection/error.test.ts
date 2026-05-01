@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { MllpConnectionError, type ConnectionErrorPhase } from '../../src/connection/error.js';
+import {
+  MllpConnectionError,
+  type ConnectionErrorPhase,
+  type ConnectionErrorCause,
+} from '../../src/connection/error.js';
 
 describe('MllpConnectionError', () => {
   it('is an instance of Error', () => {
@@ -44,5 +48,46 @@ describe('MllpConnectionError', () => {
       phase: 'connect',
     });
     expect(err.cause).toBe(original);
+  });
+
+  describe('connectionCause (D-09)', () => {
+    it('is undefined when not provided (backwards compatible)', () => {
+      const err = new MllpConnectionError('msg', {
+        cause: new Error('x'),
+        phase: 'reconnect',
+      });
+      expect(err.connectionCause).toBeUndefined();
+    });
+
+    it("exposes 'in-flight-orphan' when provided", () => {
+      const err = new MllpConnectionError('msg', {
+        cause: new Error('x'),
+        phase: 'reconnect',
+        connectionCause: 'in-flight-orphan',
+      });
+      expect(err.connectionCause).toBe('in-flight-orphan');
+    });
+
+    it("exposes 'fifo-unsafe' when provided", () => {
+      const err = new MllpConnectionError('msg', {
+        cause: new Error('x'),
+        phase: 'reconnect',
+        connectionCause: 'fifo-unsafe',
+      });
+      expect(err.connectionCause).toBe('fifo-unsafe');
+    });
+
+    it('ConnectionErrorCause type accepts only the two stable members', () => {
+      // Compile-time check via assignment — runtime equivalence to keep
+      // the test executable; the type annotation enforces the contract.
+      const fifoUnsafe: ConnectionErrorCause = 'fifo-unsafe';
+      const orphan: ConnectionErrorCause = 'in-flight-orphan';
+      expect(fifoUnsafe).toBe('fifo-unsafe');
+      expect(orphan).toBe('in-flight-orphan');
+
+      // @ts-expect-error - 'something-else' is not a valid ConnectionErrorCause
+      const invalid: ConnectionErrorCause = 'something-else';
+      expect(invalid).toBe('something-else');
+    });
   });
 });

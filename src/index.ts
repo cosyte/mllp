@@ -33,6 +33,7 @@ export {
   type ReconnectingEvent,
   MllpConnectionError,
   type ConnectionErrorPhase,
+  type ConnectionErrorCause,
 } from './connection/index.js';
 
 // Phase 4: server

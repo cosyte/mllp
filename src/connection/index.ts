@@ -13,4 +13,8 @@ export {
   type StateChangeEvent,
   type ReconnectingEvent,
 } from './connection.js';
-export { MllpConnectionError, type ConnectionErrorPhase } from './error.js';
+export {
+  MllpConnectionError,
+  type ConnectionErrorPhase,
+  type ConnectionErrorCause,
+} from './error.js';
