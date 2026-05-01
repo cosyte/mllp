@@ -328,6 +328,9 @@ export class MllpClient extends EventEmitter {
   private readonly _pipeline: boolean;
   /** Dead-peer idle timer (Plan 05 — D-11). `null` when not armed. */
   private _deadPeerTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True once the self-'ack' listener that resets the dead-peer timer
+   * has been attached. Guards against duplicate listeners on reconnect. */
+  private _ackResetWired = false;
   /** Most recently bound `connect()` signal. Reread on every RetryContext build (W-07). */
   private _connectSignal: AbortSignal | undefined;
   /** Set when close()/destroy()/abort fires; reconnect handler short-circuits. */
@@ -435,6 +438,12 @@ export class MllpClient extends EventEmitter {
         host: this._opts.host,
         port: this._opts.port,
       });
+      // Plan 05 — TCP keepalive set on the raw socket BEFORE NetTransport
+      // wrap (CLIENT-08, D-11/A3 — mirrors Phase 4 server). OS-level
+      // half-open detection. No JS-side timer (W-03).
+      if (this._opts.keepaliveIntervalMs !== undefined) {
+        socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
+      }
       this._socket = socket;
 
       const transport = new NetTransport(socket);
@@ -604,6 +613,9 @@ export class MllpClient extends EventEmitter {
         warnings: readonly MllpWarning[];
       }) => {
         this.emit('message', Object.freeze({ ...e }));
+        // Plan 05 — last-bytes-received signal resets dead-peer timer
+        // (D-11 "last bytes/ACK received").
+        this._armDeadPeerTimer();
         this._onAckPayload(e.payload, e.byteOffset);
       },
     );
@@ -622,6 +634,8 @@ export class MllpClient extends EventEmitter {
     });
     conn.on('warning', (w: MllpWarning) => {
       this.emit('warning', w);
+      // Plan 05 — Connection 'warning' is also a "bytes received" signal.
+      this._armDeadPeerTimer();
     });
     conn.on('error', (e: unknown) => {
       // Plan 04: capture the underlying Error for `RetryContext.lastError`.
@@ -645,6 +659,52 @@ export class MllpClient extends EventEmitter {
       }
     });
     this._connection = conn;
+
+    // Plan 05 — dead-peer timer self-listener on 'ack'. Connection emits
+    // 'message' (already wired above); the MllpClient itself emits 'ack'
+    // after matchAck succeeds. Both are "last bytes/ACK received" signals
+    // (D-11). The 'ack' reset is effectively a no-op when 'message' just
+    // armed it, but keeps the contract literal-true.
+    if (!this._ackResetWired) {
+      this._ackResetWired = true;
+      this.on('ack', () => {
+        this._armDeadPeerTimer();
+      });
+    }
+
+    // Arm the dead-peer timer if the connection is ALREADY in CONNECTED
+    // (test seam path: _attachExistingConnection called after notifyConnect).
+    // The state-change branch arms it for the normal path
+    // (CONNECTING → CONNECTED transition).
+    if (conn.state === 'CONNECTED') {
+      this._armDeadPeerTimer();
+    }
+  }
+
+  /**
+   * Arm (or re-arm) the dead-peer idle timer (Plan 05 — CLIENT-08, D-11).
+   * No-op when `deadPeerTimeoutMs` is unset.
+   */
+  private _armDeadPeerTimer(): void {
+    if (this._opts.deadPeerTimeoutMs === undefined) return;
+    if (this._deadPeerTimer !== null) {
+      clearTimeout(this._deadPeerTimer);
+    }
+    this._deadPeerTimer = setTimeout(() => {
+      this._connection?.destroy(new Error('dead peer timeout'));
+    }, this._opts.deadPeerTimeoutMs);
+    this._deadPeerTimer.unref();
+  }
+
+  /**
+   * Clear the dead-peer idle timer (Plan 05 — D-14 timer cleanup on
+   * every transition out of CONNECTED).
+   */
+  private _clearDeadPeerTimer(): void {
+    if (this._deadPeerTimer !== null) {
+      clearTimeout(this._deadPeerTimer);
+      this._deadPeerTimer = null;
+    }
   }
 
   /**
@@ -843,6 +903,11 @@ export class MllpClient extends EventEmitter {
           host: this._opts.host,
           port: this._opts.port,
         });
+        // Plan 05 — TCP keepalive on every reconnect attempt too
+        // (CLIENT-08, D-11/A3 — mirror connect() site).
+        if (this._opts.keepaliveIntervalMs !== undefined) {
+          socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
+        }
         this._socket = socket;
         const transport = new NetTransport(socket);
         const connOpts = this._opts.framing !== undefined
@@ -1038,6 +1103,14 @@ export class MllpClient extends EventEmitter {
   private _onStateChange(e: StateChangeEvent): void {
     this.emit('stateChange', Object.freeze({ ...e }));
     // HOOK_EXTENSION_POINT: state-change
+    // Plan 05 — dead-peer timer arm/clear (D-14). Cleared on every
+    // transition OUT of CONNECTED; re-armed on entry TO CONNECTED.
+    if (e.to === 'CONNECTED') {
+      this._armDeadPeerTimer();
+    }
+    if (e.from === 'CONNECTED' && e.to !== 'CONNECTED') {
+      this._clearDeadPeerTimer();
+    }
     // Plan 04 — disconnect detection (CLIENT-05/06/17). Trigger
     // `_handleDisconnect` on transitions out of CONNECTED into a
     // disconnect-leaning state, OR on a CONNECTING/RECONNECTING attempt
@@ -1067,7 +1140,6 @@ export class MllpClient extends EventEmitter {
       }
       this._handleDisconnect(cause);
     }
-    // PLAN-05 inserts dead-peer timer arm/clear branch.
   }
 
   /**
@@ -1285,6 +1357,9 @@ export class MllpClient extends EventEmitter {
       // _connection / _correlator null check.
       this._correlator = null;
     }
+    // Plan 05 — dead-peer timer cleanup. Belt-and-suspenders for the
+    // destroy() path that may bypass an explicit FSM transition.
+    this._clearDeadPeerTimer();
   }
 
   /**
