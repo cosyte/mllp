@@ -52,4 +52,5 @@ export {
   MllpClient,
   createClient,
   type ClientOptions,
+  MllpTimeoutError,
 } from './client/index.js';
