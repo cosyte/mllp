@@ -53,4 +53,5 @@ export {
   createClient,
   type ClientOptions,
   MllpTimeoutError,
+  isTransientConnectionError,
 } from './client/index.js';

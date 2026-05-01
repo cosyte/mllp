@@ -60,5 +60,61 @@ export class MllpTimeoutError extends Error {
   }
 }
 
-// PLAN-04 fills: isTransientConnectionError (CLIENT-18)
+/**
+ * Classifies a connection error as transient (eligible for auto-reconnect)
+ * or permanent (halts auto-reconnect, transitions to CLOSED).
+ *
+ * Used internally by `MllpClient` BEFORE invoking `retryStrategy` (Composition A
+ * — see `RetryContext.classifiedAs`). Re-exported so callers can implement
+ * their own retry policies.
+ *
+ * Classification table (CLIENT-18, D-16):
+ * - `ENOTFOUND`, `EACCES` → **permanent** (`false`)
+ * - `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EHOSTUNREACH`,
+ *   `ENETUNREACH`, `EPIPE` → **transient** (`true`)
+ * - `CERT_*` and `UNABLE_TO_VERIFY_LEAF_SIGNATURE` /
+ *   `DEPTH_ZERO_SELF_SIGNED_CERT` / `SELF_SIGNED_CERT_IN_CHAIN`
+ *   → **permanent** (`false`)
+ * - non-Error / unknown / no-code → **transient** (`true`) — Postel's Law
+ *   default. Reconnect attempts are bounded by `retryStrategy` and the
+ *   30s backoff cap, so the default is safe.
+ *
+ * @example
+ * ```typescript
+ * import { isTransientConnectionError } from '@cosyte/hl7-mllp';
+ * client.on('error', (err) => {
+ *   if (isTransientConnectionError(err)) {
+ *     metrics.increment('mllp.transient_error');
+ *   } else {
+ *     metrics.increment('mllp.permanent_error');
+ *   }
+ * });
+ * ```
+ */
+export function isTransientConnectionError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return true;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code !== 'string') return true;
+  switch (code) {
+    case 'ENOTFOUND':
+    case 'EACCES':
+      return false;
+    case 'ECONNREFUSED':
+    case 'ECONNRESET':
+    case 'ETIMEDOUT':
+    case 'EHOSTUNREACH':
+    case 'ENETUNREACH':
+    case 'EPIPE':
+      return true;
+    default:
+      // TLS cert error codes (CERT_*) and *_VERIFY_* names → permanent.
+      if (code.startsWith('CERT_')) return false;
+      if (code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') return false;
+      if (code === 'DEPTH_ZERO_SELF_SIGNED_CERT') return false;
+      if (code === 'SELF_SIGNED_CERT_IN_CHAIN') return false;
+      // Default: transient (Postel's Law — be permissive about peer behavior).
+      return true;
+  }
+}
+
 // PLAN-05 fills: MllpBackpressureError (ERR-04)
