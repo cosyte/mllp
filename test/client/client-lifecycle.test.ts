@@ -276,3 +276,141 @@ describe('MllpConnectionError export sanity (PLAN-01)', () => {
     expect(err).toBeInstanceOf(MllpConnectionError);
   });
 });
+
+describe('MllpClient additional coverage (PLAN-01)', () => {
+  it('connect() succeeds against a localhost listener', async () => {
+    const server = netCreateServer();
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    const port = (server.address() as AddressInfo).port;
+
+    const client = createClient({
+      host: '127.0.0.1',
+      port,
+      framing: { maxFrameSizeBytes: 1024 * 1024 },
+      drainTimeoutMs: 100,
+    });
+    try {
+      await client.connect();
+      expect(client.state).toBe('CONNECTED');
+    } finally {
+      await client.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('connect() rejects with MllpConnectionError on socket error (ECONNREFUSED)', async () => {
+    // Connect to a port nobody listens on. ECONNREFUSED bubbles via the
+    // socket 'error' handler into the connect() promise rejection.
+    const client = createClient({ host: '127.0.0.1', port: 1 });
+    await expect(client.connect()).rejects.toMatchObject({
+      name: 'MllpConnectionError',
+      phase: 'connect',
+    });
+  });
+
+  it('connect() with mid-attempt abort rejects with AbortError', async () => {
+    // Connect to an unreachable address with delayed abort. Because we cannot
+    // reliably guarantee timing for "between createConnection and connect",
+    // we use a bind to a routable but never-accepting address (192.0.2.1 is
+    // TEST-NET-1 — always unreachable per RFC 5737).
+    const ac = new AbortController();
+    const client = createClient({ host: '192.0.2.1', port: 12345 });
+    const p = client.connect({ signal: ac.signal });
+    // Allow createConnection to start before aborting
+    setImmediate(() => ac.abort());
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('close() resolves immediately when no Connection is attached', async () => {
+    const client = createClient({ host: '127.0.0.1', port: 1 });
+    await expect(client.close()).resolves.toBeUndefined();
+  });
+
+  it('close() pre-aborted signal rejects with AbortError', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const client = createClient({ host: '127.0.0.1', port: 1 });
+    await expect(client.close({ signal: ac.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  });
+
+  it('close() with mid-drain abort force-destroys connection and rejects', async () => {
+    const [a] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: a });
+    const client = createClient({ host: '127.0.0.1', port: 0 });
+    client._attachExistingConnection(conn);
+    conn.notifyConnect('127.0.0.1', 2575);
+
+    // Replace beforeClose with a never-resolving drain so we can abort it
+    conn.beforeClose = () => new Promise<void>(() => { /* never */ });
+
+    const ac = new AbortController();
+    const closePromise = client.close({ drainTimeoutMs: 60_000, signal: ac.signal });
+    setImmediate(() => ac.abort());
+    await expect(closePromise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(client.state).toBe('CLOSED');
+  });
+
+  it('destroy() is a no-op when no Connection is attached', () => {
+    const client = createClient({ host: '127.0.0.1', port: 1 });
+    expect(() => client.destroy()).not.toThrow();
+    // No connection attached -> falls through baseline state
+    expect(client.state).toBe('DISCONNECTED');
+  });
+
+  it('_attachExistingConnection throws if called twice', () => {
+    const [a] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: a });
+    const client = createClient({ host: '127.0.0.1', port: 0 });
+    client._attachExistingConnection(conn);
+
+    const [a2] = InMemoryTransport.pair();
+    const conn2 = new Connection({ transport: a2 });
+    expect(() => client._attachExistingConnection(conn2)).toThrow(
+      MllpConnectionError,
+    );
+  });
+
+  it('reconnecting event re-emits with frozen payload', () => {
+    // Force a stateChange CONNECTED -> RECONNECTING via the Connection FSM.
+    // The Connection itself does not auto-emit reconnecting in PLAN-01 scope,
+    // but it does emit when _transition routes through RECONNECTING. We can
+    // trigger this by sending a synthetic 'reconnecting' through the Connection.
+    const [a] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: a });
+    const client = createClient({ host: '127.0.0.1', port: 0 });
+    client._attachExistingConnection(conn);
+
+    const events: Array<{ connectionId: string }> = [];
+    client.on('reconnecting', (e: { connectionId: string }) => {
+      events.push(e);
+      expect(Object.isFrozen(e)).toBe(true);
+    });
+
+    conn.notifyConnect('127.0.0.1', 2575);
+    // Manually drive the Connection's emit (bypassing the FSM) — emulate Phase 5
+    // PLAN-04 behaviour without yet implementing it.
+    conn.emit(
+      'reconnecting',
+      Object.freeze({ connectionId: conn.connectionId, attempt: 1, delayMs: 100 }),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]?.connectionId).toBe(conn.connectionId);
+  });
+
+  it('connect() rejects when called twice without close (already-connected guard)', () => {
+    const [a] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: a });
+    const client = createClient({ host: '127.0.0.1', port: 0 });
+    client._attachExistingConnection(conn);
+    conn.notifyConnect('127.0.0.1', 2575);
+
+    return expect(client.connect()).rejects.toMatchObject({
+      name: 'MllpConnectionError',
+      phase: 'connect',
+    });
+  });
+});
