@@ -47,6 +47,63 @@ import type { PendingAck } from './correlator.js';
 import { MllpTimeoutError } from './error.js';
 
 /**
+ * Module-level "never aborts" sentinel for `RetryContext.signal` (D-18, W-07).
+ *
+ * When `connect()` is called WITHOUT a signal, `RetryContext.signal` must
+ * still be a real `AbortSignal` (the type is non-optional). This sentinel
+ * is constructed once and reused across all signal-less reconnect cycles
+ * — no new AbortController is allocated per cycle.
+ *
+ * The originating `AbortController` is held in module-private scope and
+ * never exposed; hostile callers cannot abort the sentinel (T-05-04-09).
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const NEVER_ABORTING_SIGNAL: AbortSignal = new AbortController().signal;
+
+/**
+ * Context passed to a custom `retryStrategy` hook on each reconnect attempt
+ * (CLIENT-12, D-15).
+ *
+ * Frozen via `Object.freeze` before invocation — handlers cannot mutate
+ * (T-05-04-04 mitigation).
+ *
+ * @example
+ * ```typescript
+ * const retryStrategy: RetryStrategy = (ctx) => {
+ *   if (ctx.attempt >= 5) return null;
+ *   if (ctx.classifiedAs === 'permanent') return null;
+ *   return Math.min(30_000, 1000 * (ctx.attempt + 1));
+ * };
+ * ```
+ */
+export interface RetryContext {
+  /** 0-indexed attempt counter for the current reconnect cycle. */
+  readonly attempt: number;
+  /** The error that triggered the disconnect. */
+  readonly lastError: Error;
+  /** Delay used for the previous attempt (ms). 0 on the first attempt. */
+  readonly lastDelayMs: number;
+  /** Total wall-clock ms elapsed since the disconnect that started this cycle. */
+  readonly totalElapsedMs: number;
+  /** Ms since the last successful ACK. `Infinity` if no success seen. */
+  readonly sinceLastSuccessMs: number;
+  /** CLIENT-18 classification (Composition A — D-16). */
+  readonly classifiedAs: 'transient' | 'permanent';
+  /**
+   * The same `AbortSignal` passed into `connect()`. If no signal was
+   * supplied, the module-level `NEVER_ABORTING_SIGNAL` sentinel is provided
+   * so handlers always have a real `AbortSignal` to inspect. (D-18, W-07)
+   */
+  readonly signal: AbortSignal;
+}
+
+/**
+ * Custom reconnect-backoff hook (CLIENT-12). Return `null` to halt
+ * reconnection (D-17) — the FSM transitions to `CLOSED`.
+ */
+export type RetryStrategy = (ctx: RetryContext) => number | null;
+
+/**
  * Options for {@link createClient} and the {@link MllpClient} constructor.
  *
  * Phase 5 plans extend this incrementally — new fields are additive and optional.
@@ -86,7 +143,31 @@ export interface ClientOptions {
    * @default false
    */
   readonly correlateByControlId?: boolean;
-  // PLAN-04 adds: autoReconnect?: boolean, retryStrategy?: RetryStrategy, initialDelayMs?: number, maxDelayMs?: number, multiplier?: number, jitter?: number
+  /**
+   * Auto-reconnect on transient disconnect (CLIENT-05). Default `false`.
+   *
+   * When `true`, dropped connections caused by transient errors (per
+   * {@link isTransientConnectionError}) trigger the FSM cycle
+   * `CONNECTED → DISCONNECTED → RECONNECTING → CONNECTING → CONNECTED`
+   * with exponential backoff per D-19 unless overridden by
+   * {@link ClientOptions.retryStrategy}. Permanent errors halt and
+   * transition directly to `CLOSED` (Composition A — D-16).
+   */
+  readonly autoReconnect?: boolean;
+  /**
+   * Custom reconnect-backoff hook (CLIENT-12, D-15). Return `null` to halt
+   * reconnection (D-17). Receives a frozen {@link RetryContext}. Defaults
+   * to the exponential strategy described in D-19.
+   */
+  readonly retryStrategy?: RetryStrategy;
+  /** First delay (ms) on auto-reconnect; default 100. (CLIENT-05, D-19) */
+  readonly initialDelayMs?: number;
+  /** Maximum backoff cap (ms); default 30_000. (CLIENT-05, D-19) */
+  readonly maxDelayMs?: number;
+  /** Backoff multiplier; default 2. (CLIENT-05, D-19) */
+  readonly multiplier?: number;
+  /** Jitter fraction, e.g. 0.2 = ±20%; default 0.2. (CLIENT-05, D-19) */
+  readonly jitter?: number;
   // PLAN-05 adds: highWaterMark, onBackpressure, pipeline, keepaliveIntervalMs, deadPeerTimeoutMs
 }
 

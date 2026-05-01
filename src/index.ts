@@ -52,6 +52,8 @@ export {
   MllpClient,
   createClient,
   type ClientOptions,
+  type RetryContext,
+  type RetryStrategy,
   MllpTimeoutError,
   isTransientConnectionError,
 } from './client/index.js';

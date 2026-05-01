@@ -55,13 +55,14 @@ describe('MllpTimeoutError (PLAN-02 / ERR-02)', () => {
     expect(err.stack).not.toMatch(/at new MllpTimeoutError/);
   });
 
-  it('Test 5: PLAN-02 sentinel is removed; PLAN-04 and PLAN-05 sentinels remain', async () => {
+  it('Test 5: PLAN-02 sentinel is removed; PLAN-05 sentinel remains (PLAN-04 filled in plan 04)', async () => {
     // Read the file directly to assert sentinel hygiene at the source level.
     const fs = await import('node:fs/promises');
     const url = new URL('../../src/client/error.ts', import.meta.url);
     const text = await fs.readFile(url, 'utf8');
     expect(text).not.toMatch(/PLAN-02 fills/);
-    expect(text).toMatch(/PLAN-04 fills/);
+    // PLAN-04 sentinel is removed once PLAN-04 fills isTransientConnectionError.
+    expect(text).not.toMatch(/PLAN-04 fills/);
     expect(text).toMatch(/PLAN-05 fills/);
   });
 });
