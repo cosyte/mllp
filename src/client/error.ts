@@ -3,7 +3,7 @@
  *
  * Exports:
  * - `MllpTimeoutError` (PLAN-02) — ACK timeout (ERR-02)
- * - `MllpBackpressureError` (PLAN-05) — high-water mark exceeded (ERR-04)
+ * - `MllpBackpressureError` — high-water mark exceeded (ERR-04, plan 05)
  * - `isTransientConnectionError` (PLAN-04) — transient/permanent classifier (CLIENT-18)
  *
  * Re-exported from `src/client/index.ts` and `src/index.ts`.
@@ -117,4 +117,55 @@ export function isTransientConnectionError(err: unknown): boolean {
   }
 }
 
-// PLAN-05 fills: MllpBackpressureError (ERR-04)
+/**
+ * Thrown (or rejects the `send()` promise) when the in-flight queue exceeds
+ * the configured high-water mark and `onBackpressure: 'reject'` is set
+ * (CLIENT-07, ERR-04).
+ *
+ * `highWaterMark` accepts a count cap, a byte cap, or both — when both are
+ * present, the stricter-of-two trigger wins (D-23).
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.send(payload);
+ * } catch (err) {
+ *   if (err instanceof MllpBackpressureError) {
+ *     logger.warn({
+ *       queueDepth: err.queueDepth,
+ *       queueBytes: err.queueBytes,
+ *       cap: err.highWaterMark,
+ *     });
+ *   }
+ * }
+ * ```
+ */
+export class MllpBackpressureError extends Error {
+  override readonly name = 'MllpBackpressureError' as const;
+
+  /** Number of in-flight + queued sends at the moment of rejection. */
+  readonly queueDepth: number;
+
+  /** Total bytes of in-flight + queued frames at the moment of rejection. */
+  readonly queueBytes: number;
+
+  /** The high-water-mark configuration that was triggered (D-23). */
+  readonly highWaterMark: { readonly count?: number; readonly bytes?: number };
+
+  constructor(
+    message: string,
+    opts: {
+      queueDepth: number;
+      queueBytes: number;
+      highWaterMark: { count?: number; bytes?: number };
+    },
+  ) {
+    super(message);
+    this.queueDepth = opts.queueDepth;
+    this.queueBytes = opts.queueBytes;
+    this.highWaterMark = opts.highWaterMark;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, MllpBackpressureError);
+    }
+  }
+}

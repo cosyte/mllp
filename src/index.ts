@@ -55,5 +55,6 @@ export {
   type RetryContext,
   type RetryStrategy,
   MllpTimeoutError,
+  MllpBackpressureError,
   isTransientConnectionError,
 } from './client/index.js';
