@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 5 planned 2026-04-30 — 6 plans across 3 waves; 22 REQ-IDs claimed across 05-01..05-06; checker passed iter 2. Ready to execute.
-last_updated: "2026-04-30T23:00:00.000Z"
+status: Phase 5 executing 2026-05-01 — Wave 1 (05-01 lifecycle) starting; Wave 2 (05-02..05-05) sequential due to client.ts/correlator.ts/error.ts/index.ts overlap; Wave 3 (05-06 starter+stats).
+last_updated: "2026-05-01T00:00:00.000Z"
 progress:
   total_phases: 8
   completed_phases: 4
