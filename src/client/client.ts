@@ -10,7 +10,7 @@
  * `destroy()`, event re-emission. PLAN-02 added `send()` + `MllpTimeoutError`.
  * The `correlateByControlId` option (MSH-10 → MSA-2 ACK matching) lights up
  * out-of-order ACK handling. Subsequent plans add auto-reconnect (Plan 04),
- * backpressure (PLAN-05), and `createStarterClient` + `getStats()` (PLAN-06).
+ * backpressure (Plan 05), and `createStarterClient` + `getStats()` (PLAN-06).
  *
  * @example
  * ```typescript
@@ -1078,13 +1078,10 @@ export class MllpClient extends EventEmitter {
     const belowCount = corr.size < this._hwmCount;
     const belowBytes = corr.queueBytes < this._hwmBytes;
     if (belowCount && belowBytes) {
-      this.emit(
-        'drain',
-        Object.freeze({
-          queueDepth: corr.size,
-          queueBytes: corr.queueBytes,
-        }),
-      );
+      this.emit('drain', Object.freeze({
+        queueDepth: corr.size,
+        queueBytes: corr.queueBytes,
+      }));
     }
   }
 
@@ -1092,10 +1089,10 @@ export class MllpClient extends EventEmitter {
    * Single source-of-truth for Connection FSM transitions.
    *
    * PLAN-02: re-emit frozen 'stateChange' (was inline in PLAN-01; centralized
-   * here so Plan 04 / PLAN-05 can extend at named anchors).
+   * here so Plan 04 / Plan 05 can extend at named anchors).
    * Plan 04 extends at HOOK_EXTENSION_POINT: state-change to detect
    *   CONNECTED → DISCONNECTED|RECONNECTING and trigger _handleDisconnect.
-   * PLAN-05 extends at HOOK_EXTENSION_POINT: state-change to clear/arm
+   * Plan 05 extends at HOOK_EXTENSION_POINT: state-change to clear/arm
    *   dead-peer timer on transitions out of / into CONNECTED.
    *
    * Called from the SINGLE 'stateChange' listener registered in _attachConnection.
