@@ -9,7 +9,7 @@
  * Phase 5 PLAN-01 shipped the lifecycle scaffolding — `connect()`, `close()`,
  * `destroy()`, event re-emission. PLAN-02 added `send()` + `MllpTimeoutError`.
  * The `correlateByControlId` option (MSH-10 → MSA-2 ACK matching) lights up
- * out-of-order ACK handling. Subsequent plans add auto-reconnect (PLAN-04),
+ * out-of-order ACK handling. Subsequent plans add auto-reconnect (Plan 04),
  * backpressure (PLAN-05), and `createStarterClient` + `getStats()` (PLAN-06).
  *
  * @example
@@ -44,7 +44,7 @@ import {
   extractMsaControlId,
 } from './correlator.js';
 import type { PendingAck } from './correlator.js';
-import { MllpTimeoutError } from './error.js';
+import { MllpTimeoutError, isTransientConnectionError } from './error.js';
 
 /**
  * Module-level "never aborts" sentinel for `RetryContext.signal` (D-18, W-07).
@@ -57,7 +57,6 @@ import { MllpTimeoutError } from './error.js';
  * The originating `AbortController` is held in module-private scope and
  * never exposed; hostile callers cannot abort the sentinel (T-05-04-09).
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const NEVER_ABORTING_SIGNAL: AbortSignal = new AbortController().signal;
 
 /**
@@ -179,7 +178,7 @@ export interface ClientOptions {
  * - `'stateChange'` — `{ from, to, reason? }` from the underlying Connection FSM
  * - `'connect'` — `{ connectionId }` once the FSM enters `CONNECTED`
  * - `'disconnect'` — `{ connectionId }` once the FSM enters `DISCONNECTED`
- * - `'reconnecting'` — `{ connectionId, attempt?, delayMs? }` (PLAN-04 populates)
+ * - `'reconnecting'` — `{ connectionId, attempt?, delayMs? }` (Plan 04 populates)
  * - `'close'` — `{ connectionId }` once the FSM enters terminal `CLOSED`
  * - `'message'` — `{ payload, connectionId, byteOffset, warnings }` for every inbound frame
  * - `'warning'` — `MllpWarning` enriched with `connectionId` from the Connection layer
@@ -218,11 +217,59 @@ export class MllpClient extends EventEmitter {
    */
   private _ackSweepTimer: ReturnType<typeof setInterval> | null = null;
 
+  // ── Reconnect state (Plan 04, CLIENT-05/06/12/17/18) ─────────────────────
+  private readonly _autoReconnect: boolean;
+  private readonly _initialDelayMs: number;
+  private readonly _maxDelayMs: number;
+  private readonly _multiplier: number;
+  private readonly _jitter: number;
+  private readonly _retryStrategy: RetryStrategy | undefined;
+
+  /** 0-indexed attempt counter for the current reconnect cycle. */
+  private _attempt = 0;
+  /**
+   * W-02 — total reconnect attempts since construction. Read by PLAN-06 for
+   * `getStats().reconnectAttempts`. Incremented at the entry of every
+   * `_handleDisconnect` invocation that proceeds to schedule a backoff.
+   */
+  private _reconnectAttempts = 0;
+  /** Epoch ms of the last successful ACK. Drives W-01 backoff-reset. */
+  private _lastSuccessAt: number | null = null;
+  /** Epoch ms when the current reconnect cycle began. `null` outside a cycle. */
+  private _reconnectCycleStartedAt: number | null = null;
+  /** Active backoff `setTimeout` handle. `null` when no backoff is armed. */
+  private _backoffTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Last delay (ms) used by the strategy. Surfaced via RetryContext.lastDelayMs. */
+  private _lastDelayMs = 0;
+  /** Most recently bound `connect()` signal. Reread on every RetryContext build (W-07). */
+  private _connectSignal: AbortSignal | undefined;
+  /** Set when close()/destroy()/abort fires; reconnect handler short-circuits. */
+  private _userClosed = false;
+  /** Captured Connection error feeding `RetryContext.lastError`. */
+  private _lastError: Error | null = null;
+  /** Listener-removal handle for the abort listener bound in connect(). */
+  private _abortListener: { signal: AbortSignal; handler: () => void } | null = null;
+  /**
+   * Test-only seam — when set, `_beginReconnectAttempt` builds the new
+   * Connection through this factory instead of opening a real net.Socket.
+   *
+   * @internal
+   */
+  private _reconnectFactory:
+    | (() => { conn: Connection; arm: () => void })
+    | null = null;
+
   constructor(opts: ClientOptions) {
     super();
     this._opts = opts;
     this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
     this._correlateByControlId = opts.correlateByControlId === true;
+    this._autoReconnect = opts.autoReconnect === true;
+    this._initialDelayMs = opts.initialDelayMs ?? 100;
+    this._maxDelayMs = opts.maxDelayMs ?? 30_000;
+    this._multiplier = opts.multiplier ?? 2;
+    this._jitter = opts.jitter ?? 0.2;
+    this._retryStrategy = opts.retryStrategy;
   }
 
   /**
@@ -272,6 +319,13 @@ export class MllpClient extends EventEmitter {
           phase: 'connect',
         }),
       );
+    }
+
+    // Capture the connect signal for the reconnect cycle (W-07). Each call
+    // overwrites the prior binding; `RetryContext.signal` reads `_connectSignal`
+    // at the moment a RetryContext is built.
+    if (signal !== undefined) {
+      this._captureConnectSignal(signal);
     }
 
     return new Promise<void>((resolve, reject) => {
@@ -360,65 +414,75 @@ export class MllpClient extends EventEmitter {
    * @param conn - Connection to subscribe to.
    */
   private _attachConnection(conn: Connection): void {
-    // Build the correlator before wiring listeners so the inbound 'message'
-    // hand-off has a live store to consult.
-    this._correlator = new Correlator({
-      mode: this._correlateByControlId ? 'controlId' : 'fifo',
-      ackTimeoutMs: this._ackTimeoutMs,
-      onWarning: (code, ctx) => {
-        this.emit(
-          'warning',
-          Object.freeze({
-            code,
-            byteOffset: ctx.byteOffset,
-            message: `${code}: controlId=${ctx.controlId} elapsed=${ctx.elapsedSinceSendMs}ms`,
-            connectionId: conn.connectionId,
-            timestamp: new Date(),
-          }),
-        );
-      },
-      onUnmatchedAck: (controlId) => {
-        // CLIENT-15: unmatched ACK in controlId mode. Emit a frozen
-        // MllpFramingError('MLLP_ACK_UNMATCHED_CONTROL_ID') to the 'error'
-        // event. listenerCount-guarded so absent listeners don't crash the
-        // process (T-05-03-02 mitigation).
-        if (this.listenerCount('error') === 0) return;
-        const err = new MllpFramingError(
-          'MLLP_ACK_UNMATCHED_CONTROL_ID',
-          0,
-          Buffer.alloc(0),
-          `Unmatched ACK control ID${controlId === '' ? '' : `: ${controlId}`}`,
-        );
-        this.emit(
-          'error',
-          Object.freeze({
-            connectionId: conn.connectionId,
-            error: err,
-            controlId,
-          }),
-        );
-      },
-      onTimeout: (entry, elapsedMs) => {
-        entry.reject(
-          new MllpTimeoutError(`ACK timeout after ${elapsedMs}ms`, {
-            messageControlId: entry.controlId ?? undefined,
-            elapsedMs,
-            sentAt: entry.sentAt ?? 0,
-          }),
-        );
-      },
-    });
+    // Plan 04 — preserve correlator state across reconnect cycles. In
+    // controlId mode, in-flight sends are re-transmitted on the new
+    // connection (D-08 / CLIENT-17), so the correlator must survive the
+    // transition. The closures below dereference `this._connection`
+    // lazily so they always see the CURRENT connection (not the dead
+    // one captured at attach-time).
+    if (this._correlator === null) {
+      this._correlator = new Correlator({
+        mode: this._correlateByControlId ? 'controlId' : 'fifo',
+        ackTimeoutMs: this._ackTimeoutMs,
+        onWarning: (code, ctx) => {
+          this.emit(
+            'warning',
+            Object.freeze({
+              code,
+              byteOffset: ctx.byteOffset,
+              message: `${code}: controlId=${ctx.controlId} elapsed=${ctx.elapsedSinceSendMs}ms`,
+              connectionId:
+                this._connection?.connectionId ?? conn.connectionId,
+              timestamp: new Date(),
+            }),
+          );
+        },
+        onUnmatchedAck: (controlId) => {
+          // CLIENT-15: unmatched ACK in controlId mode. Emit a frozen
+          // MllpFramingError('MLLP_ACK_UNMATCHED_CONTROL_ID') to the 'error'
+          // event. listenerCount-guarded so absent listeners don't crash the
+          // process (T-05-03-02 mitigation).
+          if (this.listenerCount('error') === 0) return;
+          const err = new MllpFramingError(
+            'MLLP_ACK_UNMATCHED_CONTROL_ID',
+            0,
+            Buffer.alloc(0),
+            `Unmatched ACK control ID${controlId === '' ? '' : `: ${controlId}`}`,
+          );
+          this.emit(
+            'error',
+            Object.freeze({
+              connectionId:
+                this._connection?.connectionId ?? conn.connectionId,
+              error: err,
+              controlId,
+            }),
+          );
+        },
+        onTimeout: (entry, elapsedMs) => {
+          entry.reject(
+            new MllpTimeoutError(`ACK timeout after ${elapsedMs}ms`, {
+              messageControlId: entry.controlId ?? undefined,
+              elapsedMs,
+              sentAt: entry.sentAt ?? 0,
+            }),
+          );
+        },
+      });
+    }
 
     // Periodic sweep: smaller of (ackTimeoutMs / 4) and 1000 ms; floor 50 ms.
     // .unref() so this timer never keeps the process alive.
-    const sweepIntervalMs = Math.max(
-      50,
-      Math.min(1000, Math.floor(this._ackTimeoutMs / 4)),
-    );
-    this._ackSweepTimer = setInterval(() => {
-      this._correlator?.expireDue();
-    }, sweepIntervalMs);
-    this._ackSweepTimer.unref();
+    if (this._ackSweepTimer === null) {
+      const sweepIntervalMs = Math.max(
+        50,
+        Math.min(1000, Math.floor(this._ackTimeoutMs / 4)),
+      );
+      this._ackSweepTimer = setInterval(() => {
+        this._correlator?.expireDue();
+      }, sweepIntervalMs);
+      this._ackSweepTimer.unref();
+    }
 
     // Single 'stateChange' listener delegates to _onStateChange (B-04 anchor).
     conn.on('stateChange', (e: StateChangeEvent) => {
@@ -454,6 +518,20 @@ export class MllpClient extends EventEmitter {
       this.emit('warning', w);
     });
     conn.on('error', (e: unknown) => {
+      // Plan 04: capture the underlying Error for `RetryContext.lastError`.
+      // The Connection emits frozen `{ connectionId, error: MllpConnectionError }`
+      // payloads. We unwrap to the original transport error so the CLIENT-18
+      // classifier (which inspects `err.code`) receives the OS-level code.
+      const wrapper =
+        e instanceof Error
+          ? e
+          : (e as { error?: unknown })?.error;
+      if (wrapper instanceof Error) {
+        // If the wrapper has a `.cause` Error (MllpConnectionError pattern),
+        // prefer the inner cause for classification.
+        const inner = (wrapper as { cause?: unknown }).cause;
+        this._lastError = inner instanceof Error ? inner : wrapper;
+      }
       // Server precedent: only re-emit if a listener is attached, to avoid
       // ERR_UNHANDLED_ERROR crashing the process (T-05-01-03 mitigation).
       if (this.listenerCount('error') > 0) {
@@ -461,6 +539,299 @@ export class MllpClient extends EventEmitter {
       }
     });
     this._connection = conn;
+  }
+
+  /**
+   * Disconnect handler — Plan 04 reconnect FSM core.
+   *
+   * Implements:
+   * - CLIENT-17 hybrid in-flight handling (D-08): controlId mode preserves
+   *   pending sends for resend; FIFO mode rejects in-flight with
+   *   `connectionCause: 'in-flight-orphan'` and queued with `'fifo-unsafe'`.
+   * - CLIENT-18 classifier-first (Composition A — D-16): permanent errors
+   *   transition straight to CLOSED without invoking `retryStrategy`.
+   * - W-01 backoff-reset on recent success: first disconnect after a
+   *   successful ACK on the prior session resets `_attempt` to 0.
+   * - W-02 `_reconnectAttempts` counter increment.
+   * - D-15 frozen RetryContext + D-17 null-return halts.
+   * - D-19 default exponential strategy.
+   *
+   * Invoked from the SINGLE `_onStateChange` hook — no parallel listener
+   * (B-04). Idempotent across same-cycle re-entry: cycle-start flag
+   * coordinates first-disconnect vs subsequent-within-cycle behavior.
+   */
+  private _handleDisconnect(err: Error): void {
+    if (this._userClosed) return;
+
+    // CLIENT-17 hybrid: handle queued + in-flight sends per mode.
+    if (this._correlator !== null) {
+      if (this._correlateByControlId) {
+        // Hold sends for resend after reconnect — DO NOT clear or reject.
+        // The correlator's live store survives the FSM transition; the
+        // entries are re-transmitted in `_beginReconnectAttempt` once the
+        // new Connection enters CONNECTED.
+      } else {
+        // FIFO: split between in-flight (sentAt set) and queued (sentAt null).
+        // In-flight sends → 'in-flight-orphan'; queued sends → 'fifo-unsafe'.
+        const orphans: PendingAck[] = [];
+        const queued: PendingAck[] = [];
+        for (const entry of this._correlator.liveEntries()) {
+          if (entry.sentAt !== null) orphans.push(entry);
+          else queued.push(entry);
+        }
+        for (const o of orphans) {
+          o.reject(
+            new MllpConnectionError('in-flight send orphaned by reconnect', {
+              cause: err,
+              phase: 'reconnect',
+              connectionCause: 'in-flight-orphan',
+            }),
+          );
+        }
+        for (const q of queued) {
+          q.reject(
+            new MllpConnectionError('queued send rejected by FIFO reconnect', {
+              cause: err,
+              phase: 'reconnect',
+              connectionCause: 'fifo-unsafe',
+            }),
+          );
+        }
+        for (const entry of [...orphans, ...queued]) {
+          this._correlator.remove(entry.key);
+        }
+      }
+    }
+
+    // CLIENT-18 classification first (Composition A — D-16). Permanent
+    // errors transition directly to CLOSED without invoking retryStrategy.
+    const classifiedAs: 'transient' | 'permanent' = isTransientConnectionError(err)
+      ? 'transient'
+      : 'permanent';
+    if (classifiedAs === 'permanent') {
+      // Halt: force the dead Connection to CLOSED (terminal); future
+      // connect() must be called explicitly.
+      this._userClosed = true;
+      this._connection?.destroy(err);
+      return;
+    }
+
+    // W-02: bump the global reconnect-attempts counter once per disconnect
+    // entering a cycle. PLAN-06 reads this for getStats().reconnectAttempts.
+    this._reconnectAttempts += 1;
+
+    // W-01: backoff reset on recent success.
+    // First disconnect AFTER any successful ACK on the prior session
+    // (`_reconnectCycleStartedAt === null` AND `_lastSuccessAt !== null`)
+    // resets attempt to 0. Subsequent disconnects within the same cycle
+    // do NOT re-reset — the cycle-start flag persists.
+    if (this._reconnectCycleStartedAt === null && this._lastSuccessAt !== null) {
+      this._attempt = 0;
+    }
+    if (this._reconnectCycleStartedAt === null) {
+      this._reconnectCycleStartedAt = Date.now();
+    }
+
+    // Build RetryContext (W-07: NEVER_ABORTING_SIGNAL when no caller signal).
+    const ctx: RetryContext = Object.freeze({
+      attempt: this._attempt,
+      lastError: err,
+      lastDelayMs: this._lastDelayMs,
+      totalElapsedMs: Date.now() - this._reconnectCycleStartedAt,
+      sinceLastSuccessMs:
+        this._lastSuccessAt !== null
+          ? Date.now() - this._lastSuccessAt
+          : Number.POSITIVE_INFINITY,
+      classifiedAs,
+      signal: this._connectSignal ?? NEVER_ABORTING_SIGNAL,
+    });
+
+    // Invoke strategy (T-05-04-05: defensive try/catch — caller-supplied hook).
+    let delay: number | null;
+    try {
+      const strategy = this._retryStrategy ?? this._defaultRetryStrategy;
+      delay = strategy(ctx);
+    } catch (hookErr) {
+      // Strategy threw — bail to CLOSED, surface error.
+      this._lastError =
+        hookErr instanceof Error ? hookErr : new Error(String(hookErr));
+      if (this.listenerCount('error') > 0) {
+        this.emit(
+          'error',
+          Object.freeze({
+            connectionId: this._connection?.connectionId ?? '<none>',
+            error: this._lastError,
+          }),
+        );
+      }
+      this._userClosed = true;
+      this._connection?.destroy(this._lastError);
+      return;
+    }
+
+    if (delay === null) {
+      // D-17 null-return halt → CLOSED.
+      this._userClosed = true;
+      this._connection?.destroy(err);
+      return;
+    }
+
+    // Emit 'reconnecting' with populated fields (Phase 3 D-CR-01 promise).
+    this.emit(
+      'reconnecting',
+      Object.freeze({
+        connectionId: this._connection?.connectionId ?? '<none>',
+        attempt: this._attempt,
+        delayMs: delay,
+      }),
+    );
+
+    // Schedule next CONNECTING attempt. .unref() so the timer never keeps
+    // the process alive (test-suite ergonomics).
+    this._lastDelayMs = delay;
+    this._backoffTimer = setTimeout(() => {
+      this._backoffTimer = null;
+      this._attempt += 1;
+      this._beginReconnectAttempt();
+    }, delay);
+    this._backoffTimer.unref();
+  }
+
+  /**
+   * Default retry strategy (D-19): `min(maxDelay, initialDelay * multiplier^attempt)`
+   * with ±jitter applied.
+   */
+  private _defaultRetryStrategy = (ctx: RetryContext): number => {
+    const base = Math.min(
+      this._maxDelayMs,
+      this._initialDelayMs * Math.pow(this._multiplier, ctx.attempt),
+    );
+    const jitterFactor = 1 + (Math.random() * 2 - 1) * this._jitter;
+    return Math.max(0, Math.floor(base * jitterFactor));
+  };
+
+  /**
+   * Open a fresh Connection for the next reconnect attempt.
+   *
+   * In production, builds a new `net.Socket` + `NetTransport` + `Connection`.
+   * In tests, the `_reconnectFactory` seam returns a pre-built Connection
+   * over `InMemoryTransport.pair()`.
+   *
+   * On successful CONNECTED transition:
+   * - controlId mode: re-transmits every live correlator entry via the
+   *   already-encoded `PendingAck.frame`, then `markFlushed`'s each one
+   *   so ACK timeouts restart from the new flush time.
+   * - All modes: clears the cycle-start flag so the next disconnect
+   *   can re-enter `_handleDisconnect` cleanly.
+   */
+  private _beginReconnectAttempt(): void {
+    if (this._userClosed) return;
+    try {
+      let conn: Connection;
+      let arm: () => void;
+      if (this._reconnectFactory !== null) {
+        ({ conn, arm } = this._reconnectFactory());
+      } else {
+        // Phase 6: wire TlsTransport here when opts.tls is provided
+        const socket = createConnection({
+          host: this._opts.host,
+          port: this._opts.port,
+        });
+        this._socket = socket;
+        const transport = new NetTransport(socket);
+        const connOpts = this._opts.framing !== undefined
+          ? { transport, framing: this._opts.framing }
+          : { transport };
+        if (this._opts.drainTimeoutMs !== undefined) {
+          (connOpts as { drainTimeoutMs?: number }).drainTimeoutMs =
+            this._opts.drainTimeoutMs;
+        }
+        conn = new Connection(connOpts);
+        arm = (): void => {
+          conn.notifyConnect(
+            socket.remoteAddress ?? null,
+            socket.remotePort ?? null,
+          );
+        };
+        socket.once('error', (sErr) => {
+          if (this._lastError === null || this._lastError.message !== sErr.message) {
+            this._lastError = sErr;
+          }
+        });
+        socket.once('connect', () => {
+          arm();
+          this._afterReconnectArmed();
+        });
+        // Replace prior Connection. Drop the dead reference; new Connection
+        // is wired below.
+        this._connection = null;
+        this._attachConnection(conn);
+        return;
+      }
+      // Test-seam path
+      this._connection = null;
+      this._attachConnection(conn);
+      arm();
+      this._afterReconnectArmed();
+    } catch (err) {
+      this._lastError = err instanceof Error ? err : new Error(String(err));
+      this._handleDisconnect(this._lastError);
+    }
+  }
+
+  /**
+   * Post-CONNECTED steps for a reconnect attempt:
+   * - controlId mode: resend every live correlator entry's frame, then
+   *   re-stamp `markFlushed` so ACK timers reset from the new flush.
+   * - Clear the cycle-start flag so the next disconnect re-enters cleanly.
+   */
+  private _afterReconnectArmed(): void {
+    if (this._correlateByControlId && this._correlator !== null && this._connection !== null) {
+      const conn = this._connection;
+      const corr = this._correlator;
+      const entries = [...corr.liveEntries()];
+      for (const entry of entries) conn.send(entry.frame);
+      const now = Date.now();
+      for (const entry of entries) corr.markFlushed(entry.key, now);
+    }
+    this._reconnectCycleStartedAt = null;
+  }
+
+  /**
+   * Test seam — install a factory that produces the next reconnect Connection.
+   *
+   * @internal
+   */
+  _setReconnectFactory(
+    factory: () => { conn: Connection; arm: () => void },
+  ): void {
+    this._reconnectFactory = factory;
+  }
+
+  /**
+   * Test seam — capture or rebind the connect-signal mid-flight (W-07).
+   *
+   * @internal
+   */
+  _captureConnectSignal(signal: AbortSignal): void {
+    this._connectSignal = signal;
+    if (this._abortListener !== null) {
+      this._abortListener.signal.removeEventListener(
+        'abort',
+        this._abortListener.handler,
+      );
+      this._abortListener = null;
+    }
+    const handler = (): void => {
+      this._userClosed = true;
+      if (this._backoffTimer !== null) {
+        clearTimeout(this._backoffTimer);
+        this._backoffTimer = null;
+      }
+      this._connection?.destroy(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', handler, { once: true });
+    this._abortListener = { signal, handler };
   }
 
   /**
@@ -495,7 +866,7 @@ export class MllpClient extends EventEmitter {
    * Single source-of-truth for a successfully matched ACK (live-store hit).
    *
    * PLAN-02: emit frozen 'ack' event, call matched.resolve().
-   * PLAN-04 extends at HOOK_EXTENSION_POINT: ack-matched to update _lastSuccessAt.
+   * Plan 04 extends at HOOK_EXTENSION_POINT: ack-matched to update _lastSuccessAt.
    * PLAN-06 extends at HOOK_EXTENSION_POINT: ack-matched to bump _ackedTotal and
    *   set _lastAckAt.
    *
@@ -513,7 +884,10 @@ export class MllpClient extends EventEmitter {
       }),
     );
     // HOOK_EXTENSION_POINT: ack-matched
-    // PLAN-04 inserts: this._lastSuccessAt = Date.now();
+    // Plan 04 — backoff-reset signal (W-01): record the most recent successful
+    // ACK so the next disconnect resets attempt counter to 0 if it's the
+    // first disconnect AFTER a successful exchange on the prior session.
+    this._lastSuccessAt = Date.now();
     // PLAN-06 inserts: this._ackedTotal += 1; this._lastAckAt = Date.now();
     matched.resolve(ackPayload);
     // PLAN-05 extends after this point at the same anchor to emit 'drain' when
@@ -524,8 +898,8 @@ export class MllpClient extends EventEmitter {
    * Single source-of-truth for Connection FSM transitions.
    *
    * PLAN-02: re-emit frozen 'stateChange' (was inline in PLAN-01; centralized
-   * here so PLAN-04 / PLAN-05 can extend at named anchors).
-   * PLAN-04 extends at HOOK_EXTENSION_POINT: state-change to detect
+   * here so Plan 04 / PLAN-05 can extend at named anchors).
+   * Plan 04 extends at HOOK_EXTENSION_POINT: state-change to detect
    *   CONNECTED → DISCONNECTED|RECONNECTING and trigger _handleDisconnect.
    * PLAN-05 extends at HOOK_EXTENSION_POINT: state-change to clear/arm
    *   dead-peer timer on transitions out of / into CONNECTED.
@@ -535,7 +909,35 @@ export class MllpClient extends EventEmitter {
   private _onStateChange(e: StateChangeEvent): void {
     this.emit('stateChange', Object.freeze({ ...e }));
     // HOOK_EXTENSION_POINT: state-change
-    // PLAN-04 inserts disconnect-detection branch.
+    // Plan 04 — disconnect detection (CLIENT-05/06/17). Trigger
+    // `_handleDisconnect` on transitions out of CONNECTED into a
+    // disconnect-leaning state, OR on a CONNECTING/RECONNECTING attempt
+    // failing into CLOSED while we are inside a reconnect cycle (so the
+    // cycle continues incrementing `_attempt`). The cycle-start flag plus
+    // `_userClosed` guard against re-entry.
+    const isPostConnectedDrop =
+      e.from === 'CONNECTED' &&
+      (e.to === 'DISCONNECTED' || e.to === 'RECONNECTING' || e.to === 'CLOSED');
+    const isReconnectAttemptFailure =
+      this._reconnectCycleStartedAt !== null &&
+      (e.from === 'CONNECTING' || e.from === 'RECONNECTING') &&
+      (e.to === 'CLOSED' || e.to === 'DISCONNECTED');
+    if (isPostConnectedDrop || isReconnectAttemptFailure) {
+      const cause = this._lastError ?? new Error(e.reason ?? 'disconnect');
+      if (this._userClosed) return;
+      if (!this._autoReconnect) {
+        // Reject pending sends — same teardown path as close() but with a
+        // disconnect-flavored MllpConnectionError so callers see the cause.
+        this._teardownCorrelator(
+          new MllpConnectionError('disconnected; autoReconnect disabled', {
+            cause,
+            phase: 'send',
+          }),
+        );
+        return;
+      }
+      this._handleDisconnect(cause);
+    }
     // PLAN-05 inserts dead-peer timer arm/clear branch.
   }
 
@@ -601,7 +1003,7 @@ export class MllpClient extends EventEmitter {
       };
       // The Connection sends RAW bytes — frame the payload here (matches the
       // Phase 4 server pattern `conn.send(encodeFrame(ack))`). The frame is
-      // what we hand to `enqueue()` so PLAN-04's reconnect-resend path can
+      // what we hand to `enqueue()` so Plan 04's reconnect-resend path can
       // re-emit identical bytes.
       const frame = encodeFrame(payload);
       const key = correlator.enqueue(
@@ -697,6 +1099,13 @@ export class MllpClient extends EventEmitter {
       return Promise.reject(new DOMException('Aborted', 'AbortError'));
     }
 
+    // Plan 04: suppress reconnect for the rest of this client's lifetime.
+    this._userClosed = true;
+    if (this._backoffTimer !== null) {
+      clearTimeout(this._backoffTimer);
+      this._backoffTimer = null;
+    }
+
     const conn = this._connection;
     if (conn === null) {
       // No connection attached; still tear down any stray correlator state
@@ -761,6 +1170,12 @@ export class MllpClient extends EventEmitter {
    * ```
    */
   destroy(reason?: Error): void {
+    // Plan 04: suppress reconnect for the rest of this client's lifetime.
+    this._userClosed = true;
+    if (this._backoffTimer !== null) {
+      clearTimeout(this._backoffTimer);
+      this._backoffTimer = null;
+    }
     const teardownReason =
       reason ??
       new MllpConnectionError('client destroyed', {

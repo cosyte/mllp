@@ -198,7 +198,7 @@ describe('MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)', () => {
     await h.client.close();
   });
 
-  it('Test 4: W-01 backoff-reset semantics — first disconnect after success resets attempt to 0', async () => {
+  it('Test 4: W-01 backoff-reset — first disconnect after success resets attempt; subsequent within same cycle do NOT re-reset', async () => {
     const attempts: number[] = [];
     const h = buildHarness({
       autoReconnect: true,
@@ -208,19 +208,38 @@ describe('MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)', () => {
         return 5;
       },
     });
-    // Simulate prior reconnect cycle bumping _attempt
+    // Simulate prior reconnect cycle bumping _attempt to 3 (no success between).
     (h.client as unknown as { _attempt: number })._attempt = 3;
-    // Mark a successful ACK to set _lastSuccessAt
+    // Mark a successful ACK to set _lastSuccessAt — first disconnect after this
+    // should reset attempt to 0 (W-01).
     (h.client as unknown as { _lastSuccessAt: number })._lastSuccessAt = Date.now();
 
     h.dropTransient();
-    await vi.advanceTimersByTimeAsync(1);
-    // First call after success resets to 0
+    // Strategy is invoked synchronously during _handleDisconnect — no timer
+    // advance needed to capture attempts[0].
     expect(attempts[0]).toBe(0);
-    // Second drop within the same cycle — should NOT reset (still in cycle).
-    h.dropTransient();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(attempts[1]).toBeGreaterThanOrEqual(1);
+
+    // Verify the cycle-start flag is set (cycle started).
+    const startedAt =
+      (h.client as unknown as { _reconnectCycleStartedAt: number | null })
+        ._reconnectCycleStartedAt;
+    expect(startedAt).not.toBeNull();
+
+    // Simulate a second disconnect within the same cycle by directly invoking
+    // _handleDisconnect with a synthetic transient error. (A real second drop
+    // on an already-DISCONNECTED transport is a no-op.)
+    (h.client as unknown as { _attempt: number })._attempt = 5;
+    (
+      h.client as unknown as { _handleDisconnect: (e: Error) => void }
+    )._handleDisconnect(
+      Object.assign(new Error('again'), { code: 'ECONNRESET' }) as Error,
+    );
+    // Same cycle — the reset path SHOULD NOT fire (cycle-start flag is set).
+    // The strategy is invoked with the current `_attempt` value (5), proving
+    // the W-01 reset didn't repeat.
+    expect(attempts.length).toBe(2);
+    expect(attempts[1]).toBe(5);
+
     await h.client.close();
   });
 
@@ -336,19 +355,34 @@ describe('MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)', () => {
       },
     });
     h.dropTransient();
-    await vi.advanceTimersByTimeAsync(1);
     expect(observed[0]).toBe(acA.signal);
-    // Now rebind to signal B mid-backoff (simulating second connect call).
+    // Rebind to signal B mid-backoff (simulating a second connect() call
+    // with a different AbortSignal).
     (
       h.client as unknown as { _captureConnectSignal: (s: AbortSignal) => void }
     )._captureConnectSignal(acB.signal);
-    h.dropTransient();
-    await vi.advanceTimersByTimeAsync(1);
+    // Trigger a second disconnect within the same cycle via the seam.
+    (
+      h.client as unknown as { _handleDisconnect: (e: Error) => void }
+    )._handleDisconnect(
+      Object.assign(new Error('again'), { code: 'ECONNRESET' }) as Error,
+    );
     expect(observed[1]).toBe(acB.signal);
-    // Cleanup — abort controllers fire abort handlers
-    acA.abort();
-    acB.abort();
-    await vi.advanceTimersByTimeAsync(2000);
+
+    // Test no-signal path: detach by clearing _connectSignal — next ctx
+    // should carry NEVER_ABORTING_SIGNAL sentinel.
+    (
+      h.client as unknown as { _connectSignal: AbortSignal | undefined }
+    )._connectSignal = undefined;
+    (
+      h.client as unknown as { _handleDisconnect: (e: Error) => void }
+    )._handleDisconnect(
+      Object.assign(new Error('again2'), { code: 'ECONNRESET' }) as Error,
+    );
+    expect(observed[2]).toBeInstanceOf(AbortSignal);
+    expect(observed[2]!.aborted).toBe(false);
+    // Cleanup
+    h.client.destroy();
   });
 
   it('Test 11: default initialDelayMs=100, maxDelayMs=30000, multiplier=2, jitter=0.2 (D-19)', () => {
@@ -442,11 +476,15 @@ describe('MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)', () => {
       reconnecting = true;
     });
     const sendP = h.client.send(Buffer.from('X'));
+    // Attach a no-op catch handler immediately so the rejection is observed
+    // before any other microtask / timer advance can flag "unhandled".
+    const tracked = sendP.catch((err: unknown) => err);
     await Promise.resolve();
     h.dropTransient();
     await vi.advanceTimersByTimeAsync(20);
     expect(reconnecting).toBe(false);
-    await expect(sendP).rejects.toBeInstanceOf(Error);
+    const err = await tracked;
+    expect(err).toBeInstanceOf(Error);
     expect(h.client.state).not.toBe('CONNECTED');
   });
 
