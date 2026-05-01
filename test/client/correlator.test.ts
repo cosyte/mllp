@@ -294,4 +294,66 @@ describe('Correlator (PLAN-02 FIFO mode)', () => {
     const _w: MllpWarning | undefined = undefined;
     expect(_w).toBeUndefined();
   });
+
+  // PLAN-06 — inFlight counter maintenance (D-26 + B-01)
+  it('Test 13 (PLAN-06): _inFlight counter is maintained across markFlushed/remove/expireDue/matchAck/clear', () => {
+    const { correlator, setNow } = harness();
+    const k1 = correlator.enqueue(Buffer.from('A'), null, noop, noopReject) as number;
+    const k2 = correlator.enqueue(Buffer.from('B'), null, noop, noopReject) as number;
+    const k3 = correlator.enqueue(Buffer.from('C'), null, noop, noopReject) as number;
+    // Pre-flush: size=3, inFlight=0
+    expect(correlator.getStats().size).toBe(3);
+    expect(correlator.getStats().inFlight).toBe(0);
+
+    setNow(2_000);
+    correlator.markFlushed(k1, 2_000);
+    expect(correlator.getStats().inFlight).toBe(1);
+    expect(correlator.getStats().size).toBe(3);
+
+    correlator.markFlushed(k2, 2_000);
+    expect(correlator.getStats().inFlight).toBe(2);
+
+    // Idempotent: re-marking k1 should NOT double-increment
+    correlator.markFlushed(k1, 2_500);
+    expect(correlator.getStats().inFlight).toBe(2);
+
+    // remove() on flushed entry decrements
+    const removed = correlator.remove(k1);
+    expect(removed).not.toBeNull();
+    expect(correlator.getStats().inFlight).toBe(1);
+    expect(correlator.getStats().size).toBe(2);
+
+    // expireDue on the second (flushed) entry decrements via timeout
+    setNow(2_000 + 1_001);
+    correlator.expireDue();
+    expect(correlator.getStats().inFlight).toBe(0);
+    expect(correlator.getStats().size).toBe(1); // k3 still alive (sentAt=null)
+
+    // clear() on the remaining (unflushed) entry must NOT over-decrement; final state is 0
+    correlator.clear(new Error('done'));
+    expect(correlator.getStats().inFlight).toBe(0);
+    expect(correlator.getStats().size).toBe(0);
+    void k3; // referenced for clarity
+  });
+
+  it('Test 14 (PLAN-06): matchAck (FIFO) decrements inFlight only when matched entry was flushed', () => {
+    const { correlator, setNow } = harness();
+    const k1 = correlator.enqueue(Buffer.from('A'), null, noop, noopReject) as number;
+    correlator.markFlushed(k1, 1_500);
+    expect(correlator.getStats().inFlight).toBe(1);
+
+    const matched = correlator.matchAck(Buffer.from('ACK'));
+    expect(matched).not.toBeNull();
+    expect(correlator.getStats().inFlight).toBe(0);
+    expect(correlator.getStats().size).toBe(0);
+
+    // Pre-flush match (entry is at head but not flushed) — also should not over-decrement
+    const k2 = correlator.enqueue(Buffer.from('B'), null, noop, noopReject) as number;
+    void k2;
+    setNow(3_000);
+    const matched2 = correlator.matchAck(Buffer.from('ACK2'));
+    expect(matched2).not.toBeNull();
+    expect(correlator.getStats().inFlight).toBe(0);
+    expect(correlator.getStats().size).toBe(0);
+  });
 });
