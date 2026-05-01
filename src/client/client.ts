@@ -34,7 +34,11 @@ import type {
 } from '../connection/index.js';
 import { MllpConnectionError } from '../connection/index.js';
 import { NetTransport } from '../transport/index.js';
+import { encodeFrame } from '../framing/index.js';
 import type { FrameReaderOptions, MllpWarning } from '../framing/index.js';
+import { Correlator } from './correlator.js';
+import type { PendingAck } from './correlator.js';
+import { MllpTimeoutError } from './error.js';
 
 /**
  * Options for {@link createClient} and the {@link MllpClient} constructor.
@@ -55,7 +59,12 @@ export interface ClientOptions {
   readonly framing?: Omit<FrameReaderOptions, 'onFrame' | 'onWarning'>;
   /** Drain timeout for {@link MllpClient.close} (default: `30_000` ms). */
   readonly drainTimeoutMs?: number;
-  // PLAN-02 adds: ackTimeoutMs?: number
+  /**
+   * Per-message ACK timeout in milliseconds (CLIENT-04). The clock starts at
+   * the underlying `write()` flush callback, NOT at the `send()` call —
+   * pre-flush queue time is not charged to the peer. Default: `30_000`.
+   */
+  readonly ackTimeoutMs?: number;
   // PLAN-03 adds: correlateByControlId?: boolean
   // PLAN-04 adds: autoReconnect?: boolean, retryStrategy?: RetryStrategy, initialDelayMs?: number, maxDelayMs?: number, multiplier?: number, jitter?: number
   // PLAN-05 adds: highWaterMark, onBackpressure, pipeline, keepaliveIntervalMs, deadPeerTimeoutMs
@@ -79,8 +88,8 @@ export interface ClientOptions {
  * @example
  * ```typescript
  * const client = createClient({ host: 'localhost', port: 2575 });
- * client.on('stateChange', ({ from, to }) => console.log(from, '->', to));
- * client.on('message', ({ payload }) => console.log('received', payload.length, 'bytes'));
+ * client.on('stateChange', ({ from, to }) => logger.info({ from, to }));
+ * client.on('message', ({ payload }) => logger.info({ bytes: payload.length }));
  * await client.connect();
  * // PLAN-02 will add: const ack = await client.send(payloadBuffer);
  * await client.close();
@@ -96,9 +105,20 @@ export class MllpClient extends EventEmitter {
    */
   private _state: ConnectionState = 'DISCONNECTED';
 
+  /** Per-message ACK timeout in ms (CLIENT-04). Resolved at construction. */
+  private readonly _ackTimeoutMs: number;
+  /** Unified ACK correlator (D-03/A1). Built during `_attachConnection`. */
+  private _correlator: Correlator | null = null;
+  /**
+   * Periodic ACK-timeout sweep timer. Drives `_correlator.expireDue()` because
+   * the Correlator is timer-free per D-03. Cleared on close/destroy.
+   */
+  private _ackSweepTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor(opts: ClientOptions) {
     super();
     this._opts = opts;
+    this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
   }
 
   /**
@@ -182,7 +202,14 @@ export class MllpClient extends EventEmitter {
       const abortHandler = (): void => {
         aborted = true;
         cleanup();
-        // Tear down the in-flight attempt
+        // Tear down the in-flight attempt — also clears the correlator so
+        // any sweep timer armed by _attachConnection is released.
+        this._teardownCorrelator(
+          new MllpConnectionError('connect aborted', {
+            cause: new Error('aborted'),
+            phase: 'connect',
+          }),
+        );
         conn.destroy(new Error('aborted'));
         reject(new DOMException('Aborted', 'AbortError'));
       };
@@ -222,12 +249,70 @@ export class MllpClient extends EventEmitter {
    * Connection layer already freezes — defense-in-depth, harmless on
    * already-frozen objects.
    *
+   * Builds the unified `Correlator` (D-03/A1) bound to this Connection and
+   * arms the periodic ACK-timeout sweep. The Correlator is teardown-aware:
+   * `close()` / `destroy()` clear the sweep timer and reject pending sends.
+   *
    * @param conn - Connection to subscribe to.
    */
   private _attachConnection(conn: Connection): void {
-    conn.on('stateChange', (e: StateChangeEvent) => {
-      this.emit('stateChange', Object.freeze({ ...e }));
+    // Build the correlator before wiring listeners so the inbound 'message'
+    // hand-off has a live store to consult.
+    this._correlator = new Correlator({
+      mode: 'fifo', // PLAN-03 will branch on opts.correlateByControlId
+      ackTimeoutMs: this._ackTimeoutMs,
+      onWarning: (code, ctx) => {
+        this.emit(
+          'warning',
+          Object.freeze({
+            code,
+            byteOffset: ctx.byteOffset,
+            message: `${code}: controlId=${ctx.controlId} elapsed=${ctx.elapsedSinceSendMs}ms`,
+            connectionId: conn.connectionId,
+            timestamp: new Date(),
+          }),
+        );
+      },
+      onTimeout: (entry, elapsedMs) => {
+        entry.reject(
+          new MllpTimeoutError(`ACK timeout after ${elapsedMs}ms`, {
+            messageControlId: entry.controlId ?? undefined,
+            elapsedMs,
+            sentAt: entry.sentAt ?? 0,
+          }),
+        );
+      },
     });
+
+    // Periodic sweep: smaller of (ackTimeoutMs / 4) and 1000 ms; floor 50 ms.
+    // .unref() so this timer never keeps the process alive.
+    const sweepIntervalMs = Math.max(
+      50,
+      Math.min(1000, Math.floor(this._ackTimeoutMs / 4)),
+    );
+    this._ackSweepTimer = setInterval(() => {
+      this._correlator?.expireDue();
+    }, sweepIntervalMs);
+    this._ackSweepTimer.unref();
+
+    // Single 'stateChange' listener delegates to _onStateChange (B-04 anchor).
+    conn.on('stateChange', (e: StateChangeEvent) => {
+      this._onStateChange(e);
+    });
+    // Single 'message' listener: re-emit + delegate to _onAckPayload (B-04 anchor).
+    conn.on(
+      'message',
+      (e: {
+        payload: Buffer;
+        connectionId: string;
+        byteOffset: number;
+        warnings: readonly MllpWarning[];
+      }) => {
+        this.emit('message', Object.freeze({ ...e }));
+        this._onAckPayload(e.payload, e.byteOffset);
+      },
+    );
+    // PLAN-01 lifecycle re-emitters preserved unchanged.
     conn.on('connect', (e: unknown) => {
       this.emit('connect', Object.freeze({ ...(e as object) }));
     });
@@ -240,9 +325,6 @@ export class MllpClient extends EventEmitter {
     conn.on('close', (e: unknown) => {
       this.emit('close', Object.freeze({ ...(e as object) }));
     });
-    conn.on('message', (e: unknown) => {
-      this.emit('message', Object.freeze({ ...(e as object) }));
-    });
     conn.on('warning', (w: MllpWarning) => {
       this.emit('warning', w);
     });
@@ -254,6 +336,190 @@ export class MllpClient extends EventEmitter {
       }
     });
     this._connection = conn;
+  }
+
+  /**
+   * Single source-of-truth for inbound ACK payload handling.
+   *
+   * PLAN-02: FIFO matchAck + delegate to _onAckMatched.
+   * PLAN-03 extends at HOOK_EXTENSION_POINT: ack-payload to extract MSA-2 and
+   *   pass to matchAck() in controlId mode.
+   *
+   * Called from the SINGLE 'message' listener registered in _attachConnection.
+   */
+  private _onAckPayload(ackPayload: Buffer, byteOffset: number): void {
+    if (this._correlator === null) return;
+    // HOOK_EXTENSION_POINT: ack-payload
+    // PLAN-03 inserts: const ackControlId = this._correlateByControlId ? extractMsaControlId(ackPayload) : null;
+    const ackControlId: string | null = null;
+    const matched = this._correlator.matchAck(
+      ackPayload,
+      ackControlId,
+      byteOffset,
+    );
+    if (matched !== null) {
+      this._onAckMatched(matched, ackPayload);
+    }
+  }
+
+  /**
+   * Single source-of-truth for a successfully matched ACK (live-store hit).
+   *
+   * PLAN-02: emit frozen 'ack' event, call matched.resolve().
+   * PLAN-04 extends at HOOK_EXTENSION_POINT: ack-matched to update _lastSuccessAt.
+   * PLAN-06 extends at HOOK_EXTENSION_POINT: ack-matched to bump _ackedTotal and
+   *   set _lastAckAt.
+   *
+   * Called from _onAckPayload when matchAck() returns a non-null PendingAck.
+   */
+  private _onAckMatched(matched: PendingAck, ackPayload: Buffer): void {
+    const latencyMs =
+      matched.sentAt !== null ? Date.now() - matched.sentAt : 0;
+    this.emit(
+      'ack',
+      Object.freeze({
+        payload: ackPayload,
+        controlId: matched.controlId,
+        latencyMs,
+      }),
+    );
+    // HOOK_EXTENSION_POINT: ack-matched
+    // PLAN-04 inserts: this._lastSuccessAt = Date.now();
+    // PLAN-06 inserts: this._ackedTotal += 1; this._lastAckAt = Date.now();
+    matched.resolve(ackPayload);
+    // PLAN-05 extends after this point at the same anchor to emit 'drain' when
+    //   queue depth crosses below highWaterMark.
+  }
+
+  /**
+   * Single source-of-truth for Connection FSM transitions.
+   *
+   * PLAN-02: re-emit frozen 'stateChange' (was inline in PLAN-01; centralized
+   * here so PLAN-04 / PLAN-05 can extend at named anchors).
+   * PLAN-04 extends at HOOK_EXTENSION_POINT: state-change to detect
+   *   CONNECTED → DISCONNECTED|RECONNECTING and trigger _handleDisconnect.
+   * PLAN-05 extends at HOOK_EXTENSION_POINT: state-change to clear/arm
+   *   dead-peer timer on transitions out of / into CONNECTED.
+   *
+   * Called from the SINGLE 'stateChange' listener registered in _attachConnection.
+   */
+  private _onStateChange(e: StateChangeEvent): void {
+    this.emit('stateChange', Object.freeze({ ...e }));
+    // HOOK_EXTENSION_POINT: state-change
+    // PLAN-04 inserts disconnect-detection branch.
+    // PLAN-05 inserts dead-peer timer arm/clear branch.
+  }
+
+  /**
+   * Send an MLLP-framed payload and await the inbound ACK (CLIENT-02).
+   *
+   * Resolves with the ACK Buffer (framing stripped). Rejects with:
+   * - `DOMException('Aborted', 'AbortError')` if `signal` aborts before ACK
+   *   (CLIENT-11 send branch).
+   * - `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs` (ERR-02).
+   *   The clock starts at the underlying `write()` flush callback, NOT at
+   *   the `send()` call (CLIENT-04, D-19).
+   * - `MllpConnectionError({ phase: 'send' })` if the client is not connected.
+   *
+   * Emits a frozen `'ack'` event on every successful match (D-25 + Specifics).
+   *
+   * @example
+   * ```typescript
+   * const ack = await client.send(payloadBuffer);
+   * logger.info({ ack: ack.toString('utf8') });
+   * ```
+   *
+   * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.
+   * @param opts.signal AbortSignal — aborting cancels the ACK wait (CLIENT-11).
+   */
+  send(payload: Buffer, opts?: { signal?: AbortSignal }): Promise<Buffer> {
+    const signal = opts?.signal;
+    if (signal?.aborted === true) {
+      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    }
+    if (
+      this._connection === null ||
+      this._correlator === null ||
+      this._connection.state !== 'CONNECTED'
+    ) {
+      return Promise.reject(
+        new MllpConnectionError('send before connect', {
+          cause: new Error(`client state is ${this.state}`),
+          phase: 'send',
+        }),
+      );
+    }
+    // PLAN-03 will extract MSH-10 from `payload`; FIFO mode passes null.
+    const controlId: string | null = null;
+    const correlator = this._correlator;
+    const conn = this._connection;
+    return new Promise<Buffer>((resolve, reject) => {
+      let abortListener: (() => void) | null = null;
+      const wrappedResolve = (ack: Buffer): void => {
+        if (signal !== undefined && abortListener !== null) {
+          signal.removeEventListener('abort', abortListener);
+        }
+        resolve(ack);
+      };
+      const wrappedReject = (err: Error): void => {
+        if (signal !== undefined && abortListener !== null) {
+          signal.removeEventListener('abort', abortListener);
+        }
+        reject(err);
+      };
+      // The Connection sends RAW bytes — frame the payload here (matches the
+      // Phase 4 server pattern `conn.send(encodeFrame(ack))`). The frame is
+      // what we hand to `enqueue()` so PLAN-04's reconnect-resend path can
+      // re-emit identical bytes.
+      const frame = encodeFrame(payload);
+      const key = correlator.enqueue(
+        frame,
+        controlId,
+        wrappedResolve,
+        wrappedReject,
+      );
+      if (key === null) {
+        // PLAN-05 implements maxInFlight=1 wait-for-drain; in PLAN-02
+        // maxInFlight is Infinity so this is unreachable.
+        wrappedReject(
+          new MllpConnectionError('queue full', {
+            cause: new Error('maxInFlight exceeded'),
+            phase: 'send',
+          }),
+        );
+        return;
+      }
+      if (signal !== undefined) {
+        abortListener = (): void => {
+          correlator.remove(key);
+          wrappedReject(new DOMException('Aborted', 'AbortError'));
+        };
+        signal.addEventListener('abort', abortListener, { once: true });
+      }
+      // Connection.send returns boolean; `false` indicates socket-level
+      // backpressure (the OS still buffers the bytes). PLAN-02 has no
+      // app-level high-water mark so we just record the flush time.
+      // PLAN-05 enforces high-water mark BEFORE enqueue.
+      conn.send(frame);
+      correlator.markFlushed(key, Date.now());
+    });
+  }
+
+  /**
+   * Tear down per-connection state (sweep timer + correlator) when the
+   * client is closing or destroying. Safe to call multiple times.
+   */
+  private _teardownCorrelator(reason: Error): void {
+    if (this._ackSweepTimer !== null) {
+      clearInterval(this._ackSweepTimer);
+      this._ackSweepTimer = null;
+    }
+    if (this._correlator !== null) {
+      this._correlator.clear(reason);
+      // Drop the reference so subsequent send() calls reject via the
+      // _connection / _correlator null check.
+      this._correlator = null;
+    }
   }
 
   /**
@@ -300,7 +566,26 @@ export class MllpClient extends EventEmitter {
     }
 
     const conn = this._connection;
-    if (conn === null) return;
+    if (conn === null) {
+      // No connection attached; still tear down any stray correlator state
+      // (defensive — this branch is unreachable in normal flow).
+      this._teardownCorrelator(
+        new MllpConnectionError('client closed', {
+          cause: new Error('closed'),
+          phase: 'close',
+        }),
+      );
+      return;
+    }
+
+    // Reject pending sends BEFORE delegating to Connection.close so callers
+    // observe the rejection promptly rather than waiting for the drain.
+    this._teardownCorrelator(
+      new MllpConnectionError('client closed', {
+        cause: new Error('closed'),
+        phase: 'close',
+      }),
+    );
 
     if (signal === undefined) {
       const closeOpts =
@@ -344,6 +629,13 @@ export class MllpClient extends EventEmitter {
    * ```
    */
   destroy(reason?: Error): void {
+    const teardownReason =
+      reason ??
+      new MllpConnectionError('client destroyed', {
+        cause: new Error('destroyed'),
+        phase: 'close',
+      });
+    this._teardownCorrelator(teardownReason);
     const conn = this._connection;
     if (conn === null) return;
     conn.destroy(reason);

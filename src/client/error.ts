@@ -25,7 +25,7 @@
  *   await client.send(payload);
  * } catch (err) {
  *   if (err instanceof MllpTimeoutError) {
- *     console.log('timed out after', err.elapsedMs, 'ms; controlId:', err.messageControlId);
+ *     logger.warn({ elapsedMs: err.elapsedMs, controlId: err.messageControlId });
  *   }
  * }
  * ```
