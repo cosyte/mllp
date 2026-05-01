@@ -22,6 +22,142 @@ import type { WarningCode } from '../framing/index.js';
 /** Correlation key — number for FIFO (`sendSeq`), string for controlId (MSH-10). */
 export type CorrelationKey = number | string;
 
+const ASCII_M = 0x4d;
+const ASCII_S = 0x53;
+const ASCII_H = 0x48;
+const ASCII_A = 0x41;
+const SEGMENT_SEPARATOR_CR = 0x0d;
+const SEGMENT_SEPARATOR_LF = 0x0a;
+
+/**
+ * Extract MSH-10 (Message Control ID) from an HL7 v2 payload.
+ *
+ * Pure byte-level scan — never throws, returns `null` for malformed input
+ * (Postel's Law decoder side; CLAUDE.md guardrail). The field separator is
+ * detected dynamically from `buf[3]` (the byte immediately after `MSH`).
+ *
+ * @example
+ * ```typescript
+ * const id = extractMshControlId(payloadBuffer);
+ * // id === 'MSG00001' | null
+ * ```
+ *
+ * @internal
+ */
+export function extractMshControlId(buf: Buffer): string | null {
+  if (buf.length < 4) return null;
+  if (buf[0] !== ASCII_M || buf[1] !== ASCII_S || buf[2] !== ASCII_H) {
+    return null;
+  }
+  const fieldSep = buf[3] as number;
+  // MSH layout when split by `fieldSep`:
+  //   [0]'MSH'  [1]encChars  [2]MSH-3 ... [9]MSH-10 ...
+  // Iteration: count separators starting at byte 3 (the first separator).
+  // Increment fieldIndex on each separator. Capture range when fieldIndex
+  // transitions 9→10 (i.e. just consumed MSH-10's closing separator).
+  let fieldIndex = 0;
+  let fieldStart = 0;
+  const end = buf.length;
+  // Iterate up to AND INCLUDING `end` so a buffer ending at MSH-10 (no
+  // trailing separator) still closes the field cleanly via the synthetic
+  // terminator (treated as a fieldSep at i === end).
+  for (let i = 3; i <= end; i++) {
+    const isSynthetic = i === end;
+    const b = isSynthetic ? fieldSep : (buf[i] as number);
+    const isFieldSep = b === fieldSep;
+    const isSegEnd = b === SEGMENT_SEPARATOR_CR || b === SEGMENT_SEPARATOR_LF;
+    if (isFieldSep || isSegEnd) {
+      fieldIndex++;
+      if (fieldIndex === 9) {
+        if (isSegEnd) return null; // segment ended before MSH-10
+        fieldStart = i + 1;
+      } else if (fieldIndex === 10) {
+        if (fieldStart >= i) return null; // empty MSH-10
+        return buf.subarray(fieldStart, i).toString('ascii');
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract MSA-2 (acknowledged Message Control ID) from an HL7 v2 ACK payload.
+ *
+ * Pure byte-level scan — never throws, returns `null` for malformed input.
+ * The field separator is taken from `buf[3]` (MSH establishes it for the whole
+ * message). The MSA segment is located by scanning segment boundaries
+ * (`\r` / `\n`).
+ *
+ * @example
+ * ```typescript
+ * const acked = extractMsaControlId(ackPayloadBuffer);
+ * // acked === 'MSG00001' | null
+ * ```
+ *
+ * @internal
+ */
+export function extractMsaControlId(buf: Buffer): string | null {
+  if (buf.length < 4) return null;
+  if (buf[0] !== ASCII_M || buf[1] !== ASCII_S || buf[2] !== ASCII_H) {
+    return null;
+  }
+  const fieldSep = buf[3] as number;
+  const end = buf.length;
+  let segStart = 0;
+  while (segStart < end) {
+    let segEnd = segStart;
+    while (
+      segEnd < end &&
+      buf[segEnd] !== SEGMENT_SEPARATOR_CR &&
+      buf[segEnd] !== SEGMENT_SEPARATOR_LF
+    ) {
+      segEnd++;
+    }
+    if (
+      segEnd - segStart >= 4 &&
+      buf[segStart] === ASCII_M &&
+      buf[segStart + 1] === ASCII_S &&
+      buf[segStart + 2] === ASCII_A &&
+      buf[segStart + 3] === fieldSep
+    ) {
+      // MSA fields: [0]'MSA' [1]MSA-1 [2]MSA-2 ...
+      // Iterate from the first separator (segStart+3) up to and including
+      // segEnd. Treat `segEnd` as a synthetic separator so the final field
+      // closes cleanly even without a trailing CR.
+      let fieldIndex = 0;
+      let fieldStart = 0;
+      for (let i = segStart + 3; i <= segEnd; i++) {
+        const b = i < segEnd ? (buf[i] as number) : fieldSep;
+        if (
+          b === fieldSep ||
+          b === SEGMENT_SEPARATOR_CR ||
+          b === SEGMENT_SEPARATOR_LF
+        ) {
+          fieldIndex++;
+          if (fieldIndex === 2) {
+            fieldStart = i + 1;
+          } else if (fieldIndex === 3) {
+            if (fieldStart >= i) return null; // empty MSA-2
+            return buf.subarray(fieldStart, i).toString('ascii');
+          }
+        }
+      }
+      return null;
+    }
+    // Skip segment terminator bytes to advance to the next segment.
+    while (
+      segEnd < end &&
+      (buf[segEnd] === SEGMENT_SEPARATOR_CR ||
+        buf[segEnd] === SEGMENT_SEPARATOR_LF)
+    ) {
+      segEnd++;
+    }
+    if (segEnd === segStart) return null; // no progress — malformed
+    segStart = segEnd;
+  }
+  return null;
+}
+
 /** A single pending send awaiting its ACK (D-03). */
 export interface PendingAck {
   readonly key: CorrelationKey;
@@ -140,10 +276,13 @@ export class Correlator {
     reject: (err: Error) => void,
   ): CorrelationKey | null {
     if (this._pending.size >= this._opts.maxInFlight) return null;
+    // controlId mode keys by MSH-10 (string). When MSH-10 is absent, we fall
+    // back to a synthetic `__seq-N` key — the send is best-effort matchable
+    // by the FIFO live-store walk, but the peer realistically cannot ACK it
+    // by control ID. Acceptable corner case (D-03/A1).
     const key: CorrelationKey =
       this._opts.mode === 'controlId'
-        ? // PLAN-03 fills the MSH-10-missing branch with a defined policy.
-          (controlIdOrNull ?? `__seq-${++this._sendSeq}`)
+        ? (controlIdOrNull ?? `__seq-${++this._sendSeq}`)
         : ++this._sendSeq;
     const entry: PendingAck = {
       key,
@@ -173,12 +312,17 @@ export class Correlator {
    *
    * - FIFO: returns first pending entry by insertion order; entry is
    *   removed from live store. Caller calls `entry.resolve(ackPayload)`.
-   * - controlId: PLAN-03 fills. Returns `null` placeholder.
+   * - controlId: keyed lookup by `controlIdFromAck`. Live-store hit returns
+   *   the entry; graveyard hit fires `MLLP_ACK_AFTER_TIMEOUT` warning
+   *   (CLIENT-16, D-04) and returns `null`; otherwise fires
+   *   `onUnmatchedAck(controlIdFromAck)` (CLIENT-15, D-05) and returns `null`.
    *
    * Triggers lazy graveyard eviction (D-04).
    *
-   * @param _payload Inbound ACK bytes (framing stripped). PLAN-03 reads MSH-10.
-   * @param controlIdFromAck MSH-10 extracted from ACK (PLAN-03).
+   * @param _payload Inbound ACK bytes (framing stripped). MSA-2 extraction
+   *   happens at MllpClient's `_onAckPayload` hook; this method takes the
+   *   already-extracted control ID as a parameter.
+   * @param controlIdFromAck MSA-2 extracted from ACK (controlId mode only).
    * @param byteOffsetFromAck Stream offset; forwarded to `onWarning` (W-05).
    */
   matchAck(
@@ -195,11 +339,39 @@ export class Correlator {
       this._queueBytes -= entry.byteCount;
       return entry;
     }
-    // PLAN-03 fills: controlId match-against-pending + graveyard hit
-    // (forward `byteOffsetFromAck` into the onWarning ctx) + unmatched-ACK
-    // path that calls `onUnmatchedAck(controlIdFromAck)`.
-    void controlIdFromAck;
-    void byteOffsetFromAck;
+    // controlId mode (PLAN-03)
+    if (controlIdFromAck === null) {
+      // Caller failed to extract MSA-2; treat as unmatched. (MllpClient is
+      // responsible for extraction; this is a defensive fallback.)
+      if (this._opts.onUnmatchedAck !== undefined) {
+        this._opts.onUnmatchedAck('');
+      }
+      return null;
+    }
+    const live = this._pending.get(controlIdFromAck);
+    if (live !== undefined) {
+      this._pending.delete(controlIdFromAck);
+      this._queueBytes -= live.byteCount;
+      return live;
+    }
+    const grave = this._graveyard.get(controlIdFromAck);
+    if (grave !== undefined) {
+      // CLIENT-16: late ACK after timeout. Forward the inbound ACK frame's
+      // byte offset (W-05) so observers see where in the stream it landed.
+      const elapsedSinceSendMs = this._opts.now() - grave.timedOutAt;
+      this._opts.onWarning('MLLP_ACK_AFTER_TIMEOUT', {
+        controlId: grave.controlId,
+        elapsedSinceSendMs,
+        byteOffset: byteOffsetFromAck,
+      });
+      // One-shot: drop the graveyard entry now that we've seen the late ACK.
+      this._graveyard.delete(controlIdFromAck);
+      return null;
+    }
+    // CLIENT-15: unmatched controlId (live store empty + not in graveyard).
+    if (this._opts.onUnmatchedAck !== undefined) {
+      this._opts.onUnmatchedAck(controlIdFromAck);
+    }
     return null;
   }
 
