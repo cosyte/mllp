@@ -106,13 +106,13 @@ North star: **A developer can send and receive HL7 v2 messages over a production
   3. A developer whose connection drops with `autoReconnect: true` sees the client transition `CONNECTED → RECONNECTING → CONNECTING → CONNECTED` with exponential backoff (default `100 ms * 2^n`, capped 30 s, ±20 % jitter, or overridden by `retryStrategy(attempt)`); backoff resets to `initialDelayMs` after any disconnect preceded by at least one successful ACK; permanent errors (`ENOTFOUND`, TLS cert errors, `EACCES`) halt reconnect and transition to `CLOSED`. In `correlateByControlId: true` mode queued sends are re-transmitted on reconnect (idempotent via stable MSH-10); in FIFO mode they reject with `MllpConnectionError({ phase: 'reconnect', cause: 'fifo-unsafe' })`.
   4. A developer sending into a saturated socket sees well-defined backpressure: `highWaterMark` accepts a message count (default 64) or `{ bytes }` (stricter-of-two wins); `onBackpressure: 'reject'` (default) rejects with `MllpBackpressureError({ queueDepth, queueBytes, highWaterMark })`; `onBackpressure: 'wait'` awaits a `'drain'` event or the per-message timeout. `{ pipeline: false }` enforces strict send → await-ACK → send serialization.
   5. A developer writing `await using c = createStarterClient({ host, port })` gets a three-line client with auto-reconnect, 30 s ACK timeout, FIFO correlation, `Symbol.asyncDispose`, and frozen event payloads; `c.getStats()` returns a JSON-serializable object with `state`, `queueDepth`, `queueBytes`, `inFlight`, `warningsByCode`, byte counters, timestamps, and `reconnectAttempts`. `isTransientConnectionError(err)` is exported from the main barrel. `client.destroy()` transitions directly to `CLOSED`.
-**Plans**: 6 plans (anticipated)
-  - 05-PLAN-01: `createClient` + `connect()` + `close()`/`destroy()` lifecycle over the 6-state `Connection` FSM
-  - 05-PLAN-02: `send()` with per-message `ackTimeoutMs` (timer starts at write-flush per CLIENT-04), FIFO ACK matching, `MllpTimeoutError` on expiry
-  - 05-PLAN-03: controlId correlation (`correlateByControlId`) — MSH-10 extraction on outbound, MSA-2 matching on inbound, CLIENT-15 unmatched-ACK path, CLIENT-16 late-ACK path
-  - 05-PLAN-04: exponential-backoff auto-reconnect with jitter + backoff-reset-on-recent-success + `retryStrategy` hook + CLIENT-17 queued-sends policy + CLIENT-18 transient-vs-permanent classifier + `isTransientConnectionError` export
-  - 05-PLAN-05: backpressure (count + `{bytes}` dual watermark, `drain` event, reject/wait policy) + `MllpBackpressureError` with `queueBytes` + `pipeline: false` serialization mode + keepalive / dead-peer detection
-  - 05-PLAN-06: `createStarterClient` helper + `AbortSignal` on all awaitables + `Symbol.asyncDispose` + frozen event payloads + `client.getStats()` (OBS-01)
+**Plans**: 6 plans
+  - [x] 05-01-PLAN.md — `createClient` + `connect()` + `close()`/`destroy()` lifecycle over the 6-state `Connection` FSM
+  - [x] 05-02-PLAN.md — `send()` with per-message `ackTimeoutMs` (timer starts at write-flush per CLIENT-04), FIFO ACK matching, `MllpTimeoutError` on expiry
+  - [x] 05-03-PLAN.md — controlId correlation (`correlateByControlId`) — MSH-10 extraction on outbound, MSA-2 matching on inbound, CLIENT-15 unmatched-ACK path, CLIENT-16 late-ACK path
+  - [x] 05-04-PLAN.md — exponential-backoff auto-reconnect with jitter + backoff-reset-on-recent-success + `retryStrategy` hook + CLIENT-17 queued-sends policy + CLIENT-18 transient-vs-permanent classifier + `isTransientConnectionError` export
+  - [x] 05-05-PLAN.md — backpressure (count + `{bytes}` dual watermark, `drain` event, reject/wait policy) + `MllpBackpressureError` with `queueBytes` + `pipeline: false` serialization mode + keepalive / dead-peer detection
+  - [x] 05-06-PLAN.md — `createStarterClient` helper + `AbortSignal` on all awaitables + `Symbol.asyncDispose` + frozen event payloads + `client.getStats()` (OBS-01)
 **UI hint**: no
 
 ### Phase 6: ACK Helpers & TLS
