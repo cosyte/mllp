@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 5 context gathered 2026-04-30 — 4 gray areas decided via advisor mode (unified correlator, hybrid in-flight reconnect, mirror-server dead-peer split, rich RetryContext). Ready for planning.
-last_updated: "2026-04-30T00:00:00.000Z"
+status: Phase 5 planned 2026-04-30 — 6 plans across 3 waves; 22 REQ-IDs claimed across 05-01..05-06; checker passed iter 2. Ready to execute.
+last_updated: "2026-04-30T23:00:00.000Z"
 progress:
   total_phases: 8
   completed_phases: 4
@@ -28,14 +28,14 @@ Project memory for session-to-session continuity. Updated at phase/plan boundari
 
 ## Current Position
 
-Phase: 5 context gathered 2026-04-30 — all 4 selected gray areas locked in 05-CONTEXT.md.
-Next Step: `/gsd-plan-phase 5`
-Resume file: `.planning/phases/05-mllp-client/05-CONTEXT.md`
+Phase: 5 planned 2026-04-30 — 6 plans across 3 waves, checker PASSED iter 2.
+Next Step: `/gsd-execute-phase 5`
+Resume file: `.planning/phases/05-mllp-client/05-01-PLAN.md`
 
 - **Milestone:** v1 (initial release — transport-only MLLP client + server)
 - **Phase:** 4 complete — MllpServer, createServer(), createStarterServer(), auto-ACK, graceful shutdown, keepalive, AbortSignal, Symbol.asyncDispose, frozen events, server.getStats(), byteOffset/warnings threading, _closedTotal guard
-- **Plans (milestone total):** 19 / ~36 complete
-- **Status:** Phase 4 complete 2026-04-24 — 306 tests, 0 TS errors, all 13 REQ-IDs delivered. Phase 5 context locked 2026-04-30 — ready for `/gsd-plan-phase 5`
+- **Plans (milestone total):** 19 / ~36 complete (6 new plans for Phase 5 ready to execute)
+- **Status:** Phase 5 planned 2026-04-30 — 6 plans (05-01 lifecycle, 05-02 correlator+send, 05-03 controlId, 05-04 reconnect, 05-05 backpressure+dead-peer, 05-06 starter+stats) using shared hook anchors (ack-matched / state-change / ack-payload) for clean cross-plan extension. 22 CLIENT/OBS/ERR REQ-IDs covered. Ready for `/gsd-execute-phase 5`
 
 ```
 [##########          ] 50 %   (4 / 8 phases shipped)
