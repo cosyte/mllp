@@ -51,8 +51,10 @@ export {
 export {
   MllpClient,
   createClient,
+  createStarterClient,
   type ClientOptions,
   type ClientStats,
+  type StarterClientOptions,
   type RetryContext,
   type RetryStrategy,
   MllpTimeoutError,

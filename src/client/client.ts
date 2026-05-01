@@ -1658,3 +1658,144 @@ export class MllpClient extends EventEmitter {
 export function createClient(opts: ClientOptions): MllpClient {
   return new MllpClient(opts);
 }
+
+/**
+ * Options for {@link createStarterClient} (PLAN-06, CLIENT-10).
+ *
+ * The starter applies opinionated D-22 defaults on top of `ClientOptions`,
+ * so every override here is optional except `host` + `port`. The
+ * starter-specific addition is `handleSignals` (mirrors `createStarterServer`).
+ *
+ * @example
+ * ```typescript
+ * const opts: StarterClientOptions = {
+ *   host: 'localhost',
+ *   port: 2575,
+ *   onMessage: (payload) => logger.info({ bytes: payload.length }),
+ *   handleSignals: true,
+ * };
+ * ```
+ */
+export interface StarterClientOptions {
+  /** Host to connect to. */
+  readonly host: string;
+  /** TCP port. */
+  readonly port: number;
+  /**
+   * Inbound-message callback (any framed payload from the peer, including
+   * non-ACK messages on bidirectional channels). Mirrors the server-side
+   * `onMessage` ergonomics.
+   */
+  readonly onMessage?: (payload: Buffer) => void;
+  /** Override default `30_000`. */
+  readonly ackTimeoutMs?: number;
+  /** Override default `false` (FIFO mode). */
+  readonly correlateByControlId?: boolean;
+  /** Override default `true` (parallel up to highWaterMark). */
+  readonly pipeline?: boolean;
+  /** Override default `64`. */
+  readonly highWaterMark?: HighWaterMark;
+  /** Override default `'reject'`. */
+  readonly onBackpressure?: 'reject' | 'wait';
+  /** Override default `true` (auto-reconnect on transient errors). */
+  readonly autoReconnect?: boolean;
+  /** Custom reconnect-backoff hook (CLIENT-12). */
+  readonly retryStrategy?: RetryStrategy;
+  /** Drain timeout for `close()` (default `30_000`). */
+  readonly drainTimeoutMs?: number;
+  /** FrameReader options (passthrough). */
+  readonly framing?: ClientOptions['framing'];
+  /** TCP keepalive interval ms (CLIENT-08). */
+  readonly keepaliveIntervalMs?: number;
+  /** Application-idle dead-peer timeout ms (CLIENT-08). */
+  readonly deadPeerTimeoutMs?: number;
+  /**
+   * Register process SIGTERM/SIGINT handlers that close the client. Default
+   * `false` (D-22). When `true`, SIGTERM/SIGINT both call `client.close()`
+   * and exit the process. Handlers self-deregister on `'close'` (T-05-06-01).
+   */
+  readonly handleSignals?: boolean;
+}
+
+/**
+ * Three-line MLLP client with batteries-included defaults (PLAN-06,
+ * CLIENT-10, D-22). The returned client is already CONNECTED — `connect()`
+ * has been awaited.
+ *
+ * D-22 defaults:
+ * - `autoReconnect: true`
+ * - `ackTimeoutMs: 30_000`
+ * - `correlateByControlId: false` (FIFO mode — simplest mental model)
+ * - `pipeline: true`
+ * - `highWaterMark: 64`
+ * - `onBackpressure: 'reject'`
+ * - `handleSignals: false` (opt-in)
+ *
+ * The factory is **async**, so the literal three-line north-star snippet
+ * has an explicit `await` BEFORE `createStarterClient(...)` — without it,
+ * the `using` declaration would receive a `Promise`, not an `MllpClient`,
+ * and `Symbol.asyncDispose` would not run at scope exit.
+ *
+ * @example
+ * ```typescript
+ * import { createStarterClient } from '@cosyte/hl7-mllp';
+ * await using c = await createStarterClient({ host: 'localhost', port: 2575 });
+ * const ack = await c.send(payloadBuffer);
+ * ```
+ */
+export async function createStarterClient(
+  opts: StarterClientOptions,
+): Promise<MllpClient> {
+  // Build ClientOptions, applying D-22 defaults only for unset fields.
+  const clientOpts: ClientOptions = {
+    host: opts.host,
+    port: opts.port,
+    autoReconnect: opts.autoReconnect ?? true,
+    ackTimeoutMs: opts.ackTimeoutMs ?? 30_000,
+    correlateByControlId: opts.correlateByControlId ?? false,
+    pipeline: opts.pipeline ?? true,
+    highWaterMark: opts.highWaterMark ?? 64,
+    onBackpressure: opts.onBackpressure ?? 'reject',
+    ...(opts.drainTimeoutMs !== undefined
+      ? { drainTimeoutMs: opts.drainTimeoutMs }
+      : {}),
+    ...(opts.framing !== undefined ? { framing: opts.framing } : {}),
+    ...(opts.retryStrategy !== undefined
+      ? { retryStrategy: opts.retryStrategy }
+      : {}),
+    ...(opts.keepaliveIntervalMs !== undefined
+      ? { keepaliveIntervalMs: opts.keepaliveIntervalMs }
+      : {}),
+    ...(opts.deadPeerTimeoutMs !== undefined
+      ? { deadPeerTimeoutMs: opts.deadPeerTimeoutMs }
+      : {}),
+  };
+  const client = createClient(clientOpts);
+
+  if (opts.onMessage !== undefined) {
+    const handler = opts.onMessage;
+    client.on('message', (e: { payload: Buffer }) => {
+      handler(e.payload);
+    });
+  }
+
+  if (opts.handleSignals === true) {
+    // T-05-06-01: handler self-deregisters on 'close' to avoid per-process
+    // listener accumulation (mirror createStarterServer pattern).
+    const sigHandler = (): void => {
+      void client
+        .close()
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
+    };
+    process.once('SIGTERM', sigHandler);
+    process.once('SIGINT', sigHandler);
+    client.once('close', () => {
+      process.removeListener('SIGTERM', sigHandler);
+      process.removeListener('SIGINT', sigHandler);
+    });
+  }
+
+  await client.connect();
+  return client;
+}
