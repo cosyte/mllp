@@ -39,17 +39,17 @@ describe('MllpClient backpressure — count mode (PLAN-05, CLIENT-07)', () => {
   it('Test 1: highWaterMark count cap rejects with MllpBackpressureError', async () => {
     const { client } = buildClientOverPair({ highWaterMark: 3 });
     const p1 = client.send(Buffer.from('M1'));
+    p1.catch(() => {});
     const p2 = client.send(Buffer.from('M2'));
+    p2.catch(() => {});
     const p3 = client.send(Buffer.from('M3'));
+    p3.catch(() => {});
     // 4th send overflows the cap of 3 → reject.
     await expect(client.send(Buffer.from('M4'))).rejects.toMatchObject({
       name: 'MllpBackpressureError',
       queueDepth: 3,
       highWaterMark: { count: 3 },
     });
-    p1.catch(() => {});
-    p2.catch(() => {});
-    p3.catch(() => {});
     client.destroy();
   });
 
@@ -58,13 +58,14 @@ describe('MllpClient backpressure — count mode (PLAN-05, CLIENT-07)', () => {
     // Hold 64 sends in flight (no peer ACKs).
     const inflight: Promise<Buffer>[] = [];
     for (let i = 0; i < 64; i++) {
-      inflight.push(client.send(Buffer.from(`M${i}`)));
+      const p = client.send(Buffer.from(`M${i}`));
+      p.catch(() => {});
+      inflight.push(p);
     }
     await expect(client.send(Buffer.from('OVERFLOW'))).rejects.toMatchObject({
       name: 'MllpBackpressureError',
       highWaterMark: { count: 64 },
     });
-    for (const p of inflight) p.catch(() => {});
     client.destroy();
   });
 });
@@ -76,11 +77,11 @@ describe('MllpClient backpressure — bytes mode (PLAN-05, D-23)', () => {
     // payload becomes 63B framed and a 50B payload becomes 53B framed —
     // first send (63B) fits under 100B, second (63+53=116B) overflows.
     const p1 = client.send(Buffer.alloc(60, 0x41));
+    p1.catch(() => {});
     await expect(client.send(Buffer.alloc(50, 0x42))).rejects.toMatchObject({
       name: 'MllpBackpressureError',
       highWaterMark: { bytes: 100 },
     });
-    p1.catch(() => {});
     client.destroy();
   });
 });
@@ -93,16 +94,16 @@ describe('MllpClient backpressure — stricter-of-two (PLAN-05, D-23)', () => {
     });
     // 50B payload → 53B framed. 4 sends = 212B > 200B cap.
     const p1 = client.send(Buffer.alloc(50, 0x41));
+    p1.catch(() => {});
     const p2 = client.send(Buffer.alloc(50, 0x42));
+    p2.catch(() => {});
     const p3 = client.send(Buffer.alloc(50, 0x43));
+    p3.catch(() => {});
     // 4th send should overflow bytes BEFORE count.
     await expect(client.send(Buffer.alloc(50, 0x44))).rejects.toMatchObject({
       name: 'MllpBackpressureError',
       highWaterMark: { count: 100, bytes: 200 },
     });
-    p1.catch(() => {});
-    p2.catch(() => {});
-    p3.catch(() => {});
     client.destroy();
   });
 });
@@ -145,17 +146,25 @@ describe("MllpClient backpressure — 'wait' mode (PLAN-05, CLIENT-07/CLIENT-11)
   });
 
   it("Test 6: 'wait' mode + ackTimeoutMs elapses while waiting → MllpTimeoutError", async () => {
+    // Global ackTimeoutMs=10_000 (M1 stays in-flight) but per-message
+    // ackTimeoutMs=100 on the waiting send forces the wait timer to fire
+    // first, demonstrating timeout precedence over an indefinite wait.
     const { client } = buildClientOverPair({
       highWaterMark: 1,
       onBackpressure: 'wait',
-      ackTimeoutMs: 100,
+      ackTimeoutMs: 10_000,
     });
     const p1 = client.send(Buffer.from('M1'));
-    const p2 = client.send(Buffer.from('M2'));
-    // p2 is waiting for drain — p1 never ACKs, p2's wait-timeout fires first.
+    p1.catch(() => {});
+    const p2 = client.send(Buffer.from('M2'), { ackTimeoutMs: 100 });
+    // Pre-attach a catch to absorb the rejection; expect(...).rejects below
+    // also reads from p2 — vitest re-uses the same Promise.
+    const p2Settled = p2.catch((err: unknown) => err);
+    // p2 waits for drain; p1 never ACKs and won't expire under the global
+    // 10s timeout. p2's wait-timeout (100ms) fires first.
     await vi.advanceTimersByTimeAsync(150);
     await expect(p2).rejects.toMatchObject({ name: 'MllpTimeoutError' });
-    p1.catch(() => {});
+    void p2Settled;
     client.destroy();
   });
 
@@ -166,6 +175,7 @@ describe("MllpClient backpressure — 'wait' mode (PLAN-05, CLIENT-07/CLIENT-11)
       ackTimeoutMs: 60_000,
     });
     const p1 = client.send(Buffer.from('M1'));
+    p1.catch(() => {});
     const baselineDrainListeners = client.listenerCount('drain');
     const ac = new AbortController();
     const p2 = client.send(Buffer.from('M2'), { signal: ac.signal });
@@ -175,7 +185,6 @@ describe("MllpClient backpressure — 'wait' mode (PLAN-05, CLIENT-07/CLIENT-11)
     await expect(p2).rejects.toMatchObject({ name: 'AbortError' });
     // Cleanup invariant: the drain listener was removed.
     expect(client.listenerCount('drain')).toBe(baselineDrainListeners);
-    p1.catch(() => {});
     client.destroy();
   });
 });
@@ -189,12 +198,12 @@ describe("MllpClient 'drain' event (PLAN-05, D-24)", () => {
     });
     const p1 = client.send(Buffer.from('M1'));
     const p2 = client.send(Buffer.from('M2'));
+    p2.catch(() => {});
     // ACK1 → queue size becomes 1 < highWaterMark.count(2) → drain fires.
     ackFromPeer(Buffer.from('A1'));
     await p1;
     expect(drains.length).toBeGreaterThanOrEqual(1);
     expect(drains[0]!.queueDepth).toBe(1);
-    p2.catch(() => {});
     client.destroy();
   });
 
@@ -206,6 +215,7 @@ describe("MllpClient 'drain' event (PLAN-05, D-24)", () => {
     });
     const p1 = client.send(Buffer.from('M1'));
     const p2 = client.send(Buffer.from('M2'));
+    p2.catch(() => {});
     ackFromPeer(Buffer.from('A1'));
     await p1;
     expect(captured).not.toBeNull();
@@ -213,7 +223,6 @@ describe("MllpClient 'drain' event (PLAN-05, D-24)", () => {
     expect(() => {
       (captured as unknown as { queueDepth: number }).queueDepth = 999;
     }).toThrow();
-    p2.catch(() => {});
     client.destroy();
   });
 
@@ -227,11 +236,11 @@ describe("MllpClient 'drain' event (PLAN-05, D-24)", () => {
     });
     const p1 = client.send(Buffer.from('M1'));
     const p2 = client.send(Buffer.from('M2'));
+    p2.catch(() => {});
     ackFromPeer(Buffer.from('A1'));
     await p1;
     // queueDepth=1 < cap=5 → drain fires.
     expect(drains.length).toBe(1);
-    p2.catch(() => {});
     client.destroy();
   });
 });

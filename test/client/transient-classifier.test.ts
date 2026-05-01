@@ -80,8 +80,8 @@ describe('isTransientConnectionError (CLIENT-18)', () => {
       'utf8',
     );
     expect(src).not.toMatch(/PLAN-04 fills: isTransientConnectionError/);
-    // PLAN-05 sentinel still present
-    expect(src).toMatch(/PLAN-05 fills: MllpBackpressureError/);
+    // PLAN-05 sentinel removed once PLAN-05 fills MllpBackpressureError.
+    expect(src).not.toMatch(/PLAN-05 fills: MllpBackpressureError/);
   });
 
   it('Test 15: re-exported from top-level barrel `src/index.ts`', () => {

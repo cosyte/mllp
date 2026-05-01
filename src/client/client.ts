@@ -44,7 +44,11 @@ import {
   extractMsaControlId,
 } from './correlator.js';
 import type { PendingAck } from './correlator.js';
-import { MllpTimeoutError, isTransientConnectionError } from './error.js';
+import {
+  MllpTimeoutError,
+  MllpBackpressureError,
+  isTransientConnectionError,
+} from './error.js';
 
 /**
  * Module-level "never aborts" sentinel for `RetryContext.signal` (D-18, W-07).
@@ -101,6 +105,25 @@ export interface RetryContext {
  * reconnection (D-17) — the FSM transitions to `CLOSED`.
  */
 export type RetryStrategy = (ctx: RetryContext) => number | null;
+
+/**
+ * Combined count + byte-based queue cap. Stricter-of-two wins (D-23).
+ *
+ * - `number` — count cap only (default 64).
+ * - `{ bytes }` — byte cap only.
+ * - `{ count, bytes }` — both caps; whichever trips first wins.
+ *
+ * @example
+ * ```typescript
+ * const opts: ClientOptions = {
+ *   host: 'localhost', port: 2575,
+ *   highWaterMark: { count: 100, bytes: 1_000_000 },
+ * };
+ * ```
+ */
+export type HighWaterMark =
+  | number
+  | { readonly count?: number; readonly bytes?: number };
 
 /**
  * Options for {@link createClient} and the {@link MllpClient} constructor.
@@ -167,7 +190,59 @@ export interface ClientOptions {
   readonly multiplier?: number;
   /** Jitter fraction, e.g. 0.2 = ±20%; default 0.2. (CLIENT-05, D-19) */
   readonly jitter?: number;
-  // PLAN-05 adds: highWaterMark, onBackpressure, pipeline, keepaliveIntervalMs, deadPeerTimeoutMs
+  /**
+   * Application-level high-water mark on the in-flight + queued send set
+   * (CLIENT-07, D-23). `number` configures a count cap (default 64);
+   * `{ bytes }` configures a byte cap; `{ count, bytes }` configures
+   * both, with the stricter-of-two trigger winning.
+   *
+   * When the cap is exceeded, behavior is governed by
+   * {@link ClientOptions.onBackpressure}.
+   *
+   * @default 64
+   */
+  readonly highWaterMark?: HighWaterMark;
+  /**
+   * Behavior when the high-water mark is exceeded (CLIENT-07).
+   *
+   * - `'reject'` (default) — `send()` rejects with `MllpBackpressureError`.
+   * - `'wait'` — `send()` awaits the `'drain'` event OR the per-message
+   *   `ackTimeoutMs` OR `signal` abort, whichever fires first (CLIENT-11).
+   *
+   * @default 'reject'
+   */
+  readonly onBackpressure?: 'reject' | 'wait';
+  /**
+   * Strict serialization send → await-ACK → send (CLIENT-19, D-06).
+   *
+   * - `true` (default) — concurrent in-flight sends up to
+   *   {@link ClientOptions.highWaterMark}.
+   * - `false` — collapses the in-flight set to ≤1 (the unified Correlator's
+   *   `maxInFlight=1`); the next `send()` waits for the prior ACK before
+   *   reaching the wire.
+   *
+   * @default true
+   */
+  readonly pipeline?: boolean;
+  /**
+   * TCP keepalive interval (ms). Sets `socket.setKeepAlive(true, ms)` on
+   * the underlying `net.Socket` BEFORE wrapping in `NetTransport`. OS-level
+   * half-open detection (network partitions, NAT-table eviction). Independent
+   * of {@link ClientOptions.deadPeerTimeoutMs} (CLIENT-08, D-11/A3).
+   *
+   * @default undefined (off)
+   */
+  readonly keepaliveIntervalMs?: number;
+  /**
+   * Application-idle timeout (ms) keyed on last inbound bytes / ACK / warning
+   * (CLIENT-08, D-11). On trip, calls `connection.destroy(new Error('dead
+   * peer timeout'))` which surfaces as `MllpConnectionError({ phase: 'receive' })`.
+   * Trip honors {@link ClientOptions.autoReconnect} (D-13). Independent of
+   * {@link ClientOptions.keepaliveIntervalMs} (D-11/A3).
+   *
+   * @default undefined (off)
+   */
+  readonly deadPeerTimeoutMs?: number;
 }
 
 /**
@@ -241,6 +316,18 @@ export class MllpClient extends EventEmitter {
   private _backoffTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last delay (ms) used by the strategy. Surfaced via RetryContext.lastDelayMs. */
   private _lastDelayMs = 0;
+
+  // ── Backpressure + pipeline state (Plan 05, CLIENT-07/CLIENT-19, D-23) ───
+  /** Count cap; `Number.POSITIVE_INFINITY` when only bytes configured. */
+  private readonly _hwmCount: number;
+  /** Byte cap; `Number.POSITIVE_INFINITY` when only count configured. */
+  private readonly _hwmBytes: number;
+  /** Backpressure policy; default `'reject'`. */
+  private readonly _onBackpressure: 'reject' | 'wait';
+  /** Pipeline flag; default `true` (parallel up to highWaterMark). */
+  private readonly _pipeline: boolean;
+  /** Dead-peer idle timer (Plan 05 — D-11). `null` when not armed. */
+  private _deadPeerTimer: ReturnType<typeof setTimeout> | null = null;
   /** Most recently bound `connect()` signal. Reread on every RetryContext build (W-07). */
   private _connectSignal: AbortSignal | undefined;
   /** Set when close()/destroy()/abort fires; reconnect handler short-circuits. */
@@ -270,6 +357,18 @@ export class MllpClient extends EventEmitter {
     this._multiplier = opts.multiplier ?? 2;
     this._jitter = opts.jitter ?? 0.2;
     this._retryStrategy = opts.retryStrategy;
+
+    // Plan 05 — backpressure + pipeline (D-23, D-06).
+    const hwm: HighWaterMark = opts.highWaterMark ?? 64;
+    if (typeof hwm === 'number') {
+      this._hwmCount = hwm;
+      this._hwmBytes = Number.POSITIVE_INFINITY;
+    } else {
+      this._hwmCount = hwm.count ?? Number.POSITIVE_INFINITY;
+      this._hwmBytes = hwm.bytes ?? Number.POSITIVE_INFINITY;
+    }
+    this._onBackpressure = opts.onBackpressure ?? 'reject';
+    this._pipeline = opts.pipeline !== false;
   }
 
   /**
@@ -424,6 +523,8 @@ export class MllpClient extends EventEmitter {
       this._correlator = new Correlator({
         mode: this._correlateByControlId ? 'controlId' : 'fifo',
         ackTimeoutMs: this._ackTimeoutMs,
+        // Plan 05 — pipeline:false collapses the in-flight set to ≤1 (D-06).
+        maxInFlight: this._pipeline ? Number.POSITIVE_INFINITY : 1,
         onWarning: (code, ctx) => {
           this.emit(
             'warning',
@@ -467,6 +568,11 @@ export class MllpClient extends EventEmitter {
               sentAt: entry.sentAt ?? 0,
             }),
           );
+          // Plan 05 — a timeout removes the entry from the live store too,
+          // so emit 'drain' if the queue now sits below both caps. This is
+          // critical for pipeline:false (D-06): an expired send must free
+          // the in-flight slot so the next send can flush.
+          this._maybeEmitDrain();
         },
       });
     }
@@ -890,8 +996,31 @@ export class MllpClient extends EventEmitter {
     this._lastSuccessAt = Date.now();
     // PLAN-06 inserts: this._ackedTotal += 1; this._lastAckAt = Date.now();
     matched.resolve(ackPayload);
-    // PLAN-05 extends after this point at the same anchor to emit 'drain' when
-    //   queue depth crosses below highWaterMark.
+    // Plan 05 — emit 'drain' when queue depth crosses below high-water mark
+    // (D-24). Fires once per ACK that brings the queue under both caps.
+    this._maybeEmitDrain();
+  }
+
+  /**
+   * Emit a frozen `'drain'` event when the queue depth and bytes fall below
+   * both configured caps (Plan 05 — D-24). Called from `_onAckMatched`
+   * (every successful ACK) and from the Correlator's `onTimeout` callback
+   * (every expired send) — both code paths free a live-store slot.
+   */
+  private _maybeEmitDrain(): void {
+    const corr = this._correlator;
+    if (corr === null) return;
+    const belowCount = corr.size < this._hwmCount;
+    const belowBytes = corr.queueBytes < this._hwmBytes;
+    if (belowCount && belowBytes) {
+      this.emit(
+        'drain',
+        Object.freeze({
+          queueDepth: corr.size,
+          queueBytes: corr.queueBytes,
+        }),
+      );
+    }
   }
 
   /**
@@ -963,7 +1092,10 @@ export class MllpClient extends EventEmitter {
    * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.
    * @param opts.signal AbortSignal — aborting cancels the ACK wait (CLIENT-11).
    */
-  send(payload: Buffer, opts?: { signal?: AbortSignal }): Promise<Buffer> {
+  send(
+    payload: Buffer,
+    opts?: { signal?: AbortSignal; ackTimeoutMs?: number },
+  ): Promise<Buffer> {
     const signal = opts?.signal;
     if (signal?.aborted === true) {
       return Promise.reject(new DOMException('Aborted', 'AbortError'));
@@ -987,6 +1119,43 @@ export class MllpClient extends EventEmitter {
       : null;
     const correlator = this._correlator;
     const conn = this._connection;
+    // Frame once at enqueue time — same bytes go to the wire AND get held
+    // for Plan 04 reconnect-resend (D-08 / CLIENT-17 controlId branch).
+    const frame = encodeFrame(payload);
+
+    // Plan 05 — backpressure gate (CLIENT-07, D-23). Runs BEFORE enqueue
+    // so a rejected send never touches the live store. The gate measures
+    // the current `correlator.size` + `queueBytes` against the configured
+    // high-water mark and applies the configured policy.
+    const newQueueDepth = correlator.size + 1;
+    const newQueueBytes = correlator.queueBytes + frame.length;
+    const overCount = newQueueDepth > this._hwmCount;
+    const overBytes = newQueueBytes > this._hwmBytes;
+    if (overCount || overBytes) {
+      const hwmDesc: { count?: number; bytes?: number } = {};
+      if (this._hwmCount !== Number.POSITIVE_INFINITY) {
+        hwmDesc.count = this._hwmCount;
+      }
+      if (this._hwmBytes !== Number.POSITIVE_INFINITY) {
+        hwmDesc.bytes = this._hwmBytes;
+      }
+      if (this._onBackpressure === 'reject') {
+        return Promise.reject(
+          new MllpBackpressureError(
+            `queue at high-water mark (depth=${correlator.size}, bytes=${correlator.queueBytes})`,
+            {
+              queueDepth: correlator.size,
+              queueBytes: correlator.queueBytes,
+              highWaterMark: hwmDesc,
+            },
+          ),
+        );
+      }
+      // 'wait' mode (CLIENT-07/CLIENT-11): defer until 'drain' fires OR
+      // ackTimeoutMs elapses OR the caller's signal aborts (B-06).
+      return this._waitThenSend(payload, opts);
+    }
+
     return new Promise<Buffer>((resolve, reject) => {
       let abortListener: (() => void) | null = null;
       const wrappedResolve = (ack: Buffer): void => {
@@ -1001,11 +1170,6 @@ export class MllpClient extends EventEmitter {
         }
         reject(err);
       };
-      // The Connection sends RAW bytes — frame the payload here (matches the
-      // Phase 4 server pattern `conn.send(encodeFrame(ack))`). The frame is
-      // what we hand to `enqueue()` so Plan 04's reconnect-resend path can
-      // re-emit identical bytes.
-      const frame = encodeFrame(payload);
       const key = correlator.enqueue(
         frame,
         controlId,
@@ -1013,14 +1177,22 @@ export class MllpClient extends EventEmitter {
         wrappedReject,
       );
       if (key === null) {
-        // PLAN-05 implements maxInFlight=1 wait-for-drain; in PLAN-02
-        // maxInFlight is Infinity so this is unreachable.
-        wrappedReject(
-          new MllpConnectionError('queue full', {
-            cause: new Error('maxInFlight exceeded'),
-            phase: 'send',
-          }),
-        );
+        // pipeline:false (Plan 05 — D-06). Correlator's maxInFlight=1 is
+        // saturated. Wait for the next 'drain' event (the prior ACK
+        // releases the slot) and then re-enter `send()` — the high-water
+        // mark gate above has already approved this send.
+        const onDrain = (): void => {
+          this.off('drain', onDrain);
+          this.send(payload, opts).then(wrappedResolve, wrappedReject);
+        };
+        this.on('drain', onDrain);
+        if (signal !== undefined) {
+          abortListener = (): void => {
+            this.off('drain', onDrain);
+            wrappedReject(new DOMException('Aborted', 'AbortError'));
+          };
+          signal.addEventListener('abort', abortListener, { once: true });
+        }
         return;
       }
       if (signal !== undefined) {
@@ -1031,11 +1203,70 @@ export class MllpClient extends EventEmitter {
         signal.addEventListener('abort', abortListener, { once: true });
       }
       // Connection.send returns boolean; `false` indicates socket-level
-      // backpressure (the OS still buffers the bytes). PLAN-02 has no
-      // app-level high-water mark so we just record the flush time.
-      // PLAN-05 enforces high-water mark BEFORE enqueue.
+      // backpressure (the OS still buffers the bytes). The application-level
+      // high-water mark is what the gate above enforces.
       conn.send(frame);
       correlator.markFlushed(key, Date.now());
+    });
+  }
+
+  /**
+   * 'wait'-mode backpressure handler (Plan 05 — CLIENT-07/CLIENT-11).
+   *
+   * Awaits one of three terminating signals, in order:
+   * - `'drain'` event → re-enter `send()` (the gate will now pass).
+   * - `ackTimeoutMs` elapses → reject with `MllpTimeoutError`.
+   * - Caller's `signal` aborts → reject with `AbortError` (B-06). Cleanup
+   *   removes the drain listener AND the abort listener AND clears the
+   *   timer to prevent leaks.
+   */
+  private _waitThenSend(
+    payload: Buffer,
+    opts?: { signal?: AbortSignal; ackTimeoutMs?: number },
+  ): Promise<Buffer> {
+    const signal = opts?.signal;
+    return new Promise<Buffer>((resolve, reject) => {
+      const ackTimeoutMs = opts?.ackTimeoutMs ?? this._ackTimeoutMs;
+      let abortListener: (() => void) | null = null;
+      const cleanup = (): void => {
+        this.off('drain', onDrain);
+        clearTimeout(timer);
+        if (signal !== undefined && abortListener !== null) {
+          signal.removeEventListener('abort', abortListener);
+        }
+      };
+      const onDrain = (): void => {
+        cleanup();
+        // Re-enter send(): the gate will now pass because the queue
+        // shrank. Forward both branches to our promise.
+        this.send(payload, opts).then(resolve, reject);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(
+          new MllpTimeoutError(
+            `waiting for drain timed out after ${ackTimeoutMs}ms`,
+            {
+              messageControlId: undefined,
+              elapsedMs: ackTimeoutMs,
+              sentAt: Date.now(),
+            },
+          ),
+        );
+      }, ackTimeoutMs);
+      timer.unref();
+      this.on('drain', onDrain);
+      if (signal !== undefined) {
+        // B-06: 'wait' mode MUST honor signal abort mid-wait. Cleanup
+        // removes the drain listener so listenerCount('drain') returns to
+        // its pre-send baseline, the timer is cleared, and the abort
+        // listener removes itself.
+        abortListener = (): void => {
+          cleanup();
+          reject(new DOMException('Aborted', 'AbortError'));
+        };
+        signal.addEventListener('abort', abortListener, { once: true });
+      }
     });
   }
 
