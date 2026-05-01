@@ -6,10 +6,11 @@
  * events with frozen payloads. Supports `AbortSignal` cancellation on every
  * awaitable and `Symbol.asyncDispose` for `await using` ergonomics.
  *
- * Phase 5 PLAN-01 ships only the lifecycle scaffolding — `connect()`, `close()`,
- * `destroy()`, event re-emission. Subsequent plans add `send()` (PLAN-02), control-id
- * correlation (PLAN-03), auto-reconnect (PLAN-04), backpressure (PLAN-05), and
- * `createStarterClient` + `getStats()` (PLAN-06).
+ * Phase 5 PLAN-01 shipped the lifecycle scaffolding — `connect()`, `close()`,
+ * `destroy()`, event re-emission. PLAN-02 added `send()` + `MllpTimeoutError`.
+ * The `correlateByControlId` option (MSH-10 → MSA-2 ACK matching) lights up
+ * out-of-order ACK handling. Subsequent plans add auto-reconnect (PLAN-04),
+ * backpressure (PLAN-05), and `createStarterClient` + `getStats()` (PLAN-06).
  *
  * @example
  * ```typescript
@@ -35,8 +36,13 @@ import type {
 import { MllpConnectionError } from '../connection/index.js';
 import { NetTransport } from '../transport/index.js';
 import { encodeFrame } from '../framing/index.js';
+import { MllpFramingError } from '../framing/index.js';
 import type { FrameReaderOptions, MllpWarning } from '../framing/index.js';
-import { Correlator } from './correlator.js';
+import {
+  Correlator,
+  extractMshControlId,
+  extractMsaControlId,
+} from './correlator.js';
 import type { PendingAck } from './correlator.js';
 import { MllpTimeoutError } from './error.js';
 
@@ -65,7 +71,21 @@ export interface ClientOptions {
    * pre-flush queue time is not charged to the peer. Default: `30_000`.
    */
   readonly ackTimeoutMs?: number;
-  // PLAN-03 adds: correlateByControlId?: boolean
+  /**
+   * If `true`, ACKs are matched against outgoing sends by MSH-10 → MSA-2
+   * (CLIENT-03 controlId branch). Default `false` (FIFO mode).
+   *
+   * Out-of-order ACKs from the peer are supported in this mode. MSH-10 is
+   * extracted from the outbound payload before send; MSA-2 is extracted from
+   * the inbound ACK payload. An ACK whose MSA-2 matches no pending send
+   * (and is not in the late-ACK graveyard) emits a frozen
+   * `MllpFramingError('MLLP_ACK_UNMATCHED_CONTROL_ID')` to the `'error'` event
+   * (CLIENT-15). A late ACK whose MSA-2 matches a graveyard entry emits a
+   * `MLLP_ACK_AFTER_TIMEOUT` warning (CLIENT-16) and is dropped.
+   *
+   * @default false
+   */
+  readonly correlateByControlId?: boolean;
   // PLAN-04 adds: autoReconnect?: boolean, retryStrategy?: RetryStrategy, initialDelayMs?: number, maxDelayMs?: number, multiplier?: number, jitter?: number
   // PLAN-05 adds: highWaterMark, onBackpressure, pipeline, keepaliveIntervalMs, deadPeerTimeoutMs
 }
@@ -107,6 +127,8 @@ export class MllpClient extends EventEmitter {
 
   /** Per-message ACK timeout in ms (CLIENT-04). Resolved at construction. */
   private readonly _ackTimeoutMs: number;
+  /** controlId-mode flag (CLIENT-03 branch). `false` → FIFO. */
+  private readonly _correlateByControlId: boolean;
   /** Unified ACK correlator (D-03/A1). Built during `_attachConnection`. */
   private _correlator: Correlator | null = null;
   /**
@@ -119,6 +141,7 @@ export class MllpClient extends EventEmitter {
     super();
     this._opts = opts;
     this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
+    this._correlateByControlId = opts.correlateByControlId === true;
   }
 
   /**
@@ -259,7 +282,7 @@ export class MllpClient extends EventEmitter {
     // Build the correlator before wiring listeners so the inbound 'message'
     // hand-off has a live store to consult.
     this._correlator = new Correlator({
-      mode: 'fifo', // PLAN-03 will branch on opts.correlateByControlId
+      mode: this._correlateByControlId ? 'controlId' : 'fifo',
       ackTimeoutMs: this._ackTimeoutMs,
       onWarning: (code, ctx) => {
         this.emit(
@@ -270,6 +293,27 @@ export class MllpClient extends EventEmitter {
             message: `${code}: controlId=${ctx.controlId} elapsed=${ctx.elapsedSinceSendMs}ms`,
             connectionId: conn.connectionId,
             timestamp: new Date(),
+          }),
+        );
+      },
+      onUnmatchedAck: (controlId) => {
+        // CLIENT-15: unmatched ACK in controlId mode. Emit a frozen
+        // MllpFramingError('MLLP_ACK_UNMATCHED_CONTROL_ID') to the 'error'
+        // event. listenerCount-guarded so absent listeners don't crash the
+        // process (T-05-03-02 mitigation).
+        if (this.listenerCount('error') === 0) return;
+        const err = new MllpFramingError(
+          'MLLP_ACK_UNMATCHED_CONTROL_ID',
+          0,
+          Buffer.alloc(0),
+          `Unmatched ACK control ID${controlId === '' ? '' : `: ${controlId}`}`,
+        );
+        this.emit(
+          'error',
+          Object.freeze({
+            connectionId: conn.connectionId,
+            error: err,
+            controlId,
           }),
         );
       },
@@ -341,17 +385,21 @@ export class MllpClient extends EventEmitter {
   /**
    * Single source-of-truth for inbound ACK payload handling.
    *
-   * PLAN-02: FIFO matchAck + delegate to _onAckMatched.
-   * PLAN-03 extends at HOOK_EXTENSION_POINT: ack-payload to extract MSA-2 and
-   *   pass to matchAck() in controlId mode.
+   * - FIFO mode: passes `null` controlId so `matchAck` returns the head of
+   *   the live store.
+   * - controlId mode: extracts MSA-2 at the `HOOK_EXTENSION_POINT: ack-payload`
+   *   anchor and passes it to `matchAck` for keyed lookup.
    *
-   * Called from the SINGLE 'message' listener registered in _attachConnection.
+   * Called from the SINGLE `'message'` listener registered in `_attachConnection`.
+   * No parallel listener is registered — downstream plans extend at the named
+   * anchor (B-04).
    */
   private _onAckPayload(ackPayload: Buffer, byteOffset: number): void {
     if (this._correlator === null) return;
     // HOOK_EXTENSION_POINT: ack-payload
-    // PLAN-03 inserts: const ackControlId = this._correlateByControlId ? extractMsaControlId(ackPayload) : null;
-    const ackControlId: string | null = null;
+    const ackControlId: string | null = this._correlateByControlId
+      ? extractMsaControlId(ackPayload)
+      : null;
     const matched = this._correlator.matchAck(
       ackPayload,
       ackControlId,
@@ -449,8 +497,11 @@ export class MllpClient extends EventEmitter {
         }),
       );
     }
-    // PLAN-03 will extract MSH-10 from `payload`; FIFO mode passes null.
-    const controlId: string | null = null;
+    // controlId mode: extract MSH-10 BEFORE enqueue so the live-store key
+    // is the same string the peer will echo back as MSA-2.
+    const controlId: string | null = this._correlateByControlId
+      ? extractMshControlId(payload)
+      : null;
     const correlator = this._correlator;
     const conn = this._connection;
     return new Promise<Buffer>((resolve, reject) => {
