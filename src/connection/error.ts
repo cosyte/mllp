@@ -23,12 +23,7 @@
  * exercised in Phase 5 (CLIENT-17). Locking the full union now prevents a
  * breaking type change later (ERR-03).
  */
-export type ConnectionErrorPhase =
-  | 'connect'
-  | 'send'
-  | 'receive'
-  | 'close'
-  | 'reconnect';
+export type ConnectionErrorPhase = "connect" | "send" | "receive" | "close" | "reconnect";
 
 /**
  * Stable cause codes for `MllpConnectionError`.
@@ -52,7 +47,7 @@ export type ConnectionErrorPhase =
  * }
  * ```
  */
-export type ConnectionErrorCause = 'fifo-unsafe' | 'in-flight-orphan';
+export type ConnectionErrorCause = "fifo-unsafe" | "in-flight-orphan";
 
 /**
  * Thrown (or emitted via `onError`) for socket-layer problems such as
@@ -71,7 +66,7 @@ export type ConnectionErrorCause = 'fifo-unsafe' | 'in-flight-orphan';
  * ```
  */
 export class MllpConnectionError extends Error {
-  override readonly name = 'MllpConnectionError' as const;
+  override readonly name = "MllpConnectionError" as const;
 
   /** The original OS or TLS error that caused this connection failure. */
   override readonly cause: Error;

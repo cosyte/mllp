@@ -16,7 +16,7 @@
  * @packageDocumentation
  */
 
-import type { WarningCode } from './registry.js';
+import type { WarningCode } from "./registry.js";
 
 /** Maximum number of bytes captured in the `snippet` field. */
 const MAX_SNIPPET_BYTES = 64;
@@ -34,7 +34,7 @@ const MAX_SNIPPET_BYTES = 64;
  * ```
  */
 export class MllpFramingError extends Error {
-  override readonly name = 'MllpFramingError' as const;
+  override readonly name = "MllpFramingError" as const;
 
   /** Stable warning code identifying the violation type. */
   readonly code: WarningCode;

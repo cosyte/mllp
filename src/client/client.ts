@@ -25,34 +25,19 @@
  * @packageDocumentation
  */
 
-import { createConnection } from 'node:net';
-import type { Socket } from 'node:net';
-import { EventEmitter } from 'node:events';
-import { Connection } from '../connection/index.js';
-import type {
-  ConnectionState,
-  StateChangeEvent,
-} from '../connection/index.js';
-import { MllpConnectionError } from '../connection/index.js';
-import { NetTransport } from '../transport/index.js';
-import { encodeFrame } from '../framing/index.js';
-import { MllpFramingError } from '../framing/index.js';
-import type {
-  FrameReaderOptions,
-  MllpWarning,
-  WarningCode,
-} from '../framing/index.js';
-import {
-  Correlator,
-  extractMshControlId,
-  extractMsaControlId,
-} from './correlator.js';
-import type { PendingAck } from './correlator.js';
-import {
-  MllpTimeoutError,
-  MllpBackpressureError,
-  isTransientConnectionError,
-} from './error.js';
+import { createConnection } from "node:net";
+import type { Socket } from "node:net";
+import { EventEmitter } from "node:events";
+import { Connection } from "../connection/index.js";
+import type { ConnectionState, StateChangeEvent } from "../connection/index.js";
+import { MllpConnectionError } from "../connection/index.js";
+import { NetTransport } from "../transport/index.js";
+import { encodeFrame } from "../framing/index.js";
+import { MllpFramingError } from "../framing/index.js";
+import type { FrameReaderOptions, MllpWarning, WarningCode } from "../framing/index.js";
+import { Correlator, extractMshControlId, extractMsaControlId } from "./correlator.js";
+import type { PendingAck } from "./correlator.js";
+import { MllpTimeoutError, MllpBackpressureError, isTransientConnectionError } from "./error.js";
 
 /**
  * Module-level "never aborts" sentinel for `RetryContext.signal` (D-18, W-07).
@@ -95,7 +80,7 @@ export interface RetryContext {
   /** Ms since the last successful ACK. `Infinity` if no success seen. */
   readonly sinceLastSuccessMs: number;
   /** CLIENT-18 classification (Composition A — D-16). */
-  readonly classifiedAs: 'transient' | 'permanent';
+  readonly classifiedAs: "transient" | "permanent";
   /**
    * The same `AbortSignal` passed into `connect()`. If no signal was
    * supplied, the module-level `NEVER_ABORTING_SIGNAL` sentinel is provided
@@ -125,9 +110,7 @@ export type RetryStrategy = (ctx: RetryContext) => number | null;
  * };
  * ```
  */
-export type HighWaterMark =
-  | number
-  | { readonly count?: number; readonly bytes?: number };
+export type HighWaterMark = number | { readonly count?: number; readonly bytes?: number };
 
 /**
  * Options for {@link createClient} and the {@link MllpClient} constructor.
@@ -145,7 +128,7 @@ export interface ClientOptions {
   /** TCP port. */
   readonly port: number;
   /** FrameReader tolerance / size options. `onFrame` and `onWarning` are managed internally. */
-  readonly framing?: Omit<FrameReaderOptions, 'onFrame' | 'onWarning'>;
+  readonly framing?: Omit<FrameReaderOptions, "onFrame" | "onWarning">;
   /** Drain timeout for {@link MllpClient.close} (default: `30_000` ms). */
   readonly drainTimeoutMs?: number;
   /**
@@ -215,7 +198,7 @@ export interface ClientOptions {
    *
    * @default 'reject'
    */
-  readonly onBackpressure?: 'reject' | 'wait';
+  readonly onBackpressure?: "reject" | "wait";
   /**
    * Strict serialization send → await-ACK → send (CLIENT-19, D-06).
    *
@@ -336,7 +319,7 @@ export class MllpClient extends EventEmitter {
    * Initial state for `get state()` before `_connection` exists. Once a Connection
    * is attached, `state` mirrors `_connection.state`.
    */
-  private _state: ConnectionState = 'DISCONNECTED';
+  private _state: ConnectionState = "DISCONNECTED";
 
   /** Per-message ACK timeout in ms (CLIENT-04). Resolved at construction. */
   private readonly _ackTimeoutMs: number;
@@ -381,7 +364,7 @@ export class MllpClient extends EventEmitter {
   /** Byte cap; `Number.POSITIVE_INFINITY` when only count configured. */
   private readonly _hwmBytes: number;
   /** Backpressure policy; default `'reject'`. */
-  private readonly _onBackpressure: 'reject' | 'wait';
+  private readonly _onBackpressure: "reject" | "wait";
   /** Pipeline flag; default `true` (parallel up to highWaterMark). */
   private readonly _pipeline: boolean;
   /** Dead-peer idle timer (Plan 05 — D-11). `null` when not armed. */
@@ -403,9 +386,7 @@ export class MllpClient extends EventEmitter {
    *
    * @internal
    */
-  private _reconnectFactory:
-    | (() => { conn: Connection; arm: () => void })
-    | null = null;
+  private _reconnectFactory: (() => { conn: Connection; arm: () => void }) | null = null;
 
   // ── PLAN-06 — observability counters for getStats (OBS-01, D-26) ─────────
   /** Total successful `conn.send()` flushes since construction. */
@@ -439,14 +420,14 @@ export class MllpClient extends EventEmitter {
 
     // Plan 05 — backpressure + pipeline (D-23, D-06).
     const hwm: HighWaterMark = opts.highWaterMark ?? 64;
-    if (typeof hwm === 'number') {
+    if (typeof hwm === "number") {
       this._hwmCount = hwm;
       this._hwmBytes = Number.POSITIVE_INFINITY;
     } else {
       this._hwmCount = hwm.count ?? Number.POSITIVE_INFINITY;
       this._hwmBytes = hwm.bytes ?? Number.POSITIVE_INFINITY;
     }
-    this._onBackpressure = opts.onBackpressure ?? 'reject';
+    this._onBackpressure = opts.onBackpressure ?? "reject";
     this._pipeline = opts.pipeline !== false;
   }
 
@@ -481,20 +462,20 @@ export class MllpClient extends EventEmitter {
 
     // AbortSignal: reject immediately if already aborted
     if (signal?.aborted) {
-      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+      return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
     // Reject if we already hold a live Connection. Once a Connection has reached
     // CLOSED or DISCONNECTED we drop the reference and allow a fresh connect().
     if (
       this._connection !== null &&
-      this._connection.state !== 'CLOSED' &&
-      this._connection.state !== 'DISCONNECTED'
+      this._connection.state !== "CLOSED" &&
+      this._connection.state !== "DISCONNECTED"
     ) {
       return Promise.reject(
-        new MllpConnectionError('already connected or connecting', {
-          cause: new Error('already connected'),
-          phase: 'connect',
+        new MllpConnectionError("already connected or connecting", {
+          cause: new Error("already connected"),
+          phase: "connect",
         }),
       );
     }
@@ -523,22 +504,22 @@ export class MllpClient extends EventEmitter {
       this._socket = socket;
 
       const transport = new NetTransport(socket);
-      const connOpts = this._opts.framing !== undefined
-        ? { transport, framing: this._opts.framing }
-        : { transport };
+      const connOpts =
+        this._opts.framing !== undefined
+          ? { transport, framing: this._opts.framing }
+          : { transport };
       if (this._opts.drainTimeoutMs !== undefined) {
-        (connOpts as { drainTimeoutMs?: number }).drainTimeoutMs =
-          this._opts.drainTimeoutMs;
+        (connOpts as { drainTimeoutMs?: number }).drainTimeoutMs = this._opts.drainTimeoutMs;
       }
       const conn = new Connection(connOpts);
       this._attachConnection(conn);
 
       const cleanup = (): void => {
         if (signal !== undefined) {
-          signal.removeEventListener('abort', abortHandler);
+          signal.removeEventListener("abort", abortHandler);
         }
-        socket.removeListener('connect', onSocketConnect);
-        socket.removeListener('error', onSocketError);
+        socket.removeListener("connect", onSocketConnect);
+        socket.removeListener("error", onSocketError);
       };
 
       const abortHandler = (): void => {
@@ -547,22 +528,19 @@ export class MllpClient extends EventEmitter {
         // Tear down the in-flight attempt — also clears the correlator so
         // any sweep timer armed by _attachConnection is released.
         this._teardownCorrelator(
-          new MllpConnectionError('connect aborted', {
-            cause: new Error('aborted'),
-            phase: 'connect',
+          new MllpConnectionError("connect aborted", {
+            cause: new Error("aborted"),
+            phase: "connect",
           }),
         );
-        conn.destroy(new Error('aborted'));
-        reject(new DOMException('Aborted', 'AbortError'));
+        conn.destroy(new Error("aborted"));
+        reject(new DOMException("Aborted", "AbortError"));
       };
 
       const onSocketConnect = (): void => {
         if (aborted) return;
         cleanup();
-        conn.notifyConnect(
-          socket.remoteAddress ?? null,
-          socket.remotePort ?? null,
-        );
+        conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
         resolve();
       };
 
@@ -572,16 +550,14 @@ export class MllpClient extends EventEmitter {
         // Surface the OS error wrapped in MllpConnectionError (Connection's
         // _onTransportError handles the same wrap once attached, but the
         // socket's 'error' may arrive before NetTransport hands it off).
-        reject(
-          new MllpConnectionError(err.message, { cause: err, phase: 'connect' }),
-        );
+        reject(new MllpConnectionError(err.message, { cause: err, phase: "connect" }));
       };
 
       if (signal !== undefined) {
-        signal.addEventListener('abort', abortHandler, { once: true });
+        signal.addEventListener("abort", abortHandler, { once: true });
       }
-      socket.once('connect', onSocketConnect);
-      socket.once('error', onSocketError);
+      socket.once("connect", onSocketConnect);
+      socket.once("error", onSocketError);
     });
   }
 
@@ -606,22 +582,20 @@ export class MllpClient extends EventEmitter {
     // one captured at attach-time).
     if (this._correlator === null) {
       this._correlator = new Correlator({
-        mode: this._correlateByControlId ? 'controlId' : 'fifo',
+        mode: this._correlateByControlId ? "controlId" : "fifo",
         ackTimeoutMs: this._ackTimeoutMs,
         // Plan 05 — pipeline:false collapses the in-flight set to ≤1 (D-06).
         maxInFlight: this._pipeline ? Number.POSITIVE_INFINITY : 1,
         onWarning: (code, ctx) => {
           // PLAN-06 (OBS-01, D-26) — aggregate Correlator-emitted warning counts.
-          this._aggregatedWarningsByCode[code] =
-            (this._aggregatedWarningsByCode[code] ?? 0) + 1;
+          this._aggregatedWarningsByCode[code] = (this._aggregatedWarningsByCode[code] ?? 0) + 1;
           this.emit(
-            'warning',
+            "warning",
             Object.freeze({
               code,
               byteOffset: ctx.byteOffset,
               message: `${code}: controlId=${ctx.controlId} elapsed=${ctx.elapsedSinceSendMs}ms`,
-              connectionId:
-                this._connection?.connectionId ?? conn.connectionId,
+              connectionId: this._connection?.connectionId ?? conn.connectionId,
               timestamp: new Date(),
             }),
           );
@@ -631,18 +605,17 @@ export class MllpClient extends EventEmitter {
           // MllpFramingError('MLLP_ACK_UNMATCHED_CONTROL_ID') to the 'error'
           // event. listenerCount-guarded so absent listeners don't crash the
           // process (T-05-03-02 mitigation).
-          if (this.listenerCount('error') === 0) return;
+          if (this.listenerCount("error") === 0) return;
           const err = new MllpFramingError(
-            'MLLP_ACK_UNMATCHED_CONTROL_ID',
+            "MLLP_ACK_UNMATCHED_CONTROL_ID",
             0,
             Buffer.alloc(0),
-            `Unmatched ACK control ID${controlId === '' ? '' : `: ${controlId}`}`,
+            `Unmatched ACK control ID${controlId === "" ? "" : `: ${controlId}`}`,
           );
           this.emit(
-            'error',
+            "error",
             Object.freeze({
-              connectionId:
-                this._connection?.connectionId ?? conn.connectionId,
+              connectionId: this._connection?.connectionId ?? conn.connectionId,
               error: err,
               controlId,
             }),
@@ -670,10 +643,7 @@ export class MllpClient extends EventEmitter {
     // Periodic sweep: smaller of (ackTimeoutMs / 4) and 1000 ms; floor 50 ms.
     // .unref() so this timer never keeps the process alive.
     if (this._ackSweepTimer === null) {
-      const sweepIntervalMs = Math.max(
-        50,
-        Math.min(1000, Math.floor(this._ackTimeoutMs / 4)),
-      );
+      const sweepIntervalMs = Math.max(50, Math.min(1000, Math.floor(this._ackTimeoutMs / 4)));
       this._ackSweepTimer = setInterval(() => {
         this._correlator?.expireDue();
       }, sweepIntervalMs);
@@ -681,19 +651,19 @@ export class MllpClient extends EventEmitter {
     }
 
     // Single 'stateChange' listener delegates to _onStateChange (B-04 anchor).
-    conn.on('stateChange', (e: StateChangeEvent) => {
+    conn.on("stateChange", (e: StateChangeEvent) => {
       this._onStateChange(e);
     });
     // Single 'message' listener: re-emit + delegate to _onAckPayload (B-04 anchor).
     conn.on(
-      'message',
+      "message",
       (e: {
         payload: Buffer;
         connectionId: string;
         byteOffset: number;
         warnings: readonly MllpWarning[];
       }) => {
-        this.emit('message', Object.freeze({ ...e }));
+        this.emit("message", Object.freeze({ ...e }));
         // Plan 05 — last-bytes-received signal resets dead-peer timer
         // (D-11 "last bytes/ACK received").
         this._armDeadPeerTimer();
@@ -701,32 +671,29 @@ export class MllpClient extends EventEmitter {
       },
     );
     // PLAN-01 lifecycle re-emitters preserved unchanged.
-    conn.on('connect', (e: unknown) => {
-      this.emit('connect', Object.freeze({ ...(e as object) }));
+    conn.on("connect", (e: unknown) => {
+      this.emit("connect", Object.freeze({ ...(e as object) }));
     });
-    conn.on('disconnect', (e: unknown) => {
-      this.emit('disconnect', Object.freeze({ ...(e as object) }));
+    conn.on("disconnect", (e: unknown) => {
+      this.emit("disconnect", Object.freeze({ ...(e as object) }));
     });
-    conn.on('reconnecting', (e: unknown) => {
-      this.emit('reconnecting', Object.freeze({ ...(e as object) }));
+    conn.on("reconnecting", (e: unknown) => {
+      this.emit("reconnecting", Object.freeze({ ...(e as object) }));
     });
-    conn.on('close', (e: unknown) => {
-      this.emit('close', Object.freeze({ ...(e as object) }));
+    conn.on("close", (e: unknown) => {
+      this.emit("close", Object.freeze({ ...(e as object) }));
     });
-    conn.on('warning', (w: MllpWarning) => {
-      this.emit('warning', w);
+    conn.on("warning", (w: MllpWarning) => {
+      this.emit("warning", w);
       // Plan 05 — Connection 'warning' is also a "bytes received" signal.
       this._armDeadPeerTimer();
     });
-    conn.on('error', (e: unknown) => {
+    conn.on("error", (e: unknown) => {
       // Plan 04: capture the underlying Error for `RetryContext.lastError`.
       // The Connection emits frozen `{ connectionId, error: MllpConnectionError }`
       // payloads. We unwrap to the original transport error so the CLIENT-18
       // classifier (which inspects `err.code`) receives the OS-level code.
-      const wrapper =
-        e instanceof Error
-          ? e
-          : (e as { error?: unknown })?.error;
+      const wrapper = e instanceof Error ? e : (e as { error?: unknown })?.error;
       if (wrapper instanceof Error) {
         // If the wrapper has a `.cause` Error (MllpConnectionError pattern),
         // prefer the inner cause for classification.
@@ -735,8 +702,8 @@ export class MllpClient extends EventEmitter {
       }
       // Server precedent: only re-emit if a listener is attached, to avoid
       // ERR_UNHANDLED_ERROR crashing the process (T-05-01-03 mitigation).
-      if (this.listenerCount('error') > 0) {
-        this.emit('error', e);
+      if (this.listenerCount("error") > 0) {
+        this.emit("error", e);
       }
     });
     this._connection = conn;
@@ -748,7 +715,7 @@ export class MllpClient extends EventEmitter {
     // armed it, but keeps the contract literal-true.
     if (!this._ackResetWired) {
       this._ackResetWired = true;
-      this.on('ack', () => {
+      this.on("ack", () => {
         this._armDeadPeerTimer();
       });
     }
@@ -757,7 +724,7 @@ export class MllpClient extends EventEmitter {
     // (test seam path: _attachExistingConnection called after notifyConnect).
     // The state-change branch arms it for the normal path
     // (CONNECTING → CONNECTED transition).
-    if (conn.state === 'CONNECTED') {
+    if (conn.state === "CONNECTED") {
       this._armDeadPeerTimer();
     }
   }
@@ -772,7 +739,7 @@ export class MllpClient extends EventEmitter {
       clearTimeout(this._deadPeerTimer);
     }
     this._deadPeerTimer = setTimeout(() => {
-      this._connection?.destroy(new Error('dead peer timeout'));
+      this._connection?.destroy(new Error("dead peer timeout"));
     }, this._opts.deadPeerTimeoutMs);
     this._deadPeerTimer.unref();
   }
@@ -828,19 +795,19 @@ export class MllpClient extends EventEmitter {
         }
         for (const o of orphans) {
           o.reject(
-            new MllpConnectionError('in-flight send orphaned by reconnect', {
+            new MllpConnectionError("in-flight send orphaned by reconnect", {
               cause: err,
-              phase: 'reconnect',
-              connectionCause: 'in-flight-orphan',
+              phase: "reconnect",
+              connectionCause: "in-flight-orphan",
             }),
           );
         }
         for (const q of queued) {
           q.reject(
-            new MllpConnectionError('queued send rejected by FIFO reconnect', {
+            new MllpConnectionError("queued send rejected by FIFO reconnect", {
               cause: err,
-              phase: 'reconnect',
-              connectionCause: 'fifo-unsafe',
+              phase: "reconnect",
+              connectionCause: "fifo-unsafe",
             }),
           );
         }
@@ -852,10 +819,10 @@ export class MllpClient extends EventEmitter {
 
     // CLIENT-18 classification first (Composition A — D-16). Permanent
     // errors transition directly to CLOSED without invoking retryStrategy.
-    const classifiedAs: 'transient' | 'permanent' = isTransientConnectionError(err)
-      ? 'transient'
-      : 'permanent';
-    if (classifiedAs === 'permanent') {
+    const classifiedAs: "transient" | "permanent" = isTransientConnectionError(err)
+      ? "transient"
+      : "permanent";
+    if (classifiedAs === "permanent") {
       // Halt: force the dead Connection to CLOSED (terminal); future
       // connect() must be called explicitly.
       this._userClosed = true;
@@ -886,9 +853,7 @@ export class MllpClient extends EventEmitter {
       lastDelayMs: this._lastDelayMs,
       totalElapsedMs: Date.now() - this._reconnectCycleStartedAt,
       sinceLastSuccessMs:
-        this._lastSuccessAt !== null
-          ? Date.now() - this._lastSuccessAt
-          : Number.POSITIVE_INFINITY,
+        this._lastSuccessAt !== null ? Date.now() - this._lastSuccessAt : Number.POSITIVE_INFINITY,
       classifiedAs,
       signal: this._connectSignal ?? NEVER_ABORTING_SIGNAL,
     });
@@ -900,13 +865,12 @@ export class MllpClient extends EventEmitter {
       delay = strategy(ctx);
     } catch (hookErr) {
       // Strategy threw — bail to CLOSED, surface error.
-      this._lastError =
-        hookErr instanceof Error ? hookErr : new Error(String(hookErr));
-      if (this.listenerCount('error') > 0) {
+      this._lastError = hookErr instanceof Error ? hookErr : new Error(String(hookErr));
+      if (this.listenerCount("error") > 0) {
         this.emit(
-          'error',
+          "error",
           Object.freeze({
-            connectionId: this._connection?.connectionId ?? '<none>',
+            connectionId: this._connection?.connectionId ?? "<none>",
             error: this._lastError,
           }),
         );
@@ -925,9 +889,9 @@ export class MllpClient extends EventEmitter {
 
     // Emit 'reconnecting' with populated fields (Phase 3 D-CR-01 promise).
     this.emit(
-      'reconnecting',
+      "reconnecting",
       Object.freeze({
-        connectionId: this._connection?.connectionId ?? '<none>',
+        connectionId: this._connection?.connectionId ?? "<none>",
         attempt: this._attempt,
         delayMs: delay,
       }),
@@ -991,26 +955,23 @@ export class MllpClient extends EventEmitter {
         }
         this._socket = socket;
         const transport = new NetTransport(socket);
-        const connOpts = this._opts.framing !== undefined
-          ? { transport, framing: this._opts.framing }
-          : { transport };
+        const connOpts =
+          this._opts.framing !== undefined
+            ? { transport, framing: this._opts.framing }
+            : { transport };
         if (this._opts.drainTimeoutMs !== undefined) {
-          (connOpts as { drainTimeoutMs?: number }).drainTimeoutMs =
-            this._opts.drainTimeoutMs;
+          (connOpts as { drainTimeoutMs?: number }).drainTimeoutMs = this._opts.drainTimeoutMs;
         }
         conn = new Connection(connOpts);
         arm = (): void => {
-          conn.notifyConnect(
-            socket.remoteAddress ?? null,
-            socket.remotePort ?? null,
-          );
+          conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
         };
-        socket.once('error', (sErr) => {
+        socket.once("error", (sErr) => {
           if (this._lastError === null || this._lastError.message !== sErr.message) {
             this._lastError = sErr;
           }
         });
-        socket.once('connect', () => {
+        socket.once("connect", () => {
           arm();
           this._afterReconnectArmed();
         });
@@ -1054,9 +1015,7 @@ export class MllpClient extends EventEmitter {
    *
    * @internal
    */
-  _setReconnectFactory(
-    factory: () => { conn: Connection; arm: () => void },
-  ): void {
+  _setReconnectFactory(factory: () => { conn: Connection; arm: () => void }): void {
     this._reconnectFactory = factory;
   }
 
@@ -1068,10 +1027,7 @@ export class MllpClient extends EventEmitter {
   _captureConnectSignal(signal: AbortSignal): void {
     this._connectSignal = signal;
     if (this._abortListener !== null) {
-      this._abortListener.signal.removeEventListener(
-        'abort',
-        this._abortListener.handler,
-      );
+      this._abortListener.signal.removeEventListener("abort", this._abortListener.handler);
       this._abortListener = null;
     }
     const handler = (): void => {
@@ -1080,9 +1036,9 @@ export class MllpClient extends EventEmitter {
         clearTimeout(this._backoffTimer);
         this._backoffTimer = null;
       }
-      this._connection?.destroy(new DOMException('Aborted', 'AbortError'));
+      this._connection?.destroy(new DOMException("Aborted", "AbortError"));
     };
-    signal.addEventListener('abort', handler, { once: true });
+    signal.addEventListener("abort", handler, { once: true });
     this._abortListener = { signal, handler };
   }
 
@@ -1104,11 +1060,7 @@ export class MllpClient extends EventEmitter {
     const ackControlId: string | null = this._correlateByControlId
       ? extractMsaControlId(ackPayload)
       : null;
-    const matched = this._correlator.matchAck(
-      ackPayload,
-      ackControlId,
-      byteOffset,
-    );
+    const matched = this._correlator.matchAck(ackPayload, ackControlId, byteOffset);
     if (matched !== null) {
       this._onAckMatched(matched, ackPayload);
     }
@@ -1125,10 +1077,9 @@ export class MllpClient extends EventEmitter {
    * Called from _onAckPayload when matchAck() returns a non-null PendingAck.
    */
   private _onAckMatched(matched: PendingAck, ackPayload: Buffer): void {
-    const latencyMs =
-      matched.sentAt !== null ? Date.now() - matched.sentAt : 0;
+    const latencyMs = matched.sentAt !== null ? Date.now() - matched.sentAt : 0;
     this.emit(
-      'ack',
+      "ack",
       Object.freeze({
         payload: ackPayload,
         controlId: matched.controlId,
@@ -1161,10 +1112,13 @@ export class MllpClient extends EventEmitter {
     const belowCount = corr.size < this._hwmCount;
     const belowBytes = corr.queueBytes < this._hwmBytes;
     if (belowCount && belowBytes) {
-      this.emit('drain', Object.freeze({
-        queueDepth: corr.size,
-        queueBytes: corr.queueBytes,
-      }));
+      this.emit(
+        "drain",
+        Object.freeze({
+          queueDepth: corr.size,
+          queueBytes: corr.queueBytes,
+        }),
+      );
     }
   }
 
@@ -1181,16 +1135,16 @@ export class MllpClient extends EventEmitter {
    * Called from the SINGLE 'stateChange' listener registered in _attachConnection.
    */
   private _onStateChange(e: StateChangeEvent): void {
-    this.emit('stateChange', Object.freeze({ ...e }));
+    this.emit("stateChange", Object.freeze({ ...e }));
     // HOOK_EXTENSION_POINT: state-change
     // Plan 05 — dead-peer timer arm/clear (D-14). Cleared on every
     // transition OUT of CONNECTED; re-armed on entry TO CONNECTED.
-    if (e.to === 'CONNECTED') {
+    if (e.to === "CONNECTED") {
       this._armDeadPeerTimer();
       // PLAN-06 (OBS-01, D-26) — record CONNECTED epoch for getStats.
       this._lastConnectedAt = Date.now();
     }
-    if (e.from === 'CONNECTED' && e.to !== 'CONNECTED') {
+    if (e.from === "CONNECTED" && e.to !== "CONNECTED") {
       this._clearDeadPeerTimer();
     }
     // Plan 04 — disconnect detection (CLIENT-05/06/17). Trigger
@@ -1200,22 +1154,22 @@ export class MllpClient extends EventEmitter {
     // cycle continues incrementing `_attempt`). The cycle-start flag plus
     // `_userClosed` guard against re-entry.
     const isPostConnectedDrop =
-      e.from === 'CONNECTED' &&
-      (e.to === 'DISCONNECTED' || e.to === 'RECONNECTING' || e.to === 'CLOSED');
+      e.from === "CONNECTED" &&
+      (e.to === "DISCONNECTED" || e.to === "RECONNECTING" || e.to === "CLOSED");
     const isReconnectAttemptFailure =
       this._reconnectCycleStartedAt !== null &&
-      (e.from === 'CONNECTING' || e.from === 'RECONNECTING') &&
-      (e.to === 'CLOSED' || e.to === 'DISCONNECTED');
+      (e.from === "CONNECTING" || e.from === "RECONNECTING") &&
+      (e.to === "CLOSED" || e.to === "DISCONNECTED");
     if (isPostConnectedDrop || isReconnectAttemptFailure) {
-      const cause = this._lastError ?? new Error(e.reason ?? 'disconnect');
+      const cause = this._lastError ?? new Error(e.reason ?? "disconnect");
       if (this._userClosed) return;
       if (!this._autoReconnect) {
         // Reject pending sends — same teardown path as close() but with a
         // disconnect-flavored MllpConnectionError so callers see the cause.
         this._teardownCorrelator(
-          new MllpConnectionError('disconnected; autoReconnect disabled', {
+          new MllpConnectionError("disconnected; autoReconnect disabled", {
             cause,
-            phase: 'send',
+            phase: "send",
           }),
         );
         return;
@@ -1246,23 +1200,20 @@ export class MllpClient extends EventEmitter {
    * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.
    * @param opts.signal AbortSignal — aborting cancels the ACK wait (CLIENT-11).
    */
-  send(
-    payload: Buffer,
-    opts?: { signal?: AbortSignal; ackTimeoutMs?: number },
-  ): Promise<Buffer> {
+  send(payload: Buffer, opts?: { signal?: AbortSignal; ackTimeoutMs?: number }): Promise<Buffer> {
     const signal = opts?.signal;
     if (signal?.aborted === true) {
-      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+      return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
     if (
       this._connection === null ||
       this._correlator === null ||
-      this._connection.state !== 'CONNECTED'
+      this._connection.state !== "CONNECTED"
     ) {
       return Promise.reject(
-        new MllpConnectionError('send before connect', {
+        new MllpConnectionError("send before connect", {
           cause: new Error(`client state is ${this.state}`),
-          phase: 'send',
+          phase: "send",
         }),
       );
     }
@@ -1293,7 +1244,7 @@ export class MllpClient extends EventEmitter {
       if (this._hwmBytes !== Number.POSITIVE_INFINITY) {
         hwmDesc.bytes = this._hwmBytes;
       }
-      if (this._onBackpressure === 'reject') {
+      if (this._onBackpressure === "reject") {
         return Promise.reject(
           new MllpBackpressureError(
             `queue at high-water mark (depth=${correlator.size}, bytes=${correlator.queueBytes})`,
@@ -1314,47 +1265,42 @@ export class MllpClient extends EventEmitter {
       let abortListener: (() => void) | null = null;
       const wrappedResolve = (ack: Buffer): void => {
         if (signal !== undefined && abortListener !== null) {
-          signal.removeEventListener('abort', abortListener);
+          signal.removeEventListener("abort", abortListener);
         }
         resolve(ack);
       };
       const wrappedReject = (err: Error): void => {
         if (signal !== undefined && abortListener !== null) {
-          signal.removeEventListener('abort', abortListener);
+          signal.removeEventListener("abort", abortListener);
         }
         reject(err);
       };
-      const key = correlator.enqueue(
-        frame,
-        controlId,
-        wrappedResolve,
-        wrappedReject,
-      );
+      const key = correlator.enqueue(frame, controlId, wrappedResolve, wrappedReject);
       if (key === null) {
         // pipeline:false (Plan 05 — D-06). Correlator's maxInFlight=1 is
         // saturated. Wait for the next 'drain' event (the prior ACK
         // releases the slot) and then re-enter `send()` — the high-water
         // mark gate above has already approved this send.
         const onDrain = (): void => {
-          this.off('drain', onDrain);
+          this.off("drain", onDrain);
           this.send(payload, opts).then(wrappedResolve, wrappedReject);
         };
-        this.on('drain', onDrain);
+        this.on("drain", onDrain);
         if (signal !== undefined) {
           abortListener = (): void => {
-            this.off('drain', onDrain);
-            wrappedReject(new DOMException('Aborted', 'AbortError'));
+            this.off("drain", onDrain);
+            wrappedReject(new DOMException("Aborted", "AbortError"));
           };
-          signal.addEventListener('abort', abortListener, { once: true });
+          signal.addEventListener("abort", abortListener, { once: true });
         }
         return;
       }
       if (signal !== undefined) {
         abortListener = (): void => {
           correlator.remove(key);
-          wrappedReject(new DOMException('Aborted', 'AbortError'));
+          wrappedReject(new DOMException("Aborted", "AbortError"));
         };
-        signal.addEventListener('abort', abortListener, { once: true });
+        signal.addEventListener("abort", abortListener, { once: true });
       }
       // Connection.send returns boolean; `false` indicates socket-level
       // backpressure (the OS still buffers the bytes). The application-level
@@ -1387,10 +1333,10 @@ export class MllpClient extends EventEmitter {
       const ackTimeoutMs = opts?.ackTimeoutMs ?? this._ackTimeoutMs;
       let abortListener: (() => void) | null = null;
       const cleanup = (): void => {
-        this.off('drain', onDrain);
+        this.off("drain", onDrain);
         clearTimeout(timer);
         if (signal !== undefined && abortListener !== null) {
-          signal.removeEventListener('abort', abortListener);
+          signal.removeEventListener("abort", abortListener);
         }
       };
       const onDrain = (): void => {
@@ -1402,18 +1348,15 @@ export class MllpClient extends EventEmitter {
       const timer = setTimeout(() => {
         cleanup();
         reject(
-          new MllpTimeoutError(
-            `waiting for drain timed out after ${ackTimeoutMs}ms`,
-            {
-              messageControlId: undefined,
-              elapsedMs: ackTimeoutMs,
-              sentAt: Date.now(),
-            },
-          ),
+          new MllpTimeoutError(`waiting for drain timed out after ${ackTimeoutMs}ms`, {
+            messageControlId: undefined,
+            elapsedMs: ackTimeoutMs,
+            sentAt: Date.now(),
+          }),
         );
       }, ackTimeoutMs);
       timer.unref();
-      this.on('drain', onDrain);
+      this.on("drain", onDrain);
       if (signal !== undefined) {
         // B-06: 'wait' mode MUST honor signal abort mid-wait. Cleanup
         // removes the drain listener so listenerCount('drain') returns to
@@ -1421,9 +1364,9 @@ export class MllpClient extends EventEmitter {
         // listener removes itself.
         abortListener = (): void => {
           cleanup();
-          reject(new DOMException('Aborted', 'AbortError'));
+          reject(new DOMException("Aborted", "AbortError"));
         };
-        signal.addEventListener('abort', abortListener, { once: true });
+        signal.addEventListener("abort", abortListener, { once: true });
       }
     });
   }
@@ -1457,9 +1400,9 @@ export class MllpClient extends EventEmitter {
    */
   _attachExistingConnection(conn: Connection): void {
     if (this._connection !== null) {
-      throw new MllpConnectionError('connection already attached', {
-        cause: new Error('attach twice'),
-        phase: 'connect',
+      throw new MllpConnectionError("connection already attached", {
+        cause: new Error("attach twice"),
+        phase: "connect",
       });
     }
     this._attachConnection(conn);
@@ -1480,15 +1423,12 @@ export class MllpClient extends EventEmitter {
    * await client.close({ drainTimeoutMs: 5_000 });
    * ```
    */
-  async close(opts?: {
-    drainTimeoutMs?: number;
-    signal?: AbortSignal;
-  }): Promise<void> {
+  async close(opts?: { drainTimeoutMs?: number; signal?: AbortSignal }): Promise<void> {
     const signal = opts?.signal;
 
     // AbortSignal: reject immediately if already aborted
     if (signal?.aborted) {
-      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+      return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
     // Plan 04: suppress reconnect for the rest of this client's lifetime.
@@ -1503,9 +1443,9 @@ export class MllpClient extends EventEmitter {
       // No connection attached; still tear down any stray correlator state
       // (defensive — this branch is unreachable in normal flow).
       this._teardownCorrelator(
-        new MllpConnectionError('client closed', {
-          cause: new Error('closed'),
-          phase: 'close',
+        new MllpConnectionError("client closed", {
+          cause: new Error("closed"),
+          phase: "close",
         }),
       );
       return;
@@ -1514,17 +1454,15 @@ export class MllpClient extends EventEmitter {
     // Reject pending sends BEFORE delegating to Connection.close so callers
     // observe the rejection promptly rather than waiting for the drain.
     this._teardownCorrelator(
-      new MllpConnectionError('client closed', {
-        cause: new Error('closed'),
-        phase: 'close',
+      new MllpConnectionError("client closed", {
+        cause: new Error("closed"),
+        phase: "close",
       }),
     );
 
     if (signal === undefined) {
       const closeOpts =
-        opts?.drainTimeoutMs !== undefined
-          ? { drainTimeoutMs: opts.drainTimeoutMs }
-          : undefined;
+        opts?.drainTimeoutMs !== undefined ? { drainTimeoutMs: opts.drainTimeoutMs } : undefined;
       await conn.close(closeOpts);
       return;
     }
@@ -1533,21 +1471,19 @@ export class MllpClient extends EventEmitter {
     let abortHandler: (() => void) | undefined;
     const abortPromise = new Promise<never>((_resolve, reject) => {
       abortHandler = (): void => {
-        conn.destroy(new Error('aborted'));
-        reject(new DOMException('Aborted', 'AbortError'));
+        conn.destroy(new Error("aborted"));
+        reject(new DOMException("Aborted", "AbortError"));
       };
-      signal.addEventListener('abort', abortHandler, { once: true });
+      signal.addEventListener("abort", abortHandler, { once: true });
     });
 
     try {
       const closeOpts =
-        opts?.drainTimeoutMs !== undefined
-          ? { drainTimeoutMs: opts.drainTimeoutMs }
-          : undefined;
+        opts?.drainTimeoutMs !== undefined ? { drainTimeoutMs: opts.drainTimeoutMs } : undefined;
       await Promise.race([conn.close(closeOpts), abortPromise]);
     } finally {
       if (abortHandler !== undefined) {
-        signal.removeEventListener('abort', abortHandler);
+        signal.removeEventListener("abort", abortHandler);
       }
     }
   }
@@ -1570,9 +1506,9 @@ export class MllpClient extends EventEmitter {
     }
     const teardownReason =
       reason ??
-      new MllpConnectionError('client destroyed', {
-        cause: new Error('destroyed'),
-        phase: 'close',
+      new MllpConnectionError("client destroyed", {
+        cause: new Error("destroyed"),
+        phase: "close",
       });
     this._teardownCorrelator(teardownReason);
     const conn = this._connection;
@@ -1696,7 +1632,7 @@ export interface StarterClientOptions {
   /** Override default `64`. */
   readonly highWaterMark?: HighWaterMark;
   /** Override default `'reject'`. */
-  readonly onBackpressure?: 'reject' | 'wait';
+  readonly onBackpressure?: "reject" | "wait";
   /** Override default `true` (auto-reconnect on transient errors). */
   readonly autoReconnect?: boolean;
   /** Custom reconnect-backoff hook (CLIENT-12). */
@@ -1704,7 +1640,7 @@ export interface StarterClientOptions {
   /** Drain timeout for `close()` (default `30_000`). */
   readonly drainTimeoutMs?: number;
   /** FrameReader options (passthrough). */
-  readonly framing?: ClientOptions['framing'];
+  readonly framing?: ClientOptions["framing"];
   /** TCP keepalive interval ms (CLIENT-08). */
   readonly keepaliveIntervalMs?: number;
   /** Application-idle dead-peer timeout ms (CLIENT-08). */
@@ -1743,9 +1679,7 @@ export interface StarterClientOptions {
  * const ack = await c.send(payloadBuffer);
  * ```
  */
-export async function createStarterClient(
-  opts: StarterClientOptions,
-): Promise<MllpClient> {
+export async function createStarterClient(opts: StarterClientOptions): Promise<MllpClient> {
   // Build ClientOptions, applying D-22 defaults only for unset fields.
   const clientOpts: ClientOptions = {
     host: opts.host,
@@ -1755,26 +1689,20 @@ export async function createStarterClient(
     correlateByControlId: opts.correlateByControlId ?? false,
     pipeline: opts.pipeline ?? true,
     highWaterMark: opts.highWaterMark ?? 64,
-    onBackpressure: opts.onBackpressure ?? 'reject',
-    ...(opts.drainTimeoutMs !== undefined
-      ? { drainTimeoutMs: opts.drainTimeoutMs }
-      : {}),
+    onBackpressure: opts.onBackpressure ?? "reject",
+    ...(opts.drainTimeoutMs !== undefined ? { drainTimeoutMs: opts.drainTimeoutMs } : {}),
     ...(opts.framing !== undefined ? { framing: opts.framing } : {}),
-    ...(opts.retryStrategy !== undefined
-      ? { retryStrategy: opts.retryStrategy }
-      : {}),
+    ...(opts.retryStrategy !== undefined ? { retryStrategy: opts.retryStrategy } : {}),
     ...(opts.keepaliveIntervalMs !== undefined
       ? { keepaliveIntervalMs: opts.keepaliveIntervalMs }
       : {}),
-    ...(opts.deadPeerTimeoutMs !== undefined
-      ? { deadPeerTimeoutMs: opts.deadPeerTimeoutMs }
-      : {}),
+    ...(opts.deadPeerTimeoutMs !== undefined ? { deadPeerTimeoutMs: opts.deadPeerTimeoutMs } : {}),
   };
   const client = createClient(clientOpts);
 
   if (opts.onMessage !== undefined) {
     const handler = opts.onMessage;
-    client.on('message', (e: { payload: Buffer }) => {
+    client.on("message", (e: { payload: Buffer }) => {
       handler(e.payload);
     });
   }
@@ -1788,11 +1716,11 @@ export async function createStarterClient(
         .then(() => process.exit(0))
         .catch(() => process.exit(1));
     };
-    process.once('SIGTERM', sigHandler);
-    process.once('SIGINT', sigHandler);
-    client.once('close', () => {
-      process.removeListener('SIGTERM', sigHandler);
-      process.removeListener('SIGINT', sigHandler);
+    process.once("SIGTERM", sigHandler);
+    process.once("SIGINT", sigHandler);
+    client.once("close", () => {
+      process.removeListener("SIGTERM", sigHandler);
+      process.removeListener("SIGINT", sigHandler);
     });
   }
 

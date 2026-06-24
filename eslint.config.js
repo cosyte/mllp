@@ -1,55 +1,48 @@
-// @ts-check
-import eslint from '@eslint/js';
-import tseslint from 'typescript-eslint';
+import cosyte from "@cosyte/eslint-config";
 
-/** @type {import('typescript-eslint').Config} */
-export default tseslint.config(
-  // Base recommended rules for all TS files
-  eslint.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked, // D-01: recommended-type-checked
+export default [
+  ...cosyte(import.meta.dirname, {
+    ignores: ["examples/**", "bench/**"],
+  }),
 
-  // Parser options for type-aware rules (D-01: projectService:true)
+  // SETUP-07: no-buffer-slice — Buffer.prototype.slice() copies in modern Node; use .subarray()
+  // for zero-copy. Scoped to the byte-handling paths.
   {
-    languageOptions: {
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
-  },
-
-  // SETUP-07: no-buffer-slice custom rule — error, scoped to src/framing, src/server, src/client
-  // Buffer.prototype.slice() copies in modern Node; use .subarray() for zero-copy.
-  {
-    files: ['src/framing/**/*.ts', 'src/server/**/*.ts', 'src/client/**/*.ts'],
+    files: ["src/framing/**/*.ts", "src/server/**/*.ts", "src/client/**/*.ts"],
     rules: {
-      'no-restricted-syntax': [
-        'error',
+      "no-restricted-syntax": [
+        "error",
         {
           selector:
             "CallExpression[callee.property.name='slice'][callee.object.type!='ArrayExpression']",
           message:
-            'Use Buffer.prototype.subarray() instead of .slice() in src/framing|server|client. ' +
-            '.slice() copies the underlying ArrayBuffer in modern Node.js — .subarray() is zero-copy. ' +
-            '(SETUP-07)',
+            "Use Buffer.prototype.subarray() instead of .slice() in src/framing|server|client. " +
+            ".slice() copies the underlying ArrayBuffer in modern Node.js — .subarray() is zero-copy. " +
+            "(SETUP-07)",
         },
       ],
     },
   },
 
-  // D-02: targeted override for @types/node gaps (socket.read() → Buffer | null typed as any)
-  // Applies only to transport/connection code that directly touches net.Socket events.
+  // D-02: @types/node gaps (socket.read() → Buffer | null typed as any) — warn, not error, only in
+  // the transport/connection code that directly touches net.Socket events.
   {
-    files: ['src/transport/**/*.ts', 'src/connection/**/*.ts'],
+    files: ["src/transport/**/*.ts", "src/connection/**/*.ts"],
     rules: {
-      '@typescript-eslint/no-unsafe-assignment': 'warn',
-      '@typescript-eslint/no-unsafe-call': 'warn',
-      '@typescript-eslint/no-unsafe-member-access': 'warn',
+      "@typescript-eslint/no-unsafe-assignment": "warn",
+      "@typescript-eslint/no-unsafe-call": "warn",
+      "@typescript-eslint/no-unsafe-member-access": "warn",
     },
   },
 
-  // Ignore patterns
+  // TODO(docs): mllp is mid-build (Phase 5) and not yet JSDoc-complete on every public export.
+  // The cosyte standard requires JSDoc + @example on public exports (error); relax to `warn` here
+  // until the docs are authored, then delete this block. Tracked as a foundation follow-up.
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'examples/**', 'bench/**', '*.config.*'],
+    files: ["src/**/*.ts"],
+    rules: {
+      "jsdoc/require-jsdoc": "warn",
+      "jsdoc/require-example": "warn",
+    },
   },
-);
+];

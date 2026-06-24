@@ -23,13 +23,13 @@
  * @packageDocumentation
  */
 
-import { VT, FS, CR, LF, DEFAULT_MAX_FRAME_SIZE } from './constants.js';
-import { MllpFramingError } from './error.js';
-import { createWarning } from './registry.js';
-import type { MllpWarning, WarningCode } from './registry.js';
+import { VT, FS, CR, LF, DEFAULT_MAX_FRAME_SIZE } from "./constants.js";
+import { MllpFramingError } from "./error.js";
+import { createWarning } from "./registry.js";
+import type { MllpWarning, WarningCode } from "./registry.js";
 
 /** Internal FSM states. */
-type ReaderState = 'SCANNING_FOR_VT' | 'READING_PAYLOAD' | 'EXPECTING_CR';
+type ReaderState = "SCANNING_FOR_VT" | "READING_PAYLOAD" | "EXPECTING_CR";
 
 /** Initial accumulator buffer size (4 KiB). Grows by doubling as needed. */
 const INITIAL_ACCUMULATOR_SIZE = 4096;
@@ -123,7 +123,7 @@ export class FrameReader {
   private readonly _opts: FrameReaderOptions;
   private readonly _maxFrameSize: number;
 
-  private _state: ReaderState = 'SCANNING_FOR_VT';
+  private _state: ReaderState = "SCANNING_FOR_VT";
   /** Reusable accumulator buffer — grown by doubling as needed. */
   private _accumulator: Buffer = Buffer.allocUnsafe(INITIAL_ACCUMULATOR_SIZE);
   /** Number of payload bytes written to accumulator in current frame. */
@@ -142,9 +142,7 @@ export class FrameReader {
   constructor(opts: FrameReaderOptions) {
     this._opts = opts;
     this._maxFrameSize =
-      opts.maxFrameSizeBytes !== undefined
-        ? opts.maxFrameSizeBytes
-        : DEFAULT_MAX_FRAME_SIZE;
+      opts.maxFrameSizeBytes !== undefined ? opts.maxFrameSizeBytes : DEFAULT_MAX_FRAME_SIZE;
   }
 
   /**
@@ -178,7 +176,7 @@ export class FrameReader {
    * ```
    */
   reset(): void {
-    this._state = 'SCANNING_FOR_VT';
+    this._state = "SCANNING_FOR_VT";
     this._writePos = 0;
     this._byteOffset = 0;
     this._wsStart = 0;
@@ -189,13 +187,13 @@ export class FrameReader {
 
   private _processByte(byte: number): void {
     switch (this._state) {
-      case 'SCANNING_FOR_VT':
+      case "SCANNING_FOR_VT":
         this._scanForVt(byte);
         break;
-      case 'READING_PAYLOAD':
+      case "READING_PAYLOAD":
         this._readPayload(byte);
         break;
-      case 'EXPECTING_CR':
+      case "EXPECTING_CR":
         this._expectCr(byte);
         break;
     }
@@ -206,7 +204,7 @@ export class FrameReader {
       // Emit leading-whitespace warning now that we know whitespace preceded this VT
       if (this._wsCount > 0) {
         this._emitWarning(
-          'MLLP_LEADING_WHITESPACE',
+          "MLLP_LEADING_WHITESPACE",
           this._wsStart,
           `${this._wsCount} leading whitespace byte(s) before VT at offset ${this._wsStart}`,
         );
@@ -214,7 +212,7 @@ export class FrameReader {
         this._wsCount = 0;
       }
       this._frameStartOffset = this._byteOffset;
-      this._state = 'READING_PAYLOAD';
+      this._state = "READING_PAYLOAD";
       return;
     }
 
@@ -227,7 +225,7 @@ export class FrameReader {
         if (this._opts.strict === true) {
           const snippet = Buffer.from([byte]);
           throw new MllpFramingError(
-            'MLLP_MISSING_LEADING_VT',
+            "MLLP_MISSING_LEADING_VT",
             this._byteOffset,
             snippet,
             `Strict mode: leading whitespace before VT at offset ${this._byteOffset}`,
@@ -242,10 +240,10 @@ export class FrameReader {
       // Whitespace before VT without tolerance → framing error
       const snippet = Buffer.from([byte]);
       throw new MllpFramingError(
-        'MLLP_MISSING_LEADING_VT',
+        "MLLP_MISSING_LEADING_VT",
         this._byteOffset,
         snippet,
-        `Expected VT (0x0B) to start MLLP frame, got whitespace 0x${byte.toString(16).padStart(2, '0')} at offset ${this._byteOffset}`,
+        `Expected VT (0x0B) to start MLLP frame, got whitespace 0x${byte.toString(16).padStart(2, "0")} at offset ${this._byteOffset}`,
       );
     }
 
@@ -253,7 +251,7 @@ export class FrameReader {
     // If whitespace was accumulated under allowLeadingWhitespace, emit that warning first.
     if (this._wsCount > 0) {
       this._emitWarning(
-        'MLLP_LEADING_WHITESPACE',
+        "MLLP_LEADING_WHITESPACE",
         this._wsStart,
         `${this._wsCount} leading whitespace byte(s) before VT at offset ${this._wsStart}`,
       );
@@ -266,7 +264,7 @@ export class FrameReader {
       if (this._opts.strict === true) {
         const snippet = Buffer.from([byte]);
         throw new MllpFramingError(
-          'MLLP_MISSING_LEADING_VT',
+          "MLLP_MISSING_LEADING_VT",
           this._byteOffset,
           snippet,
           `Strict mode: missing leading VT at offset ${this._byteOffset}`,
@@ -274,12 +272,12 @@ export class FrameReader {
       }
       // Treat this non-VT byte as the first payload byte
       this._emitWarning(
-        'MLLP_MISSING_LEADING_VT',
+        "MLLP_MISSING_LEADING_VT",
         this._byteOffset,
-        `Missing leading VT (0x0B) — treating byte 0x${byte.toString(16).padStart(2, '0')} at offset ${this._byteOffset} as payload start`,
+        `Missing leading VT (0x0B) — treating byte 0x${byte.toString(16).padStart(2, "0")} at offset ${this._byteOffset} as payload start`,
       );
       this._frameStartOffset = this._byteOffset;
-      this._state = 'READING_PAYLOAD';
+      this._state = "READING_PAYLOAD";
       this._appendByte(byte);
       return;
     }
@@ -287,10 +285,10 @@ export class FrameReader {
     // Default: strict framing error
     const snippet = Buffer.from([byte]);
     throw new MllpFramingError(
-      'MLLP_MISSING_LEADING_VT',
+      "MLLP_MISSING_LEADING_VT",
       this._byteOffset,
       snippet,
-      `Expected VT (0x0B) to start MLLP frame, got 0x${byte.toString(16).padStart(2, '0')} at offset ${this._byteOffset}`,
+      `Expected VT (0x0B) to start MLLP frame, got 0x${byte.toString(16).padStart(2, "0")} at offset ${this._byteOffset}`,
     );
   }
 
@@ -300,12 +298,12 @@ export class FrameReader {
       if (this._writePos === 0) {
         // Empty payload is always a warning (WARN-05), never a throw
         this._emitWarning(
-          'MLLP_EMPTY_PAYLOAD',
+          "MLLP_EMPTY_PAYLOAD",
           this._byteOffset,
           `Empty payload between VT and FS at offset ${this._byteOffset}`,
         );
       }
-      this._state = 'EXPECTING_CR';
+      this._state = "EXPECTING_CR";
       return;
     }
 
@@ -313,13 +311,13 @@ export class FrameReader {
       // VT mid-payload: the current partial payload is abandoned.
       // Emit MLLP_TRAILING_BYTES (always a warning, never a throw) and start fresh.
       this._emitWarning(
-        'MLLP_TRAILING_BYTES',
+        "MLLP_TRAILING_BYTES",
         this._byteOffset,
         `Unexpected VT (0x0B) mid-payload at offset ${this._byteOffset}; discarding ${this._writePos} accumulated bytes`,
       );
       this._writePos = 0;
       // Remain in READING_PAYLOAD — the VT starts a new frame payload accumulation
-      this._state = 'READING_PAYLOAD';
+      this._state = "READING_PAYLOAD";
       return;
     }
 
@@ -328,7 +326,7 @@ export class FrameReader {
       const snippetStart = Math.max(0, this._writePos - 32);
       const snippet = Buffer.from(this._accumulator.subarray(snippetStart, this._writePos));
       throw new MllpFramingError(
-        'MLLP_FRAME_TOO_LARGE',
+        "MLLP_FRAME_TOO_LARGE",
         this._byteOffset,
         snippet,
         `Frame payload exceeded maxFrameSizeBytes (${this._maxFrameSize}) at offset ${this._byteOffset}`,
@@ -342,7 +340,7 @@ export class FrameReader {
     if (byte === CR) {
       // Normal frame completion
       this._deliverFrame();
-      this._state = 'SCANNING_FOR_VT';
+      this._state = "SCANNING_FOR_VT";
       return;
     }
 
@@ -352,24 +350,24 @@ export class FrameReader {
         if (this._opts.strict === true) {
           const snippet = Buffer.from([byte]);
           throw new MllpFramingError(
-            'MLLP_LF_AFTER_FS',
+            "MLLP_LF_AFTER_FS",
             this._byteOffset,
             snippet,
             `Strict mode: LF after FS at offset ${this._byteOffset}`,
           );
         }
         this._emitWarning(
-          'MLLP_LF_AFTER_FS',
+          "MLLP_LF_AFTER_FS",
           this._byteOffset,
           `LF (0x0A) after FS instead of CR (0x0D) at offset ${this._byteOffset}`,
         );
         this._deliverFrame();
-        this._state = 'SCANNING_FOR_VT';
+        this._state = "SCANNING_FOR_VT";
         return;
       }
       const snippet = Buffer.from([byte]);
       throw new MllpFramingError(
-        'MLLP_LF_AFTER_FS',
+        "MLLP_LF_AFTER_FS",
         this._byteOffset,
         snippet,
         `Expected CR (0x0D) after FS, got LF (0x0A) at offset ${this._byteOffset}. Enable allowLfAfterFs to tolerate.`,
@@ -383,25 +381,25 @@ export class FrameReader {
         if (this._opts.strict === true) {
           const snippet = Buffer.from([byte]);
           throw new MllpFramingError(
-            'MLLP_FS_WITHOUT_CR',
+            "MLLP_FS_WITHOUT_CR",
             this._byteOffset,
             snippet,
             `Strict mode: FS without CR at offset ${this._byteOffset}`,
           );
         }
         this._emitWarning(
-          'MLLP_FS_WITHOUT_CR',
+          "MLLP_FS_WITHOUT_CR",
           this._byteOffset,
           `FS not followed by CR at offset ${this._byteOffset}; next frame VT found immediately`,
         );
         this._deliverFrame();
         // The VT byte is consumed here — transition directly to READING_PAYLOAD
-        this._state = 'READING_PAYLOAD';
+        this._state = "READING_PAYLOAD";
         return;
       }
       const snippet = Buffer.from([byte]);
       throw new MllpFramingError(
-        'MLLP_FS_WITHOUT_CR',
+        "MLLP_FS_WITHOUT_CR",
         this._byteOffset,
         snippet,
         `Expected CR (0x0D) after FS, got VT (0x0B) at offset ${this._byteOffset}. Enable allowFsOnly to tolerate.`,
@@ -414,7 +412,7 @@ export class FrameReader {
       if (this._opts.strict === true) {
         const snippet = Buffer.from([byte]);
         throw new MllpFramingError(
-          'MLLP_FS_WITHOUT_CR',
+          "MLLP_FS_WITHOUT_CR",
           this._byteOffset,
           snippet,
           `Strict mode: FS without CR at offset ${this._byteOffset}`,
@@ -422,27 +420,27 @@ export class FrameReader {
       }
       // Deliver the frame, emit FS_WITHOUT_CR, then treat the stray byte as trailing
       this._emitWarning(
-        'MLLP_FS_WITHOUT_CR',
+        "MLLP_FS_WITHOUT_CR",
         this._byteOffset,
-        `FS not followed by CR at offset ${this._byteOffset}; got 0x${byte.toString(16).padStart(2, '0')}`,
+        `FS not followed by CR at offset ${this._byteOffset}; got 0x${byte.toString(16).padStart(2, "0")}`,
       );
       this._deliverFrame();
-      this._state = 'SCANNING_FOR_VT';
+      this._state = "SCANNING_FOR_VT";
       // Emit trailing bytes warning for the stray byte
       this._emitWarning(
-        'MLLP_TRAILING_BYTES',
+        "MLLP_TRAILING_BYTES",
         this._byteOffset,
-        `Unexpected byte 0x${byte.toString(16).padStart(2, '0')} after frame terminator at offset ${this._byteOffset}`,
+        `Unexpected byte 0x${byte.toString(16).padStart(2, "0")} after frame terminator at offset ${this._byteOffset}`,
       );
       return;
     }
 
     const snippet = Buffer.from([byte]);
     throw new MllpFramingError(
-      'MLLP_FS_WITHOUT_CR',
+      "MLLP_FS_WITHOUT_CR",
       this._byteOffset,
       snippet,
-      `Expected CR (0x0D) after FS, got 0x${byte.toString(16).padStart(2, '0')} at offset ${this._byteOffset}`,
+      `Expected CR (0x0D) after FS, got 0x${byte.toString(16).padStart(2, "0")} at offset ${this._byteOffset}`,
     );
   }
 
@@ -471,11 +469,7 @@ export class FrameReader {
   }
 
   /** Emit a warning via the `onWarning` callback, swallowing any handler exceptions (WARN-06). */
-  private _emitWarning(
-    code: WarningCode,
-    byteOffset: number,
-    message: string,
-  ): void {
+  private _emitWarning(code: WarningCode, byteOffset: number, message: string): void {
     const warning = createWarning(code, byteOffset, message);
     // Accumulate per-frame warnings unconditionally (independent of onWarning handler presence)
     this._frameWarnings.push(warning);

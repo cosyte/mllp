@@ -25,17 +25,17 @@
  * ```
  */
 export type WarningCode =
-  | 'MLLP_MISSING_LEADING_VT'
-  | 'MLLP_FS_WITHOUT_CR'
-  | 'MLLP_LF_AFTER_FS'
-  | 'MLLP_LEADING_WHITESPACE'
-  | 'MLLP_TRAILING_BYTES'
-  | 'MLLP_PAYLOAD_CONTAINS_VT'
-  | 'MLLP_PAYLOAD_CONTAINS_FS'
-  | 'MLLP_EMPTY_PAYLOAD'
-  | 'MLLP_FRAME_TOO_LARGE'
-  | 'MLLP_ACK_UNMATCHED_CONTROL_ID'
-  | 'MLLP_ACK_AFTER_TIMEOUT';
+  | "MLLP_MISSING_LEADING_VT"
+  | "MLLP_FS_WITHOUT_CR"
+  | "MLLP_LF_AFTER_FS"
+  | "MLLP_LEADING_WHITESPACE"
+  | "MLLP_TRAILING_BYTES"
+  | "MLLP_PAYLOAD_CONTAINS_VT"
+  | "MLLP_PAYLOAD_CONTAINS_FS"
+  | "MLLP_EMPTY_PAYLOAD"
+  | "MLLP_FRAME_TOO_LARGE"
+  | "MLLP_ACK_UNMATCHED_CONTROL_ID"
+  | "MLLP_ACK_AFTER_TIMEOUT";
 
 /**
  * A frozen warning object emitted when the decoder tolerates a framing deviation.
@@ -90,11 +90,7 @@ export type OnWarning = (warning: MllpWarning) => void;
  * // w.connectionId === undefined
  * ```
  */
-export function createWarning(
-  code: WarningCode,
-  byteOffset: number,
-  message: string,
-): MllpWarning {
+export function createWarning(code: WarningCode, byteOffset: number, message: string): MllpWarning {
   return Object.freeze<MllpWarning>({
     code,
     message,

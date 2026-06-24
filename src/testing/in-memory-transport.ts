@@ -17,7 +17,7 @@
  * @packageDocumentation
  */
 
-import type { Transport } from '../transport/index.js';
+import type { Transport } from "../transport/index.js";
 
 /**
  * Deterministic in-memory transport for socket-free tests.
@@ -142,7 +142,7 @@ export class InMemoryTransport implements Transport {
   destroy(reason?: Error): void {
     if (this._destroyed) return;
     this._destroyed = true;
-    const err = reason ?? new Error('InMemoryTransport destroyed');
+    const err = reason ?? new Error("InMemoryTransport destroyed");
     if (this._onErrorFn !== null) {
       try {
         this._onErrorFn(err);
@@ -276,7 +276,7 @@ export class InMemoryTransport implements Transport {
     // Re-entrancy guard (D-03): writing from inside an onData handler would cause
     // infinite recursion or corrupt frame ordering. Detect and throw.
     if (this._writeDepth > 0) {
-      throw new Error('InMemoryTransport: re-entrant write detected');
+      throw new Error("InMemoryTransport: re-entrant write detected");
     }
 
     if (this._splitBytes > 0) {

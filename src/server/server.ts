@@ -20,15 +20,15 @@
  * @packageDocumentation
  */
 
-import { createServer as netCreateServer } from 'node:net';
-import type { Server as NetServer, Socket } from 'node:net';
-import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
-import { Connection } from '../connection/index.js';
-import { MllpConnectionError } from '../connection/index.js';
-import { NetTransport } from '../transport/index.js';
-import { encodeFrame } from '../framing/index.js';
-import type { FrameReaderOptions, MllpWarning } from '../framing/index.js';
+import { createServer as netCreateServer } from "node:net";
+import type { Server as NetServer, Socket } from "node:net";
+import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
+import { Connection } from "../connection/index.js";
+import { MllpConnectionError } from "../connection/index.js";
+import { NetTransport } from "../transport/index.js";
+import { encodeFrame } from "../framing/index.js";
+import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
 
 /**
  * Metadata attached to each decoded MLLP message (SERVER-03).
@@ -120,7 +120,7 @@ export interface ServerOptions {
    * Merged with SERVER_DEFAULT_FRAMING — caller-supplied values override defaults.
    * `onFrame` and `onWarning` are managed internally and must not be supplied here.
    */
-  framing?: Omit<FrameReaderOptions, 'onFrame' | 'onWarning'>;
+  framing?: Omit<FrameReaderOptions, "onFrame" | "onWarning">;
 
   /**
    * Per-connection warning subscriber. Called for every framing warning on every connection.
@@ -136,7 +136,9 @@ export interface ServerOptions {
    * The `'message'` event fires BEFORE the auto-ACK is sent (D-03). Do NOT call
    * `conn.send()` in `onMessage` when auto-ACK is active — this results in two ACKs.
    */
-  autoAck?: 'AA' | ((payload: Buffer, meta: MessageMeta, conn: Connection) => Buffer | Promise<Buffer>);
+  autoAck?:
+    | "AA"
+    | ((payload: Buffer, meta: MessageMeta, conn: Connection) => Buffer | Promise<Buffer>);
 
   /**
    * TCP keepalive probe interval in ms (D-10).
@@ -204,7 +206,7 @@ export interface StarterServerOptions extends ServerOptions {
  * - `allowLeadingWhitespace: true` — accept leading whitespace before VT
  * - `allowMissingLeadingVt: false` — require VT framing (stricter than FS-only tolerance)
  */
-const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, 'onFrame' | 'onWarning'> = {
+const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> = {
   allowFsOnly: true,
   allowLfAfterFs: true,
   allowLeadingWhitespace: true,
@@ -251,11 +253,11 @@ export class MllpServer extends EventEmitter {
     this._netServer = netCreateServer();
 
     // Wire net.Server events
-    this._netServer.on('connection', (socket: Socket) => {
+    this._netServer.on("connection", (socket: Socket) => {
       this._onSocketAccepted(socket);
     });
-    this._netServer.on('error', (err: Error) => {
-      this.emit('error', err);
+    this._netServer.on("error", (err: Error) => {
+      this.emit("error", err);
     });
   }
 
@@ -275,17 +277,17 @@ export class MllpServer extends EventEmitter {
    * await server.listen(0, { host: '127.0.0.1', signal: ac.signal });
    * ```
    */
-  listen(port: number, hostOrOpts?: string | { host?: string; signal?: AbortSignal }): Promise<void> {
-    const host = typeof hostOrOpts === 'string'
-      ? hostOrOpts
-      : hostOrOpts?.host ?? '0.0.0.0';
-    const signal = typeof hostOrOpts === 'object' && hostOrOpts !== null
-      ? hostOrOpts.signal
-      : undefined;
+  listen(
+    port: number,
+    hostOrOpts?: string | { host?: string; signal?: AbortSignal },
+  ): Promise<void> {
+    const host = typeof hostOrOpts === "string" ? hostOrOpts : (hostOrOpts?.host ?? "0.0.0.0");
+    const signal =
+      typeof hostOrOpts === "object" && hostOrOpts !== null ? hostOrOpts.signal : undefined;
 
     // AbortSignal: reject immediately if already aborted
     if (signal?.aborted) {
-      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+      return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
     return new Promise<void>((resolve, reject) => {
@@ -294,37 +296,37 @@ export class MllpServer extends EventEmitter {
       const abortHandler = () => {
         aborted = true;
         this._netServer.close();
-        reject(new DOMException('Aborted', 'AbortError'));
+        reject(new DOMException("Aborted", "AbortError"));
       };
 
       if (signal !== undefined) {
-        signal.addEventListener('abort', abortHandler, { once: true });
+        signal.addEventListener("abort", abortHandler, { once: true });
       }
 
       const onListening = () => {
         if (aborted) return;
-        signal?.removeEventListener('abort', abortHandler);
+        signal?.removeEventListener("abort", abortHandler);
 
         const addr = this._netServer.address();
-        const actualPort = typeof addr === 'object' && addr !== null ? addr.port : port;
-        const actualHost = typeof addr === 'object' && addr !== null ? addr.address : host;
+        const actualPort = typeof addr === "object" && addr !== null ? addr.port : port;
+        const actualHost = typeof addr === "object" && addr !== null ? addr.address : host;
 
         this._listening = true;
         this._port = actualPort;
         this._host = actualHost;
 
-        this.emit('listening', Object.freeze({ port: actualPort, host: actualHost }));
+        this.emit("listening", Object.freeze({ port: actualPort, host: actualHost }));
         resolve();
       };
 
       const onError = (err: Error) => {
         if (aborted) return;
-        signal?.removeEventListener('abort', abortHandler);
+        signal?.removeEventListener("abort", abortHandler);
         reject(err);
       };
 
-      this._netServer.once('listening', onListening);
-      this._netServer.once('error', onError);
+      this._netServer.once("listening", onListening);
+      this._netServer.once("error", onError);
       this._netServer.listen(port, host);
     });
   }
@@ -352,7 +354,7 @@ export class MllpServer extends EventEmitter {
 
     // AbortSignal: reject immediately if already aborted
     if (signal?.aborted) {
-      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+      return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
     // Stop accepting new connections
@@ -362,24 +364,25 @@ export class MllpServer extends EventEmitter {
     // If no active connections, we're done — emit 'close' and resolve
     // No abort handler registered on this path — nothing to remove.
     if (this._connections.size === 0) {
-      this.emit('close', Object.freeze({}));
+      this.emit("close", Object.freeze({}));
       return Promise.resolve();
     }
 
     // Wire AbortSignal — abort during drain force-destroys all connections
     let abortHandler: (() => void) | undefined;
-    const abortPromise = signal !== undefined
-      ? new Promise<'aborted'>((_resolve, reject) => {
-          abortHandler = () => {
-            // Force-destroy all active connections on abort
-            for (const conn of this._connections) {
-              conn.destroy();
-            }
-            reject(new DOMException('Aborted', 'AbortError'));
-          };
-          signal.addEventListener('abort', abortHandler, { once: true });
-        })
-      : null;
+    const abortPromise =
+      signal !== undefined
+        ? new Promise<"aborted">((_resolve, reject) => {
+            abortHandler = () => {
+              // Force-destroy all active connections on abort
+              for (const conn of this._connections) {
+                conn.destroy();
+              }
+              reject(new DOMException("Aborted", "AbortError"));
+            };
+            signal.addEventListener("abort", abortHandler, { once: true });
+          })
+        : null;
 
     try {
       const drainTimeoutMs = opts?.drainTimeoutMs ?? this._opts.drainTimeoutMs ?? 30_000;
@@ -390,11 +393,11 @@ export class MllpServer extends EventEmitter {
       }
     } finally {
       if (abortHandler !== undefined && signal !== undefined) {
-        signal.removeEventListener('abort', abortHandler);
+        signal.removeEventListener("abort", abortHandler);
       }
     }
     // Emit 'close' after all connections have drained (SERVER-10: frozen payload)
-    this.emit('close', Object.freeze({}));
+    this.emit("close", Object.freeze({}));
   }
 
   /**
@@ -500,19 +503,19 @@ export class MllpServer extends EventEmitter {
    * ```
    */
   private _buildAutoAck(payload: Buffer): Buffer {
-    const str = payload.toString('ascii');
+    const str = payload.toString("ascii");
     // Split on CR to find segments; HL7 v2 uses CR (0x0D) as segment separator
-    const segments = str.split('\r');
-    const mshSegment = segments.find((seg) => seg.startsWith('MSH'));
+    const segments = str.split("\r");
+    const mshSegment = segments.find((seg) => seg.startsWith("MSH"));
 
     // Fallback buffer when MSH is missing or payload is malformed
-    const fallback = Buffer.from('MSH|^~\\&|||||||ACK||P|2.3\rMSA|AA|\r', 'ascii');
+    const fallback = Buffer.from("MSH|^~\\&|||||||ACK||P|2.3\rMSA|AA|\r", "ascii");
 
     if (mshSegment === undefined) {
       return fallback;
     }
 
-    const fields = mshSegment.split('|');
+    const fields = mshSegment.split("|");
 
     // MSH field indices (after splitting on '|'):
     //   [0] = 'MSH'
@@ -524,17 +527,17 @@ export class MllpServer extends EventEmitter {
     //   [9] = controlId (MSH-10) → used as MSA-2 (inbound control ID)
     //   [10] = processingId
     //   [11] = version
-    const sendingApp = fields[2] ?? '';
-    const sendingFacility = fields[3] ?? '';
-    const receivingApp = fields[4] ?? '';
-    const receivingFacility = fields[5] ?? '';
-    const inboundControlId = fields[9] ?? '';
-    const processingId = fields[10] ?? 'P';
-    const version = fields[11] ?? '2.3';
+    const sendingApp = fields[2] ?? "";
+    const sendingFacility = fields[3] ?? "";
+    const receivingApp = fields[4] ?? "";
+    const receivingFacility = fields[5] ?? "";
+    const inboundControlId = fields[9] ?? "";
+    const processingId = fields[10] ?? "P";
+    const version = fields[11] ?? "2.3";
 
     // Build a 14-char timestamp (YYYYMMDDHHmmss) without .slice() (SETUP-07)
     const d = new Date();
-    const pad = (n: number, w = 2): string => String(n).padStart(w, '0');
+    const pad = (n: number, w = 2): string => String(n).padStart(w, "0");
     const now =
       String(d.getUTCFullYear()) +
       pad(d.getUTCMonth() + 1) +
@@ -544,13 +547,13 @@ export class MllpServer extends EventEmitter {
       pad(d.getUTCSeconds());
 
     // New control ID: randomUUID with dashes removed, truncated to 20 chars (MSH-10 field width)
-    const newControlId = randomUUID().replace(/-/g, '').substring(0, 20);
+    const newControlId = randomUUID().replace(/-/g, "").substring(0, 20);
 
     const ackStr =
       `MSH|^~\\&|${receivingApp}|${receivingFacility}|${sendingApp}|${sendingFacility}|${now}||ACK|${newControlId}|${processingId}|${version}\r` +
       `MSA|AA|${inboundControlId}\r`;
 
-    return Buffer.from(ackStr, 'ascii');
+    return Buffer.from(ackStr, "ascii");
   }
 
   // ---------------------------------------------------------------------------
@@ -565,14 +568,15 @@ export class MllpServer extends EventEmitter {
 
     // Phase 6: wire TlsTransport here when opts.tls is provided
     const transport = new NetTransport(socket);
-    const mergedFraming: Omit<FrameReaderOptions, 'onFrame' | 'onWarning'> = {
+    const mergedFraming: Omit<FrameReaderOptions, "onFrame" | "onWarning"> = {
       ...SERVER_DEFAULT_FRAMING,
       ...(this._opts.framing ?? {}),
     };
 
-    const connOpts = this._opts.onWarning !== undefined
-      ? { transport, framing: mergedFraming, onWarning: this._opts.onWarning }
-      : { transport, framing: mergedFraming };
+    const connOpts =
+      this._opts.onWarning !== undefined
+        ? { transport, framing: mergedFraming, onWarning: this._opts.onWarning }
+        : { transport, framing: mergedFraming };
     const conn = new Connection(connOpts);
 
     // Set beforeClose no-op hook (Plan 04 will wire autoAck drain here if needed)
@@ -582,9 +586,9 @@ export class MllpServer extends EventEmitter {
     // auto-ACK or transport errors are emitted on a connection with no user-attached
     // error listener. Forwards to server's 'error' event only when listeners exist;
     // otherwise silently swallows (D-04: server never crashes on connection errors).
-    conn.on('error', (errEvent: unknown) => {
-      if (this.listenerCount('error') > 0) {
-        this.emit('error', errEvent);
+    conn.on("error", (errEvent: unknown) => {
+      if (this.listenerCount("error") > 0) {
+        this.emit("error", errEvent);
       }
     });
 
@@ -603,26 +607,26 @@ export class MllpServer extends EventEmitter {
       this._connections.delete(conn);
       this._closedTotal++;
     };
-    conn.once('close', _onConnEnded);
-    conn.once('disconnect', _onConnEnded);
+    conn.once("close", _onConnEnded);
+    conn.once("disconnect", _onConnEnded);
 
     // Wire dead-peer idle timeout (D-11) — reset on every message
     if (this._opts.deadPeerTimeoutMs !== undefined) {
       const timeoutMs = this._opts.deadPeerTimeoutMs;
       let deadPeerTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
-        conn.destroy(new Error('idle timeout'));
+        conn.destroy(new Error("idle timeout"));
       }, timeoutMs);
       deadPeerTimer.unref();
 
-      conn.on('message', () => {
+      conn.on("message", () => {
         clearTimeout(deadPeerTimer);
         deadPeerTimer = setTimeout(() => {
-          conn.destroy(new Error('idle timeout'));
+          conn.destroy(new Error("idle timeout"));
         }, timeoutMs);
         deadPeerTimer.unref();
       });
 
-      conn.once('close', () => {
+      conn.once("close", () => {
         clearTimeout(deadPeerTimer);
       });
     }
@@ -633,33 +637,41 @@ export class MllpServer extends EventEmitter {
     // Wire message handler: emit 'message' event, then invoke onMessage callback, then autoAck.
     // The handler is async to support awaiting the autoAck fn; unhandled rejection is suppressed
     // by the internal try/catch — D-04 guarantee.
-    conn.on('message', (event: { payload: Buffer; connectionId: string; byteOffset: number; warnings: readonly MllpWarning[] }) => {
-      const { payload, connectionId, byteOffset, warnings } = event;
-      const meta: MessageMeta = Object.freeze({
-        connectionId,
-        byteOffset,
-        warnings,
-      });
+    conn.on(
+      "message",
+      (event: {
+        payload: Buffer;
+        connectionId: string;
+        byteOffset: number;
+        warnings: readonly MllpWarning[];
+      }) => {
+        const { payload, connectionId, byteOffset, warnings } = event;
+        const meta: MessageMeta = Object.freeze({
+          connectionId,
+          byteOffset,
+          warnings,
+        });
 
-      // D-03: emit 'message' BEFORE auto-ACK dispatch
-      const frozenEvent = Object.freeze({ payload, meta });
-      this.emit('message', frozenEvent);
+        // D-03: emit 'message' BEFORE auto-ACK dispatch
+        const frozenEvent = Object.freeze({ payload, meta });
+        this.emit("message", frozenEvent);
 
-      // Invoke optional onMessage callback (D-03: fires before auto-ACK).
-      // Return value is intentionally ignored here — auto-ACK is handled via
-      // _sendAutoAck, and manual-ACK mode uses conn.send() directly.
-      void this._opts.onMessage?.(payload, meta, conn);
+        // Invoke optional onMessage callback (D-03: fires before auto-ACK).
+        // Return value is intentionally ignored here — auto-ACK is handled via
+        // _sendAutoAck, and manual-ACK mode uses conn.send() directly.
+        void this._opts.onMessage?.(payload, meta, conn);
 
-      // Handle auto-ACK (D-03/D-04). Async dispatch wrapped in void to suppress
-      // unhandled-rejection; errors are caught inside _sendAutoAck and re-emitted on conn.
-      if (this._opts.autoAck !== undefined) {
-        void this._sendAutoAck(payload, meta, conn);
-      }
-    });
+        // Handle auto-ACK (D-03/D-04). Async dispatch wrapped in void to suppress
+        // unhandled-rejection; errors are caught inside _sendAutoAck and re-emitted on conn.
+        if (this._opts.autoAck !== undefined) {
+          void this._sendAutoAck(payload, meta, conn);
+        }
+      },
+    );
 
     // Emit server-level 'connection' event with frozen payload
     this.emit(
-      'connection',
+      "connection",
       Object.freeze({
         connectionId: conn.connectionId,
         remoteAddress: socket.remoteAddress ?? null,
@@ -679,16 +691,12 @@ export class MllpServer extends EventEmitter {
    * Any error (from the `autoAck` fn or from send) is caught and re-emitted as
    * `'error'` on the connection — the server never crashes (D-04).
    */
-  private async _sendAutoAck(
-    payload: Buffer,
-    meta: MessageMeta,
-    conn: Connection,
-  ): Promise<void> {
+  private async _sendAutoAck(payload: Buffer, meta: MessageMeta, conn: Connection): Promise<void> {
     try {
       let ackPayload: Buffer;
       const autoAck = this._opts.autoAck;
 
-      if (autoAck === 'AA') {
+      if (autoAck === "AA") {
         ackPayload = this._buildAutoAck(payload);
       } else if (autoAck !== undefined) {
         // autoAck is the function branch — TypeScript narrows to fn type after the 'AA' check
@@ -703,12 +711,12 @@ export class MllpServer extends EventEmitter {
         // D-04: socket write buffer full (backpressure). Emit error on the connection;
         // server does not crash; peer will timeout waiting for ACK and may retry.
         conn.emit(
-          'error',
+          "error",
           Object.freeze({
             connectionId: conn.connectionId,
-            error: new MllpConnectionError('auto-ACK dropped: socket backpressure', {
-              cause: new Error('backpressure'),
-              phase: 'send',
+            error: new MllpConnectionError("auto-ACK dropped: socket backpressure", {
+              cause: new Error("backpressure"),
+              phase: "send",
             }),
           }),
         );
@@ -717,7 +725,7 @@ export class MllpServer extends EventEmitter {
       // D-04: auto-ACK errors are emitted as 'error' on connection — server continues
       const connErr = err instanceof Error ? err : new Error(String(err));
       conn.emit(
-        'error',
+        "error",
         Object.freeze({
           connectionId: conn.connectionId,
           error: connErr,
@@ -769,7 +777,7 @@ export function createServer(opts: ServerOptions = {}): MllpServer {
 export async function createStarterServer(opts: StarterServerOptions): Promise<MllpServer> {
   const server = createServer({
     ...opts,
-    autoAck: opts.autoAck ?? 'AA',
+    autoAck: opts.autoAck ?? "AA",
     drainTimeoutMs: opts.drainTimeoutMs ?? 30_000,
   });
 
@@ -783,18 +791,18 @@ export async function createStarterServer(opts: StarterServerOptions): Promise<M
         .then(() => process.exit(0))
         .catch(() => process.exit(1));
     };
-    process.once('SIGTERM', sigHandler);
-    process.once('SIGINT', sigHandler);
+    process.once("SIGTERM", sigHandler);
+    process.once("SIGINT", sigHandler);
 
     // Clean up handlers on server close so tests do not accumulate listeners.
     // process.once handlers self-remove on first fire; this removes them early when
     // close() is called before any signal fires (the common test path).
-    server.once('close', () => {
-      process.removeListener('SIGTERM', sigHandler);
-      process.removeListener('SIGINT', sigHandler);
+    server.once("close", () => {
+      process.removeListener("SIGTERM", sigHandler);
+      process.removeListener("SIGINT", sigHandler);
     });
   }
 
-  await server.listen(opts.port, opts.host ?? '0.0.0.0');
+  await server.listen(opts.port, opts.host ?? "0.0.0.0");
   return server;
 }

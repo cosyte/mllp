@@ -1,8 +1,7 @@
 /**
  * isTransientConnectionError classifier tests (PLAN-04, CLIENT-18).
  *
- * Verifies the transient/permanent classification per the table in
- * .planning/phases/05-mllp-client/05-PATTERNS.md. The classifier is invoked
+ * Verifies the transient/permanent classification. The classifier is invoked
  * BEFORE retryStrategy in Composition A (D-16) so its correctness gates
  * whether reconnect proceeds at all.
  */

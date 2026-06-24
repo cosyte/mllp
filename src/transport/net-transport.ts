@@ -19,8 +19,8 @@
  * @packageDocumentation
  */
 
-import type { Socket } from 'node:net';
-import type { Transport } from './index.js';
+import type { Socket } from "node:net";
+import type { Transport } from "./index.js";
 
 /**
  * Wraps a `net.Socket` as a `Transport`, mapping socket EventEmitter events
@@ -56,22 +56,22 @@ export class NetTransport implements Transport {
   }
 
   onData(fn: (chunk: Buffer) => void): void {
-    this._socket.removeAllListeners('data');
-    this._socket.on('data', fn);
+    this._socket.removeAllListeners("data");
+    this._socket.on("data", fn);
   }
 
   onConnect(fn: () => void): void {
-    this._socket.removeAllListeners('connect');
-    this._socket.on('connect', fn);
+    this._socket.removeAllListeners("connect");
+    this._socket.on("connect", fn);
   }
 
   onClose(fn: () => void): void {
-    this._socket.removeAllListeners('close');
-    this._socket.on('close', fn);
+    this._socket.removeAllListeners("close");
+    this._socket.on("close", fn);
   }
 
   onError(fn: (err: Error) => void): void {
-    this._socket.removeAllListeners('error');
-    this._socket.on('error', fn);
+    this._socket.removeAllListeners("error");
+    this._socket.on("error", fn);
   }
 }

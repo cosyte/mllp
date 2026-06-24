@@ -16,10 +16,10 @@
  * @packageDocumentation
  */
 
-import { VT, FS, CR } from './constants.js';
-import { MllpFramingError } from './error.js';
-import { createWarning } from './registry.js';
-import type { MllpWarning } from './registry.js';
+import { VT, FS, CR } from "./constants.js";
+import { MllpFramingError } from "./error.js";
+import { createWarning } from "./registry.js";
+import type { MllpWarning } from "./registry.js";
 
 /**
  * Options for {@link encodeFrame}.
@@ -97,7 +97,7 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
     if (byte === undefined) break; // noUncheckedIndexedAccess guard
 
     if (byte === VT || byte === FS) {
-      const code = byte === VT ? 'MLLP_PAYLOAD_CONTAINS_VT' : 'MLLP_PAYLOAD_CONTAINS_FS';
+      const code = byte === VT ? "MLLP_PAYLOAD_CONTAINS_VT" : "MLLP_PAYLOAD_CONTAINS_FS";
 
       if (!allow) {
         // Strict path: capture snippet around offending byte and throw.
@@ -109,11 +109,11 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
 
       // Tolerant path: emit warning and continue — bytes pass through verbatim.
       if (onWarning !== undefined) {
-        const byteHex = byte === VT ? '0x0B' : '0x1C';
+        const byteHex = byte === VT ? "0x0B" : "0x1C";
         const warning = createWarning(
           code,
           i,
-          `Payload contains ${byte === VT ? 'VT' : 'FS'} byte (${byteHex}) at offset ${i}; frame will be ambiguous`,
+          `Payload contains ${byte === VT ? "VT" : "FS"} byte (${byteHex}) at offset ${i}; frame will be ambiguous`,
         );
         try {
           onWarning(warning);

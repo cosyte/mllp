@@ -31,7 +31,7 @@
  * ```
  */
 export class MllpTimeoutError extends Error {
-  override readonly name = 'MllpTimeoutError' as const;
+  override readonly name = "MllpTimeoutError" as const;
 
   /** MSH-10 control ID of the timed-out send (FIFO mode: `undefined`). */
   readonly messageControlId: string | undefined;
@@ -92,26 +92,26 @@ export class MllpTimeoutError extends Error {
  * ```
  */
 export function isTransientConnectionError(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return true;
+  if (typeof err !== "object" || err === null) return true;
   const code = (err as { code?: unknown }).code;
-  if (typeof code !== 'string') return true;
+  if (typeof code !== "string") return true;
   switch (code) {
-    case 'ENOTFOUND':
-    case 'EACCES':
+    case "ENOTFOUND":
+    case "EACCES":
       return false;
-    case 'ECONNREFUSED':
-    case 'ECONNRESET':
-    case 'ETIMEDOUT':
-    case 'EHOSTUNREACH':
-    case 'ENETUNREACH':
-    case 'EPIPE':
+    case "ECONNREFUSED":
+    case "ECONNRESET":
+    case "ETIMEDOUT":
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+    case "EPIPE":
       return true;
     default:
       // TLS cert error codes (CERT_*) and *_VERIFY_* names → permanent.
-      if (code.startsWith('CERT_')) return false;
-      if (code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') return false;
-      if (code === 'DEPTH_ZERO_SELF_SIGNED_CERT') return false;
-      if (code === 'SELF_SIGNED_CERT_IN_CHAIN') return false;
+      if (code.startsWith("CERT_")) return false;
+      if (code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE") return false;
+      if (code === "DEPTH_ZERO_SELF_SIGNED_CERT") return false;
+      if (code === "SELF_SIGNED_CERT_IN_CHAIN") return false;
       // Default: transient (Postel's Law — be permissive about peer behavior).
       return true;
   }
@@ -141,7 +141,7 @@ export function isTransientConnectionError(err: unknown): boolean {
  * ```
  */
 export class MllpBackpressureError extends Error {
-  override readonly name = 'MllpBackpressureError' as const;
+  override readonly name = "MllpBackpressureError" as const;
 
   /** Number of in-flight + queued sends at the moment of rejection. */
   readonly queueDepth: number;

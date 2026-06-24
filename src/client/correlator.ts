@@ -17,7 +17,7 @@
  * @packageDocumentation
  */
 
-import type { WarningCode } from '../framing/index.js';
+import type { WarningCode } from "../framing/index.js";
 
 /** Correlation key — number for FIFO (`sendSeq`), string for controlId (MSH-10). */
 export type CorrelationKey = number | string;
@@ -73,7 +73,7 @@ export function extractMshControlId(buf: Buffer): string | null {
         fieldStart = i + 1;
       } else if (fieldIndex === 10) {
         if (fieldStart >= i) return null; // empty MSH-10
-        return buf.subarray(fieldStart, i).toString('ascii');
+        return buf.subarray(fieldStart, i).toString("ascii");
       }
     }
   }
@@ -128,17 +128,13 @@ export function extractMsaControlId(buf: Buffer): string | null {
       let fieldStart = 0;
       for (let i = segStart + 3; i <= segEnd; i++) {
         const b = i < segEnd ? (buf[i] as number) : fieldSep;
-        if (
-          b === fieldSep ||
-          b === SEGMENT_SEPARATOR_CR ||
-          b === SEGMENT_SEPARATOR_LF
-        ) {
+        if (b === fieldSep || b === SEGMENT_SEPARATOR_CR || b === SEGMENT_SEPARATOR_LF) {
           fieldIndex++;
           if (fieldIndex === 2) {
             fieldStart = i + 1;
           } else if (fieldIndex === 3) {
             if (fieldStart >= i) return null; // empty MSA-2
-            return buf.subarray(fieldStart, i).toString('ascii');
+            return buf.subarray(fieldStart, i).toString("ascii");
           }
         }
       }
@@ -147,8 +143,7 @@ export function extractMsaControlId(buf: Buffer): string | null {
     // Skip segment terminator bytes to advance to the next segment.
     while (
       segEnd < end &&
-      (buf[segEnd] === SEGMENT_SEPARATOR_CR ||
-        buf[segEnd] === SEGMENT_SEPARATOR_LF)
+      (buf[segEnd] === SEGMENT_SEPARATOR_CR || buf[segEnd] === SEGMENT_SEPARATOR_LF)
     ) {
       segEnd++;
     }
@@ -196,7 +191,7 @@ export interface CorrelatorStats {
 /** Constructor options. INTERNAL callback-bag pattern (mirrors `FrameReaderOptions`). */
 export interface CorrelatorOptions {
   /** `'fifo'` (default) or `'controlId'` (PLAN-03 wires controlId). */
-  readonly mode?: 'fifo' | 'controlId';
+  readonly mode?: "fifo" | "controlId";
   /** Default `30_000` (CLIENT-04). */
   readonly ackTimeoutMs?: number;
   /** Default `Infinity`. PLAN-05 sets `1` for `pipeline:false`. */
@@ -241,12 +236,12 @@ export interface CorrelatorOptions {
  */
 export class Correlator {
   private readonly _opts: {
-    readonly mode: 'fifo' | 'controlId';
+    readonly mode: "fifo" | "controlId";
     readonly ackTimeoutMs: number;
     readonly maxInFlight: number;
-    readonly onWarning: CorrelatorOptions['onWarning'];
-    readonly onTimeout: CorrelatorOptions['onTimeout'];
-    readonly onUnmatchedAck: CorrelatorOptions['onUnmatchedAck'];
+    readonly onWarning: CorrelatorOptions["onWarning"];
+    readonly onTimeout: CorrelatorOptions["onTimeout"];
+    readonly onUnmatchedAck: CorrelatorOptions["onUnmatchedAck"];
     readonly now: () => number;
   };
   private readonly _pending: Map<CorrelationKey, PendingAck> = new Map();
@@ -262,7 +257,7 @@ export class Correlator {
 
   constructor(opts: CorrelatorOptions) {
     this._opts = {
-      mode: opts.mode ?? 'fifo',
+      mode: opts.mode ?? "fifo",
       ackTimeoutMs: opts.ackTimeoutMs ?? 30_000,
       maxInFlight: opts.maxInFlight ?? Number.POSITIVE_INFINITY,
       onWarning: opts.onWarning,
@@ -273,11 +268,17 @@ export class Correlator {
   }
 
   /** Number of live pending entries. */
-  get size(): number { return this._pending.size; }
+  get size(): number {
+    return this._pending.size;
+  }
   /** Sum of `frame.length` across live entries. */
-  get queueBytes(): number { return this._queueBytes; }
+  get queueBytes(): number {
+    return this._queueBytes;
+  }
   /** Number of graveyard entries awaiting lazy eviction. */
-  get graveyardSize(): number { return this._graveyard.size; }
+  get graveyardSize(): number {
+    return this._graveyard.size;
+  }
 
   /**
    * Enqueue a new send awaiting its ACK. Returns the assigned
@@ -296,7 +297,7 @@ export class Correlator {
     // by the FIFO live-store walk, but the peer realistically cannot ACK it
     // by control ID. Acceptable corner case (D-03/A1).
     const key: CorrelationKey =
-      this._opts.mode === 'controlId'
+      this._opts.mode === "controlId"
         ? (controlIdOrNull ?? `__seq-${++this._sendSeq}`)
         : ++this._sendSeq;
     const entry: PendingAck = {
@@ -350,7 +351,7 @@ export class Correlator {
     byteOffsetFromAck = 0,
   ): PendingAck | null {
     this._evictGraveyardDue(this._opts.now());
-    if (this._opts.mode === 'fifo') {
+    if (this._opts.mode === "fifo") {
       const iter = this._pending.values().next();
       if (iter.done === true) return null;
       const entry = iter.value;
@@ -365,7 +366,7 @@ export class Correlator {
       // Caller failed to extract MSA-2; treat as unmatched. (MllpClient is
       // responsible for extraction; this is a defensive fallback.)
       if (this._opts.onUnmatchedAck !== undefined) {
-        this._opts.onUnmatchedAck('');
+        this._opts.onUnmatchedAck("");
       }
       return null;
     }
@@ -382,7 +383,7 @@ export class Correlator {
       // CLIENT-16: late ACK after timeout. Forward the inbound ACK frame's
       // byte offset (W-05) so observers see where in the stream it landed.
       const elapsedSinceSendMs = this._opts.now() - grave.timedOutAt;
-      this._opts.onWarning('MLLP_ACK_AFTER_TIMEOUT', {
+      this._opts.onWarning("MLLP_ACK_AFTER_TIMEOUT", {
         controlId: grave.controlId,
         elapsedSinceSendMs,
         byteOffset: byteOffsetFromAck,

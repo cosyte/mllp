@@ -1,53 +1,21 @@
 # @cosyte/hl7-mllp — Project Guide for Claude
 
-This repo is managed with the **GSD (Get Shit Done)** workflow. Planning artifacts live in `.planning/` and are committed with the code.
-
 ## Project
 
 **`@cosyte/hl7-mllp`** — a developer-focused MLLP (Minimal Lower Layer Protocol) client + server for Node.js/TypeScript, published under the Cosyte brand. Open-source (MIT). Transport-only sibling to `@cosyte/hl7` (the parser).
 
 **North star:** A developer can send and receive HL7 v2 messages over a production-grade MLLP connection with three lines of code, and trust framing, ACKs, reconnects, and backpressure under load and on flaky networks — without reading the MLLP spec.
 
-See `.planning/PROJECT.md` for full context, requirements, constraints, and key decisions.
-
 ## Status
 
-- **Phase 0 — Initialized (research-revised 2026-04-22).** Next: `/gsd-plan-phase 1`
-- Roadmap: 8 phases, **101** v1 REQ-IDs mapped, ~33 plans → see `.planning/ROADMAP.md`
+- **Phase 5 of 8** — Phase 5 executed (521/521 tests passing); awaiting verification.
 - Sibling package: `@cosyte/hl7` at `../hl7-parser` (peer dep, not runtime dep)
-- Research synthesis: `.planning/research/SUMMARY.md` (single source of truth for the post-research deltas)
-
-## GSD Workflow
-
-**Config** (`.planning/config.json`):
-
-- Mode: `yolo` (auto-approve plans/execution)
-- Granularity: `standard` (5–8 phases, 3–5 plans each)
-- Parallelization: enabled
-- Plan Check + Verifier + Nyquist Validation: enabled
-- Commit docs: yes
-
-**Typical phase loop:**
-
-1. `/gsd-plan-phase N` — decompose phase into plans (with plan-check agent)
-2. `/gsd-execute-phase N` — execute plans in parallel where possible, atomic commits
-3. `/gsd-verify-work N` — verifier confirms deliverables match phase goal
-4. `/gsd-validate-phase N` — Nyquist validation audits test coverage
-5. `/gsd-transition` — update PROJECT.md, advance state
-
-**Commands most likely needed:**
-
-- `/gsd-progress` — status + routing
-- `/gsd-next` — auto-advance to next logical step
-- `/gsd-plan-phase N` — plan a specific phase
-- `/gsd-execute-phase N` — execute a planned phase
-- `/gsd-discuss-phase N --auto` — clarify context before planning
 
 ## Tech Stack (locked)
 
 - **Language:** TypeScript (strict, `noUncheckedIndexedAccess`)
 - **Target:** ES2022, dual ESM + CJS via `tsup`
-- **Node:** **20+** (`engines.node >=20.0.0`; Node 18 EOL 2025-04-30)
+- **Node:** **22+** (`engines.node >=22.0.0`; Node 18 EOL 2025-04-30)
 - **Package manager:** pnpm
 - **Testing:** Vitest + `@vitest/coverage-v8` with per-directory 90% gates on `src/framing|server|client`
 - **Linting:** ESLint + Prettier
@@ -76,14 +44,19 @@ See `.planning/PROJECT.md` for full context, requirements, constraints, and key 
 - Coverage target: ≥ 90 % on `src/framing/`, `src/server/`, `src/client/`.
 - **In-memory transport is a first-class deliverable** (`@cosyte/hl7-mllp/testing`). Every test that can run over it must run over it; sockets are reserved for integration smoke tests.
 
-## Key Files
+## Standing disciplines (every change)
 
-- `.planning/PROJECT.md` — vision, requirements, constraints, decisions
-- `.planning/REQUIREMENTS.md` — **101** v1 REQ-IDs with phase traceability
-- `.planning/ROADMAP.md` — 8-phase breakdown with success criteria (~33 plans)
-- `.planning/STATE.md` — current state (what's next)
-- `.planning/research/SUMMARY.md` — consolidated research synthesis (accepted actions)
-- `.planning/research/{STACK,FEATURES,ARCHITECTURE,PITFALLS}.md` — source research
-- `.planning/config.json` — GSD workflow settings
+These three bind every change in this repo (mirrored from the cosyte meta-repo's
+`documentation/conventions.md`):
 
-When in doubt, read `.planning/ROADMAP.md` first to understand the phase structure and which phase a change belongs to.
+1. **Documentation follows code.** A public-surface / stack / status change isn't done until its
+   docs are: this package's own docs (`docs-content/` + JSDoc), and — in the meta-repo — its
+   `documentation/repos/<repo>.md` and the `ecosystem-map.md` status table.
+2. **Version + changelog every meaningful change.** Add a Changeset (`pnpm changeset`, `patch`
+   during pre-alpha) and keep `CHANGELOG.md`'s `[Unreleased]` current. Stay on `0.0.x` until first alpha.
+3. **Crew + knowledgebase feedback loop.** When a standard, decision, or public surface changes,
+   flag whether a `crew` skill or `knowledgebase` doc needs creating/updating — never silently skip.
+
+Build, lint, format, and TypeScript settings come from the shared `@cosyte/*` config packages
+(`@cosyte/tsconfig` · `@cosyte/eslint-config` · `@cosyte/prettier-config`; see
+`documentation/conventions.md` → "Canonical toolchain (enforced)"). Node ≥ 22.

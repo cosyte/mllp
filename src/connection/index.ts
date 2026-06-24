@@ -12,9 +12,9 @@ export {
   type ConnectionStats,
   type StateChangeEvent,
   type ReconnectingEvent,
-} from './connection.js';
+} from "./connection.js";
 export {
   MllpConnectionError,
   type ConnectionErrorPhase,
   type ConnectionErrorCause,
-} from './error.js';
+} from "./error.js";

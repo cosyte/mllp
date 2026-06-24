@@ -5,5 +5,3 @@
 **Status: Under active development. API not yet stable.**
 
 Full documentation coming in Phase 8.
-
-See [ROADMAP](.planning/ROADMAP.md) for development status.

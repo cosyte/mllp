@@ -1,5 +1,5 @@
 /**
- * @cosyte/hl7-mllp — Production-grade MLLP client and server for Node.js.
+ * `@cosyte/hl7-mllp` — Production-grade MLLP client and server for Node.js.
  *
  * Transport-only sibling to `@cosyte/hl7`. Handles framing, ACKs, reconnects,
  * backpressure, and TLS without requiring knowledge of the MLLP spec.
@@ -14,16 +14,16 @@
  */
 
 // Populated in Phase 2+. Stub barrel — do not remove this file.
-export const VERSION = '0.1.0';
+export const VERSION = "0.1.0";
 
 // Phase 2: framing codec public surface
-export type { WarningCode, MllpWarning } from './framing/index.js';
-export { MllpFramingError, encodeFrame, FrameReader, createWarning } from './framing/index.js';
-export type { FrameReaderOptions, EncoderOptions } from './framing/index.js';
+export type { WarningCode, MllpWarning } from "./framing/index.js";
+export { MllpFramingError, encodeFrame, FrameReader, createWarning } from "./framing/index.js";
+export type { FrameReaderOptions, EncoderOptions } from "./framing/index.js";
 
 // Phase 3: transport abstraction, connection FSM, and observability
-export type { Transport } from './transport/index.js';
-export { NetTransport } from './transport/index.js';
+export type { Transport } from "./transport/index.js";
+export { NetTransport } from "./transport/index.js";
 export {
   Connection,
   type ConnectionOptions,
@@ -34,7 +34,7 @@ export {
   MllpConnectionError,
   type ConnectionErrorPhase,
   type ConnectionErrorCause,
-} from './connection/index.js';
+} from "./connection/index.js";
 
 // Phase 4: server
 export {
@@ -45,7 +45,7 @@ export {
   type StarterServerOptions,
   type ServerStats,
   type MessageMeta,
-} from './server/index.js';
+} from "./server/index.js";
 
 // Phase 5: client
 export {
@@ -60,4 +60,4 @@ export {
   MllpTimeoutError,
   MllpBackpressureError,
   isTransientConnectionError,
-} from './client/index.js';
+} from "./client/index.js";

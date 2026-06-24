@@ -7,7 +7,7 @@ export default defineConfig({
     'ack-from-hl7/index': 'src/ack-from-hl7/index.ts',
   },
   format: ['esm', 'cjs'],
-  target: 'node20',
+  target: 'es2022',
   platform: 'node',
   sourcemap: true,      // D-10: external .map files in dist/
   dts: true,            // D-11: tsup-bundled .d.ts + .d.cts per entry

@@ -18,13 +18,13 @@
  * @packageDocumentation
  */
 
-import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
-import type { Transport } from '../transport/index.js';
-import { FrameReader } from '../framing/index.js';
-import type { FrameReaderOptions, MllpWarning } from '../framing/index.js';
-import { MllpConnectionError } from './error.js';
-import type { ConnectionErrorPhase } from './error.js';
+import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
+import type { Transport } from "../transport/index.js";
+import { FrameReader } from "../framing/index.js";
+import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
+import { MllpConnectionError } from "./error.js";
+import type { ConnectionErrorPhase } from "./error.js";
 
 /**
  * The 6 connection states from LIFE-01.
@@ -33,12 +33,12 @@ import type { ConnectionErrorPhase } from './error.js';
  * are silently ignored to preserve FSM integrity.
  */
 export type ConnectionState =
-  | 'CONNECTING'
-  | 'CONNECTED'
-  | 'DRAINING'
-  | 'RECONNECTING'
-  | 'DISCONNECTED'
-  | 'CLOSED';
+  | "CONNECTING"
+  | "CONNECTED"
+  | "DRAINING"
+  | "RECONNECTING"
+  | "DISCONNECTED"
+  | "CLOSED";
 
 /**
  * Payload for the 'stateChange' event. Always `Object.freeze`'d.
@@ -71,8 +71,8 @@ export interface StateChangeEvent {
  */
 export interface ReconnectingEvent {
   readonly connectionId: string;
-  readonly attempt?: number;   // Phase 5 will populate
-  readonly delayMs?: number;   // Phase 5 will populate
+  readonly attempt?: number; // Phase 5 will populate
+  readonly delayMs?: number; // Phase 5 will populate
 }
 
 /**
@@ -124,7 +124,7 @@ export interface ConnectionOptions {
   /** Drain timeout used by close() in Phase 4/5 (default: 30_000 ms). */
   drainTimeoutMs?: number;
   /** FrameReader options (tolerance, maxFrameSizeBytes). onFrame/onWarning are managed internally. */
-  framing?: Omit<FrameReaderOptions, 'onFrame' | 'onWarning'>;
+  framing?: Omit<FrameReaderOptions, "onFrame" | "onWarning">;
 }
 
 /** Warning ring buffer cap (OBS-05). */
@@ -141,12 +141,12 @@ const MAX_WARNINGS = 100;
  * CLOSED     → (terminal — no outgoing transitions)
  */
 const LEGAL_TRANSITIONS: ReadonlyMap<ConnectionState, ReadonlySet<ConnectionState>> = new Map([
-  ['CONNECTING', new Set<ConnectionState>(['CONNECTED', 'RECONNECTING', 'CLOSED'])],
-  ['CONNECTED', new Set<ConnectionState>(['DRAINING', 'RECONNECTING', 'DISCONNECTED', 'CLOSED'])],
-  ['DRAINING', new Set<ConnectionState>(['DISCONNECTED', 'CLOSED'])],
-  ['RECONNECTING', new Set<ConnectionState>(['CONNECTING', 'CLOSED'])],
-  ['DISCONNECTED', new Set<ConnectionState>(['CLOSED'])],
-  ['CLOSED', new Set<ConnectionState>()],
+  ["CONNECTING", new Set<ConnectionState>(["CONNECTED", "RECONNECTING", "CLOSED"])],
+  ["CONNECTED", new Set<ConnectionState>(["DRAINING", "RECONNECTING", "DISCONNECTED", "CLOSED"])],
+  ["DRAINING", new Set<ConnectionState>(["DISCONNECTED", "CLOSED"])],
+  ["RECONNECTING", new Set<ConnectionState>(["CONNECTING", "CLOSED"])],
+  ["DISCONNECTED", new Set<ConnectionState>(["CLOSED"])],
+  ["CLOSED", new Set<ConnectionState>()],
 ]);
 
 /**
@@ -174,7 +174,7 @@ export class Connection extends EventEmitter {
   /** Stable UUIDv4 identifier for this connection (D-11). */
   readonly connectionId: string;
 
-  private _state: ConnectionState = 'CONNECTING';
+  private _state: ConnectionState = "CONNECTING";
   private readonly _transport: Transport;
   private readonly _reader: FrameReader;
   private readonly _opts: ConnectionOptions;
@@ -219,8 +219,12 @@ export class Connection extends EventEmitter {
 
     this._reader = new FrameReader({
       ...(opts.framing ?? {}),
-      onFrame: (payload, byteOffset, warnings) => { this._onFrameDecoded(payload, byteOffset, warnings); },
-      onWarning: (w) => { this._onFramingWarning(w); },
+      onFrame: (payload, byteOffset, warnings) => {
+        this._onFrameDecoded(payload, byteOffset, warnings);
+      },
+      onWarning: (w) => {
+        this._onFramingWarning(w);
+      },
     });
 
     // Wire transport callbacks
@@ -229,8 +233,12 @@ export class Connection extends EventEmitter {
       this._lastByteInAt = new Date();
       this._reader.push(chunk);
     });
-    this._transport.onClose(() => { this._onTransportClose(); });
-    this._transport.onError((err) => { this._onTransportError(err); });
+    this._transport.onClose(() => {
+      this._onTransportClose();
+    });
+    this._transport.onError((err) => {
+      this._onTransportError(err);
+    });
   }
 
   /**
@@ -277,8 +285,8 @@ export class Connection extends EventEmitter {
     this._remoteAddress = remoteAddress;
     this._remotePort = remotePort;
     this._connectedAt = new Date();
-    this._transition('CONNECTED');
-    this.emit('connect', Object.freeze({ connectionId: this.connectionId }));
+    this._transition("CONNECTED");
+    this.emit("connect", Object.freeze({ connectionId: this.connectionId }));
   }
 
   /**
@@ -296,7 +304,7 @@ export class Connection extends EventEmitter {
    * ```
    */
   send(data: Buffer): boolean {
-    if (this._state === 'CLOSED' || this._state === 'DISCONNECTED') return false;
+    if (this._state === "CLOSED" || this._state === "DISCONNECTED") return false;
     const ok = this._transport.write(data);
     this._bytesOut += data.length;
     this._lastByteOutAt = new Date();
@@ -325,22 +333,22 @@ export class Connection extends EventEmitter {
     const timeout = opts?.drainTimeoutMs ?? this._opts.drainTimeoutMs ?? 30_000;
 
     // Terminal states — nothing to do
-    if (this._state === 'CLOSED' || this._state === 'DISCONNECTED') return;
+    if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
 
     // CONNECTING or RECONNECTING — cancel the pending attempt (LIFE-05)
-    if (this._state === 'CONNECTING' || this._state === 'RECONNECTING') {
-      this._transition('CLOSED', 'close() during ' + this._state);
+    if (this._state === "CONNECTING" || this._state === "RECONNECTING") {
+      this._transition("CLOSED", "close() during " + this._state);
       this._transport.destroy();
       return;
     }
 
     // DRAINING already — join the in-progress drain rather than starting a second beforeClose call
-    if (this._state === 'DRAINING') {
+    if (this._state === "DRAINING") {
       return this._drainPromise ?? Promise.resolve();
     }
 
     // CONNECTED → DRAINING
-    this._transition('DRAINING');
+    this._transition("DRAINING");
     this._drainPromise = this._drainWithTimeout(timeout).finally(() => {
       this._drainPromise = null;
     });
@@ -355,24 +363,26 @@ export class Connection extends EventEmitter {
    */
   private async _drainWithTimeout(timeoutMs: number): Promise<void> {
     const drainPromise = this.beforeClose(timeoutMs);
-    const timeoutPromise = new Promise<'timeout'>((resolve) => {
-      const handle = setTimeout(() => { resolve('timeout'); }, timeoutMs);
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      const handle = setTimeout(() => {
+        resolve("timeout");
+      }, timeoutMs);
       // Unref so this timer does not keep the process alive (T-03-04-01)
       handle.unref();
     });
 
-    const result = await Promise.race([drainPromise.then(() => 'done' as const), timeoutPromise]);
+    const result = await Promise.race([drainPromise.then(() => "done" as const), timeoutPromise]);
 
-    if (result === 'timeout') {
+    if (result === "timeout") {
       // Drain timed out — force to CLOSED (DRAINING → CLOSED per LIFE-02)
-      if (this._state === 'DRAINING') {
-        this._transition('CLOSED', 'drain timeout');
+      if (this._state === "DRAINING") {
+        this._transition("CLOSED", "drain timeout");
         this._transport.destroy();
       }
     } else {
       // Drain completed — DRAINING → DISCONNECTED (LIFE-02)
-      if (this._state === 'DRAINING') {
-        this._transition('DISCONNECTED');
+      if (this._state === "DRAINING") {
+        this._transition("DISCONNECTED");
         this._transport.close();
       }
     }
@@ -393,8 +403,8 @@ export class Connection extends EventEmitter {
    * ```
    */
   destroy(reason?: Error): void {
-    if (this._state === 'CLOSED') return;
-    this._transition('CLOSED', reason?.message ?? 'destroy()');
+    if (this._state === "CLOSED") return;
+    this._transition("CLOSED", reason?.message ?? "destroy()");
     this._transport.destroy(reason);
   }
 
@@ -448,59 +458,66 @@ export class Connection extends EventEmitter {
     const event = Object.freeze<StateChangeEvent>(
       reason !== undefined ? { from, to, reason } : { from, to },
     );
-    this.emit('stateChange', event);
+    this.emit("stateChange", event);
 
     // Fire semantic lifecycle events
-    if (to === 'DISCONNECTED') {
-      this.emit('disconnect', Object.freeze({ connectionId: this.connectionId }));
+    if (to === "DISCONNECTED") {
+      this.emit("disconnect", Object.freeze({ connectionId: this.connectionId }));
     }
-    if (to === 'RECONNECTING') {
-      this.emit('reconnecting', Object.freeze({ connectionId: this.connectionId }));
+    if (to === "RECONNECTING") {
+      this.emit("reconnecting", Object.freeze({ connectionId: this.connectionId }));
     }
-    if (to === 'CLOSED') {
-      this.emit('close', Object.freeze({ connectionId: this.connectionId }));
+    if (to === "CLOSED") {
+      this.emit("close", Object.freeze({ connectionId: this.connectionId }));
     }
   }
 
   private _onTransportClose(): void {
-    if (this._state === 'DRAINING') {
+    if (this._state === "DRAINING") {
       // Transport closed naturally during graceful drain — complete the close
-      this._transition('DISCONNECTED');
+      this._transition("DISCONNECTED");
       return;
     }
-    if (this._state === 'CONNECTED') {
-      this._transition('DISCONNECTED', 'peer closed');
+    if (this._state === "CONNECTED") {
+      this._transition("DISCONNECTED", "peer closed");
       return;
     }
-    if (this._state === 'CONNECTING' || this._state === 'RECONNECTING') {
+    if (this._state === "CONNECTING" || this._state === "RECONNECTING") {
       // Neither CONNECTING nor RECONNECTING has a path to DISCONNECTED.
       // Use CLOSED (terminal) for unexpected peer close here.
-      this._transition('CLOSED', 'peer closed');
+      this._transition("CLOSED", "peer closed");
     }
   }
 
   private _onTransportError(err: Error): void {
     const phase: ConnectionErrorPhase =
-      this._state === 'CONNECTING'    ? 'connect'   :
-      this._state === 'RECONNECTING'  ? 'reconnect' :
-      this._state === 'DRAINING'      ? 'close'     :
-      'receive';
+      this._state === "CONNECTING"
+        ? "connect"
+        : this._state === "RECONNECTING"
+          ? "reconnect"
+          : this._state === "DRAINING"
+            ? "close"
+            : "receive";
 
     const connErr = new MllpConnectionError(err.message, { cause: err, phase });
-    this.emit('error', Object.freeze({ connectionId: this.connectionId, error: connErr }));
-    if (this._state === 'CLOSED' || this._state === 'DISCONNECTED') return;
+    this.emit("error", Object.freeze({ connectionId: this.connectionId, error: connErr }));
+    if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
 
     // CONNECTING and RECONNECTING have no path to DISCONNECTED — use CLOSED
     const target: ConnectionState =
-      (this._state === 'CONNECTING' || this._state === 'RECONNECTING') ? 'CLOSED' : 'DISCONNECTED';
+      this._state === "CONNECTING" || this._state === "RECONNECTING" ? "CLOSED" : "DISCONNECTED";
     this._transition(target, `error: ${err.message}`);
   }
 
-  private _onFrameDecoded(payload: Buffer, byteOffset: number, warnings: readonly MllpWarning[]): void {
+  private _onFrameDecoded(
+    payload: Buffer,
+    byteOffset: number,
+    warnings: readonly MllpWarning[],
+  ): void {
     // Only deliver messages when in an active state (CONNECTED or DRAINING)
-    if (this._state !== 'CONNECTED' && this._state !== 'DRAINING') return;
+    if (this._state !== "CONNECTED" && this._state !== "DRAINING") return;
     const event = Object.freeze({ payload, connectionId: this.connectionId, byteOffset, warnings });
-    this.emit('message', event);
+    this.emit("message", event);
     this._opts.onMessage?.(payload);
   }
 
@@ -528,6 +545,6 @@ export class Connection extends EventEmitter {
     }
 
     // EventEmitter broadcast (aggregate warning stream)
-    this.emit('warning', enriched);
+    this.emit("warning", enriched);
   }
 }

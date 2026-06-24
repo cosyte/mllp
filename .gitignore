@@ -11,3 +11,4 @@ coverage/
 *.tsbuildinfo
 examples/tls/certs/
 bench/results/
+dist-artifacts/
