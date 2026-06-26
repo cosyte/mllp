@@ -27,6 +27,14 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 - **In-memory transport** (`@cosyte/mllp/testing`) — a deterministic, socket-free test double.
 - **`ack-from-hl7` subpath** — placeholder for building ACKs from parsed messages via the optional
   `@cosyte/hl7` peer (helpers not yet implemented; Phase 6).
+- **Property + fuzz test layer** for the framing transport, built on the shared
+  `@cosyte/test-utils` conformance kit and `fast-check` (both dev-only). Covers: codec round-trip
+  byte fidelity (`encode → decode`) via `roundTripProperty`; lenient-decoder robustness
+  (malformed-but-recoverable frames recover into warnings, only `MLLP_FRAME_TOO_LARGE` throws) via
+  `lenientNeverThrowsProperty`; frozen-event-payload immutability via `immutabilityProperty`; a
+  warning-code surface snapshot tripwire via `sortedCodeSet`; and a transport-robustness **fuzz**
+  property feeding arbitrary random byte buffers and chunk-splits through `FrameReader` over the
+  in-memory transport. Test-only — no public-surface change.
 
 ### Changed
 
