@@ -36,6 +36,8 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   property feeding arbitrary random byte buffers and chunk-splits through `FrameReader` over the
   in-memory transport. Test-only — no public-surface change.
 
+- **Package metadata** — added `homepage` and `bugs` fields to `package.json` for npm completeness.
+
 ### Changed
 
 - **Renamed the package `@cosyte/hl7-mllp` → `@cosyte/mllp`.** Not yet published, so no deprecation
