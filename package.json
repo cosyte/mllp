@@ -9,6 +9,10 @@
   "packageManager": "pnpm@10.0.0",
   "license": "MIT",
   "author": "Cosyte <hello@cosyte.com> (https://cosyte.com)",
+  "homepage": "https://github.com/cosyte/mllp#readme",
+  "bugs": {
+    "url": "https://github.com/cosyte/mllp/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cosyte/mllp.git"
