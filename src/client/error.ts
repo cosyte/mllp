@@ -42,6 +42,12 @@ export class MllpTimeoutError extends Error {
   /** Epoch ms timestamp recorded at write-flush callback. */
   readonly sentAt: number;
 
+  /**
+   * Construct an MLLP timeout error.
+   *
+   * @param message - Human-readable error message.
+   * @param opts - Timeout context (originating message control id, elapsed time, flush timestamp).
+   */
   constructor(
     message: string,
     opts: {
@@ -81,7 +87,7 @@ export class MllpTimeoutError extends Error {
  *
  * @example
  * ```typescript
- * import { isTransientConnectionError } from '@cosyte/hl7-mllp';
+ * import { isTransientConnectionError } from '@cosyte/mllp';
  * client.on('error', (err) => {
  *   if (isTransientConnectionError(err)) {
  *     metrics.increment('mllp.transient_error');
@@ -152,6 +158,12 @@ export class MllpBackpressureError extends Error {
   /** The high-water-mark configuration that was triggered (D-23). */
   readonly highWaterMark: { readonly count?: number; readonly bytes?: number };
 
+  /**
+   * Construct an MLLP backpressure error.
+   *
+   * @param message - Human-readable error message.
+   * @param opts - Backpressure context (queue depth, queued bytes, the high-water-mark hit).
+   */
   constructor(
     message: string,
     opts: {

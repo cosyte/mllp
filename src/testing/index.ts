@@ -1,11 +1,11 @@
 /**
  * In-memory transport utilities for deterministic, socket-free tests.
  *
- * Import from `@cosyte/hl7-mllp/testing`:
+ * Import from `@cosyte/mllp/testing`:
  *
  * @example
  * ```typescript
- * import { InMemoryTransport } from '@cosyte/hl7-mllp/testing';
+ * import { InMemoryTransport } from '@cosyte/mllp/testing';
  *
  * const [a, b] = InMemoryTransport.pair();
  * b.onData((chunk) => b.write(chunk)); // echo

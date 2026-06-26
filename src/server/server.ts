@@ -7,7 +7,7 @@
  *
  * @example
  * ```typescript
- * import { createServer } from '@cosyte/hl7-mllp';
+ * import { createServer } from '@cosyte/mllp';
  *
  * const server = createServer({
  *   onMessage: (payload, meta, conn) => {
@@ -171,7 +171,7 @@ export interface ServerOptions {
  *
  * @example
  * ```typescript
- * import { createStarterServer } from '@cosyte/hl7-mllp';
+ * import { createStarterServer } from '@cosyte/mllp';
  *
  * const server = await createStarterServer({
  *   port: 2575,
@@ -225,7 +225,7 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  *
  * @example
  * ```typescript
- * import { createServer } from '@cosyte/hl7-mllp';
+ * import { createServer } from '@cosyte/mllp';
  *
  * const server = createServer({
  *   onMessage: (payload, meta, conn) => {
@@ -247,6 +247,12 @@ export class MllpServer extends EventEmitter {
   private _acceptedTotal = 0;
   private _closedTotal = 0;
 
+  /**
+   * Construct an MLLP server. Created idle; call `listen()` (or use
+   * {@link createServer}/{@link createStarterServer}) to begin accepting connections.
+   *
+   * @param opts - Server options (bind host/port, auto-ACK policy, message handler, framing, …).
+   */
   constructor(opts: ServerOptions) {
     super();
     this._opts = opts;
@@ -742,7 +748,7 @@ export class MllpServer extends EventEmitter {
  *
  * @example
  * ```typescript
- * import { createServer } from '@cosyte/hl7-mllp';
+ * import { createServer } from '@cosyte/mllp';
  *
  * const server = createServer({
  *   onMessage: (payload, meta, conn) => {
@@ -766,7 +772,7 @@ export function createServer(opts: ServerOptions = {}): MllpServer {
  *
  * @example
  * ```typescript
- * import { createStarterServer } from '@cosyte/hl7-mllp';
+ * import { createStarterServer } from '@cosyte/mllp';
  *
  * const server = await createStarterServer({
  *   port: 2575,

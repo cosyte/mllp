@@ -24,19 +24,34 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 - **11 stable warning codes** with byte-offset context (`MLLP_MISSING_LEADING_VT`,
   `MLLP_FS_WITHOUT_CR`, `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_UNMATCHED_CONTROL_ID`, …).
 - **TLS** support; `AbortSignal` on every awaitable and `Symbol.asyncDispose` on every closeable.
-- **In-memory transport** (`@cosyte/hl7-mllp/testing`) — a deterministic, socket-free test double.
-- **`ack-from-hl7` subpath** — build ACKs from parsed messages via the optional `@cosyte/hl7` peer.
-- **Tooling** — strict TypeScript, dual ESM + CJS via tsup, Vitest. Lint, format, and TypeScript
-  settings come from the shared `@cosyte/*` config packages (ESLint 9). CI across Node 22 / 24.
+- **In-memory transport** (`@cosyte/mllp/testing`) — a deterministic, socket-free test double.
+- **`ack-from-hl7` subpath** — placeholder for building ACKs from parsed messages via the optional
+  `@cosyte/hl7` peer (helpers not yet implemented; Phase 6).
 
 ### Changed
 
-### Deprecated
+- **Renamed the package `@cosyte/hl7-mllp` → `@cosyte/mllp`.** Not yet published, so no deprecation
+  path is needed; all imports, the `/testing` and `/ack-from-hl7` subpaths, and the optional
+  `@cosyte/hl7` peer dependency are unchanged.
+- **Adopted the shared `@cosyte/*` engineering standard (Phase E).** Build via `@cosyte/tsup-config`
+  (`cosyteTsup`), tests via `@cosyte/vitest-config` (`cosyteVitest`), lint via `@cosyte/eslint-config`
+  (ESLint 10 + `typescript-eslint`) at `--max-warnings=0`, Prettier 3.8. Exact-pinned dev tooling,
+  canonical scripts (incl. `clean`, `attw --pack .`), per-condition `.d.cts` types on every `exports`
+  subpath, and thin-caller `ci.yml` / `release.yml` over `cosyte/.github`. Target bumped ES2022 →
+  ES2023.
+- **Re-enabled the coverage gate** at per-directory >= 90 on
+  `framing|client|connection|server|transport` (was disabled).
+- **Restored the JSDoc `error` gate** (the local `warn` downgrade was removed) and reformatted the
+  source to the shared Prettier config (double quotes); no behavior change.
 
 ### Removed
+
+- **`mitata` benchmark dependency and the `bench` script** — the script had no benchmark files.
+
+### Deprecated
 
 ### Fixed
 
 ### Security
 
-[Unreleased]: https://github.com/cosyte/hl7-mllp/commits/main
+[Unreleased]: https://github.com/cosyte/mllp/commits/main

@@ -13,13 +13,23 @@
  * - Both options are independent (D-11/A3).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createConnection } from 'node:net';
-import { createClient, MllpClient } from '../../src/client/client.js';
-import { Connection } from '../../src/connection/index.js';
-import { InMemoryTransport } from '../../src/testing/in-memory-transport.js';
-import { encodeFrame } from '../../src/framing/index.js';
-import type { ClientOptions } from '../../src/client/client.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createConnection } from "node:net";
+import type { Socket as NetSocket } from "node:net";
+import { createClient, type MllpClient } from "../../src/client/client.js";
+import { Connection } from "../../src/connection/index.js";
+import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
+import { encodeFrame } from "../../src/framing/index.js";
+import type { ClientOptions } from "../../src/client/client.js";
+
+/**
+ * Narrow an indexed access to its non-nullish value, throwing if it is
+ * `undefined`/`null`. Replaces forbidden non-null assertions (`x!`) in tests.
+ */
+function must<T>(v: T | undefined | null): NonNullable<T> {
+  if (v === undefined || v === null) throw new Error("expected value");
+  return v;
+}
 
 interface Harness {
   client: MllpClient;
@@ -31,12 +41,12 @@ interface Harness {
 function buildClientOverPair(opts?: Partial<ClientOptions>): Harness {
   const [a, b] = InMemoryTransport.pair();
   const conn = new Connection({ transport: a });
-  const baseOpts: ClientOptions = { host: '127.0.0.1', port: 0, ...opts };
+  const baseOpts: ClientOptions = { host: "127.0.0.1", port: 0, ...opts };
   const client = createClient(baseOpts);
   (
     client as unknown as { _attachExistingConnection: (c: Connection) => void }
   )._attachExistingConnection(conn);
-  conn.notifyConnect('127.0.0.1', 2575);
+  conn.notifyConnect("127.0.0.1", 2575);
   return {
     client,
     conn,
@@ -45,29 +55,26 @@ function buildClientOverPair(opts?: Partial<ClientOptions>): Harness {
     },
     warningFromPeer: () => {
       // Send a malformed leading-whitespace frame to provoke a warning event.
-      b.write(Buffer.concat([Buffer.from([0x20, 0x20]), encodeFrame(Buffer.from('OK'))]));
+      b.write(Buffer.concat([Buffer.from([0x20, 0x20]), encodeFrame(Buffer.from("OK"))]));
     },
   };
 }
 
-describe('MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)', () => {
-  describe('keepaliveIntervalMs (TCP keepalive)', () => {
-    it('Test 1: setKeepAlive(true, ms) is called on the raw socket on connect', async () => {
-      const setKeepAliveSpy = vi.fn();
-      // Spy on net.Socket.prototype.setKeepAlive
-      const origSetKeepAlive = (
-        await import('node:net')
-      ).Socket.prototype.setKeepAlive;
-      const { Socket } = await import('node:net');
-      Socket.prototype.setKeepAlive = function (
-        ...args: Parameters<typeof origSetKeepAlive>
-      ) {
-        setKeepAliveSpy(...args);
-        return this;
-      };
+describe("MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)", () => {
+  describe("keepaliveIntervalMs (TCP keepalive)", () => {
+    it("Test 1: setKeepAlive(true, ms) is called on the raw socket on connect", async () => {
+      // Spy on net.Socket.prototype.setKeepAlive (vi.spyOn handles save/restore
+      // and avoids an unbound-method reference). The impl returns `this` so the
+      // chainable socket-builder path keeps working.
+      const { Socket } = await import("node:net");
+      const setKeepAliveSpy = vi
+        .spyOn(Socket.prototype, "setKeepAlive")
+        .mockImplementation(function (this: NetSocket) {
+          return this;
+        });
       try {
         const client = createClient({
-          host: '127.0.0.1',
+          host: "127.0.0.1",
           port: 1, // unreachable port — connect attempt fires error
           keepaliveIntervalMs: 1234,
         });
@@ -80,35 +87,30 @@ describe('MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)'
         expect(setKeepAliveSpy).toHaveBeenCalledWith(true, 1234);
         client.destroy();
       } finally {
-        Socket.prototype.setKeepAlive = origSetKeepAlive;
+        setKeepAliveSpy.mockRestore();
       }
     });
 
-    it('Test 2: default keepaliveIntervalMs is undefined → setKeepAlive NOT called', async () => {
-      const setKeepAliveSpy = vi.fn();
-      const origSetKeepAlive = (
-        await import('node:net')
-      ).Socket.prototype.setKeepAlive;
-      const { Socket } = await import('node:net');
-      Socket.prototype.setKeepAlive = function (
-        ...args: Parameters<typeof origSetKeepAlive>
-      ) {
-        setKeepAliveSpy(...args);
-        return this;
-      };
+    it("Test 2: default keepaliveIntervalMs is undefined → setKeepAlive NOT called", async () => {
+      const { Socket } = await import("node:net");
+      const setKeepAliveSpy = vi
+        .spyOn(Socket.prototype, "setKeepAlive")
+        .mockImplementation(function (this: NetSocket) {
+          return this;
+        });
       try {
-        const client = createClient({ host: '127.0.0.1', port: 1 });
+        const client = createClient({ host: "127.0.0.1", port: 1 });
         const cp = client.connect();
         cp.catch(() => {});
         expect(setKeepAliveSpy).not.toHaveBeenCalled();
         client.destroy();
       } finally {
-        Socket.prototype.setKeepAlive = origSetKeepAlive;
+        setKeepAliveSpy.mockRestore();
       }
     });
   });
 
-  describe('deadPeerTimeoutMs (app-idle timer)', () => {
+  describe("deadPeerTimeoutMs (app-idle timer)", () => {
     beforeEach(() => {
       vi.useFakeTimers();
     });
@@ -116,14 +118,14 @@ describe('MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)'
       vi.useRealTimers();
     });
 
-    it('Test 4: dead-peer timer fires connection.destroy on idle', async () => {
+    it("Test 4: dead-peer timer fires connection.destroy on idle", async () => {
       const { client, conn } = buildClientOverPair({
         deadPeerTimeoutMs: 100,
       });
-      const destroySpy = vi.spyOn(conn, 'destroy');
+      const destroySpy = vi.spyOn(conn, "destroy");
       await vi.advanceTimersByTimeAsync(150);
       expect(destroySpy).toHaveBeenCalled();
-      const arg = destroySpy.mock.calls[0]![0] as Error;
+      const arg = must(destroySpy.mock.calls[0]?.[0]);
       expect(arg).toBeInstanceOf(Error);
       expect(arg.message).toMatch(/dead peer/i);
       client.destroy();
@@ -133,7 +135,7 @@ describe('MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)'
       const { client, conn, ackFromPeer } = buildClientOverPair({
         deadPeerTimeoutMs: 100,
       });
-      const destroySpy = vi.spyOn(conn, 'destroy');
+      const destroySpy = vi.spyOn(conn, "destroy");
       // ACK every 50ms — the timer should keep resetting and never fire.
       // Use client.send to register an awaited send; ackFromPeer triggers
       // both the inbound 'message' on the Connection and the 'ack' event
@@ -151,72 +153,69 @@ describe('MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)'
       client.destroy();
     });
 
-    it('Test 6: default deadPeerTimeoutMs is undefined → no timer armed', async () => {
+    it("Test 6: default deadPeerTimeoutMs is undefined → no timer armed", async () => {
       const { client, conn } = buildClientOverPair();
-      const destroySpy = vi.spyOn(conn, 'destroy');
+      const destroySpy = vi.spyOn(conn, "destroy");
       await vi.advanceTimersByTimeAsync(60_000);
       expect(destroySpy).not.toHaveBeenCalled();
       client.destroy();
     });
 
-    it('Test 7: timer cleared on transition out of CONNECTED, re-armed on entry', async () => {
+    it("Test 7: timer cleared on transition out of CONNECTED, re-armed on entry", async () => {
       const { client, conn } = buildClientOverPair({
         deadPeerTimeoutMs: 100,
       });
       // Start: timer armed at attach time.
-      const beforeFieldA = (
-        client as unknown as { _deadPeerTimer: unknown }
-      )._deadPeerTimer;
+      const beforeFieldA = (client as unknown as { _deadPeerTimer: unknown })._deadPeerTimer;
       expect(beforeFieldA).not.toBeNull();
       // Drive Connection out of CONNECTED via close.
       const closeP = conn.close();
       await vi.advanceTimersByTimeAsync(1);
-      const afterField = (client as unknown as { _deadPeerTimer: unknown })
-        ._deadPeerTimer;
+      const afterField = (client as unknown as { _deadPeerTimer: unknown })._deadPeerTimer;
       expect(afterField).toBeNull();
       // Wait for close to settle.
       await closeP.catch(() => {});
       client.destroy();
     });
 
-    it('Test 12: dead-peer timer is .unref()-ed (no-throw assertion)', async () => {
+    it("Test 12: dead-peer timer is .unref()-ed (no-throw assertion)", () => {
       // We can't directly observe .unref() but we can assert the field is
       // a valid Timeout and the test process exits cleanly when the timer
       // is the only remaining handle (vitest's afterEach + useRealTimers
       // resets the test environment regardless).
       const { client } = buildClientOverPair({ deadPeerTimeoutMs: 60_000 });
-      const t = (client as unknown as { _deadPeerTimer: unknown })
-        ._deadPeerTimer;
+      const t = (client as unknown as { _deadPeerTimer: unknown })._deadPeerTimer;
       expect(t).not.toBeNull();
       client.destroy();
     });
   });
 
-  describe('FSM-aware lifecycle (D-14, B-04)', () => {
-    it('Test 8b: no parallel `conn.on(\'stateChange\')` listener registered by Plan 05', async () => {
+  describe("FSM-aware lifecycle (D-14, B-04)", () => {
+    it("Test 8b: no parallel `conn.on('stateChange')` listener registered by Plan 05", async () => {
       // Sanity: read the source of client.ts and ensure the only
       // 'stateChange' listener registration count matches PLAN-02's
       // single delegating listener (B-04 contract).
-      const fs = await import('node:fs/promises');
-      const url = new URL('../../src/client/client.ts', import.meta.url);
-      const text = await fs.readFile(url, 'utf8');
-      const matches = text.match(/conn\.on\(\s*'stateChange'/g) ?? [];
+      const fs = await import("node:fs/promises");
+      const url = new URL("../../src/client/client.ts", import.meta.url);
+      const text = await fs.readFile(url, "utf8");
+      // Quote-agnostic: the shared toolchain enforces double quotes, but accept
+      // either so the assertion tracks the registration count, not the style.
+      const matches = text.match(/conn\.on\(\s*['"]stateChange['"]/g) ?? [];
       // Exactly ONE delegating registration (PLAN-02's). Plan 05 contributes
       // ADDITIVE statements at the named anchor; it does NOT add a parallel.
       expect(matches.length).toBe(1);
     });
 
-    it('HOOK_EXTENSION_POINT: state-change anchor is preserved', async () => {
-      const fs = await import('node:fs/promises');
-      const url = new URL('../../src/client/client.ts', import.meta.url);
-      const text = await fs.readFile(url, 'utf8');
-      const matches =
-        text.match(/HOOK_EXTENSION_POINT: state-change/g) ?? [];
+    it("HOOK_EXTENSION_POINT: state-change anchor is preserved", async () => {
+      const fs = await import("node:fs/promises");
+      const url = new URL("../../src/client/client.ts", import.meta.url);
+      const text = await fs.readFile(url, "utf8");
+      const matches = text.match(/HOOK_EXTENSION_POINT: state-change/g) ?? [];
       expect(matches.length).toBeGreaterThanOrEqual(1);
     });
   });
 
-  describe('autoReconnect integration (D-13)', () => {
+  describe("autoReconnect integration (D-13)", () => {
     beforeEach(() => {
       vi.useFakeTimers();
     });
@@ -224,32 +223,31 @@ describe('MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)'
       vi.useRealTimers();
     });
 
-    it('Test 10: autoReconnect:false + dead-peer trip → DISCONNECTED, no RECONNECTING', async () => {
+    it("Test 10: autoReconnect:false + dead-peer trip → DISCONNECTED, no RECONNECTING", async () => {
       const { client } = buildClientOverPair({
         deadPeerTimeoutMs: 100,
         autoReconnect: false,
       });
       const states: string[] = [];
-      client.on('stateChange', (e: unknown) => {
+      client.on("stateChange", (e: unknown) => {
         states.push((e as { to: string }).to);
       });
       await vi.advanceTimersByTimeAsync(150);
       // Trip happened — should NOT see RECONNECTING under autoReconnect:false.
-      expect(states).not.toContain('RECONNECTING');
+      expect(states).not.toContain("RECONNECTING");
       client.destroy();
     });
   });
 
-  describe('Independence (D-11/A3)', () => {
-    it('Test 11: keepaliveIntervalMs and deadPeerTimeoutMs combine without interference', async () => {
+  describe("Independence (D-11/A3)", () => {
+    it("Test 11: keepaliveIntervalMs and deadPeerTimeoutMs combine without interference", () => {
       // Just verify the option fields can co-exist on createClient()
       // without a constructor throw and that the dead-peer timer is armed.
       const { client } = buildClientOverPair({
         keepaliveIntervalMs: 30_000,
         deadPeerTimeoutMs: 60_000,
       });
-      const t = (client as unknown as { _deadPeerTimer: unknown })
-        ._deadPeerTimer;
+      const t = (client as unknown as { _deadPeerTimer: unknown })._deadPeerTimer;
       expect(t).not.toBeNull();
       client.destroy();
     });

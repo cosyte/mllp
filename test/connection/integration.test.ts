@@ -1,30 +1,32 @@
-import { describe, it, expect } from 'vitest';
-import { Connection } from '../../src/connection/connection.js';
-import { InMemoryTransport } from '../../src/testing/in-memory-transport.js';
-import { encodeFrame } from '../../src/framing/index.js';
+import { describe, it, expect } from "vitest";
+import { Connection } from "../../src/connection/connection.js";
+import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
+import { encodeFrame } from "../../src/framing/index.js";
 
-describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
-  it('full send→receive round-trip: client sends, server receives', () => {
+describe("Connection integration over InMemoryTransport (TRANS-03)", () => {
+  it("full send→receive round-trip: client sends, server receives", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.pair();
 
     const serverMessages: Buffer[] = [];
     const serverConn = new Connection({
       transport: serverTransport,
-      onMessage: (payload) => { serverMessages.push(payload); },
+      onMessage: (payload) => {
+        serverMessages.push(payload);
+      },
     });
 
     const clientConn = new Connection({ transport: clientTransport });
 
     // Simulate connect on both ends
-    clientConn.notifyConnect('127.0.0.1', 2575);
-    serverConn.notifyConnect('127.0.0.1', 2575);
+    clientConn.notifyConnect("127.0.0.1", 2575);
+    serverConn.notifyConnect("127.0.0.1", 2575);
 
     // simulateConnect fires the onConnect handler (no-op here — Connection doesn't register onConnect)
     clientTransport.simulateConnect();
     serverTransport.simulateConnect();
 
     // Client sends an MLLP-framed message
-    const payload = Buffer.from('MSH|^~\\&|...');
+    const payload = Buffer.from("MSH|^~\\&|...");
     const framed = encodeFrame(payload);
     clientConn.send(framed);
 
@@ -33,7 +35,7 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
     expect(serverMessages[0]).toEqual(payload);
   });
 
-  it('bidirectional: server sends ACK back to client', () => {
+  it("bidirectional: server sends ACK back to client", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.pair();
 
     const clientMessages: Buffer[] = [];
@@ -41,7 +43,9 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
 
     const clientConn = new Connection({
       transport: clientTransport,
-      onMessage: (p) => { clientMessages.push(p); },
+      onMessage: (p) => {
+        clientMessages.push(p);
+      },
     });
 
     const serverConn = new Connection({
@@ -53,10 +57,10 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
       },
     });
 
-    clientConn.notifyConnect('127.0.0.1', 2575);
-    serverConn.notifyConnect('127.0.0.1', 2575);
+    clientConn.notifyConnect("127.0.0.1", 2575);
+    serverConn.notifyConnect("127.0.0.1", 2575);
 
-    const payload = Buffer.from('MSH|^~\\&|SENDER|FAC|RECV|FAC|20240101||ADT^A01|123|P|2.5');
+    const payload = Buffer.from("MSH|^~\\&|SENDER|FAC|RECV|FAC|20240101||ADT^A01|123|P|2.5");
     clientConn.send(encodeFrame(payload));
 
     // Server received original, client received echo — both synchronous
@@ -66,21 +70,23 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
     expect(clientMessages[0]).toEqual(payload);
   });
 
-  it('chunked delivery: split(1) produces same frames (TRANS-04)', () => {
+  it("chunked delivery: split(1) produces same frames (TRANS-04)", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.pair();
     serverTransport.split(1); // server receives one byte at a time
 
     const serverMessages: Buffer[] = [];
     const serverConn = new Connection({
       transport: serverTransport,
-      onMessage: (p) => { serverMessages.push(p); },
+      onMessage: (p) => {
+        serverMessages.push(p);
+      },
     });
     const clientConn = new Connection({ transport: clientTransport });
 
     clientConn.notifyConnect(null, null);
     serverConn.notifyConnect(null, null);
 
-    const payload = Buffer.from('MSH|ABC');
+    const payload = Buffer.from("MSH|ABC");
     clientConn.send(encodeFrame(payload));
 
     // Despite 1-byte chunking, FrameReader assembles the complete frame
@@ -88,18 +94,20 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
     expect(serverMessages[0]).toEqual(payload);
   });
 
-  it('connectionId is consistent across events', () => {
+  it("connectionId is consistent across events", () => {
     const [clientTransport] = InMemoryTransport.pair();
     const conn = new Connection({ transport: clientTransport });
 
     const seenIds = new Set<string>();
-    conn.on('stateChange', () => {
+    conn.on("stateChange", () => {
       // connectionId is on the Connection itself, not the stateChange payload
       seenIds.add(conn.connectionId);
     });
-    conn.on('connect', (e: { connectionId: string }) => { seenIds.add(e.connectionId); });
+    conn.on("connect", (e: { connectionId: string }) => {
+      seenIds.add(e.connectionId);
+    });
 
-    conn.notifyConnect('127.0.0.1', 2575);
+    conn.notifyConnect("127.0.0.1", 2575);
 
     // All events should reference the same connectionId
     for (const id of seenIds) {
@@ -108,29 +116,31 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
     expect(seenIds.size).toBeGreaterThan(0);
   });
 
-  it('getStats() serializes to JSON with no loss (OBS-04)', () => {
+  it("getStats() serializes to JSON with no loss (OBS-04)", () => {
     const [clientTransport] = InMemoryTransport.pair();
     const conn = new Connection({ transport: clientTransport });
-    conn.notifyConnect('10.0.0.1', 2575);
+    conn.notifyConnect("10.0.0.1", 2575);
 
     const stats = conn.getStats();
     const serialized = JSON.parse(JSON.stringify(stats)) as typeof stats;
 
     expect(serialized.state).toBe(stats.state);
     expect(serialized.connectionId).toBe(stats.connectionId);
-    expect(serialized.remoteAddress).toBe('10.0.0.1');
+    expect(serialized.remoteAddress).toBe("10.0.0.1");
     // connectedAt should round-trip as a string (not a Date after JSON.parse)
-    expect(typeof serialized.connectedAt).toBe('string');
+    expect(typeof serialized.connectedAt).toBe("string");
     expect(serialized.bytesIn).toBe(0);
   });
 
-  it('multiple messages in sequence all delivered in order', () => {
+  it("multiple messages in sequence all delivered in order", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.pair();
 
     const serverMessages: Buffer[] = [];
     const serverConn = new Connection({
       transport: serverTransport,
-      onMessage: (p) => { serverMessages.push(p); },
+      onMessage: (p) => {
+        serverMessages.push(p);
+      },
     });
     const clientConn = new Connection({ transport: clientTransport });
 
@@ -138,9 +148,9 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
     serverConn.notifyConnect(null, null);
 
     const payloads = [
-      Buffer.from('MSH|first'),
-      Buffer.from('MSH|second'),
-      Buffer.from('MSH|third'),
+      Buffer.from("MSH|first"),
+      Buffer.from("MSH|second"),
+      Buffer.from("MSH|third"),
     ];
 
     for (const p of payloads) {
@@ -153,7 +163,7 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
     }
   });
 
-  it('bytesIn/bytesOut tracked correctly in getStats()', () => {
+  it("bytesIn/bytesOut tracked correctly in getStats()", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.pair();
 
     const serverConn = new Connection({ transport: serverTransport });
@@ -162,7 +172,7 @@ describe('Connection integration over InMemoryTransport (TRANS-03)', () => {
     clientConn.notifyConnect(null, null);
     serverConn.notifyConnect(null, null);
 
-    const payload = Buffer.from('MSH|TEST');
+    const payload = Buffer.from("MSH|TEST");
     const framed = encodeFrame(payload);
     clientConn.send(framed);
 

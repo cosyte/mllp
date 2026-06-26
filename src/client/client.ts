@@ -14,7 +14,7 @@
  *
  * @example
  * ```typescript
- * import { createClient } from '@cosyte/hl7-mllp';
+ * import { createClient } from '@cosyte/mllp';
  *
  * const client = createClient({ host: 'localhost', port: 2575 });
  * await client.connect();
@@ -406,6 +406,12 @@ export class MllpClient extends EventEmitter {
    */
   private _aggregatedWarningsByCode: Partial<Record<WarningCode, number>> = {};
 
+  /**
+   * Construct an MLLP client. Created idle; call `connect()` (or use
+   * {@link createClient}/{@link createStarterClient}) to open the connection.
+   *
+   * @param opts - Client options (host/port, ACK timeout, reconnect/backpressure policy, …).
+   */
   constructor(opts: ClientOptions) {
     super();
     this._opts = opts;
@@ -1583,7 +1589,7 @@ export class MllpClient extends EventEmitter {
  *
  * @example
  * ```typescript
- * import { createClient } from '@cosyte/hl7-mllp';
+ * import { createClient } from '@cosyte/mllp';
  *
  * const client = createClient({ host: 'localhost', port: 2575 });
  * await client.connect();
@@ -1674,7 +1680,7 @@ export interface StarterClientOptions {
  *
  * @example
  * ```typescript
- * import { createStarterClient } from '@cosyte/hl7-mllp';
+ * import { createStarterClient } from '@cosyte/mllp';
  * await using c = await createStarterClient({ host: 'localhost', port: 2575 });
  * const ack = await c.send(payloadBuffer);
  * ```

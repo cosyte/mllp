@@ -4,7 +4,7 @@
  *
  * @example
  * ```typescript
- * import { Connection, NetTransport } from '@cosyte/hl7-mllp';
+ * import { Connection, NetTransport } from '@cosyte/mllp';
  * import { createConnection } from 'node:net';
  *
  * const socket = createConnection({ host: 'localhost', port: 2575 });
@@ -158,7 +158,7 @@ const LEGAL_TRANSITIONS: ReadonlyMap<ConnectionState, ReadonlySet<ConnectionStat
  *
  * @example
  * ```typescript
- * import { Connection, NetTransport } from '@cosyte/hl7-mllp';
+ * import { Connection, NetTransport } from '@cosyte/mllp';
  * import { createConnection } from 'node:net';
  *
  * const socket = createConnection({ host: 'localhost', port: 2575 });
@@ -207,6 +207,12 @@ export class Connection extends EventEmitter {
    */
   beforeClose: (drainTimeoutMs: number) => Promise<void> = () => Promise.resolve();
 
+  /**
+   * Construct a connection over the given transport. Starts in `CONNECTING`; call
+   * {@link Connection.notifyConnect} once the transport handshake completes.
+   *
+   * @param opts - Connection options (the transport, message/warning handlers, drain timeout, framing).
+   */
   constructor(opts: ConnectionOptions) {
     super();
     this.connectionId = randomUUID();

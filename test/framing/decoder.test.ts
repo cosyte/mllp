@@ -1,14 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { FrameReader } from '../../src/framing/decoder.js';
-import { MllpFramingError } from '../../src/framing/error.js';
+import { describe, it, expect } from "vitest";
+import { FrameReader } from "../../src/framing/decoder.js";
+import { MllpFramingError } from "../../src/framing/error.js";
 
 // Helper: wrap a payload in canonical MLLP framing
 function frame(payload: number[]): Buffer {
   return Buffer.from([0x0b, ...payload, 0x1c, 0x0d]);
 }
 
-describe('FrameReader — basic framing', () => {
-  it('delivers a single complete frame', () => {
+describe("FrameReader — basic framing", () => {
+  it("delivers a single complete frame", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
     r.push(frame([0x41, 0x42, 0x43]));
@@ -16,7 +16,7 @@ describe('FrameReader — basic framing', () => {
     expect(frames[0]).toEqual(Buffer.from([0x41, 0x42, 0x43]));
   });
 
-  it('delivers N frames from one chunk', () => {
+  it("delivers N frames from one chunk", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
     r.push(Buffer.concat([frame([0x41]), frame([0x42]), frame([0x43])]));
@@ -26,7 +26,7 @@ describe('FrameReader — basic framing', () => {
     expect(frames[2]).toEqual(Buffer.from([0x43]));
   });
 
-  it('delivers frame split across N 1-byte chunks', () => {
+  it("delivers frame split across N 1-byte chunks", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
     const buf = frame([0x41, 0x42]);
@@ -37,7 +37,7 @@ describe('FrameReader — basic framing', () => {
     expect(frames[0]).toEqual(Buffer.from([0x41, 0x42]));
   });
 
-  it('handles chunk ending at FS with CR in next chunk', () => {
+  it("handles chunk ending at FS with CR in next chunk", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
     r.push(Buffer.from([0x0b, 0x41, 0x1c]));
@@ -47,14 +47,14 @@ describe('FrameReader — basic framing', () => {
     expect(frames[0]).toEqual(Buffer.from([0x41]));
   });
 
-  it('back-to-back frames with zero bytes between', () => {
+  it("back-to-back frames with zero bytes between", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
     r.push(Buffer.concat([frame([0x41]), frame([0x42])]));
     expect(frames).toHaveLength(2);
   });
 
-  it('delivered payload is a copied Buffer — mutating accumulator does not corrupt prior frame', () => {
+  it("delivered payload is a copied Buffer — mutating accumulator does not corrupt prior frame", () => {
     const captured: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => captured.push(p) });
     r.push(frame([0x41, 0x42]));
@@ -64,7 +64,7 @@ describe('FrameReader — basic framing', () => {
     expect(captured[1]).toEqual(Buffer.from([0x43, 0x44]));
   });
 
-  it('accumulator grows beyond initial size for large payloads', () => {
+  it("accumulator grows beyond initial size for large payloads", () => {
     // Push a payload larger than the default initial accumulator (4096 bytes)
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
@@ -76,8 +76,8 @@ describe('FrameReader — basic framing', () => {
   });
 });
 
-describe('FrameReader — MLLP_EMPTY_PAYLOAD (always a warning)', () => {
-  it('delivers empty Buffer and emits MLLP_EMPTY_PAYLOAD warning', () => {
+describe("FrameReader — MLLP_EMPTY_PAYLOAD (always a warning)", () => {
+  it("delivers empty Buffer and emits MLLP_EMPTY_PAYLOAD warning", () => {
     const frames: Buffer[] = [];
     const warnings: string[] = [];
     const r = new FrameReader({
@@ -87,17 +87,17 @@ describe('FrameReader — MLLP_EMPTY_PAYLOAD (always a warning)', () => {
     r.push(frame([]));
     expect(frames).toHaveLength(1);
     expect(frames[0]).toEqual(Buffer.alloc(0));
-    expect(warnings).toContain('MLLP_EMPTY_PAYLOAD');
+    expect(warnings).toContain("MLLP_EMPTY_PAYLOAD");
   });
 
-  it('does not throw for empty payload even without tolerance opt-in', () => {
+  it("does not throw for empty payload even without tolerance opt-in", () => {
     const r = new FrameReader({ onFrame: () => {} });
     expect(() => r.push(frame([]))).not.toThrow();
   });
 });
 
-describe('FrameReader — FRAME-06: byte offset tracking', () => {
-  it('onWarning receives correct absolute byteOffset', () => {
+describe("FrameReader — FRAME-06: byte offset tracking", () => {
+  it("onWarning receives correct absolute byteOffset", () => {
     const warnings: number[] = [];
     const r = new FrameReader({
       onFrame: () => {},
@@ -113,7 +113,7 @@ describe('FrameReader — FRAME-06: byte offset tracking', () => {
     expect(warnings[0]).toBe(7);
   });
 
-  it('byteOffset increases monotonically across multiple push() calls', () => {
+  it("byteOffset increases monotonically across multiple push() calls", () => {
     const offsets: number[] = [];
     const r = new FrameReader({
       onFrame: () => {},
@@ -128,24 +128,24 @@ describe('FrameReader — FRAME-06: byte offset tracking', () => {
   });
 });
 
-describe('FrameReader — FRAME-07: allowFsOnly (MLLP_FS_WITHOUT_CR)', () => {
-  it('throws MllpFramingError without opt-in when FS not followed by CR', () => {
+describe("FrameReader — FRAME-07: allowFsOnly (MLLP_FS_WITHOUT_CR)", () => {
+  it("throws MllpFramingError without opt-in when FS not followed by CR", () => {
     const r = new FrameReader({ onFrame: () => {} });
     // [VT, A, FS, VT] — FS followed by VT (no CR)
     expect(() => r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x0b]))).toThrow(MllpFramingError);
   });
 
-  it('thrown error has code MLLP_FS_WITHOUT_CR', () => {
+  it("thrown error has code MLLP_FS_WITHOUT_CR", () => {
     const r = new FrameReader({ onFrame: () => {} });
     try {
       r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x0b]));
-      expect.fail('should have thrown');
+      expect.fail("should have thrown");
     } catch (err) {
-      expect((err as MllpFramingError).code).toBe('MLLP_FS_WITHOUT_CR');
+      expect((err as MllpFramingError).code).toBe("MLLP_FS_WITHOUT_CR");
     }
   });
 
-  it('emits MLLP_FS_WITHOUT_CR warning and delivers frame with allowFsOnly: true', () => {
+  it("emits MLLP_FS_WITHOUT_CR warning and delivers frame with allowFsOnly: true", () => {
     const frames: Buffer[] = [];
     const warnCodes: string[] = [];
     const r = new FrameReader({
@@ -158,10 +158,10 @@ describe('FrameReader — FRAME-07: allowFsOnly (MLLP_FS_WITHOUT_CR)', () => {
     expect(frames).toHaveLength(2);
     expect(frames[0]).toEqual(Buffer.from([0x41]));
     expect(frames[1]).toEqual(Buffer.from([0x42]));
-    expect(warnCodes).toContain('MLLP_FS_WITHOUT_CR');
+    expect(warnCodes).toContain("MLLP_FS_WITHOUT_CR");
   });
 
-  it('throws MllpFramingError without opt-in for non-CR byte after FS', () => {
+  it("throws MllpFramingError without opt-in for non-CR byte after FS", () => {
     const r = new FrameReader({ onFrame: () => {} });
     // [VT, A, FS, 0x42] — FS followed by random byte
     expect(() => r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x42]))).toThrow(MllpFramingError);
@@ -169,28 +169,28 @@ describe('FrameReader — FRAME-07: allowFsOnly (MLLP_FS_WITHOUT_CR)', () => {
     try {
       r2.push(Buffer.from([0x0b, 0x41, 0x1c, 0x42]));
     } catch (err) {
-      expect((err as MllpFramingError).code).toBe('MLLP_FS_WITHOUT_CR');
+      expect((err as MllpFramingError).code).toBe("MLLP_FS_WITHOUT_CR");
     }
   });
 });
 
-describe('FrameReader — FRAME-08: allowLfAfterFs (MLLP_LF_AFTER_FS)', () => {
-  it('throws MllpFramingError without opt-in when FS followed by LF', () => {
+describe("FrameReader — FRAME-08: allowLfAfterFs (MLLP_LF_AFTER_FS)", () => {
+  it("throws MllpFramingError without opt-in when FS followed by LF", () => {
     const r = new FrameReader({ onFrame: () => {} });
     expect(() => r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x0a]))).toThrow(MllpFramingError);
   });
 
-  it('thrown error has code MLLP_LF_AFTER_FS', () => {
+  it("thrown error has code MLLP_LF_AFTER_FS", () => {
     const r = new FrameReader({ onFrame: () => {} });
     try {
       r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x0a]));
-      expect.fail('should have thrown');
+      expect.fail("should have thrown");
     } catch (err) {
-      expect((err as MllpFramingError).code).toBe('MLLP_LF_AFTER_FS');
+      expect((err as MllpFramingError).code).toBe("MLLP_LF_AFTER_FS");
     }
   });
 
-  it('emits MLLP_LF_AFTER_FS warning and delivers frame with allowLfAfterFs: true', () => {
+  it("emits MLLP_LF_AFTER_FS warning and delivers frame with allowLfAfterFs: true", () => {
     const frames: Buffer[] = [];
     const warnCodes: string[] = [];
     const r = new FrameReader({
@@ -201,27 +201,27 @@ describe('FrameReader — FRAME-08: allowLfAfterFs (MLLP_LF_AFTER_FS)', () => {
     r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x0a]));
     expect(frames).toHaveLength(1);
     expect(frames[0]).toEqual(Buffer.from([0x41]));
-    expect(warnCodes).toContain('MLLP_LF_AFTER_FS');
+    expect(warnCodes).toContain("MLLP_LF_AFTER_FS");
   });
 });
 
-describe('FrameReader — FRAME-09: allowMissingLeadingVt (MLLP_MISSING_LEADING_VT)', () => {
-  it('throws MllpFramingError without opt-in on non-VT first byte', () => {
+describe("FrameReader — FRAME-09: allowMissingLeadingVt (MLLP_MISSING_LEADING_VT)", () => {
+  it("throws MllpFramingError without opt-in on non-VT first byte", () => {
     const r = new FrameReader({ onFrame: () => {} });
     expect(() => r.push(Buffer.from([0x41, 0x1c, 0x0d]))).toThrow(MllpFramingError);
   });
 
-  it('thrown error has code MLLP_MISSING_LEADING_VT', () => {
+  it("thrown error has code MLLP_MISSING_LEADING_VT", () => {
     const r = new FrameReader({ onFrame: () => {} });
     try {
       r.push(Buffer.from([0x41, 0x1c, 0x0d]));
-      expect.fail('should have thrown');
+      expect.fail("should have thrown");
     } catch (err) {
-      expect((err as MllpFramingError).code).toBe('MLLP_MISSING_LEADING_VT');
+      expect((err as MllpFramingError).code).toBe("MLLP_MISSING_LEADING_VT");
     }
   });
 
-  it('emits MLLP_MISSING_LEADING_VT and delivers frame with allowMissingLeadingVt: true', () => {
+  it("emits MLLP_MISSING_LEADING_VT and delivers frame with allowMissingLeadingVt: true", () => {
     const frames: Buffer[] = [];
     const warnCodes: string[] = [];
     const r = new FrameReader({
@@ -233,18 +233,18 @@ describe('FrameReader — FRAME-09: allowMissingLeadingVt (MLLP_MISSING_LEADING_
     r.push(Buffer.from([0x41, 0x42, 0x1c, 0x0d]));
     expect(frames).toHaveLength(1);
     expect(frames[0]).toEqual(Buffer.from([0x41, 0x42]));
-    expect(warnCodes).toContain('MLLP_MISSING_LEADING_VT');
+    expect(warnCodes).toContain("MLLP_MISSING_LEADING_VT");
   });
 });
 
-describe('FrameReader — FRAME-10: allowLeadingWhitespace (MLLP_LEADING_WHITESPACE)', () => {
-  it('throws MllpFramingError without opt-in on whitespace before VT', () => {
+describe("FrameReader — FRAME-10: allowLeadingWhitespace (MLLP_LEADING_WHITESPACE)", () => {
+  it("throws MllpFramingError without opt-in on whitespace before VT", () => {
     const r = new FrameReader({ onFrame: () => {} });
     // SP before VT
     expect(() => r.push(Buffer.from([0x20, 0x0b, 0x41, 0x1c, 0x0d]))).toThrow(MllpFramingError);
   });
 
-  it('emits MLLP_LEADING_WHITESPACE and delivers frame with allowLeadingWhitespace: true', () => {
+  it("emits MLLP_LEADING_WHITESPACE and delivers frame with allowLeadingWhitespace: true", () => {
     const frames: Buffer[] = [];
     const warnCodes: string[] = [];
     const r = new FrameReader({
@@ -256,10 +256,10 @@ describe('FrameReader — FRAME-10: allowLeadingWhitespace (MLLP_LEADING_WHITESP
     r.push(Buffer.from([0x20, 0x09, 0x0b, 0x41, 0x1c, 0x0d]));
     expect(frames).toHaveLength(1);
     expect(frames[0]).toEqual(Buffer.from([0x41]));
-    expect(warnCodes).toContain('MLLP_LEADING_WHITESPACE');
+    expect(warnCodes).toContain("MLLP_LEADING_WHITESPACE");
   });
 
-  it('MLLP_LEADING_WHITESPACE warning byteOffset is the offset of the first whitespace byte', () => {
+  it("MLLP_LEADING_WHITESPACE warning byteOffset is the offset of the first whitespace byte", () => {
     const warnOffsets: number[] = [];
     const r = new FrameReader({
       onFrame: () => {},
@@ -271,7 +271,7 @@ describe('FrameReader — FRAME-10: allowLeadingWhitespace (MLLP_LEADING_WHITESP
     expect(warnOffsets[0]).toBe(0);
   });
 
-  it('handles LF and CR as leading whitespace', () => {
+  it("handles LF and CR as leading whitespace", () => {
     const frames: Buffer[] = [];
     const warnCodes: string[] = [];
     const r = new FrameReader({
@@ -281,29 +281,29 @@ describe('FrameReader — FRAME-10: allowLeadingWhitespace (MLLP_LEADING_WHITESP
     });
     r.push(Buffer.from([0x0a, 0x0d, 0x0b, 0x41, 0x1c, 0x0d]));
     expect(frames).toHaveLength(1);
-    expect(warnCodes).toContain('MLLP_LEADING_WHITESPACE');
+    expect(warnCodes).toContain("MLLP_LEADING_WHITESPACE");
   });
 });
 
-describe('FrameReader — FRAME-11: maxFrameSizeBytes (MLLP_FRAME_TOO_LARGE)', () => {
-  it('throws MllpFramingError(MLLP_FRAME_TOO_LARGE) when payload exceeds limit', () => {
+describe("FrameReader — FRAME-11: maxFrameSizeBytes (MLLP_FRAME_TOO_LARGE)", () => {
+  it("throws MllpFramingError(MLLP_FRAME_TOO_LARGE) when payload exceeds limit", () => {
     const r = new FrameReader({ onFrame: () => {}, maxFrameSizeBytes: 5 });
     // VT + 6 payload bytes → should throw at the 6th byte
     const buf = Buffer.from([0x0b, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x1c, 0x0d]);
     expect(() => r.push(buf)).toThrow(MllpFramingError);
   });
 
-  it('thrown error has code MLLP_FRAME_TOO_LARGE', () => {
+  it("thrown error has code MLLP_FRAME_TOO_LARGE", () => {
     try {
       const r = new FrameReader({ onFrame: () => {}, maxFrameSizeBytes: 5 });
       r.push(Buffer.from([0x0b, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x1c, 0x0d]));
-      expect.fail('should have thrown');
+      expect.fail("should have thrown");
     } catch (err) {
-      expect((err as MllpFramingError).code).toBe('MLLP_FRAME_TOO_LARGE');
+      expect((err as MllpFramingError).code).toBe("MLLP_FRAME_TOO_LARGE");
     }
   });
 
-  it('does not throw for payload exactly at limit', () => {
+  it("does not throw for payload exactly at limit", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p), maxFrameSizeBytes: 3 });
     r.push(Buffer.from([0x0b, 0x41, 0x42, 0x43, 0x1c, 0x0d]));
@@ -311,34 +311,38 @@ describe('FrameReader — FRAME-11: maxFrameSizeBytes (MLLP_FRAME_TOO_LARGE)', (
     expect(frames[0]).toEqual(Buffer.from([0x41, 0x42, 0x43]));
   });
 
-  it('error.byteOffset is non-zero (at cap point, not 0)', () => {
+  it("error.byteOffset is non-zero (at cap point, not 0)", () => {
     try {
       const r = new FrameReader({ onFrame: () => {}, maxFrameSizeBytes: 3 });
       r.push(Buffer.from([0x0b, 0x41, 0x42, 0x43, 0x44, 0x1c, 0x0d]));
-      expect.fail('should have thrown');
+      expect.fail("should have thrown");
     } catch (err) {
       expect((err as MllpFramingError).byteOffset).toBeGreaterThan(0);
     }
   });
 
-  it('MLLP_FRAME_TOO_LARGE always throws even with onWarning provided (WARN-09)', () => {
+  it("MLLP_FRAME_TOO_LARGE always throws even with onWarning provided (WARN-09)", () => {
     const warnCodes: string[] = [];
     const r = new FrameReader({
       onFrame: () => {},
       onWarning: (w) => warnCodes.push(w.code),
       maxFrameSizeBytes: 2,
     });
-    expect(() => r.push(Buffer.from([0x0b, 0x41, 0x42, 0x43, 0x1c, 0x0d]))).toThrow(MllpFramingError);
-    expect(warnCodes).not.toContain('MLLP_FRAME_TOO_LARGE');
+    expect(() => r.push(Buffer.from([0x0b, 0x41, 0x42, 0x43, 0x1c, 0x0d]))).toThrow(
+      MllpFramingError,
+    );
+    expect(warnCodes).not.toContain("MLLP_FRAME_TOO_LARGE");
   });
 });
 
-describe('FrameReader — WARN-06: onWarning try/catch safety', () => {
-  it('throwing onWarning handler does not corrupt FSM — subsequent frames still delivered', () => {
+describe("FrameReader — WARN-06: onWarning try/catch safety", () => {
+  it("throwing onWarning handler does not corrupt FSM — subsequent frames still delivered", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({
       onFrame: (p) => frames.push(p),
-      onWarning: () => { throw new Error('handler error'); },
+      onWarning: () => {
+        throw new Error("handler error");
+      },
       allowFsOnly: true,
     });
     // First frame: [VT, A, FS, VT] — FS_WITHOUT_CR triggers onWarning (which throws), then
@@ -349,11 +353,13 @@ describe('FrameReader — WARN-06: onWarning try/catch safety', () => {
     expect(frames[1]).toEqual(Buffer.from([0x42]));
   });
 
-  it('throwing onWarning during MLLP_EMPTY_PAYLOAD does not break subsequent frame delivery', () => {
+  it("throwing onWarning during MLLP_EMPTY_PAYLOAD does not break subsequent frame delivery", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({
       onFrame: (p) => frames.push(p),
-      onWarning: () => { throw new Error('boom'); },
+      onWarning: () => {
+        throw new Error("boom");
+      },
     });
     r.push(frame([]));
     r.push(frame([0x41]));
@@ -361,8 +367,8 @@ describe('FrameReader — WARN-06: onWarning try/catch safety', () => {
   });
 });
 
-describe('FrameReader — reset()', () => {
-  it('discards partial accumulator state', () => {
+describe("FrameReader — reset()", () => {
+  it("discards partial accumulator state", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
     // Push incomplete frame (no FS+CR)
@@ -374,7 +380,7 @@ describe('FrameReader — reset()', () => {
     expect(frames[0]).toEqual(Buffer.from([0x43]));
   });
 
-  it('resets byteOffset to 0 for connection reuse', () => {
+  it("resets byteOffset to 0 for connection reuse", () => {
     const warnOffsets: number[] = [];
     const r = new FrameReader({
       onFrame: () => {},
@@ -390,7 +396,7 @@ describe('FrameReader — reset()', () => {
     expect(warnOffsets[0]).toBe(3);
   });
 
-  it('reset after completing a frame allows fresh frame to be delivered', () => {
+  it("reset after completing a frame allows fresh frame to be delivered", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
     r.push(frame([0x41]));
@@ -402,8 +408,8 @@ describe('FrameReader — reset()', () => {
   });
 });
 
-describe('FrameReader — MLLP_TRAILING_BYTES (always a warning)', () => {
-  it('VT mid-payload emits MLLP_TRAILING_BYTES warning (never throws)', () => {
+describe("FrameReader — MLLP_TRAILING_BYTES (always a warning)", () => {
+  it("VT mid-payload emits MLLP_TRAILING_BYTES warning (never throws)", () => {
     const warnCodes: string[] = [];
     const r = new FrameReader({
       onFrame: () => {},
@@ -411,15 +417,15 @@ describe('FrameReader — MLLP_TRAILING_BYTES (always a warning)', () => {
     });
     // [VT, A, VT, B, FS, CR] — VT mid-payload discards partial frame A, starts fresh with B
     r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]));
-    expect(warnCodes).toContain('MLLP_TRAILING_BYTES');
+    expect(warnCodes).toContain("MLLP_TRAILING_BYTES");
   });
 
-  it('VT mid-payload does not throw even without any tolerance opt-in', () => {
+  it("VT mid-payload does not throw even without any tolerance opt-in", () => {
     const r = new FrameReader({ onFrame: () => {} });
     expect(() => r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]))).not.toThrow();
   });
 
-  it('VT mid-payload: payload after the embedded VT is delivered as complete frame', () => {
+  it("VT mid-payload: payload after the embedded VT is delivered as complete frame", () => {
     const frames: Buffer[] = [];
     const r = new FrameReader({ onFrame: (p) => frames.push(p) });
     // Discard partial, deliver [B]
@@ -429,8 +435,8 @@ describe('FrameReader — MLLP_TRAILING_BYTES (always a warning)', () => {
   });
 });
 
-describe('FrameReader — MllpWarning shape', () => {
-  it('warning object is frozen', () => {
+describe("FrameReader — MllpWarning shape", () => {
+  it("warning object is frozen", () => {
     const warnings: object[] = [];
     const r = new FrameReader({
       onFrame: () => {},
@@ -441,17 +447,25 @@ describe('FrameReader — MllpWarning shape', () => {
     expect(Object.isFrozen(warnings[0])).toBe(true);
   });
 
-  it('warning has all required fields: code, message, byteOffset, connectionId, timestamp', () => {
+  it("warning has all required fields: code, message, byteOffset, connectionId, timestamp", () => {
     let captured: unknown;
     const r = new FrameReader({
       onFrame: () => {},
-      onWarning: (w) => { captured = w; },
+      onWarning: (w) => {
+        captured = w;
+      },
     });
     r.push(frame([]));
-    const w = captured as { code: string; message: string; byteOffset: number; connectionId: unknown; timestamp: unknown };
-    expect(typeof w.code).toBe('string');
-    expect(typeof w.message).toBe('string');
-    expect(typeof w.byteOffset).toBe('number');
+    const w = captured as {
+      code: string;
+      message: string;
+      byteOffset: number;
+      connectionId: unknown;
+      timestamp: unknown;
+    };
+    expect(typeof w.code).toBe("string");
+    expect(typeof w.message).toBe("string");
+    expect(typeof w.byteOffset).toBe("number");
     expect(w.connectionId).toBeUndefined();
     expect(w.timestamp).toBeInstanceOf(Date);
   });

@@ -1,7 +1,7 @@
 # Changesets
 
 This folder is managed by [Changesets](https://github.com/changesets/changesets). Changesets drives
-the **version bump** and **publish** for `@cosyte/hl7-mllp`; the human-readable release notes live in
+the **version bump** and **publish** for `@cosyte/mllp`; the human-readable release notes live in
 `CHANGELOG.md` (`changelog` generation is disabled in `config.json`).
 
 Add a changeset for every meaningful change:

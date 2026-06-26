@@ -7,7 +7,7 @@
  *
  * @example
  * ```typescript
- * import { encodeFrame, FrameReader } from '@cosyte/hl7-mllp';
+ * import { encodeFrame, FrameReader } from '@cosyte/mllp';
  * const reader = new FrameReader({ onFrame: (payload) => handleMessage(payload) });
  * socket.on('data', (chunk) => reader.push(chunk));
  * ```

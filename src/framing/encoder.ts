@@ -8,7 +8,7 @@
  *
  * @example
  * ```typescript
- * import { encodeFrame } from '@cosyte/hl7-mllp';
+ * import { encodeFrame } from '@cosyte/mllp';
  * const frame = encodeFrame(Buffer.from('MSH|^~\\&|...'));
  * // frame[0] === 0x0B (VT), frame[frame.length - 2] === 0x1C (FS), frame[frame.length - 1] === 0x0D (CR)
  * ```
@@ -74,7 +74,7 @@ export interface EncoderOptions {
  *
  * @example
  * ```typescript
- * import { encodeFrame } from '@cosyte/hl7-mllp';
+ * import { encodeFrame } from '@cosyte/mllp';
  *
  * // Strict (default) — throws on delimiter bytes in payload
  * const frame = encodeFrame(Buffer.from('MSH|^~\\&|SEND|FAC|RECV|FAC|...'));

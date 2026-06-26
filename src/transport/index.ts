@@ -4,11 +4,11 @@
  * All transports implement this callback-bag contract. Implementations:
  * - `NetTransport` — wraps `net.Socket` (production TCP)
  * - `TlsTransport` — wraps `tls.TLSSocket` (Phase 6)
- * - `InMemoryTransport` — deterministic test double (`@cosyte/hl7-mllp/testing`)
+ * - `InMemoryTransport` — deterministic test double (`@cosyte/mllp/testing`)
  *
  * @example
  * ```typescript
- * import { NetTransport } from '@cosyte/hl7-mllp';
+ * import { NetTransport } from '@cosyte/mllp';
  * import { createConnection } from 'node:net';
  * const socket = createConnection({ host: 'localhost', port: 2575 });
  * const transport: Transport = new NetTransport(socket);
@@ -18,6 +18,8 @@
  *
  * @packageDocumentation
  */
+
+export { NetTransport } from "./net-transport.js";
 
 /**
  * Pure callback-bag transport abstraction.
@@ -33,8 +35,6 @@
  * }
  * ```
  */
-export { NetTransport } from "./net-transport.js";
-
 export interface Transport {
   /**
    * Write `buf` to the underlying transport.

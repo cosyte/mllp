@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { createWarning, type MllpWarning, type WarningCode } from '@cosyte/hl7-mllp';
+ * import { createWarning, type MllpWarning, type WarningCode } from '@cosyte/mllp';
  * const w: MllpWarning = createWarning('MLLP_EMPTY_PAYLOAD', 128, 'Empty payload between VT and FS');
  * ```
  *

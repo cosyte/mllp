@@ -1,20 +1,18 @@
-import { defineConfig } from 'tsup';
+import { cosyteTsup } from "@cosyte/tsup-config";
 
-export default defineConfig({
+/**
+ * tsup build for @cosyte/mllp — dual ESM + CJS + `.d.ts` from the shared @cosyte/tsup-config standard
+ * (ES2023, Node platform, `.mjs`/`.cjs` out-extensions). Matches the `exports` map in package.json.
+ *
+ * Three entries (the package's three public subpaths): the root, the `/testing` in-memory transport,
+ * and the `/ack-from-hl7` helpers. `@cosyte/hl7` is the optional peer dep behind `/ack-from-hl7` and
+ * is never bundled.
+ */
+export default cosyteTsup({
   entry: {
-    index: 'src/index.ts',
-    'testing/index': 'src/testing/index.ts',
-    'ack-from-hl7/index': 'src/ack-from-hl7/index.ts',
+    index: "src/index.ts",
+    "testing/index": "src/testing/index.ts",
+    "ack-from-hl7/index": "src/ack-from-hl7/index.ts",
   },
-  format: ['esm', 'cjs'],
-  target: 'es2022',
-  platform: 'node',
-  sourcemap: true,      // D-10: external .map files in dist/
-  dts: true,            // D-11: tsup-bundled .d.ts + .d.cts per entry
-  // experimental-dts is EXCLUDED per D-12: documented broken for multi-entry (egoist/tsup#1046)
-  clean: true,          // D-13: delete stale dist/ before each build
-  external: ['@cosyte/hl7'],  // SETUP-03: peer dep never bundled
-  splitting: false,     // Keeps each subpath self-contained; no shared chunk
-  treeshake: true,
-  outDir: 'dist',
+  external: ["@cosyte/hl7"],
 });

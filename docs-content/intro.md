@@ -4,7 +4,7 @@ title: Getting started
 sidebar_position: 1
 ---
 
-# @cosyte/hl7-mllp
+# @cosyte/mllp
 
 A production-grade MLLP client and server for Node.js — the transport-only sibling to
 `@cosyte/hl7`. It moves HL7 v2 messages over TCP and gives you the parts the spec leaves to you:
@@ -19,7 +19,7 @@ one optional bridge between the two.
 ## Install
 
 ```bash
-npm install @cosyte/hl7-mllp
+npm install @cosyte/mllp
 ```
 
 `@cosyte/hl7` is an **optional** peer dependency — install it only if you use the `ack-from-hl7`
@@ -32,7 +32,7 @@ npm install @cosyte/hl7
 ## Send a message
 
 ```ts
-import { MllpClient } from "@cosyte/hl7-mllp";
+import { MllpClient } from "@cosyte/mllp";
 
 const client = new MllpClient({ host: "127.0.0.1", port: 2575 });
 await client.connect();
@@ -48,7 +48,7 @@ next bytes off the wire. Reconnects, backoff, and backpressure are handled for y
 ## Receive messages
 
 ```ts
-import { MllpServer } from "@cosyte/hl7-mllp";
+import { MllpServer } from "@cosyte/mllp";
 
 const server = new MllpServer({ port: 2575 });
 server.on("message", async ({ payload, respond }) => {
@@ -72,13 +72,13 @@ public API. Accumulators are bounded: frames past `maxFrameSizeBytes` (16 MB def
 ## Testing without sockets
 
 ```ts
-import { MllpClient, MllpServer } from "@cosyte/hl7-mllp";
-import { createInMemoryTransport } from "@cosyte/hl7-mllp/testing";
+import { MllpClient, MllpServer } from "@cosyte/mllp";
+import { createInMemoryTransport } from "@cosyte/mllp/testing";
 
 const { client: clientTransport, server: serverTransport } = createInMemoryTransport();
 ```
 
-The in-memory transport is a first-class deliverable from the `@cosyte/hl7-mllp/testing` subpath.
+The in-memory transport is a first-class deliverable from the `@cosyte/mllp/testing` subpath.
 Wire a client and server together in-process — deterministic, no ports, no certs — and reserve real
 sockets for integration smoke tests.
 
@@ -88,7 +88,7 @@ The optional `ack-from-hl7` subpath builds a spec-correct ACK from an inbound HL
 echoing the original `MSH` control id. It is the only place this package touches `@cosyte/hl7`:
 
 ```ts
-import { ackFromHl7 } from "@cosyte/hl7-mllp/ack-from-hl7";
+import { ackFromHl7 } from "@cosyte/mllp/ack-from-hl7";
 
 server.on("message", async ({ payload, respond }) => {
   await respond(ackFromHl7(payload)); // requires the @cosyte/hl7 peer dep

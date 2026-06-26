@@ -5,7 +5,7 @@
  *
  * @example
  * ```typescript
- * import { VT, FS, CR } from '@cosyte/hl7-mllp';
+ * import { VT, FS, CR } from '@cosyte/mllp';
  * // VT = 0x0B, FS = 0x1C, CR = 0x0D
  * ```
  *

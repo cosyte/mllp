@@ -3,7 +3,7 @@
  *
  * @example
  * ```typescript
- * import { MllpFramingError } from '@cosyte/hl7-mllp';
+ * import { MllpFramingError } from '@cosyte/mllp';
  * try {
  *   encodeFrame(payloadWithVt);
  * } catch (err) {
@@ -50,6 +50,14 @@ export class MllpFramingError extends Error {
    */
   readonly snippet: Buffer;
 
+  /**
+   * Construct an MLLP framing error.
+   *
+   * @param code - The stable warning code classifying the violation.
+   * @param byteOffset - Absolute stream byte offset where the violation was detected.
+   * @param snippet - Raw bytes copied from around the anomaly (capped to 64 bytes).
+   * @param message - Optional human-readable override message.
+   */
   constructor(
     code: WarningCode,
     byteOffset: number,

@@ -1,29 +1,43 @@
-# @cosyte/hl7-mllp — Project Guide for Claude
+# @cosyte/mllp — Project Guide for Claude
 
 ## Project
 
-**`@cosyte/hl7-mllp`** — a developer-focused MLLP (Minimal Lower Layer Protocol) client + server for Node.js/TypeScript, published under the Cosyte brand. Open-source (MIT). Transport-only sibling to `@cosyte/hl7` (the parser).
+**`@cosyte/mllp`** — a developer-focused MLLP (Minimal Lower Layer Protocol) client + server for Node.js/TypeScript, published under the Cosyte brand. Open-source (MIT). Transport-only sibling to `@cosyte/hl7` (the parser).
 
 **North star:** A developer can send and receive HL7 v2 messages over a production-grade MLLP connection with three lines of code, and trust framing, ACKs, reconnects, and backpressure under load and on flaky networks — without reading the MLLP spec.
 
 ## Status
 
-- **Phase 5 of 8** — Phase 5 executed (521/521 tests passing); awaiting verification.
-- Sibling package: `@cosyte/hl7` at `../hl7-parser` (peer dep, not runtime dep)
+- **Phase 5 of 8** — client/server/framing/connection/transport shipped (test suite green). The
+  `ack-from-hl7` subpath is still a stub (Phase 6); TLS has a `selfsigned`/`certs:gen` harness but no
+  TLS tests yet (follow-up).
+- Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed
+  `@cosyte/hl7-mllp` → `@cosyte/mllp`** — not yet published, so the rename is free.
+- Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).
 
-## Tech Stack (locked)
+## Tech Stack (the shared `@cosyte/*` standard)
 
-- **Language:** TypeScript (strict, `noUncheckedIndexedAccess`)
-- **Target:** ES2022, dual ESM + CJS via `tsup`
-- **Node:** **22+** (`engines.node >=22.0.0`; Node 18 EOL 2025-04-30)
-- **Package manager:** pnpm
-- **Testing:** Vitest + `@vitest/coverage-v8` with per-directory 90% gates on `src/framing|server|client`
-- **Linting:** ESLint + Prettier
+mllp inherits the canonical toolchain by depending on the published `@cosyte/*` config packages, not
+by copying files. The source of truth is the meta-repo's `documentation/conventions.md` — this is a
+summary.
+
+- **Language:** TypeScript (strict, full rigor set incl. `noUncheckedIndexedAccess`) via
+  `@cosyte/tsconfig`. **Target ES2023**, `NodeNext`.
+- **Build:** dual ESM + CJS + `.d.ts` via `tsup` (`@cosyte/tsup-config`); `attw` is a publish gate
+  (per-condition types: `.d.ts` for `import`, `.d.cts` for `require`) across all three subpaths
+  (root, `/testing`, `/ack-from-hl7`).
+- **Node:** **>= 22** (CI matrix 22 + 24).
+- **Package manager:** `pnpm@10`.
+- **Lint/format:** **ESLint 10** + unified `typescript-eslint` (type-checked) via
+  `@cosyte/eslint-config`; Prettier via `@cosyte/prettier-config`. Lint at `--max-warnings=0`.
+- **Testing:** **Vitest 4** + v8 coverage (`@cosyte/vitest-config`), per-directory >= 90 gates on
+  `src/framing|client|connection|server|transport`.
+- **CI/CD:** thin callers of the reusable `cosyte/.github` workflows.
 - **Runtime deps:** **Zero.** Node stdlib only (`net`, `tls`, `stream`, `events`, `buffer`, `timers`).
-- **Peer deps:** `@cosyte/hl7` as an **optional** peer dep, referenced only from the `@cosyte/hl7-mllp/ack-from-hl7` subpath (tsup `external`).
-- **TLS test certs:** generated at `pretest` via `selfsigned` into gitignored `examples/tls/certs/`; never committed.
-- **Benchmarking (local only):** `mitata`; not a CI gate.
-- **CI matrix:** Ubuntu / macOS / Windows × Node 20 / 22 / 24 for the test job; Ubuntu-only for lint / typecheck / coverage. `@arethetypeswrong/cli` is a publish-gate.
+- **Peer deps:** `@cosyte/hl7` as an **optional** peer dep, referenced only from the
+  `@cosyte/mllp/ack-from-hl7` subpath (tsup `external`, never bundled).
+- **TLS test certs:** generated via `selfsigned` (`pnpm certs:gen`) into gitignored
+  `examples/tls/certs/`; never committed.
 - **License:** MIT
 
 ## Engineering Guardrails
@@ -31,7 +45,7 @@
 - No `any`. No unjustified `as` casts. Use `unknown` and narrow.
 - JSDoc (with `@example`) on every public export — feeds IntelliSense.
 - **Buffer-first API** on every public surface — never string. HL7 v2 payloads are raw bytes with caller-managed charset decoding.
-- **`Buffer.prototype.slice()` is forbidden** in `src/framing|server|client` (enforced by the SETUP-07 ESLint rule). Use `.subarray()` — `.slice()` copies in modern Node.
+- **`Buffer.prototype.slice()` is forbidden** in `src/framing|server|client` (enforced by the local `no-restricted-syntax` ESLint rule in `eslint.config.js`). Use `.subarray()` — `.slice()` copies in modern Node.
 - **Postel's Law:** decoder is liberal (tolerance opt-ins + warnings with stable codes + byte offsets), encoder is strict (always emits canonical `VT + payload + FS + CR`).
 - **Stable warning codes** are a public API. Renaming or removing one is a breaking change. Codes: `MLLP_MISSING_LEADING_VT`, `MLLP_FS_WITHOUT_CR`, `MLLP_LF_AFTER_FS`, `MLLP_LEADING_WHITESPACE`, `MLLP_TRAILING_BYTES`, `MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`, `MLLP_EMPTY_PAYLOAD`, `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_UNMATCHED_CONTROL_ID`, `MLLP_ACK_AFTER_TIMEOUT` (11 total).
 - **Explicit 6-state connection machine**, never socket flags. `.state` is one of exactly `'CONNECTING' | 'CONNECTED' | 'DRAINING' | 'RECONNECTING' | 'DISCONNECTED' | 'CLOSED'`; transitions emit `'stateChange'` with `{ from, to, reason }`. `RECONNECTING` hosts auto-reconnect backoff; `CLOSED` is terminal.
@@ -41,8 +55,8 @@
 - **`getStats()` returns JSON-serializable plain objects.** No Buffers, no class instances — log-pipeline friendly.
 - No `console.*` in library code. Throw typed errors (`MllpFramingError`, `MllpTimeoutError`, `MllpConnectionError`, `MllpBackpressureError`) or emit warning events.
 - Short, testable functions over big state-machine blobs.
-- Coverage target: ≥ 90 % on `src/framing/`, `src/server/`, `src/client/`.
-- **In-memory transport is a first-class deliverable** (`@cosyte/hl7-mllp/testing`). Every test that can run over it must run over it; sockets are reserved for integration smoke tests.
+- Coverage target: ≥ 90 % per-directory on `src/framing/`, `src/client/`, `src/connection/`, `src/server/`, `src/transport/` (enforced by `pnpm test:coverage`).
+- **In-memory transport is a first-class deliverable** (`@cosyte/mllp/testing`). Every test that can run over it must run over it; sockets are reserved for integration smoke tests.
 
 ## Standing disciplines (every change)
 

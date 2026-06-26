@@ -3,7 +3,7 @@
  *
  * @example
  * ```typescript
- * import { MllpConnectionError } from '@cosyte/hl7-mllp';
+ * import { MllpConnectionError } from '@cosyte/mllp';
  * try {
  *   await client.connect();
  * } catch (err) {
@@ -82,6 +82,12 @@ export class MllpConnectionError extends Error {
    */
   readonly connectionCause?: ConnectionErrorCause;
 
+  /**
+   * Construct an MLLP connection error.
+   *
+   * @param message - Human-readable error message.
+   * @param opts - Error context (underlying `cause`, the lifecycle `phase`, optional stable cause code).
+   */
   constructor(
     message: string,
     opts: {

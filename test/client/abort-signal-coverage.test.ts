@@ -21,18 +21,16 @@
  *   AbortError + zero leftover `'drain'` listeners on the client
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createServer as netCreateServer } from 'node:net';
-import type { AddressInfo } from 'node:net';
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createClient,
-  MllpClient,
+  type MllpClient,
   type ClientOptions,
   type RetryContext,
-} from '../../src/client/client.js';
-import { Connection } from '../../src/connection/index.js';
-import { InMemoryTransport } from '../../src/testing/in-memory-transport.js';
-import { encodeFrame } from '../../src/framing/index.js';
+} from "../../src/client/client.js";
+import { Connection } from "../../src/connection/index.js";
+import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
+import { encodeFrame } from "../../src/framing/index.js";
 
 interface InMemoryHarness {
   client: MllpClient;
@@ -43,12 +41,12 @@ interface InMemoryHarness {
 function buildClientOverPair(opts?: Partial<ClientOptions>): InMemoryHarness {
   const [a, b] = InMemoryTransport.pair();
   const conn = new Connection({ transport: a });
-  const baseOpts: ClientOptions = { host: '127.0.0.1', port: 0, ...opts };
+  const baseOpts: ClientOptions = { host: "127.0.0.1", port: 0, ...opts };
   const client = createClient(baseOpts);
   (
     client as unknown as { _attachExistingConnection: (c: Connection) => void }
   )._attachExistingConnection(conn);
-  conn.notifyConnect('127.0.0.1', 2575);
+  conn.notifyConnect("127.0.0.1", 2575);
   return {
     client,
     conn,
@@ -58,40 +56,38 @@ function buildClientOverPair(opts?: Partial<ClientOptions>): InMemoryHarness {
   };
 }
 
-describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
-  describe('connect/send/close — abort BEFORE awaitable resolves', () => {
-    it('Test 1: connect({ signal }) rejects with AbortError when signal aborts before connect resolves', async () => {
+describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
+  describe("connect/send/close — abort BEFORE awaitable resolves", () => {
+    it("Test 1: connect({ signal }) rejects with AbortError when signal aborts before connect resolves", async () => {
       // Pre-aborted signal short-circuits the connect() pre-check (PLAN-01 path).
       const ac = new AbortController();
       ac.abort();
-      const client = createClient({ host: '127.0.0.1', port: 1 });
-      const err = await client.connect({ signal: ac.signal }).catch((e) => e);
+      const client = createClient({ host: "127.0.0.1", port: 1 });
+      const err = await client.connect({ signal: ac.signal }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DOMException);
-      expect((err as DOMException).name).toBe('AbortError');
-      expect(client.state).toBe('DISCONNECTED');
+      expect((err as DOMException).name).toBe("AbortError");
+      expect(client.state).toBe("DISCONNECTED");
     });
 
-    it('Test 2: send({ signal }) rejects with AbortError when signal aborts before ACK arrives', async () => {
+    it("Test 2: send({ signal }) rejects with AbortError when signal aborts before ACK arrives", async () => {
       const { client } = buildClientOverPair({ ackTimeoutMs: 60_000 });
       const ac = new AbortController();
-      const sendP = client.send(Buffer.from('M1'), { signal: ac.signal });
+      const sendP = client.send(Buffer.from("M1"), { signal: ac.signal });
       // Abort mid-flight (no ACK ever arrives from peer).
       ac.abort();
       const err = await sendP.catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DOMException);
-      expect((err as DOMException).name).toBe('AbortError');
+      expect((err as DOMException).name).toBe("AbortError");
       await client.close();
     });
 
-    it('Test 3: close({ signal }) rejects with AbortError when signal aborts during DRAINING', async () => {
+    it("Test 3: close({ signal }) rejects with AbortError when signal aborts during DRAINING", async () => {
       // DrainTimeoutMs large enough that the close stays in DRAINING long
       // enough for us to abort. We register an in-flight send first to keep
       // the drain alive, then abort the close signal.
       const { client } = buildClientOverPair({ ackTimeoutMs: 60_000 });
       // Keep a pending send so the drain has work to wait on.
-      const pendingSend = client
-        .send(Buffer.from('PENDING'))
-        .catch(() => undefined);
+      const pendingSend = client.send(Buffer.from("PENDING")).catch(() => undefined);
       const ac = new AbortController();
       const closeP = client.close({
         drainTimeoutMs: 60_000,
@@ -101,34 +97,32 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
       ac.abort();
       const err = await closeP.catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DOMException);
-      expect((err as DOMException).name).toBe('AbortError');
+      expect((err as DOMException).name).toBe("AbortError");
       await pendingSend;
     });
   });
 
-  describe('Pre-aborted signal short-circuits every method', () => {
-    it('Test 4: pre-aborted signal on connect/send/close → immediate AbortError, no work performed', async () => {
+  describe("Pre-aborted signal short-circuits every method", () => {
+    it("Test 4: pre-aborted signal on connect/send/close → immediate AbortError, no work performed", async () => {
       // connect()
       const acConnect = new AbortController();
       acConnect.abort();
-      const c1 = createClient({ host: '127.0.0.1', port: 1 });
-      const errConnect = await c1
-        .connect({ signal: acConnect.signal })
-        .catch((e: unknown) => e);
+      const c1 = createClient({ host: "127.0.0.1", port: 1 });
+      const errConnect = await c1.connect({ signal: acConnect.signal }).catch((e: unknown) => e);
       expect(errConnect).toBeInstanceOf(DOMException);
-      expect((errConnect as DOMException).name).toBe('AbortError');
+      expect((errConnect as DOMException).name).toBe("AbortError");
       // The pre-check returned immediately — no socket attempt was started.
-      expect(c1.state).toBe('DISCONNECTED');
+      expect(c1.state).toBe("DISCONNECTED");
 
       // send()
       const { client: c2 } = buildClientOverPair({ ackTimeoutMs: 60_000 });
       const acSend = new AbortController();
       acSend.abort();
       const errSend = await c2
-        .send(Buffer.from('X'), { signal: acSend.signal })
+        .send(Buffer.from("X"), { signal: acSend.signal })
         .catch((e: unknown) => e);
       expect(errSend).toBeInstanceOf(DOMException);
-      expect((errSend as DOMException).name).toBe('AbortError');
+      expect((errSend as DOMException).name).toBe("AbortError");
       // Correlator stays empty — pre-aborted send never enqueued.
       expect(c2.getStats().queueDepth).toBe(0);
       expect(c2.getStats().sentTotal).toBe(0);
@@ -137,54 +131,48 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
       const { client: c3 } = buildClientOverPair();
       const acClose = new AbortController();
       acClose.abort();
-      const errClose = await c3
-        .close({ signal: acClose.signal })
-        .catch((e: unknown) => e);
+      const errClose = await c3.close({ signal: acClose.signal }).catch((e: unknown) => e);
       expect(errClose).toBeInstanceOf(DOMException);
-      expect((errClose as DOMException).name).toBe('AbortError');
+      expect((errClose as DOMException).name).toBe("AbortError");
 
       await c2.close().catch(() => undefined);
     });
   });
 
-  describe('AbortError shape', () => {
+  describe("AbortError shape", () => {
     it('Test 5: AbortError thrown by every method matches DOMException shape (name === "AbortError")', async () => {
       // connect()
       const acConnect = new AbortController();
       acConnect.abort();
-      const c1 = createClient({ host: '127.0.0.1', port: 1 });
-      const e1 = await c1
-        .connect({ signal: acConnect.signal })
-        .catch((err: unknown) => err);
+      const c1 = createClient({ host: "127.0.0.1", port: 1 });
+      const e1 = await c1.connect({ signal: acConnect.signal }).catch((err: unknown) => err);
       expect(e1).toBeInstanceOf(DOMException);
-      expect((e1 as Error).name).toBe('AbortError');
+      expect((e1 as Error).name).toBe("AbortError");
 
       // send()
       const { client: c2 } = buildClientOverPair();
       const acSend = new AbortController();
       acSend.abort();
       const e2 = await c2
-        .send(Buffer.from('X'), { signal: acSend.signal })
+        .send(Buffer.from("X"), { signal: acSend.signal })
         .catch((err: unknown) => err);
       expect(e2).toBeInstanceOf(DOMException);
-      expect((e2 as Error).name).toBe('AbortError');
+      expect((e2 as Error).name).toBe("AbortError");
 
       // close()
       const { client: c3 } = buildClientOverPair();
       const acClose = new AbortController();
       acClose.abort();
-      const e3 = await c3
-        .close({ signal: acClose.signal })
-        .catch((err: unknown) => err);
+      const e3 = await c3.close({ signal: acClose.signal }).catch((err: unknown) => err);
       expect(e3).toBeInstanceOf(DOMException);
-      expect((e3 as Error).name).toBe('AbortError');
+      expect((e3 as Error).name).toBe("AbortError");
 
       await c2.close().catch(() => undefined);
     });
   });
 
-  describe('Listener leak audit', () => {
-    it('Test 6: removeEventListener is called for every addEventListener after a series of aborts', async () => {
+  describe("Listener leak audit", () => {
+    it("Test 6: removeEventListener is called for every addEventListener after a series of aborts", async () => {
       // We instrument an AbortSignal with spies that count how many times
       // addEventListener and removeEventListener are called for the 'abort'
       // event. After aborting and triggering each method's cleanup path, the
@@ -204,35 +192,29 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
       let removeCount = 0;
       const origAdd = ac.signal.addEventListener.bind(ac.signal);
       const origRemove = ac.signal.removeEventListener.bind(ac.signal);
-      ac.signal.addEventListener = ((
+      ac.signal.addEventListener = (
         type: string,
-        ...rest: Parameters<AbortSignal['addEventListener']> extends [
-          string,
-          ...infer R,
-        ]
+        ...rest: Parameters<AbortSignal["addEventListener"]> extends [string, ...infer R]
           ? R
           : never
       ) => {
-        if (type === 'abort') addCount += 1;
+        if (type === "abort") addCount += 1;
         return (origAdd as (...args: unknown[]) => void)(type, ...rest);
-      }) as AbortSignal['addEventListener'];
-      ac.signal.removeEventListener = ((
+      };
+      ac.signal.removeEventListener = (
         type: string,
-        ...rest: Parameters<AbortSignal['removeEventListener']> extends [
-          string,
-          ...infer R,
-        ]
+        ...rest: Parameters<AbortSignal["removeEventListener"]> extends [string, ...infer R]
           ? R
           : never
       ) => {
-        if (type === 'abort') removeCount += 1;
+        if (type === "abort") removeCount += 1;
         return (origRemove as (...args: unknown[]) => void)(type, ...rest);
-      }) as AbortSignal['removeEventListener'];
+      };
 
       // Run a successful send() with the signal — it should add ONE listener
       // and remove it on success (not aborted).
-      const sendP = client.send(Buffer.from('M1'), { signal: ac.signal });
-      ackFromPeer(Buffer.from('AA1'));
+      const sendP = client.send(Buffer.from("M1"), { signal: ac.signal });
+      ackFromPeer(Buffer.from("AA1"));
       await sendP;
 
       // Successful path: every addEventListener('abort', ...) was paired with
@@ -244,7 +226,7 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
     });
   });
 
-  describe('AbortSignal during reconnect cycle', () => {
+  describe("AbortSignal during reconnect cycle", () => {
     beforeEach(() => {
       vi.useFakeTimers();
     });
@@ -252,16 +234,15 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
       vi.useRealTimers();
     });
 
-    it('Test 7: AbortSignal during reconnect (mid-backoff) cancels reconnect, transitions to CLOSED', async () => {
+    it("Test 7: AbortSignal during reconnect (mid-backoff) cancels reconnect, transitions to CLOSED", async () => {
       // Mirror PLAN-04 Test 10 — assert the client transitions to CLOSED when
       // the connect signal aborts during the backoff window.
-      let currentPair: [InMemoryTransport, InMemoryTransport] =
-        InMemoryTransport.pair();
+      let currentPair: [InMemoryTransport, InMemoryTransport] = InMemoryTransport.pair();
       let currentConn = new Connection({ transport: currentPair[0] });
       let observedSignal: AbortSignal | null = null;
       const ac = new AbortController();
       const client = createClient({
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 0,
         autoReconnect: true,
         retryStrategy: (ctx: RetryContext) => {
@@ -271,9 +252,7 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
       });
       (
         client as unknown as {
-          _setReconnectFactory: (
-            f: () => { conn: Connection; arm: () => void },
-          ) => void;
+          _setReconnectFactory: (f: () => { conn: Connection; arm: () => void }) => void;
         }
       )._setReconnectFactory(() => {
         const pair = InMemoryTransport.pair();
@@ -282,7 +261,7 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
         currentConn = conn;
         return {
           conn,
-          arm: () => conn.notifyConnect('127.0.0.1', 2575),
+          arm: () => conn.notifyConnect("127.0.0.1", 2575),
         };
       });
       (
@@ -291,18 +270,16 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
       (
         client as unknown as { _captureConnectSignal: (s: AbortSignal) => void }
       )._captureConnectSignal(ac.signal);
-      currentConn.notifyConnect('127.0.0.1', 2575);
+      currentConn.notifyConnect("127.0.0.1", 2575);
 
       // Drop the current transport (transient), starting the reconnect cycle.
-      currentPair[0].destroy(
-        Object.assign(new Error('peer reset'), { code: 'ECONNRESET' }),
-      );
+      currentPair[0].destroy(Object.assign(new Error("peer reset"), { code: "ECONNRESET" }));
       await vi.advanceTimersByTimeAsync(1);
       expect(observedSignal).toBe(ac.signal);
       // Abort mid-backoff — the cycle MUST tear down to CLOSED.
       ac.abort();
       await vi.advanceTimersByTimeAsync(2000);
-      expect(client.state).toBe('CLOSED');
+      expect(client.state).toBe("CLOSED");
     });
   });
 
@@ -313,31 +290,29 @@ describe('MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)', () => {
       // `_waitThenSend` MUST be removed on abort.
       const { client } = buildClientOverPair({
         highWaterMark: 1,
-        onBackpressure: 'wait',
+        onBackpressure: "wait",
         ackTimeoutMs: 60_000,
       });
 
       // p1 occupies the single live-store slot.
-      const p1 = client.send(Buffer.from('M1'));
+      const p1 = client.send(Buffer.from("M1"));
       p1.catch(() => undefined);
 
-      const baselineDrainListeners = client.listenerCount('drain');
+      const baselineDrainListeners = client.listenerCount("drain");
       const ac = new AbortController();
       // p2 enters 'wait' mode (queue at high-water mark).
-      const p2 = client.send(Buffer.from('M2'), { signal: ac.signal });
+      const p2 = client.send(Buffer.from("M2"), { signal: ac.signal });
       // Drain listener should be registered for the wait.
-      expect(client.listenerCount('drain')).toBeGreaterThan(
-        baselineDrainListeners,
-      );
+      expect(client.listenerCount("drain")).toBeGreaterThan(baselineDrainListeners);
 
       // Abort mid-wait — must reject with AbortError.
       ac.abort();
       const err = await p2.catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DOMException);
-      expect((err as DOMException).name).toBe('AbortError');
+      expect((err as DOMException).name).toBe("AbortError");
 
       // Cleanup invariant: drain listener removed; no leak.
-      expect(client.listenerCount('drain')).toBe(baselineDrainListeners);
+      expect(client.listenerCount("drain")).toBe(baselineDrainListeners);
 
       client.destroy();
     });

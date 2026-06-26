@@ -10,7 +10,7 @@
  *
  * @example
  * ```typescript
- * import { FrameReader } from '@cosyte/hl7-mllp';
+ * import { FrameReader } from '@cosyte/mllp';
  * const reader = new FrameReader({
  *   onFrame: (payload) => handleMessage(payload),
  *   onWarning: (w) => logger.warn(w),
@@ -139,6 +139,11 @@ export class FrameReader {
   /** Per-frame warning accumulator — cleared after each _deliverFrame(). */
   private _frameWarnings: MllpWarning[] = [];
 
+  /**
+   * Construct a chunked MLLP frame reader.
+   *
+   * @param opts - Reader options (`onFrame`/`onWarning` callbacks, tolerance, `maxFrameSizeBytes`).
+   */
   constructor(opts: FrameReaderOptions) {
     this._opts = opts;
     this._maxFrameSize =

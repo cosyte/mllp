@@ -1,26 +1,40 @@
 {
-  "name": "@cosyte/hl7-mllp",
+  "name": "@cosyte/mllp",
   "version": "0.0.0",
   "description": "Production-grade MLLP client and server for Node.js — transport-only sibling to @cosyte/hl7",
   "type": "module",
-  "engines": { "node": ">=22.0.0" },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "packageManager": "pnpm@10.0.0",
   "license": "MIT",
-  "author": "Cosyte",
+  "author": "Cosyte <hello@cosyte.com> (https://cosyte.com)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cosyte/hl7-mllp.git"
+    "url": "git+https://github.com/cosyte/mllp.git"
   },
-  "keywords": ["hl7", "mllp", "healthcare", "hl7v2", "tcp"],
-  "files": ["dist", "README.md", "LICENSE", "CHANGELOG.md"],
+  "keywords": [
+    "hl7",
+    "mllp",
+    "healthcare",
+    "hl7v2",
+    "tcp"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
   "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
+  "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "import": {
         "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
+        "default": "./dist/index.mjs"
       },
       "require": {
         "types": "./dist/index.d.cts",
@@ -30,7 +44,7 @@
     "./testing": {
       "import": {
         "types": "./dist/testing/index.d.ts",
-        "default": "./dist/testing/index.js"
+        "default": "./dist/testing/index.mjs"
       },
       "require": {
         "types": "./dist/testing/index.d.cts",
@@ -40,13 +54,18 @@
     "./ack-from-hl7": {
       "import": {
         "types": "./dist/ack-from-hl7/index.d.ts",
-        "default": "./dist/ack-from-hl7/index.js"
+        "default": "./dist/ack-from-hl7/index.mjs"
       },
       "require": {
         "types": "./dist/ack-from-hl7/index.d.cts",
         "default": "./dist/ack-from-hl7/index.cjs"
       }
-    }
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "prettier": "@cosyte/prettier-config",
   "dependencies": {},
@@ -54,40 +73,44 @@
     "@cosyte/hl7": ">=0.0.0"
   },
   "peerDependenciesMeta": {
-    "@cosyte/hl7": { "optional": true }
+    "@cosyte/hl7": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.0",
-    "@changesets/cli": "^2.27.0",
-    "@cosyte/eslint-config": "^0.0.2",
-    "@cosyte/prettier-config": "^0.0.1",
-    "@cosyte/tsconfig": "^0.0.1",
-    "@types/node": "^20.0.0",
-    "@vitest/coverage-v8": "^3.0.0",
-    "eslint": "^9.0.0",
-    "mitata": "^0.1.0",
-    "prettier": "^3.0.0",
-    "selfsigned": "^2.4.1",
-    "tsup": "^8.0.0",
-    "typescript": "^5.5.0",
-    "vitest": "^3.0.0"
+    "@arethetypeswrong/cli": "0.18.4",
+    "@changesets/cli": "2.31.0",
+    "@cosyte/eslint-config": "^0.0.3",
+    "@cosyte/prettier-config": "^0.0.2",
+    "@cosyte/tsconfig": "^0.0.2",
+    "@cosyte/tsup-config": "^0.0.1",
+    "@cosyte/vitest-config": "^0.0.1",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "4.1.4",
+    "eslint": "10.5.0",
+    "prettier": "3.8.3",
+    "selfsigned": "2.4.1",
+    "tsup": "8.5.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.4"
   },
   "scripts": {
     "build": "tsup",
     "changeset": "changeset",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix",
-    "format:check": "prettier --check \"src/**/*.ts\"",
-    "format": "prettier --write \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --max-warnings=0",
+    "lint:fix": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --fix",
+    "format": "prettier --write \"src/**/*.{ts,md}\" \"test/**/*.ts\" \"*.{json,md,yml}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,md}\" \"test/**/*.ts\" \"*.{json,md,yml}\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "certs:gen": "node scripts/generate-test-certs.mjs",
-    "bench": "vitest bench",
-    "attw": "attw",
+    "clean": "rm -rf dist coverage",
+    "attw": "attw --pack . --profile node16",
     "pack:docs": "bash scripts/build-docs-artifacts.sh",
     "release": "changeset publish",
-    "prepublishOnly": "pnpm build && attw --pack"
+    "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm attw"
   }
 }

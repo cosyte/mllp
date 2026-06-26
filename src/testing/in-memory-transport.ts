@@ -7,7 +7,7 @@
  *
  * @example
  * ```typescript
- * import { InMemoryTransport } from '@cosyte/hl7-mllp/testing';
+ * import { InMemoryTransport } from '@cosyte/mllp/testing';
  * const [a, b] = InMemoryTransport.pair();
  * b.onData((chunk) => console.log('received:', chunk));
  * a.write(Buffer.from([0x0b, 0x41, 0x1c, 0x0d]));

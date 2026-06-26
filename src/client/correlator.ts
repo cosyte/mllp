@@ -255,6 +255,11 @@ export class Correlator {
    */
   private _inFlight = 0;
 
+  /**
+   * Construct a send/ACK correlator.
+   *
+   * @param opts - Correlation options (FIFO vs control-id mode, ACK timeout, max in-flight).
+   */
   constructor(opts: CorrelatorOptions) {
     this._opts = {
       mode: opts.mode ?? "fifo",
