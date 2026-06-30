@@ -60,6 +60,36 @@ await server.listen();
 The server frames and de-frames for you; you decide what to send back. The payload is a raw
 `Buffer` — charset decoding stays with the caller.
 
+## Fail-safe ACKs — the commit contract
+
+A positive acknowledgement (`AA`) tells the sender "you may forget this message — I have it." So a
+server must **never** emit `AA` before the message is durably handled. `@cosyte/mllp` makes that
+structural: pair `autoAck: 'AA'` with an `onMessage` handler, and the server **awaits your handler
+(the durable-commit step) and only then ACKs** — `AA` on success, a **negative** code on failure,
+never `AA` before commit.
+
+```ts
+const server = createServer({
+  autoAck: "AA",
+  onMessage: async (payload) => {
+    await db.commit(payload); // throw here ⇒ AE (resend may succeed), never AA
+  },
+});
+```
+
+- **Handler resolves ⇒ `AA`** (HL7 Table 0008), echoing the inbound `MSH-10` into `MSA-2`.
+- **Handler throws / rejects ⇒ `AE`** (application error — the sender may resend).
+- **Handler throws `MllpAckError({ ackCode: 'AR' })` ⇒ `AR`** (application reject — do not resend
+  unchanged).
+
+On failure the server emits a PHI-safe `'nack'` event carrying only `{ connectionId, ackCode }` — the
+payload and the thrown error's message (which may carry PHI) never reach the wire or the event.
+
+`autoAck: 'AA'` **without** an `onMessage` handler degrades to a **transport-accept**: `AA` means
+"bytes received and framed", not "application-processed" — only safe when a downstream component owns
+durability. For full control, pass `autoAck: fn` to build the ACK bytes yourself, or omit `autoAck`
+for manual mode (`respond()` / `conn.send()`).
+
 ## Framing and tolerance
 
 The encoder is strict: it always emits canonical `VT + payload + FS + CR`. The decoder is liberal —

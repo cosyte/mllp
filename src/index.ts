@@ -53,6 +53,16 @@ export {
   type StarterServerOptions,
   type ServerStats,
   type MessageMeta,
+  type NackEvent,
+} from "./server/index.js";
+
+// Phase 6: fail-safe ACK semantics & the commit contract
+export {
+  buildRawAck,
+  resolveNackCode,
+  MllpAckError,
+  type AckCode,
+  type NegativeAckCode,
 } from "./server/index.js";
 
 // Phase 5: client
