@@ -53,6 +53,16 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   property feeding arbitrary random byte buffers and chunk-splits through `FrameReader` over the
   in-memory transport. Test-only — no public-surface change.
 
+- **Fail-safe ACK semantics & the commit contract (Phase 6, HL7 v2.5.1 §2.9.2).** A positive
+  acknowledgement (`AA`) can never precede a successful durable commit: with `autoAck: 'AA'` + an
+  `onMessage` handler the server **awaits the handler (the commit step) then ACKs** — `AA` on resolve,
+  a **negative** code on throw/reject (`AE` by default; `AR` via `MllpAckError`), never `AA` before
+  commit. `autoAck: 'AA'` without a handler is a documented **transport-accept** (received+framed, not
+  application-processed). New public surface: `buildRawAck` (parser-free byte-level ACK builder echoing
+  inbound `MSH-10` into `MSA-2`, never throwing on malformed input), the HL7 Table 0008 `AckCode` /
+  `NegativeAckCode` unions, `MllpAckError`, `resolveNackCode`, and a PHI-safe `'nack'` event
+  (`{ connectionId, ackCode }`) with its `NackEvent` type. No payload content or thrown error text ever
+  reaches the wire, logs, or events — only routing/control metadata and the static ack code.
 - **Package metadata** — added `homepage` and `bugs` fields to `package.json` for npm completeness.
 
 ### Changed

@@ -23,12 +23,13 @@
 import { createServer as netCreateServer } from "node:net";
 import type { Server as NetServer, Socket } from "node:net";
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
 import { Connection } from "../connection/index.js";
 import { MllpConnectionError } from "../connection/index.js";
 import { NetTransport } from "../transport/index.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
+import { buildRawAck, resolveNackCode } from "./ack.js";
+import type { AckCode, NegativeAckCode } from "./ack.js";
 
 /**
  * Metadata attached to each decoded MLLP message (SERVER-03).
@@ -49,6 +50,29 @@ export interface MessageMeta {
   readonly byteOffset: number;
   /** Framing warnings emitted during decoding of this frame. */
   readonly warnings: readonly MllpWarning[];
+}
+
+/**
+ * Payload of the server `'nack'` event — emitted when a commit-gated `autoAck: 'AA'`
+ * handler throws/rejects and the server responds with a **negative** acknowledgement
+ * instead of `AA` (the fail-safe commit contract).
+ *
+ * **PHI-safe by construction:** carries only the connection ID and the resolved
+ * acknowledgement code — never the payload, the inbound control ID, or the thrown
+ * error's message (which may carry PHI). The object is `Object.freeze()`'d before emission.
+ *
+ * @example
+ * ```typescript
+ * server.on('nack', ({ connectionId, ackCode }) => {
+ *   metrics.increment('mllp.nack', { code: ackCode }); // ackCode is 'AE' | 'AR'
+ * });
+ * ```
+ */
+export interface NackEvent {
+  /** Connection that produced the negative acknowledgement. */
+  readonly connectionId: string;
+  /** The negative acknowledgement code sent to the peer (`AE` or `AR`). */
+  readonly ackCode: NegativeAckCode;
 }
 
 /**
@@ -108,12 +132,21 @@ export interface ServerOptions {
   /**
    * Called for each decoded MLLP message.
    *
-   * Return value is not used. For manual ACK, call `conn.send(encodeFrame(ackPayload))` directly.
-   * For automatic ACK generation, set `autoAck: 'AA'` instead.
+   * Its role depends on `autoAck` — this is the **commit contract** (HL7 v2.5.1 §2.9.2):
    *
-   * NOTE: If `autoAck` is also set, do NOT call `conn.send()` from here — two ACKs will be sent.
+   * - **`autoAck: 'AA'` + this handler ⇒ commit-gated (the safe default).** The handler
+   *   is the durable-commit step. The server **awaits** it and only then sends the ACK:
+   *   resolve ⇒ `AA`; **throw/reject ⇒ `AE`** (or `AR` via {@link MllpAckError}) — a
+   *   positive ACK can never precede a successful commit. Do **not** call `conn.send()`
+   *   here in this mode.
+   * - **`autoAck` unset ⇒ manual mode.** The handler owns the response; build and send the
+   *   ACK yourself via `conn.send(encodeFrame(ackPayload))`. Its return value is ignored.
+   * - **`autoAck: fn` ⇒ observation only.** `fn` builds the ACK; this handler runs first as
+   *   a side effect and its return value is ignored. Do not call `conn.send()` here.
+   *
+   * May be sync or async; an async handler is awaited in commit-gated mode.
    */
-  onMessage?: (payload: Buffer, meta: MessageMeta, conn: Connection) => void;
+  onMessage?: (payload: Buffer, meta: MessageMeta, conn: Connection) => void | Promise<void>;
 
   /**
    * FrameReader tolerance options applied to every accepted connection (SERVER-12).
@@ -128,13 +161,23 @@ export interface ServerOptions {
   onWarning?: (w: MllpWarning) => void;
 
   /**
-   * Auto-ACK mode. When set, the server automatically sends an ACK after each message.
+   * Auto-ACK mode. When set, the server builds and sends the ACK for each message.
    *
-   * - `'AA'`: sends a minimal AA acknowledgement (built from MSH fields without a parser).
-   * - `fn`: calls `fn(payload, meta, conn)` and sends the returned Buffer as the ACK.
+   * - **`'AA'`** — auto-acknowledge with the fail-safe **commit contract**:
+   *   - **With an `onMessage` handler ⇒ commit-gated (recommended).** The server awaits
+   *     `onMessage` (the durable-commit step), then sends `AA` on success or a **negative**
+   *     ACK on failure (`AE` by default; `AR` via {@link MllpAckError}). The positive ACK
+   *     **cannot precede a successful commit** — a handler throw can never yield `AA`.
+   *   - **Without an `onMessage` handler ⇒ transport-accept.** `AA` is sent on frame
+   *     receipt. This `AA` means only **"bytes received and framed"** — *not*
+   *     "application-processed". ⚠️ For clinical messages this is unsafe on its own:
+   *     pair `'AA'` with an `onMessage` handler that durably commits, so the ACK reflects
+   *     real processing.
+   * - **`fn`** — `fn(payload, meta, conn)` builds the ACK bytes the server sends; the
+   *   caller fully owns MSA-1 (e.g. to emit enhanced-mode `CA`/`CE`/`CR`).
    *
-   * The `'message'` event fires BEFORE the auto-ACK is sent (D-03). Do NOT call
-   * `conn.send()` in `onMessage` when auto-ACK is active — this results in two ACKs.
+   * The `'message'` event always fires BEFORE the ACK is sent (D-03). Do NOT call
+   * `conn.send()` in `onMessage` when `autoAck` is set — this results in two ACKs.
    */
   autoAck?:
     | "AA"
@@ -220,7 +263,9 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * with server-level framing options, and added to `_connections`. Messages are
  * surfaced via the `'message'` event and the `onMessage` callback.
  *
- * Public events: `'listening'`, `'connection'`, `'error'`, `'close'`.
+ * Public events: `'listening'`, `'connection'`, `'message'`, `'nack'`, `'error'`, `'close'`.
+ * The `'nack'` event ({@link NackEvent}) fires when a commit-gated `autoAck: 'AA'` handler
+ * fails and the server returns a negative ACK instead of `AA`.
  * All event payloads are `Object.freeze()`'d before emission (SERVER-10).
  *
  * @example
@@ -487,82 +532,6 @@ export class MllpServer extends EventEmitter {
   }
 
   // ---------------------------------------------------------------------------
-  // Private: ACK builder
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Build a minimal AA acknowledgement from raw HL7 payload bytes without a parser.
-   *
-   * Splits payload on CR (`\r`) to find the MSH segment, then splits on `|` to extract
-   * fields. Swaps sendingApp/receivingApp and sendingFacility/receivingFacility per HL7 v2
-   * ACK rules. Uses a new `randomUUID`-based control ID in MSH-10.
-   *
-   * Never throws — returns a fallback buffer on malformed or missing MSH.
-   *
-   * @param payload - Raw decoded HL7 v2 payload bytes (framing stripped).
-   * @returns MLLP ACK payload (without framing — `Connection.send` adds `encodeFrame`).
-   *
-   * @example
-   * ```typescript
-   * const ack = this._buildAutoAck(payload);
-   * const sent = conn.send(encodeFrame(ack));
-   * ```
-   */
-  private _buildAutoAck(payload: Buffer): Buffer {
-    const str = payload.toString("ascii");
-    // Split on CR to find segments; HL7 v2 uses CR (0x0D) as segment separator
-    const segments = str.split("\r");
-    const mshSegment = segments.find((seg) => seg.startsWith("MSH"));
-
-    // Fallback buffer when MSH is missing or payload is malformed
-    const fallback = Buffer.from("MSH|^~\\&|||||||ACK||P|2.3\rMSA|AA|\r", "ascii");
-
-    if (mshSegment === undefined) {
-      return fallback;
-    }
-
-    const fields = mshSegment.split("|");
-
-    // MSH field indices (after splitting on '|'):
-    //   [0] = 'MSH'
-    //   [1] = '^~\&' (encoding chars)
-    //   [2] = sendingApp      → receivingApp in ACK
-    //   [3] = sendingFacility → receivingFacility in ACK
-    //   [4] = receivingApp    → sendingApp in ACK
-    //   [5] = receivingFacility → sendingFacility in ACK
-    //   [9] = controlId (MSH-10) → used as MSA-2 (inbound control ID)
-    //   [10] = processingId
-    //   [11] = version
-    const sendingApp = fields[2] ?? "";
-    const sendingFacility = fields[3] ?? "";
-    const receivingApp = fields[4] ?? "";
-    const receivingFacility = fields[5] ?? "";
-    const inboundControlId = fields[9] ?? "";
-    const processingId = fields[10] ?? "P";
-    const version = fields[11] ?? "2.3";
-
-    // Build a 14-char timestamp (YYYYMMDDHHmmss) without .slice() (SETUP-07)
-    const d = new Date();
-    const pad = (n: number, w = 2): string => String(n).padStart(w, "0");
-    const now =
-      String(d.getUTCFullYear()) +
-      pad(d.getUTCMonth() + 1) +
-      pad(d.getUTCDate()) +
-      pad(d.getUTCHours()) +
-      pad(d.getUTCMinutes()) +
-      pad(d.getUTCSeconds());
-
-    // New control ID: randomUUID with dashes removed, truncated to 20 chars (MSH-10 field width)
-    const newControlId = randomUUID().replace(/-/g, "").substring(0, 20);
-
-    const ackStr =
-      `MSH|^~\\&|${receivingApp}|${receivingFacility}|${sendingApp}|${sendingFacility}|${now}||ACK|${newControlId}|${processingId}|${version}\r` +
-      `MSA|AA|${inboundControlId}\r`;
-
-    return Buffer.from(ackStr, "ascii");
-  }
-
-  // ---------------------------------------------------------------------------
   // Private: per-socket setup
   // ---------------------------------------------------------------------------
 
@@ -640,9 +609,10 @@ export class MllpServer extends EventEmitter {
     // Notify the connection that the socket is connected (server-side — already connected)
     conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
 
-    // Wire message handler: emit 'message' event, then invoke onMessage callback, then autoAck.
-    // The handler is async to support awaiting the autoAck fn; unhandled rejection is suppressed
-    // by the internal try/catch — D-04 guarantee.
+    // Wire message handler: always emit 'message' (received+framed) first, then route the
+    // ACK by mode (the commit contract — see ServerOptions.autoAck). D-04: a handler error
+    // never crashes the server. Async dispatch is wrapped in void; rejections are handled
+    // inside the dispatch methods.
     conn.on(
       "message",
       (event: {
@@ -658,19 +628,21 @@ export class MllpServer extends EventEmitter {
           warnings,
         });
 
-        // D-03: emit 'message' BEFORE auto-ACK dispatch
-        const frozenEvent = Object.freeze({ payload, meta });
-        this.emit("message", frozenEvent);
+        // D-03: emit 'message' BEFORE any ACK dispatch.
+        this.emit("message", Object.freeze({ payload, meta }));
 
-        // Invoke optional onMessage callback (D-03: fires before auto-ACK).
-        // Return value is intentionally ignored here — auto-ACK is handled via
-        // _sendAutoAck, and manual-ACK mode uses conn.send() directly.
-        void this._opts.onMessage?.(payload, meta, conn);
-
-        // Handle auto-ACK (D-03/D-04). Async dispatch wrapped in void to suppress
-        // unhandled-rejection; errors are caught inside _sendAutoAck and re-emitted on conn.
-        if (this._opts.autoAck !== undefined) {
-          void this._sendAutoAck(payload, meta, conn);
+        const autoAck = this._opts.autoAck;
+        if (autoAck === "AA") {
+          // Commit-gated: onMessage is the durable-commit step; AA only on success,
+          // AE/AR on failure — a positive ACK can never precede commit.
+          void this._sendCommitAck(payload, meta, conn);
+        } else if (autoAck !== undefined) {
+          // Custom-ACK mode: onMessage is observation only; the fn owns the ACK bytes.
+          this._observeMessage(payload, meta, conn);
+          void this._sendCustomAck(autoAck, payload, meta, conn);
+        } else {
+          // Manual mode: onMessage owns the response via conn.send().
+          this._observeMessage(payload, meta, conn);
         }
       },
     );
@@ -687,54 +659,103 @@ export class MllpServer extends EventEmitter {
   }
 
   /**
-   * Resolve and send the auto-ACK response (D-03/D-04, SERVER-04).
+   * The fail-safe commit path for `autoAck: 'AA'` (HL7 v2.5.1 §2.9.2).
    *
-   * Wraps the ACK payload in `encodeFrame()` before passing to `conn.send()`, since
-   * `Connection.send()` writes raw bytes without framing. Checks the boolean return
-   * from `conn.send()`: `false` indicates backpressure and causes a
-   * `MllpConnectionError({ phase: 'send' })` to be emitted on the connection (D-04).
+   * With an `onMessage` handler this **awaits** it (the durable-commit step) and only
+   * then dispatches: resolve ⇒ `AA`; throw/reject ⇒ a negative ACK (`AE` by default,
+   * `AR` via {@link MllpAckError}). A positive ACK can never precede a successful commit.
    *
-   * Any error (from the `autoAck` fn or from send) is caught and re-emitted as
-   * `'error'` on the connection — the server never crashes (D-04).
+   * Without an `onMessage` handler, `'AA'` degrades to a **transport-accept** — `AA`
+   * meaning "bytes received and framed", not "application-processed".
+   *
+   * A handler failure is **expected flow**, not a server error: it produces a negative
+   * ACK and a `'nack'` event. The thrown error's message is never placed on the wire or
+   * in the event (it may carry PHI) — only the static `ackCode` and the inbound control
+   * metadata reach the peer.
    */
-  private async _sendAutoAck(payload: Buffer, meta: MessageMeta, conn: Connection): Promise<void> {
+  private async _sendCommitAck(
+    payload: Buffer,
+    meta: MessageMeta,
+    conn: Connection,
+  ): Promise<void> {
+    const handler = this._opts.onMessage;
+
+    // No commit handler: 'AA' is a transport-accept (received+framed only).
+    if (handler === undefined) {
+      this._dispatchAck(conn, buildRawAck(payload, "AA"));
+      return;
+    }
+
+    let code: AckCode;
     try {
-      let ackPayload: Buffer;
-      const autoAck = this._opts.autoAck;
-
-      if (autoAck === "AA") {
-        ackPayload = this._buildAutoAck(payload);
-      } else if (autoAck !== undefined) {
-        // autoAck is the function branch — TypeScript narrows to fn type after the 'AA' check
-        ackPayload = await Promise.resolve(autoAck(payload, meta, conn));
-      } else {
-        return; // autoAck was undefined (should not reach here; _sendAutoAck is only called when autoAck !== undefined)
-      }
-
-      // Connection.send() writes raw bytes — encodeFrame adds VT + payload + FS + CR
-      const sent = conn.send(encodeFrame(ackPayload));
-      if (!sent) {
-        // D-04: socket write buffer full (backpressure). Emit error on the connection;
-        // server does not crash; peer will timeout waiting for ACK and may retry.
-        conn.emit(
-          "error",
-          Object.freeze({
-            connectionId: conn.connectionId,
-            error: new MllpConnectionError("auto-ACK dropped: socket backpressure", {
-              cause: new Error("backpressure"),
-              phase: "send",
-            }),
-          }),
-        );
-      }
+      await handler(payload, meta, conn); // durable-commit step
+      code = "AA";
     } catch (err: unknown) {
-      // D-04: auto-ACK errors are emitted as 'error' on connection — server continues
+      const nack: NegativeAckCode = resolveNackCode(err);
+      code = nack;
+      // PHI-safe observability: control ID + outcome only, never the payload or error text.
+      this.emit("nack", Object.freeze({ connectionId: conn.connectionId, ackCode: nack }));
+    }
+
+    this._dispatchAck(conn, buildRawAck(payload, code));
+  }
+
+  /**
+   * Run `onMessage` for its side effects only (custom-ACK and manual modes), guarding
+   * against a synchronous throw or a rejected promise. In these modes the handler does
+   * **not** gate the ACK, so a failure is re-emitted as a PHI-safe `'error'` on the
+   * connection (D-04: a handler error never crashes the server) rather than escaping as
+   * an unhandled rejection. The error text is never placed on the wire.
+   */
+  private _observeMessage(payload: Buffer, meta: MessageMeta, conn: Connection): void {
+    const handler = this._opts.onMessage;
+    if (handler === undefined) return;
+    void Promise.resolve()
+      .then(() => handler(payload, meta, conn))
+      .catch((err: unknown) => {
+        const connErr = err instanceof Error ? err : new Error(String(err));
+        conn.emit("error", Object.freeze({ connectionId: conn.connectionId, error: connErr }));
+      });
+  }
+
+  /**
+   * The custom-builder path for `autoAck: fn`. Awaits the builder and dispatches its
+   * Buffer as the ACK; the caller owns MSA-1. A builder error is re-emitted as `'error'`
+   * on the connection — the server never crashes (D-04).
+   */
+  private async _sendCustomAck(
+    fn: (payload: Buffer, meta: MessageMeta, conn: Connection) => Buffer | Promise<Buffer>,
+    payload: Buffer,
+    meta: MessageMeta,
+    conn: Connection,
+  ): Promise<void> {
+    try {
+      const ackPayload = await Promise.resolve(fn(payload, meta, conn));
+      this._dispatchAck(conn, ackPayload);
+    } catch (err: unknown) {
       const connErr = err instanceof Error ? err : new Error(String(err));
+      conn.emit("error", Object.freeze({ connectionId: conn.connectionId, error: connErr }));
+    }
+  }
+
+  /**
+   * Frame an ACK payload and write it to the connection. `Connection.send()` returns
+   * `false` under backpressure (socket write buffer full); that drops the ACK and emits
+   * a `MllpConnectionError({ phase: 'send' })` on the connection (D-04) — the peer will
+   * time out waiting and may retry. The server never crashes.
+   */
+  private _dispatchAck(conn: Connection, ackPayload: Buffer): void {
+    // Connection.send() writes raw bytes — encodeFrame adds VT + payload + FS + CR.
+    const sent = conn.send(encodeFrame(ackPayload));
+    if (!sent) {
       conn.emit(
         "error",
         Object.freeze({
           connectionId: conn.connectionId,
-          error: connErr,
+          error: new MllpConnectionError("ACK dropped: socket backpressure", {
+            cause: new Error("backpressure"),
+            phase: "send",
+          }),
         }),
       );
     }

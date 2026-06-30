@@ -18,6 +18,7 @@ import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { encodeFrame } from "../../src/framing/index.js";
 import { MllpConnectionError } from "../../src/connection/index.js";
 import { createServer } from "../../src/server/server.js";
+import { buildRawAck, resolveNackCode, MllpAckError } from "../../src/server/ack.js";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -336,6 +337,44 @@ describe("SERVER-04: auto-ACK — undefined (manual mode)", () => {
     sock.destroy();
     await server.close();
   });
+
+  it("manual mode: an async onMessage that rejects is caught (no unhandled rejection, server survives)", async () => {
+    // D-04: in manual mode onMessage owns the response but does NOT gate an ACK; a
+    // rejected handler must be swallowed into a connection 'error', never escape as an
+    // unhandled rejection that crashes the process.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    const server = createServer({
+      onMessage: async () => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        throw new Error("manual handler blew up");
+      },
+    });
+    await server.listen(0);
+    const port = must(server.getStats().port);
+
+    const net = await import("node:net");
+    const sock = await new Promise<Socket>((resolve, reject) => {
+      const s = net.createConnection({ host: "127.0.0.1", port });
+      s.once("connect", () => resolve(s));
+      s.once("error", reject);
+    });
+
+    sock.write(framePayload(ADT_A01_PAYLOAD));
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+    // The server did not crash and is still accepting; no unhandled rejection escaped.
+    expect(server.getStats().listening).toBe(true);
+    expect(unhandled).toHaveLength(0);
+
+    process.off("unhandledRejection", onUnhandled);
+    sock.destroy();
+    await server.close();
+  });
 });
 
 describe("D-03: message event fires BEFORE auto-ACK is sent", () => {
@@ -508,71 +547,56 @@ describe("D-04 + backpressure: conn.send() returns false → MllpConnectionError
   });
 });
 
-describe("SERVER-04: _buildAutoAck private method existence", () => {
-  it("MllpServer has _buildAutoAck method (acceptance criteria)", () => {
-    // We test this by reflection since the method is private
-    const server = createServer({});
-    // Cast to access private method for test
-    const serverAny = server as unknown as Record<string, unknown>;
-    expect(typeof serverAny["_buildAutoAck"]).toBe("function");
-  });
-});
-
-describe("SERVER-04: _buildAutoAck behavior via reflection (unit tests)", () => {
-  it("_buildAutoAck with well-formed MSH returns Buffer containing MSA|AA|MSG001", () => {
-    const server = createServer({});
-    const serverAny = server as unknown as Record<string, (payload: Buffer) => Buffer>;
-    const buildAutoAck = must(serverAny["_buildAutoAck"]).bind(server);
-
-    const payload = Buffer.from(ADT_A01_PAYLOAD, "ascii");
-    const ack = buildAutoAck(payload);
-
+describe("buildRawAck — byte-level ACK construction (Phase 6)", () => {
+  it("well-formed MSH, AA: echoes inbound MSH-10 into MSA-2", () => {
+    const ack = buildRawAck(Buffer.from(ADT_A01_PAYLOAD, "ascii"), "AA");
     expect(ack).toBeInstanceOf(Buffer);
     expect(ack.toString("ascii")).toContain("MSA|AA|MSG001");
   });
 
-  it("_buildAutoAck with well-formed MSH swaps sendingApp → receivingApp in ACK MSH", () => {
-    const server = createServer({});
-    const serverAny = server as unknown as Record<string, (payload: Buffer) => Buffer>;
-    const buildAutoAck = must(serverAny["_buildAutoAck"]).bind(server);
-
-    const payload = Buffer.from(ADT_A01_PAYLOAD, "ascii");
-    const ack = buildAutoAck(payload);
-
-    const ackStr = ack.toString("ascii");
-    const mshLine = must(ackStr.split("\r")[0]);
-    const mshFields = mshLine.split("|");
-
-    // Original: MSH[2]=SENDER, MSH[4]=RECV
-    // ACK: MSH[2] should be RECV, MSH[4] should be SENDER
+  it("well-formed MSH swaps sendingApp ↔ receivingApp in the ACK MSH", () => {
+    const ack = buildRawAck(Buffer.from(ADT_A01_PAYLOAD, "ascii"), "AA");
+    const mshFields = must(ack.toString("ascii").split("\r")[0]).split("|");
+    // Original: MSH[2]=SENDER, MSH[4]=RECV → ACK: MSH[2]=RECV, MSH[4]=SENDER
     expect(mshFields[2]).toBe("RECV");
     expect(mshFields[4]).toBe("SENDER");
   });
 
-  it("_buildAutoAck with empty payload returns fallback Buffer containing MSA|AA", () => {
-    const server = createServer({});
-    const serverAny = server as unknown as Record<string, (payload: Buffer) => Buffer>;
-    const buildAutoAck = must(serverAny["_buildAutoAck"]).bind(server);
-
-    // Malformed — no MSH
-    const emptyPayload = Buffer.allocUnsafe(0);
-    const ack = buildAutoAck(emptyPayload);
-
-    expect(ack).toBeInstanceOf(Buffer);
-    expect(ack.toString("ascii")).toContain("MSA|AA");
-    // Must not throw
+  it("negative codes carry the inbound control ID and a static, PHI-free MSA-3 reason", () => {
+    const ae = buildRawAck(Buffer.from(ADT_A01_PAYLOAD, "ascii"), "AE").toString("ascii");
+    expect(ae).toContain("MSA|AE|MSG001|message could not be processed");
+    const ar = buildRawAck(Buffer.from(ADT_A01_PAYLOAD, "ascii"), "AR").toString("ascii");
+    expect(ar).toContain("MSA|AR|MSG001|message rejected");
   });
 
-  it("_buildAutoAck with no MSH segment returns fallback Buffer containing MSA|AA", () => {
-    const server = createServer({});
-    const serverAny = server as unknown as Record<string, (payload: Buffer) => Buffer>;
-    const buildAutoAck = must(serverAny["_buildAutoAck"]).bind(server);
+  it("never copies payload content beyond routing/control metadata (no PHI leak)", () => {
+    // PID free-text must never appear in any ACK code.
+    const ack = buildRawAck(Buffer.from(ADT_A01_PAYLOAD, "ascii"), "AE").toString("ascii");
+    expect(ack).not.toContain("DOE");
+    expect(ack).not.toContain("JOHN");
+    expect(ack).not.toContain("12345");
+  });
 
-    // Payload with PID but no MSH
-    const noMsh = Buffer.from("PID|||12345\rEVN|A01\r", "ascii");
-    const ack = buildAutoAck(noMsh);
+  it("missing MSH returns a well-formed ACK carrying the requested code, never throws", () => {
+    expect(buildRawAck(Buffer.allocUnsafe(0), "AA").toString("ascii")).toContain("MSA|AA|");
+    const noMsh = buildRawAck(Buffer.from("PID|||12345\rEVN|A01\r", "ascii"), "AE");
+    expect(noMsh.toString("ascii")).toContain("MSA|AE|");
+    expect(noMsh.toString("ascii")).not.toContain("12345");
+  });
+});
 
-    expect(ack).toBeInstanceOf(Buffer);
-    expect(ack.toString("ascii")).toContain("MSA|AA");
+describe("resolveNackCode — handler-failure → negative code mapping", () => {
+  it("a plain Error maps to AE (application error, resend may succeed)", () => {
+    expect(resolveNackCode(new Error("downstream timeout"))).toBe("AE");
+    expect(resolveNackCode("string failure")).toBe("AE");
+  });
+
+  it("MllpAckError carries its explicit ackCode (AR)", () => {
+    expect(resolveNackCode(new MllpAckError("nope", { ackCode: "AR" }))).toBe("AR");
+    expect(resolveNackCode(new MllpAckError("default"))).toBe("AE");
+  });
+
+  it("a duck-typed { ackCode: 'AR' } is honored", () => {
+    expect(resolveNackCode({ ackCode: "AR" })).toBe("AR");
   });
 });
