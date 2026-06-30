@@ -12,6 +12,23 @@ this file is maintained by hand (Changesets handles the version bump and publish
 The first pre-alpha release (`0.0.1`) will ship the v1 MLLP transport surface below. The package
 begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` until first alpha).
 
+### Security
+
+- **Dev-dependency advisory remediation (no runtime impact — `@cosyte/mllp`
+  ships zero runtime dependencies, so the published artifact is unchanged).**
+  Added scoped `pnpm.overrides` pinning two transitive **dev/build-time**
+  packages to their patched releases: `esbuild` (`>=0.27.3 <0.28.1` →
+  `0.28.1`; GHSA dev-server path-traversal — not reachable here: the library
+  builds via `tsup`/`vitest` and never runs `esbuild serve`) and the
+  `@changesets/parse` copy of `js-yaml` (`>=4.0.0 <4.2.0` → `4.2.0`;
+  GHSA-h67p-54hq-rp68 merge-key DoS). The `js-yaml@3.14.2` pulled by
+  `read-yaml-file@1.1.0` (via `@manypkg/get-packages` → `@changesets/cli`) is
+  **intentionally left**: it calls `yaml.safeLoad`, removed/throwing in
+  js-yaml 4, so it cannot be force-upgraded without breaking the release
+  tooling, and it only parses trusted local repo YAML at release time. This is
+  the shared canonical override block, enforced suite-wide by the
+  `@cosyte/config` drift check.
+
 ### Added
 
 - **MLLP client + server** — production-grade client and server with framing
