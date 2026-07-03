@@ -114,16 +114,44 @@ sockets for integration smoke tests.
 
 ## ACK from an HL7 message
 
-The optional `ack-from-hl7` subpath builds a spec-correct ACK from an inbound HL7 v2 message,
-echoing the original `MSH` control id. It is the only place this package touches `@cosyte/hl7`:
+The optional `ack-from-hl7` subpath builds a spec-correct, MLLP-framed ACK from an inbound HL7 v2
+message — a thin adapter over `@cosyte/hl7`'s `buildAck` (hl7 owns the ACK content and control
+tables; this package frames and correlates). It is the only place this package touches
+`@cosyte/hl7`, and the peer is loaded lazily on first call:
 
 ```ts
-import { ackFromHl7 } from "@cosyte/mllp/ack-from-hl7";
+import { buildAckAA, buildAckAE } from "@cosyte/mllp/ack-from-hl7";
 
-server.on("message", async ({ payload, respond }) => {
-  await respond(ackFromHl7(payload)); // requires the @cosyte/hl7 peer dep
-});
+// After your handler durably commits the message (the commit contract):
+const { frame, code, correlationId } = buildAckAA(payload); // requires the @cosyte/hl7 peer dep
+socket.write(frame); // VT + ACK + FS + CR, MSA-2 echoes the inbound MSH-10 verbatim
+
+// On a processing failure — never acknowledge what you did not commit:
+socket.write(buildAckAE(payload, { error: { conditionCode: "207" } }).frame);
 ```
+
+`buildMllpAck` is the core (explicit `code`); `buildAckAA/AE/AR/CA/CE/CR` are the six
+Table-0008 conveniences; `detectMode` reports original-vs-enhanced from the inbound MSH-15/16.
+Fail-safe by construction: an inbound without a findable MSH-10 **never** yields a positive
+ACK — the disposition downgrades (`AA`→`AE`, `CA`→`CE`) and the result carries a warning
+(`ACK_NO_CORRELATION_ID` from the peer, or `MLLP_ACK_INBOUND_UNPARSEABLE` when the inbound
+could not be parsed at all). Warnings carry codes and structural context only — never message
+content.
+
+### Known limitations (`ack-from-hl7`)
+
+- **The builder trusts the caller's disposition.** It never decides clinical accept/reject —
+  choose `AA`/`AE`/`AR` from your own commit outcome (the Phase-6 commit contract).
+- **MSA-2 is the inbound MSH-10's canonical re-serialization, not its original bytes.** Plain
+  and delimiter-bearing ids (`ID^X`) echo byte-exact; hex escapes decode (`\X41\` → `A`),
+  preserved formatting/vendor escapes re-emit as escaped literal text, custom-delimiter
+  senders are re-delimited spec-cleanly, and trailing insignificant empties canonicalize.
+- **`encoding` other than the default `"utf8"` can silently mangle non-ASCII header content**
+  (single-byte encodings map out-of-repertoire characters with no warning).
+- **No enhanced-mode two-phase sequencing** — the helpers build any of the six codes; *when*
+  to send an accept-ack vs an application-ack is the server/caller's orchestration.
+- **No MLLP Release 2 commit-ack bytes** (`<SB><ACK><EB><CR>`) — R2 is a possible future,
+  opt-in phase.
 
 ## Next
 

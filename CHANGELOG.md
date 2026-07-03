@@ -12,6 +12,30 @@ this file is maintained by hand (Changesets handles the version bump and publish
 The first pre-alpha release (`0.0.1`) will ship the v1 MLLP transport surface below. The package
 begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` until first alpha).
 
+### Added
+
+- **`@cosyte/mllp/ack-from-hl7` — real helpers (Phase 7); stub removed.** A thin transport
+  adapter over `@cosyte/hl7`'s `buildAck` (hl7 owns ACK content + the HL7 control tables;
+  this package frames and correlates — O-1 boundary). New surface: `buildMllpAck(inbound,
+  { code, error?, encoding?, allowDelimiterBytesInPayload? })` returning a frozen `MllpAck`
+  (`frame` ready-to-write MLLP bytes, unframed `payload`, the built `ack` message,
+  `requestedCode` vs emitted `code`, verbatim `correlationId`, detected `mode`, content-free
+  `warnings`); the six Table-0008 conveniences `buildAckAA/AE/AR/CA/CE/CR`; `detectMode`
+  (original-vs-enhanced from MSH-15/16); lazy peer loading with a typed
+  `MllpPeerMissingError` (`MLLP_PEER_MISSING`) when `@cosyte/hl7` is absent; and the
+  `loadHl7Peer` seam. Fail-safe by construction: a fatally-unparseable inbound never yields
+  a positive ACK (`AA`→`AE`, `CA`→`CE` via the peer's `downgradePositiveAck` — no divergent
+  copy of the pair), MSA-2 stays empty, and the result carries the new stable warning code
+  **`MLLP_ACK_INBOUND_UNPARSEABLE`** (public API; 12 codes total). A parseable inbound with
+  no MSH-10 rides the peer's own downgrade + `ACK_NO_CORRELATION_ID`. MSA-2 echoes the
+  inbound MSH-10 whole — delimiter-bearing vendor-quirk ids (`ID^X`) byte-exact, matching
+  this package's own raw-bytes client correlator (escape-bearing ids canonicalize; see the
+  docs' known limitations).
+- **Dev/test consumption of the unpublished `@cosyte/hl7` peer** via a vendored packed
+  tarball (`vendor/cosyte-hl7-0.0.0.tgz`, devDependency) so the accuracy suite runs against
+  the real peer in CI — an interim mechanism until the cross-repo consumption decision
+  lands; the runtime peer stays optional and is never bundled (`external` in tsup).
+
 ### Security
 
 - **Dev-dependency advisory remediation (no runtime impact — `@cosyte/mllp`
