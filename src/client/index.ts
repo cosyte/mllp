@@ -14,4 +14,10 @@ export {
   type RetryContext,
   type RetryStrategy,
 } from "./client.js";
-export { MllpTimeoutError, MllpBackpressureError, isTransientConnectionError } from "./error.js";
+export {
+  MllpTimeoutError,
+  MllpBackpressureError,
+  isTransientConnectionError,
+  isTlsVerificationErrorCode,
+  isTlsProtocolError,
+} from "./error.js";

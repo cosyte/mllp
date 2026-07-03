@@ -32,6 +32,17 @@ export type { FrameReaderOptions, EncoderOptions } from "./framing/index.js";
 // Phase 3: transport abstraction, connection FSM, and observability
 export type { Transport } from "./transport/index.js";
 export { NetTransport } from "./transport/index.js";
+
+// Phase 8: TLS / MLLPS hardening
+export { TlsTransport } from "./transport/index.js";
+export type { TlsOptions, ServerTlsOptions, ClientAuth, PemInput } from "./transport/index.js";
+export {
+  MLLP_TLS_VERIFY_DISABLED,
+  MLLP_BIND_ALL_INTERFACES,
+  type SecurityWarning,
+  type SecurityWarningCode,
+} from "./transport/index.js";
+
 export {
   Connection,
   type ConnectionOptions,
@@ -78,4 +89,6 @@ export {
   MllpTimeoutError,
   MllpBackpressureError,
   isTransientConnectionError,
+  isTlsVerificationErrorCode,
+  isTlsProtocolError,
 } from "./client/index.js";

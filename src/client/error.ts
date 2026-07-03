@@ -67,6 +67,107 @@ export class MllpTimeoutError extends Error {
 }
 
 /**
+ * Set of Node/OpenSSL error codes that indicate a **certificate-verification**
+ * failure (as opposed to some other TLS handshake failure) — untrusted chain,
+ * expired/not-yet-valid certificate, hostname mismatch, revocation, etc.
+ *
+ * Used by `MllpClient` (Phase 8) to classify a TLS connect failure's
+ * `connectionCause` as `'tls-verify'` (this set) vs `'tls-handshake'`
+ * (everything else observed before `'secureConnect'`). Exported so callers
+ * can apply the same classification to their own error handling.
+ *
+ * @example
+ * ```typescript
+ * import { isTlsVerificationErrorCode } from '@cosyte/mllp';
+ * if (isTlsVerificationErrorCode('CERT_HAS_EXPIRED')) {
+ *   // definitely a verification failure, not a protocol/cipher mismatch
+ * }
+ * ```
+ */
+export function isTlsVerificationErrorCode(code: string): boolean {
+  switch (code) {
+    case "UNABLE_TO_VERIFY_LEAF_SIGNATURE":
+    case "DEPTH_ZERO_SELF_SIGNED_CERT":
+    case "SELF_SIGNED_CERT_IN_CHAIN":
+    case "UNABLE_TO_GET_ISSUER_CERT":
+    case "UNABLE_TO_GET_ISSUER_CERT_LOCALLY":
+    case "CERT_HAS_EXPIRED":
+    case "CERT_NOT_YET_VALID":
+    case "CERT_REVOKED":
+    case "CERT_UNTRUSTED":
+    case "CERT_REJECTED":
+    case "CERT_SIGNATURE_FAILURE":
+    case "HOSTNAME_MISMATCH":
+    case "ERR_TLS_CERT_ALTNAME_INVALID":
+      return true;
+    default:
+      return code.startsWith("CERT_");
+  }
+}
+
+/**
+ * Detects **TLS-protocol-shaped** errors — failures of the TLS protocol
+ * itself, as opposed to plain TCP-level network failures (Phase 8).
+ *
+ * Apply this only to errors raised on a **TLS** connection; `MllpClient`
+ * does exactly that (the predicate is consulted only when `ClientOptions.tls`
+ * is set). The boundary:
+ *
+ * **TLS-protocol-shaped (`true`):**
+ * - `code` starting `ERR_SSL_` (Node's TLS alert codes, e.g.
+ *   `ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED` — a `clientAuth: 'MUST'`
+ *   server rejecting the client's certificate).
+ * - `code === 'EPROTO'` — on a TLS connection this is OpenSSL failing the
+ *   handshake (protocol version mismatch, no shared cipher, a TLS ≤1.2
+ *   mTLS rejection).
+ * - `message` containing `ssl` or `alert` (`/\bssl\b|\balert\b/i` — "SSL
+ *   routines", "tlsv13 alert certificate required", …). This message check
+ *   is a **heuristic backstop** over the code-based checks above, not a
+ *   precise boundary: it exists to catch OpenSSL errors that surface without
+ *   a usable `code`, and `MllpClient` consults it only on connections where
+ *   TLS is configured. An arbitrary non-TLS error whose message happens to
+ *   contain those words would also match.
+ *
+ * **NOT TLS-protocol-shaped (`false`) — plain network failures, which stay
+ * transient for the reconnect classifier:** `ECONNREFUSED`, `ETIMEDOUT`,
+ * `EHOSTUNREACH`, `ENETUNREACH`, `EPIPE`, and a plain `ECONNRESET` carrying
+ * no TLS alert context — a network blip during (or after) a handshake
+ * should still auto-heal.
+ *
+ * Certificate-**verification** failures are a separate class — see
+ * {@link isTlsVerificationErrorCode}; `MllpClient` checks that first and
+ * labels those `connectionCause: 'tls-verify'`.
+ *
+ * Why this matters: under TLS 1.3 (RFC 8446 §4.4.2) a `clientAuth: 'MUST'`
+ * server can reject the client's certificate AFTER the client's own
+ * `'secureConnect'` — the rejection then surfaces as a post-connect socket
+ * error. A misconfigured mTLS client must never auto-reconnect-loop against
+ * a server that will always reject it, so `MllpClient` classifies
+ * TLS-protocol-shaped errors as **permanent**.
+ *
+ * @example
+ * ```typescript
+ * import { isTlsProtocolError, MllpConnectionError } from '@cosyte/mllp';
+ * client.on('error', ({ error }) => {
+ *   if (error instanceof MllpConnectionError && isTlsProtocolError(error.cause)) {
+ *     // TLS protocol failure — a configuration problem, not a network blip.
+ *   }
+ * });
+ * ```
+ */
+export function isTlsProtocolError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === "string") {
+    if (code.startsWith("ERR_SSL_")) return true;
+    if (code === "EPROTO") return true;
+  }
+  const message = (err as { message?: unknown }).message;
+  if (typeof message === "string" && /\bssl\b|\balert\b/i.test(message)) return true;
+  return false;
+}
+
+/**
  * Classifies a connection error as transient (eligible for auto-reconnect)
  * or permanent (halts auto-reconnect, transitions to CLOSED).
  *
@@ -80,7 +181,15 @@ export class MllpTimeoutError extends Error {
  *   `ENETUNREACH`, `EPIPE` → **transient** (`true`)
  * - `CERT_*` and `UNABLE_TO_VERIFY_LEAF_SIGNATURE` /
  *   `DEPTH_ZERO_SELF_SIGNED_CERT` / `SELF_SIGNED_CERT_IN_CHAIN`
- *   → **permanent** (`false`)
+ *   (any {@link isTlsVerificationErrorCode} code) → **permanent** (`false`) —
+ *   never auto-reconnect-loop into a misconfigured or MITM'd endpoint (Phase 8).
+ * - `ERR_SSL_*` (Node TLS alert codes) → **permanent** (`false`) — a TLS
+ *   protocol failure such as a `clientAuth: 'MUST'` server rejecting the
+ *   client certificate recurs on every attempt (Phase 8). On TLS-configured
+ *   connections `MllpClient` additionally consults {@link isTlsProtocolError},
+ *   which also catches `EPROTO`/alert-bearing OpenSSL errors that this
+ *   generic classifier (which cannot know the connection was TLS) leaves
+ *   transient.
  * - non-Error / unknown / no-code → **transient** (`true`) — Postel's Law
  *   default. Reconnect attempts are bounded by `retryStrategy` and the
  *   30s backoff cap, so the default is safe.
@@ -114,10 +223,9 @@ export function isTransientConnectionError(err: unknown): boolean {
       return true;
     default:
       // TLS cert error codes (CERT_*) and *_VERIFY_* names → permanent.
-      if (code.startsWith("CERT_")) return false;
-      if (code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE") return false;
-      if (code === "DEPTH_ZERO_SELF_SIGNED_CERT") return false;
-      if (code === "SELF_SIGNED_CERT_IN_CHAIN") return false;
+      if (isTlsVerificationErrorCode(code)) return false;
+      // Node TLS alert codes → permanent (Phase 8; recur on every attempt).
+      if (code.startsWith("ERR_SSL_")) return false;
       // Default: transient (Postel's Law — be permissive about peer behavior).
       return true;
   }

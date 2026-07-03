@@ -14,6 +14,37 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Added
 
+- **TLS / MLLPS hardening (Phase 8).** `TlsTransport` (wraps `tls.TLSSocket`, maps `onConnect` to
+  `'secureConnect'`) joins `NetTransport` as a first-class `Transport`. Client: `ClientOptions.tls?:
+  TlsOptions | true` — verification **on by default**; the only opt-out is the loud
+  `allowUnverified` flag, which emits a frozen `'securityWarning'` (`MLLP_TLS_VERIFY_DISABLED`) +
+  `process.emitWarning` on every `secureConnect` (initial connect and every reconnect). Server:
+  `ServerOptions.tls?: ServerTlsOptions` with `clientAuth: 'NONE' | 'WANT' | 'MUST'` (ATNA ITI-19
+  mutual node authentication) — `'WANT'`/`'MUST'` surface a minimal, content-free `peerCertificate`
+  (`{ subjectCN, issuerCN, validTo, authorized }`) on the `'connection'` event; `authorized`
+  reports whether the chain was verified against `ca` (under `'WANT'` a certificate can be present
+  yet unverified — never authorize on `subjectCN` alone); `'MUST'` additionally rejects
+  unauthorized/missing client certificates. Failed handshakes (incl. rejected mTLS client certs)
+  never crash the server: a frozen `'tlsClientError'` event (`{ remoteAddress, remotePort, message,
+  code, timestamp }`) is emitted and the server keeps accepting other connections. Both `minVersion`
+  default to `'TLSv1.2'` — the IHE ATNA ITI-19 "TLS 1.2 Floor" (BCP195) floor (ITI TF-2 §3.19.6.2.3);
+  `'TLSv1.0'/'TLSv1.1'` are not expressible through this API. No bundled cipher list — `ciphers`
+  passes through to Node's OpenSSL defaults, which already include both ATNA-mandated ECDHE suites.
+  New typed failure modes on `MllpConnectionError.connectionCause`: `'tls-verify'` (certificate
+  verification failure) and `'tls-handshake'` (TLS-**protocol**-shaped pre-`secureConnect` failures
+  only — `ERR_SSL_*`, `EPROTO`, OpenSSL alert-bearing errors; pure TCP failures like `ECONNREFUSED`
+  carry no `connectionCause`, same as plaintext). Both classes are **permanent** for the reconnect
+  classifier — never auto-reconnect-looped into a misconfigured or MITM'd endpoint — while plain
+  network blips stay transient. TLS 1.3 honesty note (RFC 8446 §4.4.2): `connect()` resolving does
+  NOT guarantee a `clientAuth: 'MUST'` server accepted the client certificate — a rejection
+  surfaces moments later as a typed post-connect error classified permanent; ACK correlation
+  remains the delivery guarantee. New exported helpers `isTlsVerificationErrorCode(code)` and
+  `isTlsProtocolError(err)`. New stats fields: `ClientStats.tls`, `ServerStats.tls`,
+  `ServerStats.tlsClientErrorsTotal`. New root exports: `TlsTransport`, `TlsOptions`,
+  `ServerTlsOptions`, `ClientAuth`, `SecurityWarning`, `MLLP_TLS_VERIFY_DISABLED`,
+  `MLLP_BIND_ALL_INTERFACES`, `isTlsVerificationErrorCode`, `isTlsProtocolError`. See
+  `docs-content/tls.md` for the full guide (mTLS table, TLS-1.3 client-cert-rejection note,
+  known limitations).
 - **`@cosyte/mllp/ack-from-hl7` — real helpers (Phase 7); stub removed.** A thin transport
   adapter over `@cosyte/hl7`'s `buildAck` (hl7 owns ACK content + the HL7 control tables;
   this package frames and correlates — O-1 boundary). New surface: `buildMllpAck(inbound,
@@ -91,6 +122,21 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Changed
 
+- **Server bind-safety hardening (Phase 8; BREAKING pre-publish — free before first release).**
+  `MllpServer.listen()` / `createStarterServer` default bind host changed `'0.0.0.0'` →
+  `'127.0.0.1'`. Binding a wildcard host now requires `ServerOptions.allowWildcardBind: true` —
+  **enforced against the OS-normalized bound address**, not the requested spelling. Literal
+  wildcard spellings (`'0.0.0.0'`, `'::'`, `''`, `'::0'`, `'0:0:0:0:0:0:0:0'`,
+  `'::ffff:0.0.0.0'`) reject with a typed `MllpConnectionError` **before** binding;
+  resolver-only shorthands (`'0'`, `'0.0'`, `'0x0.0.0.0'`, …) are caught by a post-bind check
+  on `server.address()` — the just-bound server closes immediately and `listen()` rejects,
+  leaving no listening state and emitting no `'listening'` event. `listen()` is **single-flight**:
+  a call while the server is already listening, or while another `listen()` is in flight, rejects
+  with a typed `MllpConnectionError` instead of racing the first call's post-bind checks (a lost
+  race could otherwise record listening state for a bind that no longer exists); `close()` before
+  re-listening. When a wildcard host IS bound with the flag set, the server emits a one-time
+  frozen `'securityWarning'` (`MLLP_BIND_ALL_INTERFACES`) + `process.emitWarning`, keyed off the
+  bound address.
 - **Renamed the package `@cosyte/hl7-mllp` → `@cosyte/mllp`.** Not yet published, so no deprecation
   path is needed; all imports, the `/testing` and `/ack-from-hl7` subpaths, and the optional
   `@cosyte/hl7` peer dependency are unchanged.

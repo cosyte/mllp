@@ -20,16 +20,98 @@
  * @packageDocumentation
  */
 
-import { createServer as netCreateServer } from "node:net";
+import { createServer as netCreateServer, isIP, SocketAddress } from "node:net";
 import type { Server as NetServer, Socket } from "node:net";
+import { createServer as tlsCreateServer } from "node:tls";
+import type { TLSSocket } from "node:tls";
 import { EventEmitter } from "node:events";
 import { Connection } from "../connection/index.js";
 import { MllpConnectionError } from "../connection/index.js";
-import { NetTransport } from "../transport/index.js";
+import { NetTransport, TlsTransport } from "../transport/index.js";
+import type { ServerTlsOptions } from "../transport/tls-options.js";
+import { MLLP_BIND_ALL_INTERFACES, type SecurityWarning } from "../transport/security-warnings.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
 import { buildRawAck, resolveNackCode } from "./ack.js";
 import type { AckCode, NegativeAckCode } from "./ack.js";
+
+/**
+ * Wildcard (unspecified-address) bind detection for Phase 8 bind safety —
+ * hosts that bind ALL interfaces and therefore require
+ * `ServerOptions.allowWildcardBind: true`.
+ *
+ * NORMALIZES rather than string-matching:
+ * - `''` (empty string — Node binds all interfaces)
+ * - IPv4: every dotted-quad whose octets are all numerically zero (`'0.0.0.0'`)
+ * - IPv6: any spelling that canonicalizes (via `net.SocketAddress`) to `'::'`
+ *   (`'::0'`, `'0:0:0:0:0:0:0:0'`, …) or to the IPv4-mapped unspecified
+ *   address `'::ffff:0.0.0.0'` (also `'::ffff:0:0'`)
+ *
+ * Non-IP strings return `false` here — but that is NOT the enforcement
+ * boundary. getaddrinfo/inet_aton resolves shorthands this predicate cannot
+ * see as strings (`'0'`, `'0.0'`, `'0.0.0'`, `'00.0.0.0'`, `'0x0.0.0.0'`,
+ * wildcard-resolving hostnames), so `listen()` applies this predicate
+ * **twice**: pre-bind on the requested host string (fast path), and
+ * post-bind on the **OS-normalized bound address** from `server.address()`
+ * (always canonical `'0.0.0.0'`/`'::'`) — the authoritative check. The
+ * guarantee is enforced against the address actually bound, not the
+ * spelling requested.
+ */
+function isWildcardHost(host: string): boolean {
+  if (host === "") return true;
+  const family = isIP(host);
+  if (family === 4) {
+    return host.split(".").every((octet) => Number(octet) === 0);
+  }
+  if (family === 6) {
+    let canonical: string;
+    try {
+      canonical = new SocketAddress({ address: host, family: "ipv6" }).address;
+    } catch {
+      // isIP said valid IPv6 but SocketAddress refused — treat as non-wildcard
+      // (the bind itself will fail downstream with the OS error).
+      return false;
+    }
+    return canonical === "::" || canonical === "::ffff:0.0.0.0";
+  }
+  return false;
+}
+
+/**
+ * Minimal, content-free peer-certificate summary surfaced on the `'connection'`
+ * event when `ServerOptions.tls.clientAuth` is `'WANT'` or `'MUST'` (Phase 8,
+ * ATNA ITI-19 mutual authentication). Never the full certificate object —
+ * CN strings, the expiry date, and the verification outcome only.
+ *
+ * @example
+ * ```typescript
+ * server.on('connection', ({ peerCertificate }) => {
+ *   if (peerCertificate !== null && peerCertificate.authorized) {
+ *     logger.info({ cn: peerCertificate.subjectCN });
+ *   }
+ * });
+ * ```
+ */
+export interface PeerCertificateSummary {
+  /** Subject Common Name, or `null` if absent/unavailable. */
+  readonly subjectCN: string | null;
+  /** Issuer Common Name, or `null` if absent/unavailable. */
+  readonly issuerCN: string | null;
+  /** Certificate expiry (`notAfter`), or `null` if absent/unavailable. */
+  readonly validTo: string | null;
+  /**
+   * Whether the peer certificate chain was **verified** against
+   * {@link ServerTlsOptions.ca} (`socket.authorized === true`).
+   *
+   * ⚠️ Under `clientAuth: 'WANT'` a peer certificate may be present yet
+   * **unverified** — the connection is accepted regardless. Never make
+   * authorization decisions on `subjectCN` (or any other field of this
+   * summary) unless `authorized` is `true`. Under `clientAuth: 'MUST'` an
+   * unverified certificate never reaches this point (the handshake is
+   * rejected), so `authorized` is always `true` there.
+   */
+  readonly authorized: boolean;
+}
 
 /**
  * Metadata attached to each decoded MLLP message (SERVER-03).
@@ -109,6 +191,10 @@ export interface ServerStats {
   readonly acceptedTotal: number;
   /** Total connections closed since listen() (monotonically increasing). */
   readonly closedTotal: number;
+  /** Whether this server is configured for TLS (Phase 8). Mirrors `ServerOptions.tls` being set. */
+  readonly tls: boolean;
+  /** Total `'tlsClientError'` events (failed TLS handshakes, incl. rejected client certs) since listen() (Phase 8). */
+  readonly tlsClientErrorsTotal: number;
 }
 
 /**
@@ -204,6 +290,29 @@ export interface ServerOptions {
    * Default: 30 000 ms.
    */
   drainTimeoutMs?: number;
+
+  /**
+   * Enable TLS (MLLPS) for this server (Phase 8). When set, the server binds a
+   * `tls.Server` instead of a plain `net.Server`, consumes `'secureConnection'`
+   * (post-handshake sockets) instead of `'connection'`, and surfaces failed
+   * handshakes via the `'tlsClientError'` event rather than crashing.
+   *
+   * Spec anchor: IHE ATNA ITI-19 (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html).
+   *
+   * @default undefined (plaintext TCP)
+   */
+  tls?: ServerTlsOptions;
+
+  /**
+   * Opt-in required to bind a wildcard host (`'0.0.0.0'`, `'::'`, or `''`) —
+   * a bind-safety guardrail (Phase 8). Without this flag, `listen()` rejects
+   * BEFORE binding when given a wildcard host. When `true`, binding a
+   * wildcard host also emits a one-time `'securityWarning'`
+   * (`MLLP_BIND_ALL_INTERFACES`) at listen time.
+   *
+   * @default false
+   */
+  allowWildcardBind?: boolean;
 }
 
 /**
@@ -227,7 +336,11 @@ export interface ServerOptions {
 export interface StarterServerOptions extends ServerOptions {
   /** Port to listen on. */
   port: number;
-  /** Host to bind to (default '0.0.0.0'). */
+  /**
+   * Host to bind to. Default `'127.0.0.1'` (Phase 8 bind-safety hardening —
+   * was `'0.0.0.0'`; binding all interfaces now requires
+   * `ServerOptions.allowWildcardBind: true`).
+   */
   host?: string;
   /**
    * Register `process.once('SIGTERM')` and `process.once('SIGINT')` handlers that
@@ -266,6 +379,9 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * Public events: `'listening'`, `'connection'`, `'message'`, `'nack'`, `'error'`, `'close'`.
  * The `'nack'` event ({@link NackEvent}) fires when a commit-gated `autoAck: 'AA'` handler
  * fails and the server returns a negative ACK instead of `AA`.
+ * Phase 8 (TLS/MLLPS) adds two more: `'tlsClientError'` (a failed TLS handshake — the
+ * server logs it and keeps serving other connections) and `'securityWarning'` (loud,
+ * one-time notice when a wildcard host is bound via `allowWildcardBind: true`).
  * All event payloads are `Object.freeze()`'d before emission (SERVER-10).
  *
  * @example
@@ -285,12 +401,25 @@ export class MllpServer extends EventEmitter {
   private readonly _netServer: NetServer;
   private readonly _connections: Set<Connection> = new Set();
   private readonly _opts: ServerOptions;
+  /** `true` when `ServerOptions.tls` is set — `_netServer` is actually a `tls.Server`. */
+  private readonly _isTls: boolean;
 
   private _listening = false;
+  /** Phase 8 — single-flight guard: `true` while a `listen()` call is settling. */
+  private _listenInFlight = false;
+  /**
+   * Phase 8 — settle hook for an in-flight `listen()`. Non-null only while a
+   * `listen()` is in flight; invoked by `close()` so a close racing startup
+   * rejects the pending `listen()` (typed) instead of leaving it hung with
+   * the single-flight guard stuck. Cleared on every settle path.
+   */
+  private _pendingListenSettle: (() => void) | null = null;
   private _port: number | null = null;
   private _host: string | null = null;
   private _acceptedTotal = 0;
   private _closedTotal = 0;
+  /** Phase 8 — count of `'tlsClientError'` events since listen(). */
+  private _tlsClientErrorsTotal = 0;
 
   /**
    * Construct an MLLP server. Created idle; call `listen()` (or use
@@ -301,12 +430,55 @@ export class MllpServer extends EventEmitter {
   constructor(opts: ServerOptions) {
     super();
     this._opts = opts;
-    this._netServer = netCreateServer();
+    this._isTls = opts.tls !== undefined;
 
-    // Wire net.Server events
-    this._netServer.on("connection", (socket: Socket) => {
-      this._onSocketAccepted(socket);
-    });
+    if (opts.tls !== undefined) {
+      const tlsOpts: ServerTlsOptions = opts.tls;
+      const clientAuth = tlsOpts.clientAuth ?? "NONE";
+      const tlsServer = tlsCreateServer({
+        cert: tlsOpts.cert,
+        key: tlsOpts.key,
+        ...(tlsOpts.ca !== undefined ? { ca: tlsOpts.ca } : {}),
+        ...(tlsOpts.passphrase !== undefined ? { passphrase: tlsOpts.passphrase } : {}),
+        minVersion: tlsOpts.minVersion ?? "TLSv1.2",
+        ...(tlsOpts.maxVersion !== undefined ? { maxVersion: tlsOpts.maxVersion } : {}),
+        ...(tlsOpts.ciphers !== undefined ? { ciphers: tlsOpts.ciphers } : {}),
+        requestCert: clientAuth !== "NONE",
+        rejectUnauthorized: clientAuth === "MUST",
+      });
+      this._netServer = tlsServer;
+      tlsServer.on("secureConnection", (socket: TLSSocket) => {
+        this._onSocketAccepted(socket);
+      });
+      // 'tlsClientError' fires for failed handshakes (incl. rejected client
+      // certs under mTLS 'MUST'). The server MUST NOT crash and MUST keep
+      // accepting other connections — only the error's message/code and the
+      // remote address are surfaced; never payload bytes or a cert dump.
+      tlsServer.on("tlsClientError", (err: Error, socket: TLSSocket) => {
+        this._tlsClientErrorsTotal += 1;
+        const nodeErr = err as NodeJS.ErrnoException;
+        const event: {
+          remoteAddress: string | null;
+          remotePort: number | null;
+          message: string;
+          code: string | null;
+          timestamp: Date;
+        } = Object.freeze({
+          remoteAddress: socket.remoteAddress ?? null,
+          remotePort: socket.remotePort ?? null,
+          message: err.message,
+          code: typeof nodeErr.code === "string" ? nodeErr.code : null,
+          timestamp: new Date(),
+        });
+        this.emit("tlsClientError", event);
+      });
+    } else {
+      this._netServer = netCreateServer();
+      this._netServer.on("connection", (socket: Socket) => {
+        this._onSocketAccepted(socket);
+      });
+    }
+
     this._netServer.on("error", (err: Error) => {
       this.emit("error", err);
     });
@@ -318,12 +490,28 @@ export class MllpServer extends EventEmitter {
    * Resolves once the TCP socket is bound and emits `'listening'` with
    * `Object.freeze({ port: actualPort, host: actualHost })`.
    *
+   * **Single-flight:** one `listen()` per server lifecycle at a time. A call
+   * while the server is already listening — or while another `listen()` is
+   * still in flight — rejects with a typed `MllpConnectionError` (concurrent
+   * binds raced each other's post-bind safety checks). Call `close()` before
+   * re-listening; sequential `listen()` → `close()` → `listen()` is fine.
+   *
+   * **`close()` during an in-flight `listen()`** rejects that `listen()` with
+   * a typed `MllpConnectionError` (never a hang) and clears the single-flight
+   * guard — a subsequent `listen()` on the same server works. This makes
+   * `Symbol.asyncDispose` (which delegates to `close()`) safe even before a
+   * `listen()` has settled.
+   *
    * @param port - TCP port to bind. Use `0` to let the OS assign an ephemeral port.
    * @param hostOrOpts - Host string or object with `host` and optional `signal`.
+   *   Default host: `'127.0.0.1'` (Phase 8 bind-safety hardening). Wildcard hosts
+   *   are rejected unless `ServerOptions.allowWildcardBind: true` — literal
+   *   spellings pre-bind, resolver-only shorthands post-bind via the
+   *   OS-normalized bound address.
    *
    * @example
    * ```typescript
-   * await server.listen(2575);
+   * await server.listen(2575); // binds 127.0.0.1
    * await server.listen(0, '127.0.0.1');
    * await server.listen(0, { host: '127.0.0.1', signal: ac.signal });
    * ```
@@ -332,7 +520,7 @@ export class MllpServer extends EventEmitter {
     port: number,
     hostOrOpts?: string | { host?: string; signal?: AbortSignal },
   ): Promise<void> {
-    const host = typeof hostOrOpts === "string" ? hostOrOpts : (hostOrOpts?.host ?? "0.0.0.0");
+    const host = typeof hostOrOpts === "string" ? hostOrOpts : (hostOrOpts?.host ?? "127.0.0.1");
     const signal =
       typeof hostOrOpts === "object" && hostOrOpts !== null ? hostOrOpts.signal : undefined;
 
@@ -341,12 +529,56 @@ export class MllpServer extends EventEmitter {
       return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
+    // Phase 8 bind safety — SINGLE-FLIGHT guard. Two concurrent listen()
+    // calls on one server race each other's post-bind checks: the losing
+    // call's 'listening' handler can observe the winner's (or a just-closed)
+    // socket and record listening state for a bind that no longer exists —
+    // a green health check with nothing bound. One listen per lifecycle;
+    // close() before re-listening.
+    if (this._listening || this._listenInFlight) {
+      return Promise.reject(
+        new MllpConnectionError(
+          this._listening
+            ? "listen() rejected: server is already listening — call close() before re-listening"
+            : "listen() rejected: another listen() is already in flight on this server",
+          {
+            cause: new Error("listen already listening or in flight"),
+            phase: "connect",
+          },
+        ),
+      );
+    }
+
+    // Phase 8 bind safety, pre-bind FAST PATH: reject a literal wildcard
+    // host BEFORE binding unless the operator explicitly opted in via
+    // allowWildcardBind. isWildcardHost normalizes IP literals ('::0',
+    // '0:0:0:0:0:0:0:0', '::ffff:0.0.0.0' …); getaddrinfo shorthands it
+    // cannot see as strings ('0', '0x0.0.0.0', …) are caught by the
+    // authoritative POST-BIND check in onListening below.
+    if (isWildcardHost(host) && this._opts.allowWildcardBind !== true) {
+      return Promise.reject(
+        new MllpConnectionError(
+          `refusing to bind wildcard host '${host}' — set ServerOptions.allowWildcardBind: true to bind all interfaces`,
+          {
+            cause: new Error("wildcard bind requires allowWildcardBind"),
+            phase: "connect",
+          },
+        ),
+      );
+    }
+
+    this._listenInFlight = true;
+
     return new Promise<void>((resolve, reject) => {
       let aborted = false;
 
       const abortHandler = () => {
         aborted = true;
+        this._pendingListenSettle = null;
+        this._netServer.removeListener("listening", onListening);
+        this._netServer.removeListener("error", onError);
         this._netServer.close();
+        this._listenInFlight = false;
         reject(new DOMException("Aborted", "AbortError"));
       };
 
@@ -354,25 +586,132 @@ export class MllpServer extends EventEmitter {
         signal.addEventListener("abort", abortHandler, { once: true });
       }
 
+      // close() (or Symbol.asyncDispose) racing an in-flight listen():
+      // net.Server.close() nulls the handle, and the pending 'listening'
+      // emission is guarded on the handle — so NEITHER 'listening' NOR
+      // 'error' ever fires for the in-flight bind. Without a settle path the
+      // promise hangs forever and every later listen() rejects "in flight".
+      // close() settles the pending listen PROACTIVELY through this hook.
+      // (Deliberately NOT a netServer once('close') listener: the 'close'
+      // event from a PREVIOUS lifecycle's close() is delivered
+      // asynchronously and can land after a NEW listen() has registered its
+      // listeners, spuriously rejecting the fresh attempt. The netServer is
+      // private, so our own close() — and the settle paths below, which
+      // settle themselves — are the only close initiators.)
+      const settlePendingListen = () => {
+        if (aborted) return;
+        this._pendingListenSettle = null;
+        signal?.removeEventListener("abort", abortHandler);
+        this._netServer.removeListener("listening", onListening);
+        this._netServer.removeListener("error", onError);
+        this._listenInFlight = false;
+        reject(
+          new MllpConnectionError(
+            "listen() failed: server was closed while listen() was in flight",
+            {
+              cause: new Error("close() during in-flight listen()"),
+              phase: "connect",
+            },
+          ),
+        );
+      };
+      this._pendingListenSettle = settlePendingListen;
+
       const onListening = () => {
         if (aborted) return;
         signal?.removeEventListener("abort", abortHandler);
+        // Listener hygiene: this promise is settling on this path (success,
+        // address-null reject, or post-bind wildcard reject) — drop the
+        // error listener and the close()-settle hook so nothing can
+        // re-invoke a settled promise.
+        this._netServer.removeListener("error", onError);
+        this._pendingListenSettle = null;
 
         const addr = this._netServer.address();
-        const actualPort = typeof addr === "object" && addr !== null ? addr.port : port;
-        const actualHost = typeof addr === "object" && addr !== null ? addr.address : host;
+        // address() is always an AddressInfo object for a bound TCP server;
+        // null (or a string — pipe/IPC servers, which this class never
+        // creates) means the server was closed out from under this bind.
+        // NEVER fall back to the requested port/host strings — that records
+        // listening state for a bind that does not exist. The single-flight
+        // guard above should make this branch unreachable; it stays as
+        // defense-in-depth.
+        if (addr === null || typeof addr === "string") {
+          this._netServer.close();
+          this._listenInFlight = false;
+          reject(
+            new MllpConnectionError(
+              "listen() failed: server was closed before the bind completed",
+              {
+                cause: new Error("server.address() returned no TCP address"),
+                phase: "connect",
+              },
+            ),
+          );
+          return;
+        }
+        const actualPort = addr.port;
+        const actualHost = addr.address;
+
+        // Phase 8 bind safety — POST-BIND enforcement against the
+        // OS-NORMALIZED bound address. getaddrinfo/inet_aton resolves
+        // shorthands the pre-bind string check cannot see ('0', '0.0',
+        // '0.0.0', '00.0.0.0', '0x0.0.0.0', hostnames that resolve to the
+        // unspecified address, …); the kernel-reported address is canonical
+        // ('0.0.0.0' / '::'), so this check is authoritative. On violation:
+        // close the just-bound server immediately and reject — no listening
+        // state is recorded and no 'listening' event is emitted.
+        if (isWildcardHost(actualHost) && this._opts.allowWildcardBind !== true) {
+          this._netServer.close();
+          this._listenInFlight = false;
+          reject(
+            new MllpConnectionError(
+              `refusing to bind wildcard host '${host}' (bound address '${actualHost}') — ` +
+                "set ServerOptions.allowWildcardBind: true to bind all interfaces",
+              {
+                cause: new Error("wildcard bind requires allowWildcardBind"),
+                phase: "connect",
+              },
+            ),
+          );
+          return;
+        }
 
         this._listening = true;
         this._port = actualPort;
         this._host = actualHost;
 
         this.emit("listening", Object.freeze({ port: actualPort, host: actualHost }));
+
+        // Phase 8 — loud, one-time notice when a wildcard host is actually
+        // bound (keyed off the OS-normalized actualHost so shorthand
+        // spellings warn too; single emission site).
+        if (isWildcardHost(actualHost)) {
+          const message =
+            `MLLP server is bound to ALL network interfaces (host='${actualHost}') — ` +
+            "set a specific bind address unless this is intentional.";
+          const warning: SecurityWarning = Object.freeze({
+            code: MLLP_BIND_ALL_INTERFACES,
+            message,
+            host: actualHost,
+            port: actualPort,
+            timestamp: new Date(),
+          });
+          this.emit("securityWarning", warning);
+          process.emitWarning(message, { code: MLLP_BIND_ALL_INTERFACES });
+        }
+
+        this._listenInFlight = false;
         resolve();
       };
 
       const onError = (err: Error) => {
         if (aborted) return;
         signal?.removeEventListener("abort", abortHandler);
+        // Listener hygiene mirror: drop the pending 'listening' listener and
+        // the close()-settle hook too.
+        this._netServer.removeListener("listening", onListening);
+        this._pendingListenSettle = null;
+        this._listenInFlight = false;
         reject(err);
       };
 
@@ -391,6 +730,12 @@ export class MllpServer extends EventEmitter {
    * 3. Calls `_drainAll(drainTimeoutMs)` — Promise.all + side-effect setTimeout
    *    that force-destroys stragglers after the drain window
    *
+   * Calling `close()` while a `listen()` is still in flight proactively
+   * settles that `listen()` with a typed `MllpConnectionError` rejection
+   * and clears the single-flight guard — the server is immediately
+   * re-listenable. `Symbol.asyncDispose` (which delegates here) is
+   * therefore safe before `listen()` settles.
+   *
    * @param opts.drainTimeoutMs - Override drain timeout (default: `opts.drainTimeoutMs ?? 30_000`).
    * @param opts.signal - AbortSignal to cancel the close operation. On abort, all
    *   active connections are destroyed and the promise rejects with AbortError.
@@ -407,6 +752,15 @@ export class MllpServer extends EventEmitter {
     if (signal?.aborted) {
       return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
+
+    // Phase 8 — settle an in-flight listen() FIRST (typed rejection). A
+    // close racing startup (SIGTERM handler, test teardown, an `await using`
+    // scope exiting before listen() was awaited) would otherwise leave the
+    // listen() promise hung forever: net.Server.close() nulls the handle and
+    // the pending 'listening' emission is handle-guarded, so neither
+    // 'listening' nor 'error' ever fires for the in-flight bind — and the
+    // stuck single-flight guard would reject every later listen().
+    this._pendingListenSettle?.();
 
     // Stop accepting new connections
     this._netServer.close();
@@ -528,6 +882,8 @@ export class MllpServer extends EventEmitter {
       totalBytesOut,
       acceptedTotal: this._acceptedTotal,
       closedTotal: this._closedTotal,
+      tls: this._isTls,
+      tlsClientErrorsTotal: this._tlsClientErrorsTotal,
     };
   }
 
@@ -535,14 +891,15 @@ export class MllpServer extends EventEmitter {
   // Private: per-socket setup
   // ---------------------------------------------------------------------------
 
-  private _onSocketAccepted(socket: Socket): void {
+  private _onSocketAccepted(socket: Socket | TLSSocket): void {
     // TCP keepalive — must be set on the raw socket BEFORE passing to NetTransport (D-10)
     if (this._opts.keepaliveIntervalMs !== undefined) {
       socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
     }
 
-    // Phase 6: wire TlsTransport here when opts.tls is provided
-    const transport = new NetTransport(socket);
+    const transport = this._isTls
+      ? new TlsTransport(socket as TLSSocket)
+      : new NetTransport(socket);
     const mergedFraming: Omit<FrameReaderOptions, "onFrame" | "onWarning"> = {
       ...SERVER_DEFAULT_FRAMING,
       ...(this._opts.framing ?? {}),
@@ -647,6 +1004,13 @@ export class MllpServer extends EventEmitter {
       },
     );
 
+    // Phase 8 — surface a minimal, content-free peer-certificate summary
+    // (WANT/MUST only) on the 'connection' event. Never the full cert object.
+    const peerCertificate: PeerCertificateSummary | null =
+      this._isTls && (this._opts.tls?.clientAuth ?? "NONE") !== "NONE"
+        ? this._extractPeerCertificateSummary(socket as TLSSocket)
+        : null;
+
     // Emit server-level 'connection' event with frozen payload
     this.emit(
       "connection",
@@ -654,8 +1018,35 @@ export class MllpServer extends EventEmitter {
         connectionId: conn.connectionId,
         remoteAddress: socket.remoteAddress ?? null,
         remotePort: socket.remotePort ?? null,
+        peerCertificate,
       }),
     );
+  }
+
+  /**
+   * Extract a minimal, content-free peer-certificate summary (Phase 8, ATNA
+   * ITI-19 mutual authentication) — CN strings, expiry, and the verification
+   * outcome (`authorized`) only; never the full certificate object. Returns
+   * `null` when no peer certificate was presented (e.g. `clientAuth: 'WANT'`
+   * with no client cert).
+   */
+  private _extractPeerCertificateSummary(socket: TLSSocket): PeerCertificateSummary | null {
+    const cert = socket.getPeerCertificate();
+    if (cert === undefined || cert === null || Object.keys(cert).length === 0) {
+      return null;
+    }
+    const asCn = (value: string | string[] | undefined): string | null => {
+      if (value === undefined) return null;
+      return Array.isArray(value) ? (value[0] ?? null) : value;
+    };
+    return Object.freeze({
+      subjectCN: asCn(cert.subject?.CN),
+      issuerCN: asCn(cert.issuer?.CN),
+      validTo: cert.valid_to ?? null,
+      // Verification outcome — under 'WANT' a certificate can be present yet
+      // UNVERIFIED (see PeerCertificateSummary.authorized JSDoc).
+      authorized: socket.authorized === true,
+    });
   }
 
   /**
@@ -830,6 +1221,6 @@ export async function createStarterServer(opts: StarterServerOptions): Promise<M
     });
   }
 
-  await server.listen(opts.port, opts.host ?? "0.0.0.0");
+  await server.listen(opts.port, opts.host ?? "127.0.0.1");
   return server;
 }

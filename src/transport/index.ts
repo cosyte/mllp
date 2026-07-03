@@ -3,7 +3,7 @@
  *
  * All transports implement this callback-bag contract. Implementations:
  * - `NetTransport` — wraps `net.Socket` (production TCP)
- * - `TlsTransport` — wraps `tls.TLSSocket` (Phase 6)
+ * - `TlsTransport` — wraps `tls.TLSSocket` (Phase 8 — MLLPS / TLS hardening)
  * - `InMemoryTransport` — deterministic test double (`@cosyte/mllp/testing`)
  *
  * @example
@@ -20,6 +20,14 @@
  */
 
 export { NetTransport } from "./net-transport.js";
+export { TlsTransport } from "./tls-transport.js";
+export type { TlsOptions, ServerTlsOptions, ClientAuth, PemInput } from "./tls-options.js";
+export {
+  MLLP_TLS_VERIFY_DISABLED,
+  MLLP_BIND_ALL_INTERFACES,
+  type SecurityWarning,
+  type SecurityWarningCode,
+} from "./security-warnings.js";
 
 /**
  * Pure callback-bag transport abstraction.

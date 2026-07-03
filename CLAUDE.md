@@ -8,10 +8,12 @@
 
 ## Status
 
-- **Phase 7 of 11** — client/server/framing/connection/transport shipped; Phase 6 (fail-safe ACK
-  commit contract) and Phase 7 (`ack-from-hl7` — real helpers over `@cosyte/hl7`'s `buildAck`,
-  stub removed) done. Next: Phase 8 TLS/MLLPS hardening (harness exists via `selfsigned`/`certs:gen`,
-  tests pending). For dev/test the unpublished `@cosyte/hl7` peer is consumed as a **vendored packed
+- **Phase 8 of 11** — client/server/framing/connection/transport shipped; Phase 6 (fail-safe ACK
+  commit contract), Phase 7 (`ack-from-hl7` — real helpers over `@cosyte/hl7`'s `buildAck`, stub
+  removed), and Phase 8 (TLS/MLLPS hardening — `TlsTransport`, mutual TLS via `ClientAuth`, the
+  `'securityWarning'`/`'tlsClientError'` events, bind-safety default `127.0.0.1` + gated wildcard
+  bind) done. Next: see `operations/roadmaps/mllp.md` for what follows Phase 8. For dev/test the
+  unpublished `@cosyte/hl7` peer is consumed as a **vendored packed
   tarball** (`vendor/cosyte-hl7-0.0.0.tgz`, a devDependency) — an interim mechanism until the
   cross-repo consumption decision (umbrella `PW-5` gate) lands; refresh it by re-running
   `pnpm -C ../hl7 build && pnpm -C ../hl7 pack --out ../mllp/vendor/cosyte-hl7-0.0.0.tgz`
@@ -55,7 +57,10 @@ summary.
 - **`Buffer.prototype.slice()` is forbidden** in `src/framing|server|client` (enforced by the local `no-restricted-syntax` ESLint rule in `eslint.config.js`). Use `.subarray()` — `.slice()` copies in modern Node.
 - **Postel's Law:** decoder is liberal (tolerance opt-ins + warnings with stable codes + byte offsets), encoder is strict (always emits canonical `VT + payload + FS + CR`).
 - **Stable warning codes** are a public API. Renaming or removing one is a breaking change. Codes: `MLLP_MISSING_LEADING_VT`, `MLLP_FS_WITHOUT_CR`, `MLLP_LF_AFTER_FS`, `MLLP_LEADING_WHITESPACE`, `MLLP_TRAILING_BYTES`, `MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`, `MLLP_EMPTY_PAYLOAD`, `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_UNMATCHED_CONTROL_ID`, `MLLP_ACK_AFTER_TIMEOUT`, `MLLP_ACK_INBOUND_UNPARSEABLE` (12 total; the last is `ack-from-hl7`-scoped — emitted in `MllpAck.warnings`, not through the framing registry).
+- **Stable security-warning codes** (Phase 8, separate from the framing `WarningCode` union above) are also a public API: `MLLP_TLS_VERIFY_DISABLED` (client, every `secureConnect` while `tls.allowUnverified: true`) and `MLLP_BIND_ALL_INTERFACES` (server, once at `listen()` when a wildcard host is bound via `allowWildcardBind: true`). Both are emitted as a frozen `'securityWarning'` event AND via `process.emitWarning`.
+- **`MllpConnectionError.connectionCause`** (public union) gained two Phase 8 values: `'tls-verify'` (certificate-verification failure) and `'tls-handshake'` (TLS-**protocol**-shaped pre-`secureConnect` failures only — `ERR_SSL_*`/`EPROTO`/OpenSSL alert-bearing, per the exported `isTlsProtocolError`; pure TCP failures on a TLS connection carry no `connectionCause`). Both classes are classified **permanent** for the reconnect classifier — never auto-reconnect-looped; plain network blips stay transient. TLS 1.3 caveat (RFC 8446 §4.4.2): `connect()` resolving does not guarantee a `clientAuth: 'MUST'` server accepted the client cert — a rejection surfaces as a typed permanent post-connect error; ACK correlation is the delivery guarantee. Existing values: `'fifo-unsafe'`, `'in-flight-orphan'`.
 - **Explicit 6-state connection machine**, never socket flags. `.state` is one of exactly `'CONNECTING' | 'CONNECTED' | 'DRAINING' | 'RECONNECTING' | 'DISCONNECTED' | 'CLOSED'`; transitions emit `'stateChange'` with `{ from, to, reason }`. `RECONNECTING` hosts auto-reconnect backoff; `CLOSED` is terminal.
+- **Server bind-safety (Phase 8, BREAKING pre-publish).** `MllpServer.listen()` / `createStarterServer` default host is `'127.0.0.1'` (was `'0.0.0.0'`). Binding a wildcard host requires `ServerOptions.allowWildcardBind: true` — **enforced against the OS-normalized bound address**: literal spellings (`'0.0.0.0'`, `'::'`, `''`, `'::0'`, `'0:0:0:0:0:0:0:0'`, `'::ffff:0.0.0.0'`) reject pre-bind; resolver-only shorthands (`'0'`, `'0.0'`, `'0x0.0.0.0'`, …) are caught post-bind via `server.address()` (the just-bound server closes and `listen()` rejects; no listening state, no `'listening'` event). `listen()` is **single-flight**: concurrent calls (or a call while already listening) reject with a typed error instead of racing the post-bind checks; `close()` before re-listening.
 - **Bounded accumulators.** `FrameReader.maxFrameSizeBytes` defaults to 16 MB; overflow throws `MLLP_FRAME_TOO_LARGE`. Never grow buffers unbounded.
 - **`AbortSignal` on every awaitable, `Symbol.asyncDispose` on every closeable.** 2026 Node baseline; not retrofittable without breaking change.
 - **Frozen event payloads.** Every event object emitted publicly is `Object.freeze`'d. Subscribers cannot mutate shared state.
