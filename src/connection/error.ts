@@ -38,6 +38,25 @@ export type ConnectionErrorPhase = "connect" | "send" | "receive" | "close" | "r
  *   ACK timer started) was rejected during reconnect in FIFO mode because
  *   the at-most-once delivery contract cannot be preserved across a
  *   socket drop (D-08, healthcare medication/orders semantics).
+ * - `'tls-verify'` (Phase 8) — The TLS handshake failed certificate
+ *   verification (untrusted chain, expired/not-yet-valid cert, hostname
+ *   mismatch, revocation, …). See {@link isTlsVerificationErrorCode} for the
+ *   exact underlying error codes. Classified **permanent** by
+ *   `isTransientConnectionError` — never auto-reconnect-looped into a
+ *   misconfigured or MITM'd endpoint.
+ * - `'tls-handshake'` (Phase 8) — A TLS-**protocol**-shaped handshake
+ *   failure observed before `'secureConnect'`: `ERR_SSL_*` codes, `EPROTO`,
+ *   or an OpenSSL alert-bearing error (protocol version mismatch, no shared
+ *   cipher, a required mutual-TLS client certificate rejected by the
+ *   server, …). See `isTlsProtocolError` for the boundary. Pure TCP-level
+ *   failures (`ECONNREFUSED`, `ETIMEDOUT`, …) on a TLS-configured
+ *   connection carry **no** `connectionCause` — the same shape as plaintext.
+ *
+ * Scope note: the `'tls-verify'`/`'tls-handshake'` values are attached on
+ * the client's **initial `connect()` path**. Failures on the auto-reconnect
+ * path surface as raw socket errors — their transient/permanent
+ * classification still applies, but they do not (yet) carry a
+ * `connectionCause`.
  *
  * @example
  * ```typescript
@@ -47,7 +66,11 @@ export type ConnectionErrorPhase = "connect" | "send" | "receive" | "close" | "r
  * }
  * ```
  */
-export type ConnectionErrorCause = "fifo-unsafe" | "in-flight-orphan";
+export type ConnectionErrorCause =
+  | "fifo-unsafe"
+  | "in-flight-orphan"
+  | "tls-verify"
+  | "tls-handshake";
 
 /**
  * Thrown (or emitted via `onError`) for socket-layer problems such as

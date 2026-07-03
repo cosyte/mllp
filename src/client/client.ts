@@ -27,17 +27,28 @@
 
 import { createConnection } from "node:net";
 import type { Socket } from "node:net";
+import { connect as tlsConnect } from "node:tls";
+import type { TLSSocket } from "node:tls";
 import { EventEmitter } from "node:events";
 import { Connection } from "../connection/index.js";
 import type { ConnectionState, StateChangeEvent } from "../connection/index.js";
 import { MllpConnectionError } from "../connection/index.js";
-import { NetTransport } from "../transport/index.js";
+import { NetTransport, TlsTransport } from "../transport/index.js";
+import type { Transport } from "../transport/index.js";
+import type { TlsOptions } from "../transport/tls-options.js";
+import { MLLP_TLS_VERIFY_DISABLED, type SecurityWarning } from "../transport/security-warnings.js";
 import { encodeFrame } from "../framing/index.js";
 import { MllpFramingError } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning, WarningCode } from "../framing/index.js";
 import { Correlator, extractMshControlId, extractMsaControlId } from "./correlator.js";
 import type { PendingAck } from "./correlator.js";
-import { MllpTimeoutError, MllpBackpressureError, isTransientConnectionError } from "./error.js";
+import {
+  MllpTimeoutError,
+  MllpBackpressureError,
+  isTransientConnectionError,
+  isTlsVerificationErrorCode,
+  isTlsProtocolError,
+} from "./error.js";
 
 /**
  * Module-level "never aborts" sentinel for `RetryContext.signal` (D-18, W-07).
@@ -230,6 +241,17 @@ export interface ClientOptions {
    * @default undefined (off)
    */
   readonly deadPeerTimeoutMs?: number;
+  /**
+   * Enable TLS (MLLPS) for this connection (Phase 8). `true` enables TLS with
+   * all defaults — including certificate verification **on**. Pass a
+   * {@link TlsOptions} object to customize (`ca`/`cert`/`key`, minimum
+   * version, ciphers, `allowUnverified`, …).
+   *
+   * Spec anchor: IHE ATNA ITI-19 (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html).
+   *
+   * @default undefined (plaintext TCP)
+   */
+  readonly tls?: TlsOptions | true;
 }
 
 /**
@@ -284,6 +306,8 @@ export interface ClientStats {
   readonly lastConnectedAt: number | null;
   /** Epoch ms of the most recent successful ACK. `null` until first ACK. */
   readonly lastAckAt: number | null;
+  /** Whether this client is configured for TLS (Phase 8). Mirrors `ClientOptions.tls` being set. */
+  readonly tls: boolean;
 }
 
 /**
@@ -298,6 +322,9 @@ export interface ClientStats {
  * - `'close'` — `{ connectionId }` once the FSM enters terminal `CLOSED`
  * - `'message'` — `{ payload, connectionId, byteOffset, warnings }` for every inbound frame
  * - `'warning'` — `MllpWarning` enriched with `connectionId` from the Connection layer
+ * - `'securityWarning'` — `SecurityWarning` (Phase 8). Emitted on every successful
+ *   `secureConnect` (initial + every reconnect) when `tls.allowUnverified` is `true`
+ *   — code `MLLP_TLS_VERIFY_DISABLED`. Also mirrored to `process.emitWarning`.
  * - `'error'` — re-emitted from Connection. Guarded by `listenerCount('error') > 0` so
  *   absence of a listener does NOT crash the process (server precedent).
  *
@@ -447,14 +474,35 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Open a TCP connection to the configured `host:port` and attach a Phase 3
-   * {@link Connection} to it. Resolves once the FSM enters `CONNECTED`.
+   * Open a TCP (or TLS — Phase 8) connection to the configured `host:port`
+   * and attach a Phase 3 {@link Connection} to it. Resolves once the FSM
+   * enters `CONNECTED` — for TLS, on `'secureConnect'` (handshake complete,
+   * including certificate verification when it is on).
    *
    * Rejects with:
    * - `DOMException('Aborted', 'AbortError')` if `signal` is provided and aborts
    *   before the connect resolves.
    * - `MllpConnectionError({ phase: 'connect' })` if the underlying socket emits
    *   `error` before connecting, OR if the client is already connecting/connected.
+   *   TLS failures carry a `connectionCause`: `'tls-verify'` for certificate
+   *   verification failures, `'tls-handshake'` for TLS-protocol-shaped failures
+   *   ({@link isTlsProtocolError}); pure TCP failures carry none.
+   *
+   * **Dual failure signal on initial connect:** the Connection's transport
+   * error handler is attached before this promise's own error listener, so a
+   * pre-connect socket error produces BOTH the promise rejection AND a
+   * client `'error'` event (when an `'error'` listener is attached). Handle
+   * whichever fits your flow; they describe the same underlying failure.
+   *
+   * **TLS 1.3 + mutual TLS caveat (RFC 8446 §4.4.2):** `connect()` resolving
+   * does NOT guarantee that a `clientAuth: 'MUST'` server accepted your
+   * client certificate. Under TLS 1.3 the client's handshake — and its
+   * `'secureConnect'` — can complete before the server finishes validating
+   * the certificate; a rejection then surfaces moments later as a typed
+   * post-connect error (`'error'` event with an `ERR_SSL_*`/alert cause,
+   * classified **permanent** — no auto-reconnect loop). ACK correlation via
+   * {@link MllpClient.send} remains the delivery guarantee: no send resolves
+   * without its ACK, so a rejected session can never silently "deliver".
    *
    * @example
    * ```typescript
@@ -496,11 +544,7 @@ export class MllpClient extends EventEmitter {
     return new Promise<void>((resolve, reject) => {
       let aborted = false;
 
-      // Phase 6: wire TlsTransport here when opts.tls is provided
-      const socket = createConnection({
-        host: this._opts.host,
-        port: this._opts.port,
-      });
+      const { socket, transport } = this._createSocketAndTransport();
       // Plan 05 — TCP keepalive set on the raw socket BEFORE NetTransport
       // wrap (CLIENT-08, D-11/A3 — mirrors Phase 4 server). OS-level
       // half-open detection. No JS-side timer (W-03).
@@ -509,7 +553,6 @@ export class MllpClient extends EventEmitter {
       }
       this._socket = socket;
 
-      const transport = new NetTransport(socket);
       const connOpts =
         this._opts.framing !== undefined
           ? { transport, framing: this._opts.framing }
@@ -520,11 +563,13 @@ export class MllpClient extends EventEmitter {
       const conn = new Connection(connOpts);
       this._attachConnection(conn);
 
+      const connectEventName = this._opts.tls !== undefined ? "secureConnect" : "connect";
+
       const cleanup = (): void => {
         if (signal !== undefined) {
           signal.removeEventListener("abort", abortHandler);
         }
-        socket.removeListener("connect", onSocketConnect);
+        socket.removeListener(connectEventName, onSocketConnect);
         socket.removeListener("error", onSocketError);
       };
 
@@ -545,8 +590,16 @@ export class MllpClient extends EventEmitter {
 
       const onSocketConnect = (): void => {
         if (aborted) return;
+        // TLS and plaintext behave identically here: 'secureConnect' (TLS)
+        // or 'connect' (plaintext) immediately arms the Connection and
+        // resolves. Deferring notifyConnect for TLS was tried and removed —
+        // any delay leaves the Connection in CONNECTING while post-handshake
+        // frames arrive, and Connection discards frames outside
+        // CONNECTED/DRAINING (a silent inbound-frame drop). See the
+        // TLS 1.3 note in the method JSDoc for what this means for mTLS.
         cleanup();
         conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
+        this._emitInsecureWarningIfNeeded();
         resolve();
       };
 
@@ -556,15 +609,113 @@ export class MllpClient extends EventEmitter {
         // Surface the OS error wrapped in MllpConnectionError (Connection's
         // _onTransportError handles the same wrap once attached, but the
         // socket's 'error' may arrive before NetTransport hands it off).
-        reject(new MllpConnectionError(err.message, { cause: err, phase: "connect" }));
+        reject(this._wrapConnectError(err, "connect"));
       };
 
       if (signal !== undefined) {
         signal.addEventListener("abort", abortHandler, { once: true });
       }
-      socket.once("connect", onSocketConnect);
+      socket.once(connectEventName, onSocketConnect);
       socket.once("error", onSocketError);
     });
+  }
+
+  /**
+   * Build the raw socket + `Transport` pair for a connect / reconnect attempt.
+   *
+   * Plaintext (`ClientOptions.tls` unset): a `net.Socket` wrapped in
+   * `NetTransport`. TLS (Phase 8): a `tls.TLSSocket` wrapped in
+   * `TlsTransport` — verification defaults **on**
+   * (`rejectUnauthorized: !allowUnverified`), floor `minVersion: 'TLSv1.2'`
+   * (the IHE ATNA ITI-19 BCP195 floor), `servername` defaulting to
+   * `ClientOptions.host`.
+   */
+  private _createSocketAndTransport(): {
+    socket: Socket | TLSSocket;
+    transport: Transport;
+  } {
+    const tlsOpt = this._opts.tls;
+    if (tlsOpt === undefined) {
+      const socket = createConnection({ host: this._opts.host, port: this._opts.port });
+      return { socket, transport: new NetTransport(socket) };
+    }
+    const tlsOpts: TlsOptions = tlsOpt === true ? {} : tlsOpt;
+    const socket = tlsConnect({
+      host: this._opts.host,
+      port: this._opts.port,
+      servername: tlsOpts.servername ?? this._opts.host,
+      ...(tlsOpts.ca !== undefined ? { ca: tlsOpts.ca } : {}),
+      ...(tlsOpts.cert !== undefined ? { cert: tlsOpts.cert } : {}),
+      ...(tlsOpts.key !== undefined ? { key: tlsOpts.key } : {}),
+      ...(tlsOpts.passphrase !== undefined ? { passphrase: tlsOpts.passphrase } : {}),
+      minVersion: tlsOpts.minVersion ?? "TLSv1.2",
+      ...(tlsOpts.maxVersion !== undefined ? { maxVersion: tlsOpts.maxVersion } : {}),
+      ...(tlsOpts.ciphers !== undefined ? { ciphers: tlsOpts.ciphers } : {}),
+      rejectUnauthorized: tlsOpts.allowUnverified !== true,
+    });
+    return { socket, transport: new TlsTransport(socket) };
+  }
+
+  /**
+   * Wrap a connect-phase socket error as `MllpConnectionError`, classifying
+   * TLS failures (Phase 8) into the additive `connectionCause`:
+   *
+   * - `'tls-verify'` — certificate-verification failures
+   *   ({@link isTlsVerificationErrorCode}).
+   * - `'tls-handshake'` — TLS-**protocol**-shaped failures only
+   *   ({@link isTlsProtocolError}): `ERR_SSL_*`, `EPROTO`, OpenSSL
+   *   alert-bearing errors.
+   * - **No `connectionCause`** — pure TCP-level failures (`ECONNREFUSED`,
+   *   `ETIMEDOUT`, …) even on a TLS-configured connection; these carry the
+   *   same shape as plaintext connect failures.
+   */
+  private _wrapConnectError(err: Error, phase: "connect" | "reconnect"): MllpConnectionError {
+    if (this._opts.tls === undefined) {
+      return new MllpConnectionError(err.message, { cause: err, phase });
+    }
+    const code = (err as NodeJS.ErrnoException).code;
+    if (typeof code === "string" && isTlsVerificationErrorCode(code)) {
+      return new MllpConnectionError(err.message, {
+        cause: err,
+        phase,
+        connectionCause: "tls-verify",
+      });
+    }
+    if (isTlsProtocolError(err)) {
+      return new MllpConnectionError(err.message, {
+        cause: err,
+        phase,
+        connectionCause: "tls-handshake",
+      });
+    }
+    // Pure TCP-level failure on a TLS-configured connection — same shape as
+    // a plaintext connect failure; no TLS-specific connectionCause.
+    return new MllpConnectionError(err.message, { cause: err, phase });
+  }
+
+  /**
+   * Emit the per-connection insecure-TLS warning (Phase 8) when
+   * `tls.allowUnverified === true` — fires on EVERY successful
+   * `secureConnect`, initial connect and every reconnect. Emits both a frozen
+   * `'securityWarning'` event and `process.emitWarning`. No-op for plaintext
+   * connections or when verification is on.
+   */
+  private _emitInsecureWarningIfNeeded(): void {
+    const tlsOpt = this._opts.tls;
+    if (tlsOpt === undefined || tlsOpt === true) return;
+    if (tlsOpt.allowUnverified !== true) return;
+    const message =
+      "MLLP TLS certificate verification is DISABLED (allowUnverified: true) — " +
+      "this connection does not authenticate the peer.";
+    const warning: SecurityWarning = Object.freeze({
+      code: MLLP_TLS_VERIFY_DISABLED,
+      message,
+      host: this._opts.host,
+      port: this._opts.port,
+      timestamp: new Date(),
+    });
+    this.emit("securityWarning", warning);
+    process.emitWarning(message, { code: MLLP_TLS_VERIFY_DISABLED });
   }
 
   /**
@@ -825,9 +976,15 @@ export class MllpClient extends EventEmitter {
 
     // CLIENT-18 classification first (Composition A — D-16). Permanent
     // errors transition directly to CLOSED without invoking retryStrategy.
-    const classifiedAs: "transient" | "permanent" = isTransientConnectionError(err)
-      ? "transient"
-      : "permanent";
+    // Phase 8: on a TLS-configured connection, TLS-protocol-shaped errors
+    // (ERR_SSL_*, EPROTO, OpenSSL alert-bearing — see isTlsProtocolError)
+    // are ALSO permanent: a clientAuth 'MUST' server that rejects this
+    // client's certificate will reject every retry — never reconnect-loop
+    // into it. Pure TCP-level errors (ECONNREFUSED, ETIMEDOUT, plain
+    // ECONNRESET) stay transient so a network blip still auto-heals.
+    const tlsProtocolShaped = this._opts.tls !== undefined && isTlsProtocolError(err);
+    const classifiedAs: "transient" | "permanent" =
+      !tlsProtocolShaped && isTransientConnectionError(err) ? "transient" : "permanent";
     if (classifiedAs === "permanent") {
       // Halt: force the dead Connection to CLOSED (terminal); future
       // connect() must be called explicitly.
@@ -949,18 +1106,13 @@ export class MllpClient extends EventEmitter {
       if (this._reconnectFactory !== null) {
         ({ conn, arm } = this._reconnectFactory());
       } else {
-        // Phase 6: wire TlsTransport here when opts.tls is provided
-        const socket = createConnection({
-          host: this._opts.host,
-          port: this._opts.port,
-        });
+        const { socket, transport } = this._createSocketAndTransport();
         // Plan 05 — TCP keepalive on every reconnect attempt too
         // (CLIENT-08, D-11/A3 — mirror connect() site).
         if (this._opts.keepaliveIntervalMs !== undefined) {
           socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
         }
         this._socket = socket;
-        const transport = new NetTransport(socket);
         const connOpts =
           this._opts.framing !== undefined
             ? { transport, framing: this._opts.framing }
@@ -971,13 +1123,24 @@ export class MllpClient extends EventEmitter {
         conn = new Connection(connOpts);
         arm = (): void => {
           conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
+          this._emitInsecureWarningIfNeeded();
         };
-        socket.once("error", (sErr) => {
+        const connectEventName = this._opts.tls !== undefined ? "secureConnect" : "connect";
+        socket.once("error", (sErr: Error) => {
+          // Phase 8 — the raw OS/TLS error (with its original `.code`) is
+          // what the reconnect classifier inspects in _handleDisconnect;
+          // keep it unwrapped here so TLS cert-verification codes (CERT_*,
+          // UNABLE_TO_VERIFY_LEAF_SIGNATURE, …) and TLS-protocol-shaped
+          // codes (ERR_SSL_*, EPROTO with an SSL alert) are still visible
+          // to the classifier and correctly permanent (never reconnect-loop
+          // into a misconfigured or MITM'd endpoint).
           if (this._lastError === null || this._lastError.message !== sErr.message) {
             this._lastError = sErr;
           }
         });
-        socket.once("connect", () => {
+        socket.once(connectEventName, () => {
+          // TLS and plaintext arm identically and immediately — see the
+          // matching note in connect()'s onSocketConnect.
           arm();
           this._afterReconnectArmed();
         });
@@ -1566,6 +1729,7 @@ export class MllpClient extends EventEmitter {
       reconnectAttempts: this._reconnectAttempts,
       lastConnectedAt: this._lastConnectedAt,
       lastAckAt: this._lastAckAt,
+      tls: this._opts.tls !== undefined,
     };
   }
 
@@ -1651,6 +1815,8 @@ export interface StarterClientOptions {
   readonly keepaliveIntervalMs?: number;
   /** Application-idle dead-peer timeout ms (CLIENT-08). */
   readonly deadPeerTimeoutMs?: number;
+  /** Enable TLS (MLLPS) for this connection (Phase 8). Passthrough to `ClientOptions.tls`. */
+  readonly tls?: TlsOptions | true;
   /**
    * Register process SIGTERM/SIGINT handlers that close the client. Default
    * `false` (D-22). When `true`, SIGTERM/SIGINT both call `client.close()`
@@ -1703,6 +1869,7 @@ export async function createStarterClient(opts: StarterClientOptions): Promise<M
       ? { keepaliveIntervalMs: opts.keepaliveIntervalMs }
       : {}),
     ...(opts.deadPeerTimeoutMs !== undefined ? { deadPeerTimeoutMs: opts.deadPeerTimeoutMs } : {}),
+    ...(opts.tls !== undefined ? { tls: opts.tls } : {}),
   };
   const client = createClient(clientOpts);
 

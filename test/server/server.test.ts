@@ -92,6 +92,14 @@ describe("createServer / MllpServer skeleton", () => {
       expect(typeof port).toBe("number");
       expect(port as number).toBeGreaterThan(0);
     });
+
+    it("Phase 8: getStats().tls is false and tlsClientErrorsTotal is 0 for a plaintext server", async () => {
+      const server = makeServer({});
+      await server.listen(0);
+      const stats = server.getStats();
+      expect(stats.tls).toBe(false);
+      expect(stats.tlsClientErrorsTotal).toBe(0);
+    });
   });
 
   describe("SERVER-10: listening event is frozen and has port/host", () => {

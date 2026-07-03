@@ -66,6 +66,7 @@ const D26_KEYS = [
   "reconnectAttempts",
   "lastConnectedAt",
   "lastAckAt",
+  "tls",
 ] as const;
 
 describe("client.getStats (PLAN-06, OBS-01, D-26)", () => {
@@ -86,10 +87,16 @@ describe("client.getStats (PLAN-06, OBS-01, D-26)", () => {
     expect(stats.reconnectAttempts).toBe(0);
     expect(stats.lastConnectedAt).toBeNull();
     expect(stats.lastAckAt).toBeNull();
+    expect(stats.tls).toBe(false);
     // All required D-26 keys present
     for (const key of D26_KEYS) {
       expect(Object.prototype.hasOwnProperty.call(stats, key)).toBe(true);
     }
+  });
+
+  it("Test 13 (Phase 8): getStats().tls is true when ClientOptions.tls is configured", () => {
+    const client = createClient({ host: "127.0.0.1", port: 0, tls: true });
+    expect(client.getStats().tls).toBe(true);
   });
 
   it("Test 2: AFTER connect() resolves, state=CONNECTED, connectionId is non-null string, lastConnectedAt is number", async () => {

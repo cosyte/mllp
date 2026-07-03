@@ -10,7 +10,11 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve as pathResolve } from "node:path";
-import { isTransientConnectionError } from "../../src/client/error.js";
+import {
+  isTransientConnectionError,
+  isTlsVerificationErrorCode,
+  isTlsProtocolError,
+} from "../../src/client/error.js";
 // Top-level barrel re-export check
 import * as topBarrel from "../../src/index.js";
 
@@ -99,5 +103,103 @@ describe("isTransientConnectionError (CLIENT-18)", () => {
 
   it("Test 19: non-string code → transient (default)", () => {
     expect(isTransientConnectionError({ code: 42 })).toBe(true);
+  });
+
+  describe("isTlsVerificationErrorCode (Phase 8)", () => {
+    const verificationCodes = [
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "DEPTH_ZERO_SELF_SIGNED_CERT",
+      "SELF_SIGNED_CERT_IN_CHAIN",
+      "UNABLE_TO_GET_ISSUER_CERT",
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      "CERT_HAS_EXPIRED",
+      "CERT_NOT_YET_VALID",
+      "CERT_REVOKED",
+      "CERT_UNTRUSTED",
+      "CERT_REJECTED",
+      "CERT_SIGNATURE_FAILURE",
+      "HOSTNAME_MISMATCH",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+    ] as const;
+
+    it.each(verificationCodes)("%s is a verification error code", (code) => {
+      expect(isTlsVerificationErrorCode(code)).toBe(true);
+    });
+
+    it("an unlisted CERT_* code is still treated as verification (prefix fallback)", () => {
+      expect(isTlsVerificationErrorCode("CERT_SOME_FUTURE_CODE")).toBe(true);
+    });
+
+    it("a non-TLS code is NOT a verification error code", () => {
+      expect(isTlsVerificationErrorCode("ECONNRESET")).toBe(false);
+      expect(isTlsVerificationErrorCode("ERR_TLS_HANDSHAKE_TIMEOUT")).toBe(false);
+    });
+
+    it("re-exported from the top-level barrel src/index.ts", () => {
+      expect(
+        typeof (topBarrel as { isTlsVerificationErrorCode?: unknown }).isTlsVerificationErrorCode,
+      ).toBe("function");
+    });
+
+    it("each verification code is classified permanent by isTransientConnectionError", () => {
+      for (const code of verificationCodes) {
+        expect(isTransientConnectionError({ code })).toBe(false);
+      }
+    });
+
+    it("ERR_TLS_CERT_ALTNAME_INVALID (hostname/SAN mismatch) is classified permanent", () => {
+      expect(isTransientConnectionError({ code: "ERR_TLS_CERT_ALTNAME_INVALID" })).toBe(false);
+    });
+  });
+
+  describe("isTlsProtocolError (Phase 8 — TLS-protocol-shaped boundary)", () => {
+    it("ERR_SSL_* codes are TLS-protocol-shaped", () => {
+      expect(isTlsProtocolError({ code: "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED" })).toBe(true);
+      expect(isTlsProtocolError({ code: "ERR_SSL_WRONG_VERSION_NUMBER" })).toBe(true);
+    });
+
+    it("EPROTO is TLS-protocol-shaped (apply only on TLS connections)", () => {
+      expect(isTlsProtocolError({ code: "EPROTO" })).toBe(true);
+    });
+
+    it("OpenSSL alert-bearing messages are TLS-protocol-shaped even without a code", () => {
+      expect(
+        isTlsProtocolError(
+          new Error(
+            "40CD333E:SSL routines:ssl3_read_bytes:tlsv13 alert certificate required:SSL alert number 116",
+          ),
+        ),
+      ).toBe(true);
+      expect(isTlsProtocolError(new Error("sslv3 alert handshake failure"))).toBe(true);
+    });
+
+    it("pure TCP failures are NOT TLS-protocol-shaped (stay transient)", () => {
+      expect(isTlsProtocolError({ code: "ECONNREFUSED", message: "connect ECONNREFUSED" })).toBe(
+        false,
+      );
+      expect(isTlsProtocolError({ code: "ECONNRESET", message: "read ECONNRESET" })).toBe(false);
+      expect(isTlsProtocolError({ code: "ETIMEDOUT", message: "connect ETIMEDOUT" })).toBe(false);
+      expect(isTlsProtocolError({ code: "EHOSTUNREACH", message: "connect EHOSTUNREACH" })).toBe(
+        false,
+      );
+    });
+
+    it("non-object / null inputs are not TLS-protocol-shaped", () => {
+      expect(isTlsProtocolError(null)).toBe(false);
+      expect(isTlsProtocolError(undefined)).toBe(false);
+      expect(isTlsProtocolError("ssl alert")).toBe(false);
+    });
+
+    it("ERR_SSL_* is classified PERMANENT by isTransientConnectionError", () => {
+      expect(
+        isTransientConnectionError({ code: "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED" }),
+      ).toBe(false);
+    });
+
+    it("re-exported from the top-level barrel src/index.ts", () => {
+      expect(typeof (topBarrel as { isTlsProtocolError?: unknown }).isTlsProtocolError).toBe(
+        "function",
+      );
+    });
   });
 });
