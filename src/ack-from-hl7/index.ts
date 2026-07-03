@@ -1,27 +1,42 @@
 /**
- * ACK helpers that accept a parsed `@cosyte/hl7` `Hl7Message`.
- * Requires `@cosyte/hl7` as an installed peer dependency.
+ * ACK helpers that build a framed MLLP ACK from an inbound HL7 v2 message —
+ * a THIN transport adapter over `@cosyte/hl7`'s `buildAck`.
+ *
+ * `@cosyte/hl7` owns ACK **content** (MSH/MSA/ERR construction, control
+ * vocabulary, the no-correlation fail-safe); this subpath owns **transport
+ * policy** — accepting raw bytes or a parsed message, never fabricating a
+ * positive disposition when the inbound is unparseable, and framing the
+ * result via `encodeFrame`.
+ *
+ * Requires `@cosyte/hl7` as an installed peer dependency; it is loaded lazily
+ * on first call, so the rest of `@cosyte/mllp` stays fully dependency-free.
  *
  * @example
  * ```typescript
  * import { buildAckAA } from '@cosyte/mllp/ack-from-hl7';
+ * const ack = buildAckAA(inboundBuffer);
+ * socket.write(ack.frame);
  * ```
  *
  * @packageDocumentation
  */
 
-/**
- * Placeholder export for the `@cosyte/mllp/ack-from-hl7` subpath until the ACK helpers land.
- *
- * The helpers (which accept a parsed `@cosyte/hl7` `Hl7Message` and build an MLLP ACK) are not
- * implemented yet; this constant keeps the subpath a non-empty, importable module so the build,
- * `exports` map, and `attw` publish gate stay green. Do not depend on it — it will be removed when
- * the real helpers replace it.
- *
- * @example
- * ```typescript
- * import { ACK_FROM_HL7_STUB } from '@cosyte/mllp/ack-from-hl7';
- * // ACK_FROM_HL7_STUB === true (placeholder; real helpers pending)
- * ```
- */
-export const ACK_FROM_HL7_STUB = true;
+export {
+  buildMllpAck,
+  buildAckAA,
+  buildAckAE,
+  buildAckAR,
+  buildAckCA,
+  buildAckCE,
+  buildAckCR,
+  detectMode,
+  MLLP_ACK_INBOUND_UNPARSEABLE,
+} from "./build.js";
+export type { BuildMllpAckOptions, MllpAck, MllpAckWarning } from "./build.js";
+
+export { loadHl7Peer, MllpPeerMissingError } from "./peer.js";
+export type { Hl7Peer } from "./peer.js";
+
+// Re-exported for convenience so consumers of this subpath don't need a
+// direct `@cosyte/hl7` dependency just to name these types.
+export type { AckCode, AckMode, AckErrorDetail } from "@cosyte/hl7";

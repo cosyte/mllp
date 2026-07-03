@@ -6,7 +6,8 @@ import { cosyteTsup } from "@cosyte/tsup-config";
  *
  * Three entries (the package's three public subpaths): the root, the `/testing` in-memory transport,
  * and the `/ack-from-hl7` helpers. `@cosyte/hl7` is the optional peer dep behind `/ack-from-hl7` and
- * is never bundled.
+ * is never bundled. `shims: true` polyfills `import.meta.url` in the CJS build — `ack-from-hl7`'s
+ * lazy peer loader (`src/ack-from-hl7/peer.ts`) needs it for `createRequire(import.meta.url)`.
  */
 export default cosyteTsup({
   entry: {
@@ -15,4 +16,5 @@ export default cosyteTsup({
     "ack-from-hl7/index": "src/ack-from-hl7/index.ts",
   },
   external: ["@cosyte/hl7"],
+  shims: true,
 });

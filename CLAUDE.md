@@ -8,9 +8,16 @@
 
 ## Status
 
-- **Phase 5 of 8** — client/server/framing/connection/transport shipped (test suite green). The
-  `ack-from-hl7` subpath is still a stub (Phase 6); TLS has a `selfsigned`/`certs:gen` harness but no
-  TLS tests yet (follow-up).
+- **Phase 7 of 11** — client/server/framing/connection/transport shipped; Phase 6 (fail-safe ACK
+  commit contract) and Phase 7 (`ack-from-hl7` — real helpers over `@cosyte/hl7`'s `buildAck`,
+  stub removed) done. Next: Phase 8 TLS/MLLPS hardening (harness exists via `selfsigned`/`certs:gen`,
+  tests pending). For dev/test the unpublished `@cosyte/hl7` peer is consumed as a **vendored packed
+  tarball** (`vendor/cosyte-hl7-0.0.0.tgz`, a devDependency) — an interim mechanism until the
+  cross-repo consumption decision (umbrella `PW-5` gate) lands; refresh it by re-running
+  `pnpm -C ../hl7 build && pnpm -C ../hl7 pack --out ../mllp/vendor/cosyte-hl7-0.0.0.tgz`
+  (`--out` resolves relative to the `-C` directory) then `pnpm remove @cosyte/hl7 &&
+  pnpm add -D @cosyte/hl7@file:vendor/cosyte-hl7-0.0.0.tgz` — and note `pnpm remove` also
+  strips the `peerDependencies` entry; restore it (`"@cosyte/hl7": ">=0.0.0"`) after.
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed
   `@cosyte/hl7-mllp` → `@cosyte/mllp`** — not yet published, so the rename is free.
 - Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).
@@ -47,7 +54,7 @@ summary.
 - **Buffer-first API** on every public surface — never string. HL7 v2 payloads are raw bytes with caller-managed charset decoding.
 - **`Buffer.prototype.slice()` is forbidden** in `src/framing|server|client` (enforced by the local `no-restricted-syntax` ESLint rule in `eslint.config.js`). Use `.subarray()` — `.slice()` copies in modern Node.
 - **Postel's Law:** decoder is liberal (tolerance opt-ins + warnings with stable codes + byte offsets), encoder is strict (always emits canonical `VT + payload + FS + CR`).
-- **Stable warning codes** are a public API. Renaming or removing one is a breaking change. Codes: `MLLP_MISSING_LEADING_VT`, `MLLP_FS_WITHOUT_CR`, `MLLP_LF_AFTER_FS`, `MLLP_LEADING_WHITESPACE`, `MLLP_TRAILING_BYTES`, `MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`, `MLLP_EMPTY_PAYLOAD`, `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_UNMATCHED_CONTROL_ID`, `MLLP_ACK_AFTER_TIMEOUT` (11 total).
+- **Stable warning codes** are a public API. Renaming or removing one is a breaking change. Codes: `MLLP_MISSING_LEADING_VT`, `MLLP_FS_WITHOUT_CR`, `MLLP_LF_AFTER_FS`, `MLLP_LEADING_WHITESPACE`, `MLLP_TRAILING_BYTES`, `MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`, `MLLP_EMPTY_PAYLOAD`, `MLLP_FRAME_TOO_LARGE`, `MLLP_ACK_UNMATCHED_CONTROL_ID`, `MLLP_ACK_AFTER_TIMEOUT`, `MLLP_ACK_INBOUND_UNPARSEABLE` (12 total; the last is `ack-from-hl7`-scoped — emitted in `MllpAck.warnings`, not through the framing registry).
 - **Explicit 6-state connection machine**, never socket flags. `.state` is one of exactly `'CONNECTING' | 'CONNECTED' | 'DRAINING' | 'RECONNECTING' | 'DISCONNECTED' | 'CLOSED'`; transitions emit `'stateChange'` with `{ from, to, reason }`. `RECONNECTING` hosts auto-reconnect backoff; `CLOSED` is terminal.
 - **Bounded accumulators.** `FrameReader.maxFrameSizeBytes` defaults to 16 MB; overflow throws `MLLP_FRAME_TOO_LARGE`. Never grow buffers unbounded.
 - **`AbortSignal` on every awaitable, `Symbol.asyncDispose` on every closeable.** 2026 Node baseline; not retrofittable without breaking change.

@@ -3,9 +3,9 @@ import { cosyteVitest } from "@cosyte/vitest-config";
 /**
  * Vitest config for @cosyte/mllp from the shared @cosyte/vitest-config standard.
  *
- * Per-directory >= 90 gates on the core dirs (framing/client/connection/server/transport), enforced
- * by `pnpm test:coverage`. The coverage gate was re-enabled during the Phase E standards migration;
- * `framing`, `connection`, `transport`, and `testing` clear the 90 bar today.
+ * Per-directory >= 90 gates on the core dirs (framing/client/connection/server/transport/ack-from-hl7),
+ * enforced by `pnpm test:coverage`. The coverage gate was re-enabled during the Phase E standards
+ * migration; `framing`, `connection`, `transport`, `testing`, and `ack-from-hl7` clear the 90 bar today.
  *
  * Transient floors below 90 (all to be lifted to 90 by adding the missing tests — these directories
  * have genuinely untested branches/paths, not a measurement artifact):
@@ -18,7 +18,7 @@ import { cosyteVitest } from "@cosyte/vitest-config";
  *    error paths). // TODO(coverage): add server tests, restore all four to 90.
  */
 export default cosyteVitest({
-  coverageDirs: ["framing", "client", "connection", "server", "transport"],
+  coverageDirs: ["framing", "client", "connection", "server", "transport", "ack-from-hl7"],
   coverageThresholds: {
     branches: 85,
     "src/client/**": { lines: 90, branches: 85, functions: 90, statements: 90 },
