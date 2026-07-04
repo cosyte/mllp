@@ -159,6 +159,34 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **Bind errors no longer crash a server with no `'error'` listener (Phase 8 residuals, MLLP-8.1).**
+  The constructor-time `net.Server`/`tls.Server` `'error'` forwarder ran before `listen()`'s own
+  rejection handler and re-emitted unconditionally — on a server with no `'error'` listener, a plain
+  bind error (`EADDRINUSE`, `EACCES`, …) crashed the process (unlistened `EventEmitter` `'error'`
+  emissions throw) instead of rejecting the `listen()` promise. The forwarder is now guarded by
+  **server state**, and the error contract is documented: with a listener attached, always
+  forwarded; with none, a bind-window error rejects the `listen()` promise (the **primary** error
+  surface — caveat: an `'error'` listener that synchronously calls `close()` during the bind window
+  changes the rejection to the typed close-during-listen error), a stale error after `close()` is
+  dropped, and a runtime error **while serving** (e.g. accept-loop `EMFILE`) deliberately keeps
+  Node's fail-loud crash-on-unlistened-`'error'` convention — a silent accept outage is impossible.
+  A throwing `'listening'`/`'securityWarning'` subscriber can no longer strand the `listen()`
+  promise and wedge the single-flight guard: each emit is contained separately (a throw in one
+  subscriber cannot suppress a later emission — in particular the `MLLP_BIND_ALL_INTERFACES`
+  security warning always survives, with the operator-channel `process.emitWarning` fired first so
+  no event listener can ever suppress it), the throw is surfaced via the guarded `'error'` tap
+  (itself contained against a double throw), and `listen()` still resolves. Also consolidates `listen()`'s five hand-woven settle paths (abort,
+  close-during-listen, no-address reject, post-bind wildcard reject, bind error) into one idempotent
+  first-caller-wins settle helper — no path can leak a listener, strand the single-flight guard, or
+  re-settle a settled promise — and documents three subtleties: the post-bind wildcard reject window
+  is accept-safe (the check runs synchronously on `'listening'`, before any connection can be
+  delivered); `close({ signal })` with an **already-aborted** signal is a no-op `AbortError`
+  rejection that does **not** settle an in-flight `listen()` (which continues and settles on its own
+  bind outcome); and once the bind has succeeded, an abort of the listen signal fired from inside a
+  `'listening'`/`'securityWarning'` handler is deliberately **too late** — the bind wins and
+  `listen()` resolves (use `close()` to shut down), so aborted-mid-emit can never strand
+  `listening: true` on a closed socket.
+
 ### Security
 
 [Unreleased]: https://github.com/cosyte/mllp/commits/main

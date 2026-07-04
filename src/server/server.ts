@@ -304,11 +304,18 @@ export interface ServerOptions {
   tls?: ServerTlsOptions;
 
   /**
-   * Opt-in required to bind a wildcard host (`'0.0.0.0'`, `'::'`, or `''`) —
-   * a bind-safety guardrail (Phase 8). Without this flag, `listen()` rejects
-   * BEFORE binding when given a wildcard host. When `true`, binding a
-   * wildcard host also emits a one-time `'securityWarning'`
-   * (`MLLP_BIND_ALL_INTERFACES`) at listen time.
+   * Opt-in required to bind a wildcard host — a bind-safety guardrail
+   * (Phase 8). Without this flag, `listen()` rejects a wildcard host in
+   * two tiers: **literal spellings** (`'0.0.0.0'`, `'::'`, `''`, `'::0'`,
+   * `'0:0:0:0:0:0:0:0'`, `'::ffff:0.0.0.0'`, …) reject **pre-bind** (fast
+   * path, nothing is ever bound); **resolver-only shorthands** (`'0'`,
+   * `'0.0'`, `'0x0.0.0.0'`, hostnames resolving to the unspecified
+   * address, …) are caught **post-bind** against the OS-normalized bound
+   * address — the just-bound server closes before any connection can be
+   * accepted and `listen()` rejects, with no listening state and no
+   * `'listening'` event either way. When `true`, binding a wildcard host
+   * emits a one-time `'securityWarning'` (`MLLP_BIND_ALL_INTERFACES`) at
+   * listen time.
    *
    * @default false
    */
@@ -379,6 +386,19 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * Public events: `'listening'`, `'connection'`, `'message'`, `'nack'`, `'error'`, `'close'`.
  * The `'nack'` event ({@link NackEvent}) fires when a commit-gated `autoAck: 'AA'` handler
  * fails and the server returns a negative ACK instead of `AA`.
+ *
+ * **`'error'` contract:** underlying `net.Server`/`tls.Server` errors are forwarded to the
+ * `'error'` event whenever a listener is attached. With **no** listener, the outcome depends on
+ * server state: during a `listen()` (the bind window) the error **rejects the `listen()` promise**
+ * — the primary error surface — and the process never crashes on a bind error; with no `listen()`
+ * in flight and the server not serving (e.g. a stale async error after `close()`) the error is
+ * dropped; but **while serving**, an unlistened runtime error (e.g. accept-loop `EMFILE`) keeps
+ * Node's fail-loud crash-on-unlistened-`'error'` convention — a silent accept outage is
+ * impossible. Caveat for `'error'` listeners: the forwarder runs **before** the internal
+ * `listen()` rejection handler, so an `'error'` listener that synchronously calls `close()`
+ * during the bind window changes the `listen()` rejection from the bind error to the typed
+ * close-during-listen `MllpConnectionError` — match on the `'error'` event payload, not the
+ * rejection, if you do that.
  * Phase 8 (TLS/MLLPS) adds two more: `'tlsClientError'` (a failed TLS handshake — the
  * server logs it and keeps serving other connections) and `'securityWarning'` (loud,
  * one-time notice when a wildcard host is bound via `allowWildcardBind: true`).
@@ -479,8 +499,26 @@ export class MllpServer extends EventEmitter {
       });
     }
 
+    // Forward net.Server errors to the public 'error' event, guarded by
+    // server state — an unlistened EventEmitter 'error' emission THROWS,
+    // and this constructor-time listener runs BEFORE listen()'s own
+    // once('error') rejection handler (registration order), so an unguarded
+    // re-emit crashed the process on a plain bind error (EADDRINUSE,
+    // EACCES, …) instead of letting listen() reject. Contract (also in the
+    // class JSDoc):
+    //   • 'error' listener attached ⇒ always forwarded.
+    //   • no listener + a listen() in flight (bind window) ⇒ dropped here;
+    //     the listen() promise rejects with this error (primary surface).
+    //   • no listener + not listening (e.g. stale async error after
+    //     close()) ⇒ dropped; there is no consumer to surface it to.
+    //   • no listener + SERVING (this._listening) ⇒ re-emit unguarded,
+    //     which throws — Node's fail-loud convention is deliberately kept
+    //     for runtime accept-loop errors (EMFILE/ENFILE): a silent accept
+    //     outage on a healthcare listener must be impossible.
     this._netServer.on("error", (err: Error) => {
-      this.emit("error", err);
+      if (this.listenerCount("error") > 0 || this._listening) {
+        this.emit("error", err);
+      }
     });
   }
 
@@ -500,7 +538,9 @@ export class MllpServer extends EventEmitter {
    * a typed `MllpConnectionError` (never a hang) and clears the single-flight
    * guard — a subsequent `listen()` on the same server works. This makes
    * `Symbol.asyncDispose` (which delegates to `close()`) safe even before a
-   * `listen()` has settled.
+   * `listen()` has settled. (Exception: `close({ signal })` with an
+   * already-aborted signal is a no-op AbortError rejection — the in-flight
+   * `listen()` is left to settle on its own bind outcome; see `close()`.)
    *
    * @param port - TCP port to bind. Use `0` to let the OS assign an ephemeral port.
    * @param hostOrOpts - Host string or object with `host` and optional `signal`.
@@ -570,16 +610,44 @@ export class MllpServer extends EventEmitter {
     this._listenInFlight = true;
 
     return new Promise<void>((resolve, reject) => {
-      let aborted = false;
-
-      const abortHandler = () => {
-        aborted = true;
+      // ONE idempotent settle point for every outcome of this listen()
+      // (success, abort, close-during-listen, bind error, addr-null reject,
+      // post-bind wildcard reject). First caller wins; every path gets the
+      // same cleanup — abort listener, netServer listeners, the close()
+      // settle hook, and the single-flight guard — so no path can leak a
+      // listener, strand the guard, or re-settle a settled promise.
+      let settled = false;
+      const settle = (
+        outcome: { ok: true } | { ok: false; error: Error },
+        opts?: { closeServer?: boolean },
+      ): void => {
+        if (settled) return;
+        settled = true;
         this._pendingListenSettle = null;
+        signal?.removeEventListener("abort", abortHandler);
         this._netServer.removeListener("listening", onListening);
         this._netServer.removeListener("error", onError);
-        this._netServer.close();
+        if (opts?.closeServer === true) {
+          this._netServer.close();
+        }
         this._listenInFlight = false;
-        reject(new DOMException("Aborted", "AbortError"));
+        if (outcome.ok) {
+          resolve();
+        } else {
+          // Pass the rejection reason through untouched — AbortError
+          // (DOMException), MllpConnectionError, and raw bind errors keep
+          // their identity for callers matching on name/instanceof.
+          reject(outcome.error);
+        }
+      };
+
+      const abortHandler = () => {
+        settle(
+          { ok: false, error: new DOMException("Aborted", "AbortError") },
+          {
+            closeServer: true,
+          },
+        );
       };
 
       if (signal !== undefined) {
@@ -597,35 +665,37 @@ export class MllpServer extends EventEmitter {
       // asynchronously and can land after a NEW listen() has registered its
       // listeners, spuriously rejecting the fresh attempt. The netServer is
       // private, so our own close() — and the settle paths below, which
-      // settle themselves — are the only close initiators.)
-      const settlePendingListen = () => {
-        if (aborted) return;
-        this._pendingListenSettle = null;
-        signal?.removeEventListener("abort", abortHandler);
-        this._netServer.removeListener("listening", onListening);
-        this._netServer.removeListener("error", onError);
-        this._listenInFlight = false;
-        reject(
-          new MllpConnectionError(
+      // settle themselves — are the only close initiators. close() itself
+      // closes the netServer right after invoking this hook, so the hook
+      // does not.)
+      this._pendingListenSettle = () => {
+        settle({
+          ok: false,
+          error: new MllpConnectionError(
             "listen() failed: server was closed while listen() was in flight",
             {
               cause: new Error("close() during in-flight listen()"),
               phase: "connect",
             },
           ),
-        );
+        });
       };
-      this._pendingListenSettle = settlePendingListen;
 
       const onListening = () => {
-        if (aborted) return;
-        signal?.removeEventListener("abort", abortHandler);
-        // Listener hygiene: this promise is settling on this path (success,
-        // address-null reject, or post-bind wildcard reject) — drop the
-        // error listener and the close()-settle hook so nothing can
-        // re-invoke a settled promise.
-        this._netServer.removeListener("error", onError);
+        if (settled) return;
+        // The bind outcome is now known and this handler settles the promise
+        // synchronously below — drop the close()-settle hook AND the abort
+        // listener FIRST. The hook: a close() called from inside the
+        // 'listening' event handler must not reject a bind that succeeded.
+        // The abort listener: the success path below emits 'listening' /
+        // 'securityWarning' BEFORE settling, and an abort fired from inside
+        // one of those handlers would otherwise close the just-bound server
+        // AFTER listening state is recorded — stranding `listening: true`
+        // with nothing bound (the exact hazard the post-bind checks exist to
+        // prevent). Once the bind has succeeded, an abort of the listen
+        // signal is too late and is deliberately ignored; use close().
         this._pendingListenSettle = null;
+        signal?.removeEventListener("abort", abortHandler);
 
         const addr = this._netServer.address();
         // address() is always an AddressInfo object for a bound TCP server;
@@ -636,16 +706,18 @@ export class MllpServer extends EventEmitter {
         // guard above should make this branch unreachable; it stays as
         // defense-in-depth.
         if (addr === null || typeof addr === "string") {
-          this._netServer.close();
-          this._listenInFlight = false;
-          reject(
-            new MllpConnectionError(
-              "listen() failed: server was closed before the bind completed",
-              {
-                cause: new Error("server.address() returned no TCP address"),
-                phase: "connect",
-              },
-            ),
+          settle(
+            {
+              ok: false,
+              error: new MllpConnectionError(
+                "listen() failed: server was closed before the bind completed",
+                {
+                  cause: new Error("server.address() returned no TCP address"),
+                  phase: "connect",
+                },
+              ),
+            },
+            { closeServer: true },
           );
           return;
         }
@@ -660,18 +732,25 @@ export class MllpServer extends EventEmitter {
         // ('0.0.0.0' / '::'), so this check is authoritative. On violation:
         // close the just-bound server immediately and reject — no listening
         // state is recorded and no 'listening' event is emitted.
+        // The sub-tick bind window is ACCEPT-SAFE — this handler runs
+        // synchronously on 'listening', before the event loop can deliver
+        // any 'connection'/'secureConnection' for the just-bound socket, so
+        // no connection is ever accepted on a rejected wildcard bind. Do
+        // not reorder or defer this branch.
         if (isWildcardHost(actualHost) && this._opts.allowWildcardBind !== true) {
-          this._netServer.close();
-          this._listenInFlight = false;
-          reject(
-            new MllpConnectionError(
-              `refusing to bind wildcard host '${host}' (bound address '${actualHost}') — ` +
-                "set ServerOptions.allowWildcardBind: true to bind all interfaces",
-              {
-                cause: new Error("wildcard bind requires allowWildcardBind"),
-                phase: "connect",
-              },
-            ),
+          settle(
+            {
+              ok: false,
+              error: new MllpConnectionError(
+                `refusing to bind wildcard host '${host}' (bound address '${actualHost}') — ` +
+                  "set ServerOptions.allowWildcardBind: true to bind all interfaces",
+                {
+                  cause: new Error("wildcard bind requires allowWildcardBind"),
+                  phase: "connect",
+                },
+              ),
+            },
+            { closeServer: true },
           );
           return;
         }
@@ -680,39 +759,64 @@ export class MllpServer extends EventEmitter {
         this._port = actualPort;
         this._host = actualHost;
 
-        this.emit("listening", Object.freeze({ port: actualPort, host: actualHost }));
+        // The bind has succeeded — nothing a 'listening'/'securityWarning'
+        // subscriber does may undo that. A THROWING subscriber must not
+        // strand the settle (the promise would hang and the single-flight
+        // guard would wedge every later listen()) and must not suppress a
+        // LATER emission: each emit is contained SEPARATELY (a throw in
+        // 'listening' cannot swallow the securityWarning), surfaced via the
+        // guarded 'error' tap (D-04 — a handler error never crashes the
+        // server) with the tap itself contained too (a throwing 'error'
+        // listener on top of a throwing subscriber drops rather than
+        // strands), so listen() always resolves.
+        const emitSubscriberSafe = (event: "listening" | "securityWarning", payload: unknown) => {
+          try {
+            this.emit(event, payload);
+          } catch (subscriberErr: unknown) {
+            try {
+              this._emitErrorIfListened(
+                subscriberErr instanceof Error ? subscriberErr : new Error(String(subscriberErr)),
+              );
+            } catch {
+              // Double user bug ('listening'/'securityWarning' subscriber
+              // threw AND the 'error' listener threw): dropping beats
+              // stranding the settle or crashing a successfully-bound server.
+            }
+          }
+        };
 
         // Phase 8 — loud, one-time notice when a wildcard host is actually
         // bound (keyed off the OS-normalized actualHost so shorthand
-        // spellings warn too; single emission site).
-        if (isWildcardHost(actualHost)) {
-          const message =
-            `MLLP server is bound to ALL network interfaces (host='${actualHost}') — ` +
-            "set a specific bind address unless this is intentional.";
+        // spellings warn too; single emission site). The operator channel
+        // (process.emitWarning) fires FIRST — it has no subscribers, so no
+        // throwing event listener can ever suppress the mandated
+        // MLLP_BIND_ALL_INTERFACES notice on a live wildcard bind.
+        const wildcardBound = isWildcardHost(actualHost);
+        const wildcardMessage =
+          `MLLP server is bound to ALL network interfaces (host='${actualHost}') — ` +
+          "set a specific bind address unless this is intentional.";
+        if (wildcardBound) {
+          process.emitWarning(wildcardMessage, { code: MLLP_BIND_ALL_INTERFACES });
+        }
+
+        emitSubscriberSafe("listening", Object.freeze({ port: actualPort, host: actualHost }));
+
+        if (wildcardBound) {
           const warning: SecurityWarning = Object.freeze({
             code: MLLP_BIND_ALL_INTERFACES,
-            message,
+            message: wildcardMessage,
             host: actualHost,
             port: actualPort,
             timestamp: new Date(),
           });
-          this.emit("securityWarning", warning);
-          process.emitWarning(message, { code: MLLP_BIND_ALL_INTERFACES });
+          emitSubscriberSafe("securityWarning", warning);
         }
 
-        this._listenInFlight = false;
-        resolve();
+        settle({ ok: true });
       };
 
       const onError = (err: Error) => {
-        if (aborted) return;
-        signal?.removeEventListener("abort", abortHandler);
-        // Listener hygiene mirror: drop the pending 'listening' listener and
-        // the close()-settle hook too.
-        this._netServer.removeListener("listening", onListening);
-        this._pendingListenSettle = null;
-        this._listenInFlight = false;
-        reject(err);
+        settle({ ok: false, error: err });
       };
 
       this._netServer.once("listening", onListening);
@@ -734,7 +838,11 @@ export class MllpServer extends EventEmitter {
    * settles that `listen()` with a typed `MllpConnectionError` rejection
    * and clears the single-flight guard — the server is immediately
    * re-listenable. `Symbol.asyncDispose` (which delegates here) is
-   * therefore safe before `listen()` settles.
+   * therefore safe before `listen()` settles. **Qualification:** a
+   * `close({ signal })` whose signal is **already aborted** rejects
+   * immediately with `AbortError` and performs no work — it does NOT close
+   * the server and does NOT settle the in-flight `listen()`, which simply
+   * continues and settles on its own bind outcome.
    *
    * @param opts.drainTimeoutMs - Override drain timeout (default: `opts.drainTimeoutMs ?? 30_000`).
    * @param opts.signal - AbortSignal to cancel the close operation. On abort, all
@@ -887,6 +995,20 @@ export class MllpServer extends EventEmitter {
     };
   }
 
+  /**
+   * Emit on `'error'` only when a listener is attached — an unlistened
+   * `EventEmitter` `'error'` emission throws (see the class JSDoc error
+   * contract). The single guard shared by the optional-tap forwarding sites
+   * in this class; the constructor's net.Server forwarder deliberately does
+   * NOT use it (its while-serving branch re-emits unguarded to keep Node's
+   * fail-loud convention).
+   */
+  private _emitErrorIfListened(errEvent: unknown): void {
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", errEvent);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Private: per-socket setup
   // ---------------------------------------------------------------------------
@@ -919,9 +1041,7 @@ export class MllpServer extends EventEmitter {
     // error listener. Forwards to server's 'error' event only when listeners exist;
     // otherwise silently swallows (D-04: server never crashes on connection errors).
     conn.on("error", (errEvent: unknown) => {
-      if (this.listenerCount("error") > 0) {
-        this.emit("error", errEvent);
-      }
+      this._emitErrorIfListened(errEvent);
     });
 
     this._acceptedTotal++;
