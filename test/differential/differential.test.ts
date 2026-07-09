@@ -149,7 +149,10 @@ describe("differential Tier 2: live R1 adapter (opt-in via MLLP_DIFF_ADAPTER)", 
       sock.on("data", (d) => {
         reader.push(d);
       });
-      sock.on("error", reject);
+      sock.on("error", (err) => {
+        sock.destroy();
+        reject(err);
+      });
       sock.setTimeout(10_000, () => {
         sock.destroy();
         reject(new Error("live adapter did not ACK within 10s"));

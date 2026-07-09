@@ -253,21 +253,12 @@ describe("createServer / MllpServer skeleton", () => {
 });
 
 describe("Gap closure — byteOffset/warnings threading, closedTotal accuracy, onMessage void type", () => {
-  const servers: MllpServer[] = [];
+  const { track, closeAll } = makeServerTracker();
 
-  afterEach(async () => {
-    for (const s of servers) {
-      await s.close().catch(() => {
-        /* ignore cleanup errors */
-      });
-    }
-    servers.length = 0;
-  });
+  afterEach(closeAll);
 
   function makeServer(opts: Parameters<typeof createServer>[0] = {}) {
-    const s = createServer(opts);
-    servers.push(s);
-    return s;
+    return track(createServer(opts));
   }
 
   describe("Gap 1: meta.byteOffset reflects actual frame-start stream offset", () => {
