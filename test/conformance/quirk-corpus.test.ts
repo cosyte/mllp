@@ -78,8 +78,11 @@ describe("quirk corpus: a real HL7 message survives each §3 deviation", () => {
     expect(codes(warnings)).toContain("MLLP_LF_AFTER_FS");
   });
 
-  it("§3.3 stray trailing junk after FS+CR → MLLP_TRAILING_BYTES on next scan", () => {
-    // Trailing junk lands in SCANNING_FOR_VT; under allowMissingLeadingVt it is surfaced.
+  it("§3.3 stray trailing junk after FS+CR → surfaced as MLLP_MISSING_LEADING_VT, never a throw", () => {
+    // Junk after a complete frame lands back in SCANNING_FOR_VT: the tolerant reader treats it
+    // as the start of a NEW frame whose leading VT is missing — hence MLLP_MISSING_LEADING_VT,
+    // NOT MLLP_TRAILING_BYTES (that code is reserved for a VT appearing mid-payload; see the
+    // decoder's READING_PAYLOAD branch).
     const bytes = Buffer.concat([frame(ADT_A01), Buffer.from([0x00, 0x7f])]);
     const { frames, warnings } = decode(bytes, {
       allowMissingLeadingVt: true,
@@ -87,7 +90,7 @@ describe("quirk corpus: a real HL7 message survives each §3 deviation", () => {
     });
     expect(frames[0]).toEqual(ADT_A01);
     // The junk is surfaced as a recoverable deviation, never a throw.
-    expect(warnings.length).toBeGreaterThan(0);
+    expect(codes(warnings)).toContain("MLLP_MISSING_LEADING_VT");
   });
 
   it("§3.4 non-MLLP keepalive frame (FS without CR, next VT immediately) → MLLP_FS_WITHOUT_CR", () => {

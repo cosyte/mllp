@@ -34,6 +34,11 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
     echoes payload content, including the oversized path.
   - **Test-infra:** the pre-existing `test/server/*` suites now use the shared
     `test/helpers/tracked-servers.ts` (`must()` + `makeServerTracker()`) instead of copy-pasted helpers.
+  - **Scope note:** the remaining Phase 9 roadmap acceptance items — (c) keepalive / half-open
+    detection and (d) fuzz chunk-boundary adversaries — were already delivered in earlier phases
+    (`socket.setKeepAlive` in `src/server/server.ts`; the byte-at-a-time `randomChunks` /
+    `split(1)` generators in `test/property/fuzz.property.test.ts`), so Phase 9 legitimately
+    narrows to the PHI snippet audit + differential harness + quirk corpus.
 - **TLS / MLLPS hardening (Phase 8).** `TlsTransport` (wraps `tls.TLSSocket`, maps `onConnect` to
   `'secureConnect'`) joins `NetTransport` as a first-class `Transport`. Client: `ClientOptions.tls?:
   TlsOptions | true` — verification **on by default**; the only opt-out is the loud

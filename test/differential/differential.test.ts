@@ -63,7 +63,12 @@ function stripR1(framed: Buffer): Buffer {
 
 const GOLDENS = ["r1-adt-a01.frame.bin", "r1-oru-r01.frame.bin", "r1-ack-aa.frame.bin"] as const;
 
-describe("differential Tier 1: byte-parity with R1 adapter framing (Google / Mirth)", () => {
+// Tier 1 pins mllp against the *canonical R1 wire shape* (VT … FS CR) — the framing both the
+// Google Cloud MLLP adapter and Mirth/NextGen emit, since R1 framing is byte-identical across
+// conformant implementations. The goldens are spec-derived (see fixtures/README), NOT live
+// captures, so this tier is a self-consistency + regression guard on the canonical shape; true
+// per-binary parity against a running adapter is the opt-in Tier 2 below.
+describe("differential Tier 1: parity with the canonical R1 wire shape (spec-derived golden)", () => {
   for (const name of GOLDENS) {
     describe(name, () => {
       const framed = readFileSync(path.join(FIXTURE_DIR, name));
@@ -80,7 +85,7 @@ describe("differential Tier 1: byte-parity with R1 adapter framing (Google / Mir
         expect(payload).toEqual(stripR1(framed));
       });
 
-      it("mllp encodeFrame reproduces the adapter's bytes exactly (emit parity)", () => {
+      it("mllp encodeFrame reproduces the canonical R1 golden bytes exactly (emit parity)", () => {
         const payload = stripR1(framed);
         expect(encodeFrame(payload)).toEqual(framed);
       });
@@ -103,11 +108,16 @@ describe("differential Tier 1: byte-parity with R1 adapter framing (Google / Mir
 
 /** Parse `MLLP_DIFF_ADAPTER=host:port`; undefined when unset/malformed → Tier 2 skips. */
 function liveAdapter(): { host: string; port: number } | undefined {
-  const raw = process.env["MLLP_DIFF_ADAPTER"];
-  if (raw === undefined || raw.trim() === "") return undefined;
-  const [host, portStr] = raw.split(":");
-  const port = Number(portStr);
-  if (host === undefined || host === "" || !Number.isInteger(port) || port <= 0) return undefined;
+  const raw = process.env["MLLP_DIFF_ADAPTER"]?.trim();
+  if (raw === undefined || raw === "") return undefined;
+  // Split on the LAST colon so an IPv6 host parses too (e.g. '::1:2575', '[::1]:2575'), not just
+  // IPv4/hostname — a naive split(':') would mangle the host and NaN the port, silently skipping
+  // the live tier when the developer believes it ran.
+  const lastColon = raw.lastIndexOf(":");
+  if (lastColon <= 0) return undefined;
+  const host = raw.slice(0, lastColon).replace(/^\[|\]$/g, "");
+  const port = Number(raw.slice(lastColon + 1));
+  if (host === "" || !Number.isInteger(port) || port <= 0) return undefined;
   return { host, port };
 }
 

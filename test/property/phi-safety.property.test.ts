@@ -106,15 +106,26 @@ describe("PHI-safety: no framing throw echoes a payload content slice (MLLP-9)",
                 ? { onFrame: () => {}, allowMissingLeadingVt: false }
                 : { onFrame: () => {} };
           const reader = new FrameReader(opts);
+          let caught: MllpFramingError | undefined;
           try {
             reader.push(noVt);
           } catch (err) {
-            const fe = err as MllpFramingError;
-            // A boundary-byte snippet is at most one byte; never a payload run.
-            expect(fe.snippet.length).toBeLessThanOrEqual(1);
-            expect(leaksMarker(fe.snippet)).toBe(false);
-            expect(leaksMarker(fe.message)).toBe(false);
+            caught = err as MllpFramingError;
           }
+          // A missing-VT payload MUST throw in every mode exercised here. Without this guard
+          // the PHI assertions below would VACUOUSLY pass if a regression stopped throwing.
+          expect(caught).toBeDefined();
+          const fe = caught as MllpFramingError;
+          // The load-bearing PHI invariant: the snippet is at most ONE byte (whose hex the
+          // message already discloses), so it can never be a *run* of payload content. That
+          // single byte may itself be a payload byte (the first byte seen where a VT was
+          // expected), so the invariant is a length cap — not a "snippet is a delimiter" check,
+          // and not `leaksMarker(snippet)`, which needs a ≥4-byte window and so can never fire
+          // on a ≤1-byte snippet.
+          expect(fe.snippet.length).toBeLessThanOrEqual(1);
+          // The message is the one diagnostic surface long enough to leak a run — pin that it
+          // never echoes marker content.
+          expect(leaksMarker(fe.message)).toBe(false);
         },
       ),
       { numRuns: 300 },
