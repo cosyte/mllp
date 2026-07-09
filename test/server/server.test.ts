@@ -3,11 +3,7 @@ import { createServer } from "../../src/server/server.js";
 import type { MllpServer } from "../../src/server/server.js";
 import * as net from "node:net";
 
-/** Assert a value is present (non-null/undefined) and return it narrowed. */
-function must<T>(v: T | undefined | null): T {
-  if (v === undefined || v === null) throw new Error("expected value");
-  return v;
-}
+import { must, makeServerTracker } from "../helpers/tracked-servers.js";
 
 // Helper: connect a raw socket to a server bound on 0 and return both
 async function connectToServer(server: MllpServer): Promise<net.Socket> {
@@ -36,23 +32,13 @@ function frameMessage(payload: string): Buffer {
 }
 
 describe("createServer / MllpServer skeleton", () => {
-  const servers: MllpServer[] = [];
+  const { track, closeAll } = makeServerTracker();
 
-  afterEach(async () => {
-    // Clean up all servers created during tests
-    for (const s of servers) {
-      await s.close().catch(() => {
-        /* ignore errors during cleanup */
-      });
-    }
-    servers.length = 0;
-  });
+  afterEach(closeAll);
 
   // Helper that creates a server and tracks it for cleanup
   function makeServer(opts: Parameters<typeof createServer>[0] = {}) {
-    const s = createServer(opts);
-    servers.push(s);
-    return s;
+    return track(createServer(opts));
   }
 
   describe("SERVER-01: factory and basic API", () => {

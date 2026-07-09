@@ -35,6 +35,14 @@ type ReaderState = "SCANNING_FOR_VT" | "READING_PAYLOAD" | "EXPECTING_CR";
 const INITIAL_ACCUMULATOR_SIZE = 4096;
 
 /**
+ * Shared empty snippet for framing errors whose anomaly is not a specific byte (e.g.
+ * `MLLP_FRAME_TOO_LARGE`, where the fault is the accumulated size, not any content byte).
+ * Emitting a run of accumulated payload bytes here would leak a field-body slice of clinical
+ * content onto a public error field (MLLP-9 PHI audit).
+ */
+const EMPTY_SNIPPET = Buffer.alloc(0);
+
+/**
  * Options for `FrameReader`.
  *
  * All tolerance opts default to `false` — every framing deviation throws unless
@@ -328,12 +336,14 @@ export class FrameReader {
 
     // Regular payload byte — enforce size cap BEFORE appending
     if (this._writePos >= this._maxFrameSize) {
-      const snippetStart = Math.max(0, this._writePos - 32);
-      const snippet = Buffer.from(this._accumulator.subarray(snippetStart, this._writePos));
+      // PHI: the snippet must NOT carry a run of accumulated payload bytes — that is a
+      // field-body slice of clinical content (the too-large frame is a full HL7 message).
+      // The anomaly here is the size, not any specific byte, so the snippet is empty; the
+      // structural facts (cap, byte offset) live in the message. (MLLP-9 PHI audit.)
       throw new MllpFramingError(
         "MLLP_FRAME_TOO_LARGE",
         this._byteOffset,
-        snippet,
+        EMPTY_SNIPPET,
         `Frame payload exceeded maxFrameSizeBytes (${this._maxFrameSize}) at offset ${this._byteOffset}`,
       );
     }

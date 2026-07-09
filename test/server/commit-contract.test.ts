@@ -17,6 +17,8 @@ import type { Socket } from "node:net";
 import { createServer } from "../../src/server/server.js";
 import { MllpAckError } from "../../src/server/ack.js";
 
+import { must } from "../helpers/tracked-servers.js";
+
 const VT = 0x0b;
 const FS = 0x1c;
 const CR = 0x0d;
@@ -32,11 +34,6 @@ function framePayload(payload: string): Buffer {
   framed[payloadBuf.length + 1] = FS;
   framed[payloadBuf.length + 2] = CR;
   return framed;
-}
-
-function must<T>(v: T | undefined | null): T {
-  if (v === undefined || v === null) throw new Error("expected value");
-  return v;
 }
 
 /** Connect to a listening server, send `payload`, resolve with the decoded ACK payload string. */

@@ -5,28 +5,15 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer } from "../../src/server/server.js";
-import type { MllpServer } from "../../src/server/server.js";
-
-function must<T>(v: T | undefined | null): T {
-  if (v === undefined || v === null) throw new Error("expected value");
-  return v;
-}
+import { must, makeServerTracker } from "../helpers/tracked-servers.js";
 
 describe("Server bind safety (Phase 8)", () => {
-  const servers: MllpServer[] = [];
+  const { track, closeAll } = makeServerTracker();
 
   afterEach(async () => {
-    for (const s of servers) {
-      await s.close().catch(() => undefined);
-    }
-    servers.length = 0;
+    await closeAll();
     vi.restoreAllMocks();
   });
-
-  function track(s: MllpServer): MllpServer {
-    servers.push(s);
-    return s;
-  }
 
   it("default host is 127.0.0.1 (listen(0) with no host arg)", async () => {
     const server = track(createServer({}));
@@ -406,7 +393,7 @@ describe("Server bind safety (Phase 8)", () => {
   it("createStarterServer defaults to 127.0.0.1", async () => {
     const { createStarterServer } = await import("../../src/server/server.js");
     const server = await createStarterServer({ port: 0 });
-    servers.push(server);
+    track(server);
     expect(server.getStats().host).toBe("127.0.0.1");
   });
 });

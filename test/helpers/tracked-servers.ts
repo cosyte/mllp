@@ -1,8 +1,10 @@
 /**
  * Shared server-test scaffolding — the `must()` narrowing helper and the
  * tracked-server teardown pattern that test/server/*.test.ts files had been
- * copy-pasting (review finding, MLLP-8.1). New server suites should use this;
- * migrating the pre-existing suites rides with MLLP-9.
+ * copy-pasting (review finding, MLLP-8.1). All server suites use this as of
+ * MLLP-9; the only suite keeping its own tracker is `graceful-shutdown`, whose
+ * teardown needs a bounded `close({ drainTimeoutMs })` the generic helper (a
+ * plain `close()`) does not express.
  */
 import type { MllpServer } from "../../src/server/server.js";
 

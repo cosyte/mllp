@@ -20,6 +20,8 @@ import { MllpConnectionError } from "../../src/connection/index.js";
 import { createServer } from "../../src/server/server.js";
 import { buildRawAck, resolveNackCode, MllpAckError } from "../../src/server/ack.js";
 
+import { must } from "../helpers/tracked-servers.js";
+
 // ---------------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------------
@@ -48,12 +50,6 @@ function framePayload(payload: string): Buffer {
  */
 const ADT_A01_PAYLOAD =
   "MSH|^~\\&|SENDER|SFAC|RECV|RFAC|20260424120000||ADT^A01|MSG001|P|2.5\rPID|||12345^^^FAC||DOE^JOHN\r";
-
-/** Assert a value is present (non-null/undefined) and return it narrowed. */
-function must<T>(v: T | undefined | null): T {
-  if (v === undefined || v === null) throw new Error("expected value");
-  return v;
-}
 
 // ---------------------------------------------------------------------------
 // Describe blocks

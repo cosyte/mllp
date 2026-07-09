@@ -14,6 +14,26 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Added
 
+- **Real-world interop, differential conformance & PHI/observability audit (Phase 9).**
+  - **PHI hardening (framing).** `MllpFramingError.snippet` no longer carries a run of payload content
+    bytes on **either** framing path. (1) The decoder's `MLLP_FRAME_TOO_LARGE` used to copy the last 32
+    accumulated payload bytes into `snippet` (the too-large frame is a full HL7 message) — now empty (the
+    anomaly is the frame's *size*, not a byte). (2) The encoder's `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` (strict,
+    reachable from `client.send()`) copied up to 64 payload bytes around the offending delimiter — now
+    just the single offending delimiter byte (a VT/FS control byte the `code` already names). Every
+    framing throw now carries at most the single framing-boundary byte that broke the structure, never a
+    payload run; the `snippet` PHI contract is documented on the field. No public-API change.
+  - **Differential harness** (`test/differential/`) — byte-parity with the Google Cloud Healthcare MLLP
+    adapter and Mirth/NextGen Connect (both R1). Tier 1 (always on) asserts decode + `encodeFrame`
+    byte-parity against canonical R1 golden frames and ACK correlation; Tier 2 (`MLLP_DIFF_ADAPTER`
+    opt-in) checks a live adapter and skips cleanly when unset, so `verify` stays green.
+  - **Quirk corpus** (`test/conformance/`) — a realistic multi-segment HL7 message driven through each
+    §3 real-world deviation, asserting the exact warning code/typed error and byte-identical payload
+    recovery; the lenient decoder never throws except the sanctioned `MLLP_FRAME_TOO_LARGE`.
+  - **PHI-safety property suite** — generative proof (mutation-checked) that no framing diagnostic ever
+    echoes payload content, including the oversized path.
+  - **Test-infra:** the pre-existing `test/server/*` suites now use the shared
+    `test/helpers/tracked-servers.ts` (`must()` + `makeServerTracker()`) instead of copy-pasted helpers.
 - **TLS / MLLPS hardening (Phase 8).** `TlsTransport` (wraps `tls.TLSSocket`, maps `onConnect` to
   `'secureConnect'`) joins `NetTransport` as a first-class `Transport`. Client: `ClientOptions.tls?:
   TlsOptions | true` — verification **on by default**; the only opt-out is the loud

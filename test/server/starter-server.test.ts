@@ -9,14 +9,9 @@
 
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { createStarterServer, createServer } from "../../src/server/server.js";
-import type { MllpServer } from "../../src/server/server.js";
 import * as net from "node:net";
 
-/** Assert a value is present (non-null/undefined) and return it narrowed. */
-function must<T>(v: T | undefined | null): T {
-  if (v === undefined || v === null) throw new Error("expected value");
-  return v;
-}
+import { must, makeServerTracker } from "../helpers/tracked-servers.js";
 
 // MLLP framing helpers
 const VT = 0x0b;
@@ -51,27 +46,20 @@ async function sendFramedMessage(sock: net.Socket, msg: string): Promise<void> {
 }
 
 describe("createStarterServer", () => {
-  const servers: MllpServer[] = [];
+  const { track, closeAll } = makeServerTracker();
 
-  afterEach(async () => {
-    for (const s of servers) {
-      await s.close().catch(() => {
-        /* ignore */
-      });
-    }
-    servers.length = 0;
-  });
+  afterEach(closeAll);
 
   it("resolves with a listening MllpServer", async () => {
     const server = await createStarterServer({ port: 0 });
-    servers.push(server);
+    track(server);
     expect(server).toBeDefined();
     expect(server.getStats().listening).toBe(true);
   });
 
   it("getStats() has both connections and activeConnections fields (OBS-02)", async () => {
     const server = await createStarterServer({ port: 0 });
-    servers.push(server);
+    track(server);
     const stats = server.getStats();
     expect(stats).toHaveProperty("connections");
     expect(stats).toHaveProperty("activeConnections");
@@ -88,7 +76,7 @@ describe("createStarterServer", () => {
 
   it("no onMessage provided → auto-ACK AA is still active", async () => {
     const server = await createStarterServer({ port: 0 });
-    servers.push(server);
+    track(server);
     const port = must(server.getStats().port);
     const sock = await connectRaw(port);
     try {
@@ -111,7 +99,7 @@ describe("createStarterServer", () => {
 
   it("JSON.stringify(server.getStats()) succeeds without loss (OBS-04)", async () => {
     const server = await createStarterServer({ port: 0 });
-    servers.push(server);
+    track(server);
     const stats = server.getStats();
     const str = JSON.stringify(stats);
     expect(str).not.toContain("[object Object]");
@@ -131,20 +119,13 @@ describe("createStarterServer", () => {
 });
 
 describe("server.getStats() byte aggregation", () => {
-  const servers: MllpServer[] = [];
+  const { track, closeAll } = makeServerTracker();
 
-  afterEach(async () => {
-    for (const s of servers) {
-      await s.close().catch(() => {
-        /* ignore */
-      });
-    }
-    servers.length = 0;
-  });
+  afterEach(closeAll);
 
   it("totalBytesIn aggregates from connected peers", async () => {
     const server = await createStarterServer({ port: 0, autoAck: "AA" });
-    servers.push(server);
+    track(server);
     const port = must(server.getStats().port);
 
     // Wait for message to be processed
@@ -168,7 +149,7 @@ describe("server.getStats() byte aggregation", () => {
 
   it("totalBytesOut aggregates from connected peers after sending", async () => {
     const server = await createStarterServer({ port: 0, autoAck: "AA" });
-    servers.push(server);
+    track(server);
     const port = must(server.getStats().port);
 
     // Wait for message to be processed and ACK sent
@@ -279,20 +260,13 @@ describe("handleSignals", () => {
 });
 
 describe("frozen event payloads audit", () => {
-  const servers: MllpServer[] = [];
+  const { track, closeAll } = makeServerTracker();
 
-  afterEach(async () => {
-    for (const s of servers) {
-      await s.close().catch(() => {
-        /* ignore */
-      });
-    }
-    servers.length = 0;
-  });
+  afterEach(closeAll);
 
   it("'listening' event payload is frozen", async () => {
     const server = createServer({});
-    servers.push(server);
+    track(server);
     let listeningPayload: Record<string, unknown> | undefined;
     server.once("listening", (payload: unknown) => {
       listeningPayload = payload as Record<string, unknown>;
@@ -304,7 +278,7 @@ describe("frozen event payloads audit", () => {
 
   it("'connection' event payload is frozen", async () => {
     const server = createServer({});
-    servers.push(server);
+    track(server);
     await server.listen(0);
     const port = must(server.getStats().port);
 
@@ -324,7 +298,7 @@ describe("frozen event payloads audit", () => {
 
   it("'message' event payload is frozen", async () => {
     const server = createServer({});
-    servers.push(server);
+    track(server);
     await server.listen(0);
     const port = must(server.getStats().port);
 
