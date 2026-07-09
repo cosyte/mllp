@@ -10,11 +10,7 @@ import { createServer } from "../../src/server/server.js";
 import type { MllpServer } from "../../src/server/server.js";
 import * as net from "node:net";
 
-/** Assert a value is present (non-null/undefined) and return it narrowed. */
-function must<T>(v: T | undefined | null): T {
-  if (v === undefined || v === null) throw new Error("expected value");
-  return v;
-}
+import { must } from "../helpers/tracked-servers.js";
 
 // Helper: connect a raw socket to a server bound on 0 and return it
 async function connectToServer(server: MllpServer): Promise<net.Socket> {

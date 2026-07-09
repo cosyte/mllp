@@ -8,11 +8,15 @@
 
 ## Status
 
-- **Phase 8 of 11** — client/server/framing/connection/transport shipped; Phase 6 (fail-safe ACK
+- **Phase 9 of 11** — client/server/framing/connection/transport shipped; Phase 6 (fail-safe ACK
   commit contract), Phase 7 (`ack-from-hl7` — real helpers over `@cosyte/hl7`'s `buildAck`, stub
-  removed), and Phase 8 (TLS/MLLPS hardening — `TlsTransport`, mutual TLS via `ClientAuth`, the
+  removed), Phase 8 (TLS/MLLPS hardening — `TlsTransport`, mutual TLS via `ClientAuth`, the
   `'securityWarning'`/`'tlsClientError'` events, bind-safety default `127.0.0.1` + gated wildcard
-  bind) done. Next: see `operations/roadmaps/mllp.md` for what follows Phase 8. For dev/test the
+  bind), and Phase 9 (real-world interop — differential harness vs the Google Cloud MLLP adapter +
+  Mirth/NextGen (`test/differential/`, `MLLP_DIFF_ADAPTER`-gated live tier), the §3 quirk corpus
+  (`test/conformance/`), and a PHI/observability audit that closed the `MLLP_FRAME_TOO_LARGE`
+  `snippet` payload-slice leak) done. Next: see `operations/roadmaps/mllp.md` for what follows Phase 9.
+  For dev/test the
   unpublished `@cosyte/hl7` peer is consumed as a **vendored packed
   tarball** (`vendor/cosyte-hl7-0.0.0.tgz`, a devDependency) — an interim mechanism until the
   cross-repo consumption decision (umbrella `PW-5` gate) lands; refresh it by re-running

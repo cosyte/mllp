@@ -26,11 +26,14 @@ const MAX_SNIPPET_BYTES = 64;
  *
  * - `code` — stable `WarningCode` identifying the violation
  * - `byteOffset` — absolute stream position where the violation was detected
- * - `snippet` — up to 64 bytes copied from around the anomaly (isolated from source buffer reuse)
+ * - `snippet` — the single framing-boundary byte that broke the structure, or empty when the
+ *   anomaly is not a specific byte. **Never a run of payload content** (see the `snippet` PHI
+ *   contract below); the constructor caps whatever it is given to 64 bytes as a backstop.
  *
  * @example
  * ```typescript
- * throw new MllpFramingError('MLLP_FRAME_TOO_LARGE', byteOffset, chunk.subarray(0, 64));
+ * // Pass only the offending framing-boundary byte — never a slice of payload content.
+ * throw new MllpFramingError('MLLP_MISSING_LEADING_VT', byteOffset, Buffer.from([byte]));
  * ```
  */
 export class MllpFramingError extends Error {
@@ -47,6 +50,14 @@ export class MllpFramingError extends Error {
    *
    * This is a **copied** Buffer — isolated from the source buffer so it remains
    * valid after the underlying buffer is reused or overwritten.
+   *
+   * **PHI contract (MLLP-9):** the decoder only ever populates this with the single
+   * framing-boundary byte that violated the frame structure (whose hex value the
+   * `message` already discloses) — never a run of payload content bytes. For anomalies
+   * whose fault is not a specific byte (`MLLP_FRAME_TOO_LARGE` — the accumulated size),
+   * the snippet is **empty**: a payload slice on a public error field would leak a
+   * field-body slice of clinical content. Callers constructing this directly are
+   * responsible for the same discipline.
    */
   readonly snippet: Buffer;
 

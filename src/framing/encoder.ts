@@ -100,11 +100,13 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
       const code = byte === VT ? "MLLP_PAYLOAD_CONTAINS_VT" : "MLLP_PAYLOAD_CONTAINS_FS";
 
       if (!allow) {
-        // Strict path: capture snippet around offending byte and throw.
-        const snippetStart = Math.max(0, i - 32);
-        const snippetEnd = Math.min(payload.length, i + 32);
-        const snippet = Buffer.from(payload.subarray(snippetStart, snippetEnd));
-        throw new MllpFramingError(code, i, snippet);
+        // PHI: the snippet must NOT carry the surrounding payload bytes — that is a
+        // field-body slice of clinical content on a public error field (MLLP-9 PHI
+        // audit, mirroring the decoder's MLLP_FRAME_TOO_LARGE fix). The offending byte
+        // is itself a framing delimiter (VT/FS, a control byte, never PHI); the `code`
+        // already names which and the offset is on the error, so the snippet is just
+        // that one boundary byte.
+        throw new MllpFramingError(code, i, Buffer.from([byte]));
       }
 
       // Tolerant path: emit warning and continue — bytes pass through verbatim.
