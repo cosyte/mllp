@@ -68,14 +68,45 @@ const client = createClient({
 See the **MLLPS / TLS** doc for the `ClientAuth` table, the TLS 1.2 floor (IHE ATNA ITI-19), typed
 failure modes (`tls-verify` vs `tls-handshake`), and bind-safety details.
 
+## Fail-safe ACKs — the commit contract
+
+A positive acknowledgement (`AA`) tells the sender *"you may forget this message — I have it."* So a
+receiver must never send one before the message is durably handled, or the message is silently lost.
+`@cosyte/mllp` makes that structural: pair `autoAck: 'AA'` with an `onMessage` handler and the server
+**awaits your handler (the durable-commit step) and only then ACKs**.
+
+```ts
+const server = createServer({
+  autoAck: "AA",
+  onMessage: async (payload) => {
+    await db.commit(payload); // throw here ⇒ AE (resend may succeed), never AA
+  },
+});
+```
+
+Handler resolves ⇒ `AA`. Handler throws ⇒ `AE` (or `AR` via `MllpAckError`). **A positive ACK cannot
+precede a successful commit.** `autoAck: 'AA'` *without* a handler is documented as a
+transport-accept — "received and framed", not "processed".
+
 ## What's in the box
 
 - **Client + server** with strict MLLP framing (`VT + payload + FS + CR`), ACK correlation, auto-reconnect with backoff, and backpressure.
+- **The commit contract** — a positive ACK can never precede a durable commit; an unparseable inbound can never yield a positive ACK.
 - **Explicit 6-state connection machine** (`CONNECTING | CONNECTED | DRAINING | RECONNECTING | DISCONNECTED | CLOSED`) with `stateChange` events — never socket flags.
-- **Lenient decoder, strict encoder** (Postel's Law) with **11 stable warning codes** carrying byte offsets.
+- **Lenient decoder, strict encoder** (Postel's Law) with **11 stable warning codes** carrying byte offsets. Tolerance is opt-in per flag; the server ships tolerant defaults.
 - **TLS (MLLPS)** — verification on by default, mutual TLS (`clientAuth: 'NONE' | 'WANT' | 'MUST'`), a TLS 1.2 floor per IHE ATNA ITI-19, and bind-safety guardrails (`127.0.0.1` default, wildcard binds require opt-in). `AbortSignal` on every awaitable and `Symbol.asyncDispose` on every closeable.
+- **PHI-safe diagnostics** — no error, warning, event payload, or stats object ever echoes message content.
 - **In-memory transport** (`@cosyte/mllp/testing`) — a deterministic, socket-free test double for fast, reliable tests.
 - **`@cosyte/hl7` as an optional peer** — the `@cosyte/mllp/ack-from-hl7` subpath builds ACKs from parsed messages when it's installed.
+- **Zero runtime dependencies.** Node stdlib only.
+
+## What it deliberately does not do
+
+MLLP + ACK is **at-least-once at best** — your application owns idempotency and de-duplication
+(`MSH-10` + `MSH-7`). This package does not parse HL7 (use `@cosyte/hl7`), does not queue or replay
+unacked messages, does not decide clinical acceptance, does not speak MLLP **Release 2**, and ships
+no PKI. The full list is in the **Known limitations & non-goals** doc — read it before you depend on
+this.
 
 ## License
 

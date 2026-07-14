@@ -1,7 +1,7 @@
 ---
 id: tls
 title: MLLPS / TLS
-sidebar_position: 2
+sidebar_position: 5
 ---
 
 # MLLPS / TLS

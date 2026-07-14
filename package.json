@@ -124,6 +124,8 @@
     "clean": "rm -rf dist coverage",
     "attw": "attw --pack . --profile node16",
     "pack:docs": "bash scripts/build-docs-artifacts.sh",
+    "version": "changeset version && node scripts/sync-version.mjs && prettier --write package.json src/index.ts",
+    "publish:dry": "pnpm publish --dry-run --no-git-checks",
     "release": "changeset publish",
     "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm attw"
   }

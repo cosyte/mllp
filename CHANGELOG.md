@@ -12,7 +12,47 @@ this file is maintained by hand (Changesets handles the version bump and publish
 The first pre-alpha release (`0.0.1`) will ship the v1 MLLP transport surface below. The package
 begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` until first alpha).
 
+### Fixed
+
+- **Release pipeline could not have released (Phase 10).** The shared `cosyte/.github` release
+  workflow drives Changesets with `version: pnpm run version`, but no `version` script existed —
+  it failed with `ERR_PNPM_NO_SCRIPT`, so the "Version Packages" PR could never be opened. Added
+  `version` (`changeset version` → `scripts/sync-version.mjs` → `prettier --write`).
+- **The `VERSION` export would have lied about the release (Phase 10).** `VERSION` was hardcoded
+  `"0.0.0"` in `src/index.ts`, while `changeset version` bumps only `package.json` — the published
+  `0.0.1` would have exported `"0.0.0"`. `scripts/sync-version.mjs` now rewrites the constant from
+  `package.json` inside the `version` script, and `test/sanity.test.ts` compares the export against
+  `package.json` rather than asserting a hardcoded literal against a hardcoded literal (the old
+  test would have stayed green through precisely this drift).
+- **`VERSION` had a literal type in the published `.d.ts` (Phase 10).** It declared
+  `const VERSION = "0.0.0"`, leaking the current release into consumers' types and turning an
+  equality check against any other version into a compile error. Now `VERSION: string`.
+- **Docs accuracy (Phase 10).** `docs-content/intro.md` described the decoder as liberal outright.
+  It is **strict by default** — tolerance is opt-in per flag, and it is `MllpServer` that ships
+  tolerant defaults (`allowFsOnly`, `allowLfAfterFs`, `allowLeadingWhitespace`;
+  `allowMissingLeadingVt` stays off even there).
+
 ### Added
+
+- **Release readiness for `0.0.1` (Phase 10).**
+  - **Publish pipeline proven without burning a version.** New `publish:dry` script
+    (`pnpm publish --dry-run --no-git-checks`). Verified end to end: the `prepublishOnly` chain
+    (clean → typecheck → lint → test → build → `attw`) is green; `changeset version` consumes the
+    pending changesets to exactly **`0.0.1`**; the dry-run packs 24 files (`dist/` + README +
+    LICENSE + CHANGELOG) with public access and no `src/`, `test/`, or `vendor/` leakage;
+    `pack:docs` produces both docs artifacts. **Nothing was published** — the first real publish
+    is a human gate.
+  - **Full `docs-content/` transport guide.** New pages: **Framing & tolerance** (wire format, the
+    opt-in tolerance flags with a `FrameReader`-vs-`MllpServer` default table, the stable
+    warning-code registry, bounded accumulators, the PHI contract on diagnostics); **ACKs & the
+    commit contract** (fail-safe ACK semantics, the three `autoAck` modes, the transport-accept
+    caveat, FIFO-vs-control-id correlation, `ack-from-hl7`); **Connection, reconnect &
+    backpressure** (the 6-state machine, jittered exponential backoff, the transient-vs-permanent
+    classifier, keepalive vs dead-peer timeout, high-water marks, graceful drain); and **Known
+    limitations & non-goals** (at-least-once at best, no queue/replay, no MLLP R2, no Epic/Cerner
+    differential verification, no PKI, not byte-transparent, pre-stable API). Sidebar updated; all
+    examples synthetic.
+  - **README** now documents the commit contract and the non-goals, not just the feature list.
 
 - **Real-world interop, differential conformance & PHI/observability audit (Phase 9).**
   - **PHI hardening (framing).** `MllpFramingError.snippet` no longer carries a run of payload content

@@ -16,13 +16,19 @@
 /**
  * Package version marker exported from the `@cosyte/mllp` root.
  *
+ * Kept in lockstep with `package.json` by `scripts/sync-version.mjs`, which the `version` script
+ * runs immediately after `changeset version`. The `: string` annotation is deliberate — without it
+ * TypeScript infers the *literal* type (`declare const VERSION = "0.0.0"`), which leaks the current
+ * release into consumers' types and makes an equality check against any other version a compile
+ * error.
+ *
  * @example
  * ```typescript
  * import { VERSION } from '@cosyte/mllp';
  * console.log(VERSION);
  * ```
  */
-export const VERSION = "0.0.0";
+export const VERSION: string = "0.0.0";
 
 // Phase 2: framing codec public surface
 export type { WarningCode, MllpWarning } from "./framing/index.js";
