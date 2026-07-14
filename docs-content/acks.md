@@ -167,31 +167,45 @@ if (ack.warnings.some((w) => w.code === MLLP_ACK_CONTROL_ID_NOT_VERBATIM)) {
 conn.send(ack.frame);
 ```
 
-Four things provoke it, all real. The first is yours; the other three are `@cosyte/hl7`'s
-serializer, which **re-emits MSH-10 rather than copying its bytes** — so anything its canonical form
-does not preserve, it cannot echo verbatim:
+**Five** things provoke it. The first is yours; the other four are `@cosyte/hl7`'s serializer, which
+**re-emits MSH-10 in canonical form rather than copying its bytes** — so anything that form does not
+preserve, it cannot echo verbatim:
 
-1. **Overriding `encoding`** to a codec that cannot round-trip the inbound bytes. The default never
-   does; set it only when the receiving system genuinely demands a specific codec.
+1. **A lossy `encoding` override** — a codec that cannot round-trip the inbound bytes. The default
+   never does; set it only when the receiving system genuinely demands a specific codec.
 2. **Non-default delimiters** (`MSH-1`/`MSH-2`). `@cosyte/hl7` always emits the HL7 default `|^~\&`,
    so an MSH-10 of `ID#X` under a `#` component separator is re-delimited to `ID^X`.
-3. **Escape sequences.** The parser unescapes on read and **re-escapes on write**, so an MSH-10 of
-   `ID\X` comes back as `ID\E\X` — semantically the same id, different bytes, unmatchable key.
-4. **Whitespace.** Fields are **trimmed**, so an MSH-10 of `MSG42 ` comes back as `MSG42`.
+3. **Escape sequences.** Unescaped on read, re-escaped on write: `ID\X` comes back as `ID\E\X`.
+4. **Whitespace.** Fields are trimmed: `MSG42 ` comes back as `MSG42`.
+5. **Trailing empty components or subcomponents.** Canonicalized away: `ID^` and `ID&` both come back
+   as `ID`.
 
-All four warn. And all four have the same answer: use **`buildRawAck`** (the root export, and what
-the server's `autoAck` path uses). It is parser-free — it copies the MSH-10 bytes rather than
-re-serializing them — so it holds the verbatim guarantee under *any* delimiter set, escape, or
-padding.
+Each yields a *different* MSH-10 on the wire, and so an ACK the sender cannot match. All five warn.
+And all five have the same answer: use **`buildRawAck`** (the root export, and what the server's
+`autoAck` path uses). It is parser-free — it copies the MSH-10 bytes rather than re-serializing them
+— so it holds the verbatim guarantee under any delimiter set, escape, padding, or empty component.
+
+### `ack-from-hl7` refuses an HL7 batch, loudly
+
+An HL7 batch (§2.10.3) is `[FHS] { [BHS] { MSH … } [BTS] } [FTS]` — a **sequence** of messages.
+`@cosyte/mllp` does not implement batch ACK, so `buildMllpAck` will not pretend to: an `FHS`/`BHS`
+envelope yields the warned, non-positive fallback (`AE` + `MLLP_ACK_INBOUND_UNPARSEABLE`, no
+correlation id).
+
+That is deliberate and it is the safe answer. Acknowledging the batch's *first* message with a
+positive `AA` would tell the sender the whole batch was accepted, while messages 2..N were never
+looked at — they would be lost outright, or time out and resend as duplicates. A positive ACK for a
+message nobody read is precisely what the [commit contract](#the-commit-contract) exists to make
+impossible. Split the batch and ACK each message yourself, or handle it with `autoAck: fn`.
 
 ### Limits of the builder
 
 - **It trusts your disposition.** It never decides clinical accept/reject — you choose `AA`/`AE`/`AR`
   from your own commit outcome.
 - **MSA-2 is byte-verbatim for a plain control ID under the HL7 default delimiters** — including a
-  high-bit one — and *loud*, never silently wrong, in the four cases where it cannot be (above:
-  a lossy `encoding`, non-default delimiters, an escape sequence in MSH-10, or padding whitespace).
-  It is the parser's canonical re-serialization, not a byte copy; `buildRawAck` is the byte copy.
+  high-bit one — and *loud*, never silently wrong, in the five cases where it cannot be (above). It
+  is the parser's canonical re-serialization, not a byte copy; `buildRawAck` is the byte copy.
+- **It does not ACK a batch.** An `FHS`/`BHS` envelope is refused with a warned, non-positive `AE`.
 - **No enhanced-mode two-phase sequencing.** The helpers build any of the six codes; *when* to send an
   accept-ack versus an application-ack is your orchestration.
 - **No MLLP Release 2 commit-ack bytes.** See [Limitations](./limitations.md).

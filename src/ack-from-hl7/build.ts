@@ -20,7 +20,11 @@
 import type { AckCode, AckErrorDetail, AckMode, Hl7Message } from "@cosyte/hl7";
 
 import { encodeFrame } from "../framing/encoder.js";
-import { extractMsaControlId, extractMshControlId, sliceFromMsh } from "../internal/control-id.js";
+import {
+  extractMsaControlId,
+  extractMshControlId,
+  stripLeadingSegmentTerminators,
+} from "../internal/control-id.js";
 
 import { loadHl7Peer } from "./peer.js";
 import type { Hl7Peer } from "./peer.js";
@@ -441,18 +445,21 @@ function resolveInbound(
   inbound: Hl7Message | Buffer | string,
   encoding: BufferEncoding,
 ): Hl7Message {
+  // Strip LEADING SEGMENT TERMINATORS ONLY, and do it for bytes and text alike so the two
+  // give the same answer for the same message. `parseHL7` requires MSH to be the FIRST
+  // segment and throws `NO_MSH_SEGMENT` otherwise; a leading `CR` (which the MLLP decoder
+  // passes straight through) carries no data, so dropping it cannot hide anything.
+  //
+  // It deliberately stops there. It does NOT skip an `FHS`/`BHS` batch envelope — doing so
+  // would hand `parseHL7` only the batch's FIRST message and yield a positive `AA` for
+  // messages 2..N that were never read. A batch falls through to `NO_MSH_SEGMENT` and out
+  // into the warned, non-positive `AE` fallback: a loud refusal to ACK what we did not
+  // read. See `stripLeadingSegmentTerminators`.
   if (Buffer.isBuffer(inbound)) {
-    // Re-base on the MSH before parsing. `parseHL7` requires MSH to be the FIRST segment
-    // and throws `NO_MSH_SEGMENT` otherwise, so a leading `CR` (which the MLLP decoder
-    // passes straight through) or an `FHS`/`BHS` batch header (§2.10.3) would otherwise
-    // drop us into the unparseable fallback — a warned, non-positive `AE` with no
-    // correlation id — for a message whose MSH-10 is plainly readable, and would leave
-    // this builder LESS tolerant than the byte-level scanners the client correlates with.
-    // `sliceFromMsh` is a no-op for the overwhelmingly common MSH-at-byte-0 case.
-    return peer.parseHL7(sliceFromMsh(inbound).toString(encoding));
+    return peer.parseHL7(stripLeadingSegmentTerminators(inbound).toString(encoding));
   }
   if (typeof inbound === "string") {
-    return peer.parseHL7(inbound);
+    return peer.parseHL7(inbound.replace(/^[\r\n]+/, ""));
   }
   const isPeerNative: boolean = inbound instanceof peer.Hl7Message;
   return isPeerNative ? inbound : peer.parseHL7(inbound.toString());

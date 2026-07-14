@@ -235,25 +235,42 @@ export function readMshSegment(buf: Buffer): MshSegment | null {
 }
 
 /**
- * The payload re-based on its `MSH` segment: everything from the located `MSH` onward,
- * with any leading `CR`/`LF` or `FHS`/`BHS` batch header dropped. Returns `buf`
- * unchanged when there is no `MSH` to find (let the caller's parser report that).
+ * Strip **leading segment terminators only** — `CR`/`LF` bytes before the first segment.
  *
- * This exists so the **parser-backed** ACK builder can be as tolerant as the byte-level
- * scanners. `@cosyte/hl7`'s `parseHL7` requires `MSH` to be the first segment and throws
- * `NO_MSH_SEGMENT` otherwise, so a leading `CR` — which the MLLP decoder passes straight
- * through — or a batch header would send `buildMllpAck` down its unparseable fallback
- * (a warned, non-positive `AE` with no correlation id) for a message whose MSH-10 is
- * perfectly readable. Re-basing first means all three consumers agree at the tolerant
- * fixed point rather than two of them being tolerant and the third not.
+ * This is the whole of what the parser-backed ACK builder needs re-based, and it is
+ * deliberately the *minimum*. `@cosyte/hl7`'s `parseHL7` requires `MSH` to be the first
+ * segment and throws `NO_MSH_SEGMENT` otherwise, so a leading `CR` — which the MLLP
+ * decoder passes straight through into the payload — would otherwise send `buildMllpAck`
+ * down its unparseable fallback for a message whose MSH-10 is plainly readable. A leading
+ * `CR`/`LF` is pure segment-terminator noise: it carries **no data**, so dropping it
+ * cannot hide anything.
  *
- * Nothing is lost by dropping what precedes the `MSH`: an ACK is built from the MSH
- * alone, and the verbatim check still runs against the **original**, un-rebased bytes.
+ * ## What this deliberately does NOT do: skip an `FHS`/`BHS` batch header
+ *
+ * An earlier version of this function re-based on the *located `MSH`*, which also skipped
+ * a batch envelope. That was a serious mistake. A batch (§2.10.3) is
+ * `[FHS] { [BHS] { MSH … } [BTS] } [FTS]` — a **sequence of messages**. Re-basing on the
+ * first `MSH` handed `parseHL7` message 1 and silently discarded every later `MSH`, the
+ * `BTS` count, and the `FTS`. `buildMllpAck` then returned a confident positive **`AA`
+ * correlated to message 1, with zero warnings**, for a batch whose messages 2..N it had
+ * never looked at. The sender reads that as "the batch is accepted" — so those messages
+ * are lost outright, or time out and resend as **duplicate clinical messages**.
+ *
+ * Batch ACK is a real feature and is tracked separately. It is not something to arrive at
+ * by accident, via a byte-offset helper, on the way to fixing something else. Until it is
+ * built deliberately, an `FHS`/`BHS` envelope must fall through to `parseHL7`'s
+ * `NO_MSH_SEGMENT` and out into the **warned, non-positive `AE` fallback** — a loud
+ * refusal to ACK what we did not read. That is the fail-safe answer and it is what the
+ * package did before this item touched it.
+ *
  * @internal
  */
-export function sliceFromMsh(buf: Buffer): Buffer {
-  const at = findMshSegment(buf);
-  return at === null || at.start === 0 ? buf : buf.subarray(at.start);
+export function stripLeadingSegmentTerminators(buf: Buffer): Buffer {
+  let i = 0;
+  while (i < buf.length && (buf[i] === SEGMENT_SEPARATOR_CR || buf[i] === SEGMENT_SEPARATOR_LF)) {
+    i++;
+  }
+  return i === 0 ? buf : buf.subarray(i);
 }
 
 /**

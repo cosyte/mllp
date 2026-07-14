@@ -200,7 +200,11 @@ describe("the MSH is LOCATED, not demanded at byte 0 (tolerance is not negotiabl
     expect(ackMsa2).toBe("MSG00042");
   });
 
-  it("an FHS/BHS batch header does not hide the control ID (§2.10.3)", () => {
+  it("the byte scanners still locate an MSH behind an FHS/BHS header (as main did)", () => {
+    // The byte-level scanners and `buildRawAck` find the MSH wherever the segment is —
+    // `buildRawAck` always did (it hunted for a segment starting with `MSH`), so this is
+    // main's behaviour preserved, not new tolerance. It is NOT a batch feature: see the
+    // batch suite below for what the parser-backed builder does, and why.
     const batch = `FHS|^~\\&|SENDER\rBHS|^~\\&|SENDER\r${MSH}\rPID|1||MRN00042\r`;
     const { delivered, ackMsa2 } = throughTheWire(Buffer.from(batch, "latin1"));
     expect(extractMshControlId(delivered)).toBe("MSG00042");
@@ -222,5 +226,78 @@ describe("the MSH is LOCATED, not demanded at byte 0 (tolerance is not negotiabl
     );
     expect(extractMshControlId(delivered)).toBeNull();
     expect(ackMsa2).toBeNull();
+  });
+});
+
+describe("a BATCH is refused loudly — never a positive AA for messages nobody read", () => {
+  /**
+   * An HL7 batch (§2.10.3) is `[FHS] { [BHS] { MSH … } [BTS] } [FTS]` — a **sequence** of
+   * messages, with BTS-1 carrying the count. `@cosyte/mllp` does not implement batch ACK.
+   * The only safe answer is therefore the one `parseHL7` already gives: `NO_MSH_SEGMENT`
+   * out into the warned, non-positive `AE` fallback — a loud refusal to acknowledge what
+   * we did not read.
+   *
+   * The trap this locks shut: an interim version of MLLP-ACK-UTF8 re-based the payload on
+   * the *located* MSH before parsing, which skipped the batch envelope. `buildMllpAck` then
+   * parsed message 1, silently discarded every later MSH and the BTS/FTS, and returned a
+   * confident **`AA` correlated to message 1 with ZERO warnings**. The sender reads that as
+   * "batch accepted" — so messages 2..N are lost outright, or time out and resend as
+   * duplicate clinical messages. A positive ACK for a message nobody looked at is the exact
+   * failure the commit contract exists to make structurally impossible.
+   *
+   * Do not "fix" this into a positive AA. Batch ACK is its own feature, to be built
+   * deliberately (parse every MSH, verify the BTS count, emit a batch ACK) — never arrived
+   * at by accident via a byte-offset helper.
+   */
+  const msg = (id: string): string =>
+    `MSH|^~\\&|S|F|R|F2|20260714120000||ADT^A01|${id}|P|2.5.1\rPID|1||MRN00042\r`;
+
+  const batch = (...ids: readonly string[]): Buffer =>
+    Buffer.from(
+      `FHS|^~\\&|S|F\rBHS|^~\\&|S|F\r${ids.map(msg).join("")}BTS|${String(ids.length)}\rFTS|1\r`,
+      "latin1",
+    );
+
+  it("a TWO-message batch never yields a positive AA", () => {
+    const ack = buildAckAA(batch("MSG00001", "MSG00002"));
+
+    expect(ack.code).toBe("AE"); // downgraded — never AA
+    expect(ack.correlationId).toBeUndefined(); // no fabricated correlation
+    expect(ack.warnings.map((w) => w.code)).toContain("MLLP_ACK_INBOUND_UNPARSEABLE");
+    // Above all: it must NOT claim to have accepted message 1 while ignoring message 2.
+    expect(ack.payload.toString("latin1")).not.toContain("MSG00001");
+    expect(ack.payload.toString("latin1")).not.toContain("MSG00002");
+  });
+
+  it("a ONE-message batch is refused too — the envelope is what we cannot read", () => {
+    const ack = buildAckAA(batch("MSG00001"));
+    expect(ack.code).toBe("AE");
+    expect(ack.correlationId).toBeUndefined();
+    expect(ack.warnings.map((w) => w.code)).toContain("MLLP_ACK_INBOUND_UNPARSEABLE");
+  });
+
+  it("but a LEADING CR/LF is still stripped — terminator noise carries no data", () => {
+    // The line between the two: a leading CR is pure segment-terminator noise, so dropping
+    // it hides nothing. An FHS/BHS envelope is DATA, and dropping it hides messages.
+    for (const prefix of ["\r", "\n", "\r\n", "\r\r\n"]) {
+      const ack = buildAckAA(Buffer.from(`${prefix}${msg("MSG00042")}`, "latin1"));
+      expect(ack.code, `prefix ${JSON.stringify(prefix)}`).toBe("AA");
+      expect(ack.correlationId, `prefix ${JSON.stringify(prefix)}`).toBe("MSG00042");
+      expect(ack.warnings, `prefix ${JSON.stringify(prefix)}`).toHaveLength(0);
+    }
+  });
+
+  it("a string inbound answers exactly as the equivalent Buffer does", () => {
+    // The tolerant strip is applied to bytes and text alike, so the two branches cannot
+    // disagree about the same message.
+    const text = `\r${msg("MSG00042")}`;
+    const fromText = buildAckAA(text);
+    const fromBytes = buildAckAA(Buffer.from(text, "latin1"));
+    expect(fromText.code).toBe(fromBytes.code);
+    expect(fromText.correlationId).toBe(fromBytes.correlationId);
+
+    const batchText = batch("MSG00001", "MSG00002").toString("latin1");
+    expect(buildAckAA(batchText).code).toBe("AE");
+    expect(buildAckAA(batchText).correlationId).toBeUndefined();
   });
 });

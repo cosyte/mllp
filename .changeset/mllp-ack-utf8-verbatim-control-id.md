@@ -29,8 +29,10 @@ exist reads as absent, never as the next segment's contents.
 The three places that each re-derived "read the MSH" — and each got it wrong differently — now
 genuinely share one implementation, and they agree at the **tolerant** fixed point: `readMshSegment`
 **locates** the MSH (the first `CR`/`LF`-delimited segment starting with `MSH`) rather than demanding
-it at byte 0, so a leading `CR` or an `FHS`/`BHS` batch header cannot hide a control ID that is
-plainly present. Adds the stable warning code
+it at byte 0, so a leading `CR` cannot hide a control ID that is plainly present. `buildMllpAck`
+strips leading segment terminators only — an `FHS`/`BHS` batch envelope is still refused with a
+warned, non-positive `AE`, since acknowledging a batch's first message positively would tell the
+sender the whole batch was accepted while messages 2..N went unread. Adds the stable warning code
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`: `buildMllpAck` verifies its own output against the scanners the
 client correlates with, so a non-matchable ACK is loud rather than silent. The warning reports byte
 lengths and withholds the field values — MSH-10 is inbound payload content, and a warning goes to a

@@ -64,9 +64,19 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
     disagreement by degrading the side that was **right**: `buildRawAck` began emitting a positive
     `AA` with an empty MSA-2, **silently**, for a message whose MSH-10 was there to read — a
     tolerance regression that manufactured the very duplicate-message failure this item exists to
-    close. A lenient reader may never drop data that is present (Postel's Law). `buildMllpAck` is
-    re-based on the located `MSH` before parsing for the same reason, since `parseHL7` requires `MSH`
-    to be the first segment.
+    close. A lenient reader may never drop data that is present (Postel's Law). `buildMllpAck` strips **leading
+    segment terminators only** before parsing, for the same reason and no further: `parseHL7` requires
+    `MSH` to be the first segment, and a leading `CR`/`LF` is pure terminator noise carrying no data,
+    so dropping it can hide nothing.
+  - **An HL7 batch (§2.10.3) is still refused, loudly.** `buildMllpAck` does not implement batch ACK,
+    so an `FHS`/`BHS` envelope falls through to `parseHL7`'s `NO_MSH_SEGMENT` and out into the
+    warned, non-positive `AE` fallback — exactly as before this item. An interim version of the fix
+    above re-based the payload on the *located* `MSH`, which skipped the batch envelope: the builder
+    then parsed only message 1, silently discarded every later `MSH` and the `BTS`/`FTS`, and returned
+    a positive **`AA` correlated to message 1 with zero warnings** for a batch whose messages 2..N it
+    had never read — telling the sender the whole batch was accepted. A positive ACK for a message
+    nobody looked at is what the commit contract exists to make structurally impossible. Batch ACK is
+    its own feature; it is not something to arrive at by accident via a byte-offset helper.
 - **`buildRawAck` assumed `|` was the field separator instead of reading MSH-1
   (MLLP-ACK-UTF8, sibling).** MSH-1 *is* the field separator (HL7 v2.5.1 §2.5.4) — the byte at
   offset 3 of the MSH segment defines it — and the client-side scanners had always read it

@@ -97,13 +97,18 @@ canonical form rather than copying the bytes. Four things that canonical form do
   separator is re-delimited to `ID^X`.
 - **Escape sequences.** Unescaped on read, re-escaped on write: `ID\X` comes back as `ID\E\X`.
 - **Whitespace.** Fields are trimmed: `MSG42 ` comes back as `MSG42`.
+- **Trailing empty components/subcomponents.** Canonicalized away: `ID^` and `ID&` both become `ID`.
 - **A lossy `encoding` override.** Any codec that cannot round-trip the inbound bytes.
 
 Each yields a *different* MSH-10, and so an ACK the sender cannot match. None of them is silent — the
 result carries `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. And all four have the same answer: **`buildRawAck`**
 (the root export, and what the server's `autoAck` path uses) is parser-free — it copies the MSH-10
-bytes — so it holds the verbatim guarantee under any delimiter set, escape, or padding. See
-[ACKs](./acks.md).
+bytes — so it holds the verbatim guarantee under any delimiter set, escape, padding, or empty
+component. See [ACKs](./acks.md).
+
+`buildMllpAck` also **does not ACK an HL7 batch** (§2.10.3). An `FHS`/`BHS` envelope yields the
+warned, non-positive `AE` fallback rather than a positive `AA` correlated to the batch's first
+message — which would tell the sender the whole batch was accepted while messages 2..N went unread.
 
 ## The API is not stable yet
 

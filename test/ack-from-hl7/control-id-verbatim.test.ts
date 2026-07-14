@@ -265,6 +265,8 @@ describe("ack-from-hl7 — the parser RE-SERIALIZES MSH-10; every case it cannot
     ["an escape sequence", "ID\\X", "ID\\E\\X"],
     ["trailing whitespace", "MSG42 ", "MSG42"],
     ["leading whitespace", " MSG42", "MSG42"],
+    ["a trailing empty component", "ID^", "ID"],
+    ["a trailing empty subcomponent", "ID&", "ID"],
   ];
 
   it.each(cases)("%s in MSH-10 is re-serialized — and warns", (_name, id, reserialized) => {
