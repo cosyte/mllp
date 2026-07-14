@@ -14,7 +14,7 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
-- **Anything throwing on the receive path crashed the whole process — three routes, all closed
+- **Anything throwing on the receive path crashed the whole process — four routes, all closed
   (Phase 10).** `FrameReader.push()` runs synchronously inside the transport's data callback, which
   on a real socket **is** the `'data'` listener, so any throw there is an **uncaught exception** that
   kills the process — every other connection and every in-flight durable commit with it. The
