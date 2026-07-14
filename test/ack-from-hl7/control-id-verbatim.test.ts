@@ -283,3 +283,38 @@ describe("ack-from-hl7 — the parser RE-SERIALIZES MSH-10; every case it cannot
     expect(extractMsaControlId(buildRawAck(inbound, "AA"))).toBe(id);
   });
 });
+
+describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee (known limitation)", () => {
+  /**
+   * This suite pins a limitation, not a feature. It exists so the scoped claim in the docs
+   * ("loud on a `Buffer` inbound") cannot silently re-broaden into "loud, always" — which is
+   * what it said before the conformance gate caught it.
+   *
+   * `verifyVerbatimEcho` compares the ACK against `inboundBytes(inbound, encoding)`. For a
+   * `string`/`Hl7Message` the wire bytes are already gone, so that helper re-encodes the
+   * caller's text with the SAME codec the ACK is encoded with — the codec cancels on both
+   * sides and the comparison becomes a tautology. A codec-induced mismatch is therefore
+   * structurally invisible on the string path, and no guard placed here can see it.
+   *
+   * The underlying double-encode is a PRE-EXISTING correlation bug (byte-identical on
+   * `origin/main`) and is filed separately. Do not "fix" it by growing the guard — you
+   * cannot; the bytes are gone. The fix is to pass a `Buffer`.
+   */
+  it("a Buffer inbound echoes a high-bit control ID verbatim, with no warning", () => {
+    const ack = buildAckAA(inboundWithControlId(HIGH_BIT_ID));
+    expect(hex(extractMsaControlId(ack.payload))).toBe(HIGH_BIT_ID.toString("hex"));
+    expect(ack.warnings).toHaveLength(0);
+  });
+
+  it("the SAME message as a string double-encodes it — and CANNOT warn (this is the hole)", () => {
+    const wire = inboundWithControlId(HIGH_BIT_ID);
+    const ack = buildAckAA(wire.toString("latin1")); // the natural call if you hold decoded text
+
+    // 0x8B goes out as the two utf8 bytes 0xC2 0x8B — a DIFFERENT control ID.
+    expect(hex(extractMsaControlId(ack.payload))).toBe("41c28b43");
+    expect(hex(extractMsaControlId(ack.payload))).not.toBe(HIGH_BIT_ID.toString("hex"));
+
+    // And the guard is blind to it. Asserted so nobody can claim otherwise in the docs.
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+  });
+});

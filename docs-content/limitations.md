@@ -91,7 +91,7 @@ MSA-2 must carry the inbound MSH-10 **verbatim** (HL7 v2.5.1 §2.9.2.2), because
 sender correlates its ACK on. `buildMllpAck` (the `/ack-from-hl7` subpath) holds that guarantee
 byte-for-byte for a plain control ID under the HL7 default delimiters — including a high-bit one
 under an `MSH-18` of `8859/1` — but it builds through `@cosyte/hl7`, which **re-emits** MSH-10 in its
-canonical form rather than copying the bytes. Four things that canonical form does not preserve:
+canonical form rather than copying the bytes. Five things that canonical form does not preserve:
 
 - **Non-default delimiters.** `@cosyte/hl7` always emits `|^~\&`, so `ID#X` under a `#` component
   separator is re-delimited to `ID^X`.
@@ -100,11 +100,20 @@ canonical form rather than copying the bytes. Four things that canonical form do
 - **Trailing empty components/subcomponents.** Canonicalized away: `ID^` and `ID&` both become `ID`.
 - **A lossy `encoding` override.** Any codec that cannot round-trip the inbound bytes.
 
-Each yields a *different* MSH-10, and so an ACK the sender cannot match. None of them is silent — the
-result carries `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. And all four have the same answer: **`buildRawAck`**
+Each yields a *different* MSH-10, and so an ACK the sender cannot match. On a **`Buffer`** inbound none
+of them is silent — the result carries `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. And all five have the same
+answer: **`buildRawAck`**
 (the root export, and what the server's `autoAck` path uses) is parser-free — it copies the MSH-10
 bytes — so it holds the verbatim guarantee under any delimiter set, escape, padding, or empty
 component. See [ACKs](./acks.md).
+
+And it is a **`Buffer`** guarantee. On a `string` / `Hl7Message` inbound the wire bytes were decoded
+before `buildMllpAck` ever saw them, so it re-encodes your text with the same codec it decoded it
+with: the codec cancels on both sides, and a codec-induced mismatch is **structurally invisible**.
+`buildAckAA(payload.toString("latin1"))` on a high-bit control ID (`0x8B`) emits the two `utf8` bytes
+`0xC2 0x8B` — a *different* control ID the sender cannot correlate — and warns about **nothing**. The
+check cannot be extended to catch this; the bytes are gone by then. Pass a `Buffer`. That is what the
+`Buffer`-first API rule is for.
 
 `buildMllpAck` also **does not ACK an HL7 batch** (§2.10.3). An `FHS`/`BHS` envelope yields the
 warned, non-positive `AE` fallback rather than a positive `AA` correlated to the batch's first

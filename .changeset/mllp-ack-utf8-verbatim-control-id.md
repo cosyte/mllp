@@ -37,3 +37,8 @@ sender the whole batch was accepted while messages 2..N went unread. Adds the st
 client correlates with, so a non-matchable ACK is loud rather than silent. The warning reports byte
 lengths and withholds the field values — MSH-10 is inbound payload content, and a warning goes to a
 log.
+
+The verbatim guarantee (and the warning when it breaks) is a **`Buffer`** guarantee: on a `string` /
+`Hl7Message` inbound the wire bytes are decoded before `buildMllpAck` sees them, so a codec-induced
+mismatch is structurally invisible to the check. Documented, scoped, and tested — pass a `Buffer`.
+Also fixes `buildRawAck` emitting an ACK whose default MSH-2 collided with an inbound MSH-1 of `^`.

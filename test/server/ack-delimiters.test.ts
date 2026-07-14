@@ -201,3 +201,38 @@ describe("buildRawAck — end-to-end correlation under a custom separator", () =
     await client.close();
   });
 });
+
+describe("buildRawAck — the ACK's MSH-2 never collides with its MSH-1 (§2.5.4, §2.16)", () => {
+  // MSH-2 must not contain MSH-1 — they are distinct delimiters. A declared MSH-2 structurally
+  // cannot collide (it is a product of splitting ON the field separator), but the DEFAULT
+  // fallback `^~\&` can: an inbound declaring MSH-1 = `^` with no usable MSH-2 would emit an ACK
+  // whose MSH-2 reads back EMPTY, shifting every later MSH field by one.
+  const collidingSeps = ["^", "~", "\\", "&"] as const;
+
+  it.each(collidingSeps)("MSH-1 = %s with an empty MSH-2 still yields a well-formed ACK", (sep) => {
+    const inbound = Buffer.from(
+      `MSH${sep}${sep}A${sep}B${sep}C${sep}D${sep}ts${sep}${sep}ADT${sep}CID9${sep}P${sep}2.5.1\r`,
+      "latin1",
+    );
+    const ack = buildRawAck(inbound, "AA");
+    const text = ack.toString("latin1");
+
+    // The ACK's own MSH-2 must be non-empty and must not contain the ACK's own MSH-1.
+    const ackFieldSep = text.charAt(3);
+    const ackMsh2 = text.split("\r")[0]?.split(ackFieldSep)[1] ?? "";
+    expect(ackMsh2, `sep=${sep}`).not.toBe("");
+    expect(ackMsh2.includes(ackFieldSep), `sep=${sep}`).toBe(false);
+
+    // And — the point of the whole file — the control ID still echoes, so the sender still
+    // correlates. A well-formed ACK that cannot be matched would be a worse trade.
+    expect(extractMsaControlId(ack), `sep=${sep}`).toBe("CID9");
+    expect(extractMsaControlId(ack), `sep=${sep}`).toBe(extractMshControlId(inbound));
+  });
+
+  it("a declared MSH-2 is still echoed when it does not collide", () => {
+    // No regression: the collision guard must not fire on ordinary messages.
+    const ack = buildRawAck(inbound({ sep: "!", enc: "#~\\&", id: "ID#X" }), "AA");
+    expect(ack.toString("latin1").startsWith("MSH!#~\\&!")).toBe(true);
+    expect(extractMsaControlId(ack)).toBe("ID#X");
+  });
+});

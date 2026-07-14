@@ -261,10 +261,26 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
   //   [2]=sendingApp [3]=sendingFacility [4]=receivingApp [5]=receivingFacility
   //   [9]=MSH-10 control ID  [10]=processingId  [11]=version
   const declaredEnc = fields[1] ?? "";
-  const encodingChars =
+  const usableEnc =
     declaredEnc !== "" && !UNSAFE_DELIMITER.test(declaredEnc)
       ? declaredEnc
       : DEFAULT_ENCODING_CHARACTERS;
+
+  // MSH-2 must not contain MSH-1 (§2.5.4, §2.16 — the delimiters are distinct characters).
+  // `declaredEnc` structurally cannot: it is a product of splitting ON `fieldSep`. The DEFAULT
+  // fallback can. An inbound declaring MSH-1 = `^` with no usable MSH-2 would take `^~\&`, whose
+  // first character IS the field separator — so the ACK we emit reads back with an EMPTY MSH-2
+  // and every later MSH field shifted by one. When the delimiters collide, emit the ACK under
+  // the HL7 defaults ENTIRELY (MSH-1 and MSH-2 together, the one pair guaranteed consistent).
+  //
+  // Note what we do NOT do: fall through to the minimal ACK. That would drop the MSA-2 echo, and
+  // an ACK that is well-formed but uncorrelatable is *worse* than one that is correlatable but
+  // has a malformed header — the sender would time out and resend a duplicate clinical message.
+  // The control-ID echo is the thing this file exists to protect; the header is not.
+  const collides = usableEnc.includes(fieldSep);
+  const s = collides ? DEFAULT_FIELD_SEPARATOR : fieldSep;
+  const encodingChars = collides ? DEFAULT_ENCODING_CHARACTERS : usableEnc;
+
   const sendingApp = fields[2] ?? "";
   const sendingFacility = fields[3] ?? "";
   const receivingApp = fields[4] ?? "";
@@ -273,7 +289,6 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
   const processingId = fields[10] ?? "P";
   const version = fields[11] ?? "2.3";
 
-  const s = fieldSep;
   const msaTail = code === "AE" || code === "AR" ? `${s}${NACK_TEXT[code]}` : "";
   const ackStr =
     `MSH${s}${encodingChars}${s}${receivingApp}${s}${receivingFacility}${s}${sendingApp}${s}${sendingFacility}${s}${now}${s}${s}ACK${s}${newControlId}${s}${processingId}${s}${version}\r` +

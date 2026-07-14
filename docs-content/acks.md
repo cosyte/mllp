@@ -185,6 +185,29 @@ And all five have the same answer: use **`buildRawAck`** (the root export, and w
 `autoAck` path uses). It is parser-free — it copies the MSH-10 bytes rather than re-serializing them
 — so it holds the verbatim guarantee under any delimiter set, escape, padding, or empty component.
 
+### Pass a `Buffer`. The guarantee is a byte guarantee.
+
+Everything above — the verbatim echo, and the warning when it breaks — holds for a **`Buffer`**
+inbound, and *only* for a `Buffer`. A `Buffer` is the wire bytes, so `buildMllpAck` can compare what
+it emitted against what actually arrived.
+
+Hand it a `string` (or an already-parsed `Hl7Message`) and the wire bytes are **already gone**. It
+re-encodes your text with the same codec it decodes it with, so the codec cancels on both sides and a
+codec-induced mismatch becomes structurally invisible — it warns about nothing:
+
+```ts
+const wire = /* MSH-10 = A <0x8B> B — legal under MSH-18 = 8859/1 */;
+
+buildAckAA(wire);                        // MSA-2 = A <0x8B> B   ✅ verbatim
+buildAckAA(wire.toString("latin1"));     // MSA-2 = A <0xC2 0x8B> B   ❌ and NO warning
+```
+
+The second is the natural call for anyone already holding a decoded payload — and it silently emits a
+*different* control ID, which the sender cannot correlate: timeout, resend, duplicate message. This
+is not something the check can be extended to catch; by the time a `string` arrives, there is nothing
+left to compare. It is why the package is `Buffer`-first on every public surface. **Pass the raw
+payload.**
+
 ### `ack-from-hl7` refuses an HL7 batch, loudly
 
 An HL7 batch (§2.10.3) is `[FHS] { [BHS] { MSH … } [BTS] } [FTS]` — a **sequence** of messages.
@@ -203,7 +226,8 @@ impossible. Split the batch and ACK each message yourself, or handle it with `au
 - **It trusts your disposition.** It never decides clinical accept/reject — you choose `AA`/`AE`/`AR`
   from your own commit outcome.
 - **MSA-2 is byte-verbatim for a plain control ID under the HL7 default delimiters** — including a
-  high-bit one — and *loud*, never silently wrong, in the five cases where it cannot be (above). It
+  high-bit one — and, **on a `Buffer` inbound**, *loud* rather than silently wrong in the five cases
+  where it cannot be (above). It
   is the parser's canonical re-serialization, not a byte copy; `buildRawAck` is the byte copy.
 - **It does not ACK a batch.** An `FHS`/`BHS` envelope is refused with a warned, non-positive `AE`.
 - **No enhanced-mode two-phase sequencing.** The helpers build any of the six codes; *when* to send an

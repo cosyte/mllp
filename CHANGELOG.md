@@ -213,6 +213,17 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
     *run* of content, but the single-byte `snippet` on `MLLP_MISSING_LEADING_VT` is by definition the
     first byte of unframed content.
 
+- **`buildRawAck` could emit an ACK whose MSH-2 collided with its MSH-1 (MLLP-ACK-UTF8).** When an
+  inbound declared no usable MSH-2, the builder fell back to the HL7 default encoding characters
+  `^~\&` **without checking them against MSH-1**. For an inbound declaring MSH-1 = `^` (or `~`, `\`,
+  `&`), the fallback's first character *is* the field separator, so the emitted ACK read back with an
+  **empty MSH-2** and every later MSH field shifted by one (§2.5.4, §2.16 — the delimiters must be
+  distinct). Fixed: when the delimiters would collide, the ACK is emitted under the HL7 defaults
+  entirely (MSH-1 and MSH-2 together — the one pair guaranteed consistent). It deliberately does
+  **not** fall through to the minimal ACK, which would drop the MSA-2 echo: an ACK that is
+  well-formed but uncorrelatable is worse than one that correlates with a malformed header. The
+  control-ID echo is the thing being protected.
+
 ### Added
 
 - **`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` (MLLP-ACK-UTF8).** A new stable warning code —
@@ -228,6 +239,18 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   whitespace-padded control ID — cases `@cosyte/hl7`'s builder structurally cannot represent (it
   always emits `|^~\&`, and trims field whitespace). `buildRawAck` is parser-free and has neither
   limit, so it remains the answer for a non-default-delimiter peer.
+
+  **The check is a `Buffer` guarantee, and the docs now say so.** On a `string`/`Hl7Message` inbound
+  the wire bytes are decoded before `buildMllpAck` ever sees them, so it re-encodes the caller's text
+  with the same codec it decoded it with: the codec cancels on both sides and a codec-induced
+  mismatch is **structurally invisible**. `buildAckAA(payload.toString("latin1"))` on a high-bit
+  control ID emits `0xC2 0x8B` — a different control ID — and warns about nothing. That double-encode
+  is pre-existing (byte-identical on the previous release line) and is tracked separately; the guard
+  cannot be grown to catch it, because by then the bytes are gone. What was *new* and is now fixed is
+  the **claim** that it could not happen: `docs-content/acks.md`, `docs-content/limitations.md`, and
+  the `BuildMllpAckOptions.encoding` JSDoc each asserted the echo was "never silently wrong". They now
+  scope the guarantee to `Buffer` inbound and name `Buffer` as the byte-safe path, and a test pins the
+  limitation so the claim cannot silently re-broaden.
 - **`ConnectionErrorCause` gains `'framing-fatal'` (Phase 10).** Public union. Attached to the
   `'error'` event when the decoder throws; classified **permanent** by `isTransientConnectionError`,
   so a client never auto-reconnects into a peer that is not speaking MLLP.

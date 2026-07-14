@@ -76,8 +76,16 @@ export const MLLP_ACK_INBOUND_UNPARSEABLE = "MLLP_ACK_INBOUND_UNPARSEABLE";
  * mismatch must never pass unremarked.
  *
  * `buildMllpAck` verifies this on every build, against the very same byte-level
- * scanners the `@cosyte/mllp` client uses to correlate (`src/internal/control-id.ts`),
- * so a green check means a `@cosyte/mllp` sender *will* match this ACK.
+ * scanners the `@cosyte/mllp` client uses to correlate (`src/internal/control-id.ts`).
+ *
+ * **The verification is meaningful for a `Buffer` inbound, and only for a `Buffer`.**
+ * A `Buffer` *is* the wire bytes, so comparing the ACK to it is a real byte-level check
+ * and a clean result means a `@cosyte/mllp` sender will match this ACK. A
+ * `string`/`Hl7Message` inbound has **already been decoded** before this module sees it:
+ * the only thing left to compare against is that same text, encoded with the same codec,
+ * so the codec cancels on both sides and a codec-induced mismatch is **structurally
+ * invisible** — it warns about nothing. See {@link BuildMllpAckOptions.encoding}. Pass a
+ * `Buffer` if you want this guarantee to mean anything.
  *
  * Two known ways to provoke it, both documented in the package limitations:
  *
@@ -160,12 +168,26 @@ export interface BuildMllpAckOptions {
    * - `string` / `Hl7Message` → **`"utf8"`**. The caller already decoded; we re-encode
    *   with the JS-native codec.
    *
-   * **Override with care.** Any value other than `"latin1"` on a raw-`Buffer` inbound
-   * gives up the verbatim guarantee for non-ASCII bytes (`"ascii"` masks the high bit;
-   * `"utf8"` folds invalid sequences onto `U+FFFD`). `buildMllpAck` checks the result
-   * either way and emits {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM} if the echo did not
-   * survive, so a bad override is loud rather than silent — but it is still a broken
-   * ACK. Set this only when the receiving system genuinely demands a specific codec.
+   * **Override with care, and only on a `Buffer`.** Any value other than `"latin1"` on a
+   * raw-`Buffer` inbound gives up the verbatim guarantee for non-ASCII bytes (`"ascii"`
+   * masks the high bit; `"utf8"` folds invalid sequences onto `U+FFFD`). On a `Buffer`,
+   * `buildMllpAck` **checks** the result and emits {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM}
+   * if the echo did not survive, so a bad override there is loud rather than silent — but
+   * it is still a broken ACK. Set this only when the receiving system genuinely demands a
+   * specific codec.
+   *
+   * **On a `string` / `Hl7Message` inbound the check cannot see a codec problem at all.**
+   * The wire bytes were decoded to text *before* this function saw them, so there is
+   * nothing left to compare the ACK against except that same text — the codec cancels on
+   * both sides and the comparison is a tautology. Concretely,
+   * `buildAckAA(payload.toString("latin1"))` on a high-bit control ID (`0x8B`, legal under
+   * an `MSH-18` of `8859/1`) re-encodes it as the two `utf8` bytes `0xC2 0x8B`, emits a
+   * **different** control ID, and warns about **nothing** — the sender cannot correlate it.
+   * This is not a hole the guard can be grown to cover; the bytes are gone by then.
+   *
+   * **`Buffer` is the byte-safe path.** Pass the raw payload. It is what the server hands
+   * you, it is what the `Buffer`-first API rule exists for, and it is the only input for
+   * which the verbatim guarantee — or a warning that it broke — actually means anything.
    */
   readonly encoding?: BufferEncoding;
   /**
@@ -267,6 +289,21 @@ function inboundBytes(
  * back up. This is therefore not only a spec assertion but an end-to-end
  * correlation assertion: if it passes, a `@cosyte/mllp` sender will match this
  * ACK to its send.
+ *
+ * ## Its reach is bounded by what the caller gave us, and that bound is REAL
+ *
+ * `inboundBytes` re-encodes a `string`/`Hl7Message` inbound with the *same* codec the
+ * ACK is encoded with, so on that path the codec **cancels on both sides** and this
+ * check is a **tautology**: it cannot, even in principle, catch a codec-induced
+ * non-verbatim echo. `buildAckAA(wire.toString("latin1"))` on a `0x8B` control ID emits
+ * `0xC2 0x8B` and this function returns `null` — no warning, unmatchable ACK.
+ *
+ * That is not a bug to fix here, and do **not** try to grow the guard to cover it: by
+ * the time a `string` reaches us the wire bytes are already gone, and there is nothing
+ * left to compare against. It is a real limitation of the `string` overload, documented
+ * as such on {@link BuildMllpAckOptions.encoding} and in the package limitations. The
+ * check is honest and complete for a `Buffer` inbound — the `Buffer`-first path the API
+ * rule points at — and it claims nothing beyond that.
  *
  * Returns `null` when the check passes, or cannot be made at all — the inbound has no
  * readable MSH (it does not lead with `MSH`, e.g. it is still MLLP-framed), or it
