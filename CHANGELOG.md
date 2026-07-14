@@ -14,6 +14,38 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **`ack-from-hl7` could not echo a control ID verbatim, so a cosyte client could not correlate a
+  cosyte server's ACK (MLLP-ACK-UTF8).** `buildMllpAck` decoded the inbound through the peer
+  parser's charset machinery and re-encoded the ACK through a hardcoded **`utf8`**. The two are not
+  inverses. A control-ID byte `0x8B` — legal under an `MSH-18` of `8859/1`, and the exact case
+  `MLLP-CORRELATOR-ASCII` had just fixed on the client — came back out of MSA-2 as the **two** bytes
+  `0xC2 0x8B`: a *different* control ID, so HL7 v2.5.1 §2.9.2.2's verbatim-echo requirement was
+  violated. The client keys its in-flight store on the raw bytes it sent, so it could not match that
+  ACK: the send never settled → ACK timeout → resend → **duplicate clinical message**. This was the
+  third and last of the three call sites that each re-derived "read the control ID" independently and
+  each got it wrong differently.
+  - `Buffer` input is now decoded as **`latin1`** and the ACK re-encoded with the same codec — one
+    symmetric choice, so the round-trip is the exact identity for any inbound bytes. `latin1` is the
+    only codec for which that holds: `ascii` masks the high bit, `utf8` folds invalid sequences onto
+    `U+FFFD`, and a `TextDecoder`'s `iso-8859-1` label is aliased by the WHATWG Encoding Standard to
+    **windows-1252** (`0x8B` → `U+2039`), which does not round-trip `0x80`–`0x9F` at all — so the
+    decode had to be taken away from the charset-aware parser and done on the bytes directly.
+    `string` / `Hl7Message` input keeps its `utf8` default (the caller already chose the decode).
+  - The three scanners are now **one** implementation, `src/internal/control-id.ts`, shared by the
+    client correlator, `buildRawAck`, and `buildMllpAck`.
+- **`buildRawAck` assumed `|` was the field separator instead of reading MSH-1
+  (MLLP-ACK-UTF8, sibling).** MSH-1 *is* the field separator (HL7 v2.5.1 §2.5.4) — the byte at
+  offset 3 of the MSH segment defines it — and the client-side scanners had always read it
+  dynamically. `buildRawAck` split on a hardcoded `|`, so a `!`-delimited message yielded one field
+  and **every** echoed field came back empty: the ACK went out as `MSA|AA|` with **no correlation id
+  at all**, unmatchable by construction. It now reads MSH-1 and echoes the inbound's own MSH-1/MSH-2,
+  which also keeps the echoed field *content* and the delimiters that define it together (re-emitting
+  `ID#X` under `^~\&` silently turns two components into one). Segment splitting now tolerates `LF`
+  and `CRLF` as well as `CR`, matching the scanners: an `LF`-terminated inbound previously left the
+  whole message as one "MSH" segment and emitted the ACK's MSH-12 as `2.5.1\nPID`, embedding a raw
+  `LF` and a stray segment id in the ACK. A framing byte (`VT`/`FS`) or segment terminator declared
+  as MSH-1 is refused and falls back to a minimal ACK, so the ACK can always be framed.
+
 - **The client's ACK correlator masked the high bit out of the correlation key
   (MLLP-CORRELATOR-ASCII).** `extractMshControlId` / `extractMsaControlId` decoded MSH-10 / MSA-2
   with `ascii` (`byte & 0x7f`) — the same class of bug the Phase 10 entry below fixed in
@@ -29,10 +61,11 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   distinct bytes stay distinct keys and no VT/FS can be synthesized). Six tests added under
   `test/client/correlator-controlid.test.ts`, each failing under the old decode, one of them a
   cross-path round-trip pinning `buildRawAck`'s echo and the client extractors to the same key.
-  Pure-ASCII control IDs are unaffected. **Scope:** the two paths agree byte-for-byte for the
-  `|`-delimited messages `buildRawAck` supports — it still hardcodes `|` where the extractors read
-  the separator from MSH-1, and the `ack-from-hl7` subpath still round-trips control IDs through
-  `utf8`. Both are pre-existing and untouched here.
+  Pure-ASCII control IDs are unaffected. **Scope at the time:** the two paths agreed byte-for-byte
+  only for the `|`-delimited messages `buildRawAck` supported — it still hardcoded `|` where the
+  extractors read the separator from MSH-1, and the `ack-from-hl7` subpath still round-tripped
+  control IDs through `utf8`. Both of those were left pre-existing then, and are **closed by
+  MLLP-ACK-UTF8** (above); the scanners are now a single shared implementation.
 
 - **A peer could crash the server with one high-bit byte, and corrupt the ACK control ID
   (Phase 10).** `buildRawAck` decoded the inbound message with `ascii`, which masks the high bit
@@ -138,6 +171,17 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Added
 
+- **`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` (MLLP-ACK-UTF8).** A new stable warning code —
+  `ack-from-hl7`-scoped, emitted in `MllpAck.warnings`, not through the framing registry (13 codes
+  total now). `buildMllpAck` **verifies** every ACK it builds against the very byte-level scanners the
+  `@cosyte/mllp` client uses to correlate, and warns when MSA-2 is not byte-identical to the inbound
+  MSH-10 (HL7 v2.5.1 §2.9.2.2), naming both byte strings in hex. The ACK is still emitted — a
+  mismatched ACK beats silence — but the mismatch can no longer pass unremarked, because a
+  non-verbatim MSA-2 *is* an ACK the sender cannot match. It fires for an `encoding` override that
+  cannot round-trip the inbound bytes, and for an inbound declaring non-default delimiters or a
+  whitespace-padded control ID — cases `@cosyte/hl7`'s builder structurally cannot represent (it
+  always emits `|^~\&`, and trims field whitespace). `buildRawAck` is parser-free and has neither
+  limit, so it remains the answer for a non-default-delimiter peer.
 - **`ConnectionErrorCause` gains `'framing-fatal'` (Phase 10).** Public union. Attached to the
   `'error'` event when the decoder throws; classified **permanent** by `isTransientConnectionError`,
   so a client never auto-reconnects into a peer that is not speaking MLLP.

@@ -128,14 +128,74 @@ const NACK_TEXT: Readonly<Record<NegativeAckCode, string>> = Object.freeze({
   AR: "message rejected",
 });
 
+/** HL7 default encoding characters (MSH-2), used when the inbound declares none. */
+const DEFAULT_ENCODING_CHARACTERS = "^~\\&";
+
+/** HL7 default field separator (MSH-1), used when the inbound declares none usable. */
+const DEFAULT_FIELD_SEPARATOR = "|";
+
+/**
+ * Segment terminators we tolerate when locating the inbound `MSH`.
+ *
+ * HL7 v2.5.1 §2.5.4 mandates `CR`, but `LF`/`CRLF`-terminated messages are a
+ * pervasive real-world quirk, and this package's own control-ID scanners
+ * (`src/internal/control-id.ts`) already accept both. Splitting on `CR` alone
+ * would leave an `LF`-terminated message as ONE segment — the "MSH" segment
+ * would then run on into the next segment, so the ACK's MSH-12 (version) would
+ * be emitted as `2.5.1\nPID`, carrying a raw `LF` and a stray segment id into
+ * the ACK. Postel's Law: read both, emit only `CR`.
+ */
+const SEGMENT_TERMINATORS = /[\r\n]/;
+
+/**
+ * Delimiters we refuse to echo into the ACK we build.
+ *
+ * The inbound's MSH-1/MSH-2 are echoed so the ACK's *structure* matches the
+ * message it answers — but a delimiter is a byte we then write ourselves, all
+ * over the ACK. `VT` (0x0B) and `FS` (0x1C) are the MLLP framing bytes, and `CR`
+ * / `LF` are segment terminators: any of them adopted as a field separator or an
+ * encoding character would make the ACK unframeable (`encodeFrame` is strict) or
+ * unparseable. A payload can legitimately carry those bytes — the decoder
+ * tolerates them behind `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` — so this is reachable
+ * from peer-controlled input, and a payload declaring one as its delimiter is
+ * not a real HL7 message. Fall back to the HL7 defaults: an ACK that frames and
+ * parses beats an ACK that cannot be sent at all.
+ */
+const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
+
 /**
  * Build a minimal original-mode HL7 v2 acknowledgement from raw inbound payload bytes,
  * **without a parser** (parser-driven ACKs are the `@cosyte/mllp/ack-from-hl7` subpath).
  *
- * Splits the payload on `CR` to locate the `MSH` segment, then on `|` to read fields.
- * The ACK swaps sender/receiver per HL7 ACK rules, echoes the inbound MSH-10 into MSA-2
- * (§2.9.2.2), sets MSA-1 to `code`, and — for negative codes — adds a **static, PHI-free**
- * MSA-3 reason. A fresh control ID fills the ACK's own MSH-10.
+ * Splits the payload on `CR`/`LF` to locate the `MSH` segment, reads the field separator
+ * from **MSH-1** and the encoding characters from **MSH-2**, then splits the segment on
+ * that separator to read fields. The ACK swaps sender/receiver per HL7 ACK rules, echoes
+ * the inbound MSH-10 into MSA-2 (§2.9.2.2), sets MSA-1 to `code`, and — for negative
+ * codes — adds a **static, PHI-free** MSA-3 reason. A fresh control ID fills the ACK's
+ * own MSH-10.
+ *
+ * ## Why the delimiters are read, not assumed
+ *
+ * MSH-1 **is** the field separator (HL7 v2.5.1 §2.5.4): the byte at offset 3 of the MSH
+ * segment *defines* it for the whole message. `|` is overwhelmingly common but it is a
+ * convention, not the spec. Assuming it was wrong in two compounding ways:
+ *
+ *   1. **Reading.** Splitting a `!`-delimited message on `|` yields ONE field, so every
+ *      echoed field — including MSH-10 — came back empty. The ACK went out as
+ *      `MSA|AA|` with **no correlation id at all**: the sender cannot match it, times
+ *      out, and resends → a duplicate clinical message. That is the exact failure this
+ *      package's correlator exists to prevent, manufactured by the ACK builder itself.
+ *   2. **Writing.** The echoed MSH-3..6 and MSH-10 field *content* is copied verbatim
+ *      from the inbound, still escaped against the **inbound's** encoding characters. Re-
+ *      emitting that content under a different delimiter set silently reinterprets it:
+ *      an inbound whose component separator is `#` and whose MSH-10 is `ID#X` would be
+ *      re-emitted under `^~\&` as the literal `ID#X`, which the sender then reads as a
+ *      single component rather than two. Echoing MSH-1 and MSH-2 keeps the content and
+ *      the delimiters that define it together.
+ *
+ * The client-side correlator (`src/internal/control-id.ts`) has always read MSH-1
+ * dynamically. This is the builder catching up to it, so that the two halves of a
+ * cosyte↔cosyte channel agree on the control-ID bytes for **any** delimiter set.
  *
  * **Never throws** and **never copies payload content** beyond the routing/control
  * metadata above. On a missing/malformed `MSH` it returns a minimal well-formed ACK
@@ -152,8 +212,6 @@ const NACK_TEXT: Readonly<Record<NegativeAckCode, string>> = Object.freeze({
  * ```
  */
 export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
-  const msaTail = code === "AE" || code === "AR" ? `|${NACK_TEXT[code]}` : "";
-
   // `latin1`, NOT `ascii`. Node's `ascii` codec masks the high bit (`byte & 0x7f`), which is wrong
   // twice over:
   //   1. **Spec (HL7 v2.5.1 §2.9.2.2):** MSA-2 must echo the inbound MSH-10 **verbatim**. Under
@@ -165,24 +223,41 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
   //      which `encodeFrame` (strict) rejects. `latin1` is a 1:1 byte↔code-unit mapping, so every
   //      byte round-trips exactly and no delimiter can be synthesized.
   const str = payload.toString("latin1");
-  const segments = str.split("\r");
+  const segments = str.split(SEGMENT_TERMINATORS);
   const mshSegment = segments.find((seg) => seg.startsWith("MSH"));
 
   const newControlId = randomUUID().replace(/-/g, "").substring(0, 20);
   const now = timestamp14();
 
-  if (mshSegment === undefined) {
-    // No MSH to echo: emit a well-formed ACK carrying the requested code, no payload content.
+  // MSH-1 (HL7 v2.5.1 §2.5.4) is the 4th character of the MSH segment — it DEFINES the field
+  // separator. The MSH is only readable if it declares one we can also safely write back: a bare
+  // `MSH` declares none, and a framing/segment byte as the separator is not a real HL7 message.
+  // Either way there is nothing we can honestly echo, so both take the missing-MSH path rather
+  // than guessing `|` and splitting a message that never used it.
+  const fieldSep = mshSegment?.charAt(3) ?? "";
+  if (mshSegment === undefined || fieldSep === "" || UNSAFE_DELIMITER.test(fieldSep)) {
+    // No usable MSH to echo: emit a well-formed ACK carrying the requested code, no payload
+    // content. HL7 defaults, since the inbound declared no delimiters we can trust.
+    const s = DEFAULT_FIELD_SEPARATOR;
+    const e = DEFAULT_ENCODING_CHARACTERS;
+    const tail = code === "AE" || code === "AR" ? `${s}${NACK_TEXT[code]}` : "";
     return Buffer.from(
-      `MSH|^~\\&|||||${now}||ACK|${newControlId}|P|2.3\rMSA|${code}|${msaTail}\r`,
+      `MSH${s}${e}${s}${s}${s}${s}${s}${now}${s}${s}ACK${s}${newControlId}${s}P${s}2.3\r` +
+        `MSA${s}${code}${s}${tail}\r`,
       "latin1",
     );
   }
 
-  const fields = mshSegment.split("|");
-  // MSH field indices after splitting on '|':
+  const fields = mshSegment.split(fieldSep);
+  // MSH field indices after splitting on the field separator:
+  //   [1]=MSH-2 encoding chars
   //   [2]=sendingApp [3]=sendingFacility [4]=receivingApp [5]=receivingFacility
   //   [9]=MSH-10 control ID  [10]=processingId  [11]=version
+  const declaredEnc = fields[1] ?? "";
+  const encodingChars =
+    declaredEnc !== "" && !UNSAFE_DELIMITER.test(declaredEnc)
+      ? declaredEnc
+      : DEFAULT_ENCODING_CHARACTERS;
   const sendingApp = fields[2] ?? "";
   const sendingFacility = fields[3] ?? "";
   const receivingApp = fields[4] ?? "";
@@ -191,13 +266,16 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
   const processingId = fields[10] ?? "P";
   const version = fields[11] ?? "2.3";
 
+  const s = fieldSep;
+  const msaTail = code === "AE" || code === "AR" ? `${s}${NACK_TEXT[code]}` : "";
   const ackStr =
-    `MSH|^~\\&|${receivingApp}|${receivingFacility}|${sendingApp}|${sendingFacility}|${now}||ACK|${newControlId}|${processingId}|${version}\r` +
-    `MSA|${code}|${inboundControlId}${msaTail}\r`;
+    `MSH${s}${encodingChars}${s}${receivingApp}${s}${receivingFacility}${s}${sendingApp}${s}${sendingFacility}${s}${now}${s}${s}ACK${s}${newControlId}${s}${processingId}${s}${version}\r` +
+    `MSA${s}${code}${s}${inboundControlId}${msaTail}\r`;
 
   // `latin1` on the way back out too, so a high-bit byte echoed from the inbound MSH-10 is
   // preserved rather than re-masked. Paired with the `latin1` decode above, the inbound control ID
-  // round-trips byte-exact into MSA-2.
+  // round-trips byte-exact into MSA-2 — and because the ACK carries the inbound's own MSH-1, the
+  // sender's MSA-2 scanner reads back the very bytes it keyed its in-flight store on.
   return Buffer.from(ackStr, "latin1");
 }
 

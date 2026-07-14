@@ -135,15 +135,55 @@ not accept.
 `@cosyte/hl7` is an **optional peer dependency** — install it only if you use this subpath. Calling
 in without it throws a typed `MllpPeerMissingError` rather than a bare module-not-found.
 
+### MSA-2 echoes MSH-10 *verbatim* — and says so when it can't
+
+HL7 v2.5.1 §2.9.2.2 requires MSA-2 to carry the inbound MSH-10 **verbatim**. That is not a
+formality: the sender keys its in-flight store on the control-ID bytes it put on the wire, so an ACK
+whose MSA-2 differs by a single byte is an ACK it cannot match — the send never settles, it times
+out, it resends, and the receiver commits the clinical message **twice**.
+
+So `buildMllpAck` decodes raw `Buffer` input as **`latin1`** and encodes the ACK back with the same
+codec. `latin1` is a 1:1 map between the 256 byte values and `U+0000`–`U+00FF`, which makes the
+round-trip the exact identity for *any* inbound bytes — including a high-bit control ID under an
+`MSH-18` of `8859/1`. (It is the only codec for which that holds. `ascii` masks the high bit;
+`utf8` folds invalid sequences onto `U+FFFD`; and a `TextDecoder`'s `iso-8859-1` is aliased by the
+WHATWG Encoding Standard to **windows-1252**, which does not round-trip `0x80`–`0x9F` at all.)
+
+Every build is then **checked** against the same byte-level scanners the `@cosyte/mllp` client uses
+to correlate. If MSA-2 does not match the inbound MSH-10 byte-for-byte, the ACK still goes out — a
+mismatched ACK tells the peer *something*, which beats silence — but it carries a
+`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` warning naming both byte strings in hex. **Check your warnings.**
+
+```ts
+import { buildAckAA, MLLP_ACK_CONTROL_ID_NOT_VERBATIM } from "@cosyte/mllp/ack-from-hl7";
+
+const ack = buildAckAA(payload);
+if (ack.warnings.some((w) => w.code === MLLP_ACK_CONTROL_ID_NOT_VERBATIM)) {
+  // This ACK will NOT correlate at the sender. Investigate before you ship it.
+}
+conn.send(ack.frame);
+```
+
+Two things provoke it, both real:
+
+1. **Overriding `encoding`** to a codec that cannot round-trip the inbound bytes. The default never
+   does; set it only when the receiving system genuinely demands a specific codec.
+2. **An inbound that declares non-default delimiters** (`MSH-1`/`MSH-2`). `@cosyte/hl7` always emits
+   the HL7 default `|^~\&`, so an MSH-10 of `ID#X` under a `#` component separator is re-delimited to
+   `ID^X` — different bytes, unmatchable key. Use **`buildRawAck`** (the root export) for such a
+   peer: it is parser-free and echoes the inbound's own `MSH-1`/`MSH-2`, so it holds the verbatim
+   guarantee under *any* delimiter set.
+
+The parser also **trims field whitespace**, so a control ID with leading or trailing whitespace
+cannot survive `buildMllpAck` verbatim either. It warns; `buildRawAck` has no such limit.
+
 ### Limits of the builder
 
 - **It trusts your disposition.** It never decides clinical accept/reject — you choose `AA`/`AE`/`AR`
   from your own commit outcome.
-- **MSA-2 is the inbound MSH-10's canonical re-serialization,** not its original bytes. Plain and
-  delimiter-bearing ids (`ID^X`) echo byte-exact; hex escapes decode (`\X41\` → `A`); custom-delimiter
-  senders are re-delimited spec-cleanly; trailing insignificant empties canonicalize.
-- **A non-default `encoding` can silently mangle non-ASCII header content** — single-byte encodings
-  map out-of-repertoire characters with no warning.
+- **MSA-2 is byte-verbatim under the HL7 default delimiters**, and *loud* — never silently wrong —
+  when it cannot be (above). Escapes still normalize through the parser (`\X41\` → `A`), and
+  trailing insignificant empties canonicalize.
 - **No enhanced-mode two-phase sequencing.** The helpers build any of the six codes; *when* to send an
   accept-ack versus an application-ack is your orchestration.
 - **No MLLP Release 2 commit-ack bytes.** See [Limitations](./limitations.md).

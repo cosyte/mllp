@@ -85,6 +85,20 @@ UTF-32 will contain those bytes inside ordinary characters, and any MLLP impleme
 this one) will mis-frame it. Use a single-byte encoding, UTF-8, or Shift_JIS. Which charset is in
 play is the HL7 message's `MSH-18` concern, not the transport's.
 
+## `ack-from-hl7` cannot echo a control ID under non-default delimiters
+
+MSA-2 must carry the inbound MSH-10 **verbatim** (HL7 v2.5.1 §2.9.2.2), because that is the key the
+sender correlates its ACK on. `buildMllpAck` (the `/ack-from-hl7` subpath) holds that guarantee
+byte-for-byte under the HL7 default delimiters `|^~\&` — including high-bit control IDs — but it
+builds through `@cosyte/hl7`, which always **emits** the default delimiters and **trims** field
+whitespace. So an inbound that declares its own `MSH-1`/`MSH-2`, or a control ID padded with
+whitespace, comes back re-delimited or trimmed: different bytes, and an ACK the sender cannot match.
+
+It never does this silently — the result carries `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. And there is a
+way out: **`buildRawAck`** (the root export, used by the server's `autoAck` path) is parser-free and
+echoes the inbound's own `MSH-1`/`MSH-2`, so it holds the verbatim guarantee under *any* delimiter
+set. See [ACKs](./acks.md).
+
 ## The API is not stable yet
 
 `@cosyte/mllp` is on the `0.0.x` ladder and **pre-alpha**. There is no API-stability promise and no

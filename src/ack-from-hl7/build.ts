@@ -20,6 +20,11 @@
 import type { AckCode, AckErrorDetail, AckMode, Hl7Message } from "@cosyte/hl7";
 
 import { encodeFrame } from "../framing/encoder.js";
+import {
+  CONTROL_ID_ENCODING,
+  extractMsaControlId,
+  extractMshControlId,
+} from "../internal/control-id.js";
 
 import { loadHl7Peer } from "./peer.js";
 import type { Hl7Peer } from "./peer.js";
@@ -58,6 +63,70 @@ export interface MllpAckWarning {
 export const MLLP_ACK_INBOUND_UNPARSEABLE = "MLLP_ACK_INBOUND_UNPARSEABLE";
 
 /**
+ * Warning code emitted when the built ACK's MSA-2 bytes are **not** byte-identical
+ * to the inbound MSH-10 bytes — i.e. the ACK does not echo the message control ID
+ * verbatim, as HL7 v2.5.1 §2.9.2.2 requires.
+ *
+ * This is a **correlation failure**, and the reason it is a loud warning rather
+ * than a silent success: the sender keys its in-flight store on the MSH-10 bytes
+ * it put on the wire. An ACK whose MSA-2 differs by even one byte will not match
+ * that key, so the send is never settled → ACK timeout → resend → **duplicate
+ * clinical message**. Emitting the ACK anyway (rather than throwing) is the
+ * fail-safe choice — a mismatched ACK still tells the peer *something* — but the
+ * mismatch must never pass unremarked.
+ *
+ * `buildMllpAck` verifies this on every build, against the very same byte-level
+ * scanners the `@cosyte/mllp` client uses to correlate (`src/internal/control-id.ts`),
+ * so a green check means a `@cosyte/mllp` sender *will* match this ACK.
+ *
+ * Two known ways to provoke it, both documented in the package limitations:
+ *
+ *   1. Overriding {@link BuildMllpAckOptions.encoding} to a codec that cannot
+ *      round-trip the inbound bytes (`"utf8"`/`"ascii"` against a high-bit,
+ *      8859/1-charset control ID). The default never does this.
+ *   2. An inbound that declares **non-default encoding characters** (MSH-1/MSH-2).
+ *      `@cosyte/hl7`'s `buildMessage` always emits the HL7 default `|^~\&`, so an
+ *      inbound MSH-10 of `ID#X` under a `#` component separator is re-delimited to
+ *      `ID^X` in MSA-2 — different bytes, unmatchable key. Use `buildRawAck` (root
+ *      export), which echoes the inbound's own MSH-1/MSH-2, if you must serve such
+ *      a peer.
+ *
+ * @example
+ * ```typescript
+ * import { MLLP_ACK_CONTROL_ID_NOT_VERBATIM, buildAckAA } from '@cosyte/mllp/ack-from-hl7';
+ * const { warnings } = buildAckAA(inbound, { encoding: "ascii" });
+ * if (warnings.some((w) => w.code === MLLP_ACK_CONTROL_ID_NOT_VERBATIM)) {
+ *   // this ACK will NOT correlate at the sender — investigate before shipping it
+ * }
+ * ```
+ */
+export const MLLP_ACK_CONTROL_ID_NOT_VERBATIM = "MLLP_ACK_CONTROL_ID_NOT_VERBATIM";
+
+/**
+ * Byte-faithful codec for raw-`Buffer` inbound — the default (HL7 v2.5.1 §2.9.2.2).
+ *
+ * `latin1` is Node's true ISO-8859-1: a 1:1 map between the 256 byte values and
+ * U+0000–U+00FF, so `Buffer.from(buf.toString("latin1"), "latin1")` is the identity
+ * for **every** byte string. It is the only codec for which that holds, which makes
+ * it the only one under which MSA-2 can echo an arbitrary inbound MSH-10 verbatim.
+ * See `src/internal/control-id.ts` for why `ascii`, `utf8`, and a charset-driven
+ * `TextDecoder` each lose bytes in exactly the range a high-bit control ID lives in.
+ * @internal
+ */
+const BYTES_INBOUND_ENCODING: BufferEncoding = "latin1";
+
+/**
+ * Codec for `string` / `Hl7Message` inbound — JS-native `utf8`.
+ *
+ * When the caller hands us text, **they** already chose the decode; we cannot know
+ * which codec produced those code units, so we re-encode with the JS-native one and
+ * let them override. (For raw bytes we own the decode, so we can guarantee the
+ * round-trip — see {@link BYTES_INBOUND_ENCODING}.)
+ * @internal
+ */
+const TEXT_INBOUND_ENCODING: BufferEncoding = "utf8";
+
+/**
  * Options for {@link buildMllpAck} and its six convenience wrappers.
  *
  * @example
@@ -72,15 +141,31 @@ export interface BuildMllpAckOptions {
   /** Optional error detail; one entry emits one ERR segment. */
   readonly error?: AckErrorDetail | readonly AckErrorDetail[];
   /**
-   * Payload byte encoding for the serialized ACK. Defaults to `"utf8"`.
+   * The codec used to move the ACK between bytes and text — **both** directions,
+   * as a single symmetric choice. It decodes a raw-`Buffer` `inbound` on the way in
+   * and encodes the serialized ACK on the way out, so the ACK is emitted in the same
+   * codec the inbound was read in.
    *
-   * **Caveat:** a single-byte encoding (`"ascii"`, `"latin1"`) silently maps
-   * characters outside its repertoire — non-ASCII content echoed from the
-   * inbound MSH-3..6 into the ACK header would be mangled with no warning.
-   * Keep the default unless the receiving system genuinely requires a
-   * single-byte encoding, and know your inbound header charset if you do
-   * (payload charset discipline is the HL7 message's MSH-18 concern — see the
-   * package known-limitations).
+   * That symmetry is the whole point, and it is what makes MSA-2 echo MSH-10
+   * **verbatim** (HL7 v2.5.1 §2.9.2.2). Decoding in one codec and encoding in another
+   * corrupts every non-ASCII byte it round-trips: a `latin1`-decoded `0x8B` re-encoded
+   * as `utf8` goes out as the two bytes `0xC2 0x8B`, which is a *different control ID*
+   * — and the sender, which keyed its in-flight store on `0x8B`, cannot match the ACK.
+   *
+   * **Defaults, by inbound type:**
+   *
+   * - `Buffer` → **`"latin1"`**. We own the decode, and `latin1` is the only codec
+   *   that round-trips arbitrary bytes losslessly, so MSA-2 is byte-verbatim for any
+   *   charset — including an MSH-18 of `8859/1` with high-bit bytes in the control ID.
+   * - `string` / `Hl7Message` → **`"utf8"`**. The caller already decoded; we re-encode
+   *   with the JS-native codec.
+   *
+   * **Override with care.** Any value other than `"latin1"` on a raw-`Buffer` inbound
+   * gives up the verbatim guarantee for non-ASCII bytes (`"ascii"` masks the high bit;
+   * `"utf8"` folds invalid sequences onto `U+FFFD`). `buildMllpAck` checks the result
+   * either way and emits {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM} if the echo did not
+   * survive, so a bad override is loud rather than silent — but it is still a broken
+   * ACK. Set this only when the receiving system genuinely demands a specific codec.
    */
   readonly encoding?: BufferEncoding;
   /**
@@ -141,7 +226,83 @@ function assertKnownAckCode(peer: Hl7Peer, code: unknown): asserts code is AckCo
 }
 
 /**
- * Serialize a built ACK message into a framed `MllpAck` result.
+ * Resolve the single codec used for BOTH the inbound decode and the outbound
+ * encode. An explicit `options.encoding` always wins; otherwise raw bytes get
+ * the byte-faithful `latin1` and caller-supplied text gets JS-native `utf8`.
+ * @internal
+ */
+function resolveEncoding(
+  inbound: Hl7Message | Buffer | string,
+  options: BuildMllpAckOptions,
+): BufferEncoding {
+  if (options.encoding !== undefined) return options.encoding;
+  return Buffer.isBuffer(inbound) ? BYTES_INBOUND_ENCODING : TEXT_INBOUND_ENCODING;
+}
+
+/**
+ * The inbound as bytes, for the verbatim-echo check — or `undefined` when the
+ * inbound has no bytes to name.
+ *
+ * A `Buffer` *is* its bytes. A `string`'s bytes are that string under the
+ * resolved codec. A pre-parsed `Hl7Message` has none: the caller already consumed
+ * whatever bytes it came from, so there is nothing to compare MSA-2 against and
+ * the check is skipped rather than invented.
+ * @internal
+ */
+function inboundBytes(
+  inbound: Hl7Message | Buffer | string,
+  encoding: BufferEncoding,
+): Buffer | undefined {
+  if (Buffer.isBuffer(inbound)) return inbound;
+  if (typeof inbound === "string") return Buffer.from(inbound, encoding);
+  return undefined;
+}
+
+/**
+ * Verify HL7 v2.5.1 §2.9.2.2 on the bytes we are about to put on the wire: the
+ * ACK's MSA-2 must be byte-identical to the inbound's MSH-10.
+ *
+ * Deliberately checked against `src/internal/control-id.ts` — the very scanners
+ * the `@cosyte/mllp` client uses to key its in-flight store and to look an ACK
+ * back up. This is therefore not only a spec assertion but an end-to-end
+ * correlation assertion: if it passes, a `@cosyte/mllp` sender will match this
+ * ACK to its send.
+ *
+ * Returns `null` when the check passes, or cannot be made at all — MSH-10 is
+ * absent (the peer's own no-correlation fail-safe already warns), or the inbound's
+ * MSH cannot be located byte-wise (it does not lead with `MSH`, e.g. it is still
+ * MLLP-framed). We never warn on a comparison we could not actually perform.
+ * @internal
+ */
+function verifyVerbatimEcho(
+  ackPayload: Buffer,
+  inboundRaw: Buffer | undefined,
+): MllpAckWarning | null {
+  if (inboundRaw === undefined) return null;
+  const inboundId = extractMshControlId(inboundRaw);
+  if (inboundId === null) return null;
+  const echoedId = extractMsaControlId(ackPayload);
+  if (echoedId === inboundId) return null;
+
+  // The ids are `latin1` — 1:1 with bytes — so hex is a faithful, PHI-free rendering
+  // of exactly what differs. A control id is routing metadata, not clinical content,
+  // and the operator tracing a lost message needs to see the bytes.
+  const inboundHex = Buffer.from(inboundId, CONTROL_ID_ENCODING).toString("hex");
+  const echoedHex =
+    echoedId === null ? "<absent>" : Buffer.from(echoedId, CONTROL_ID_ENCODING).toString("hex");
+  return {
+    code: MLLP_ACK_CONTROL_ID_NOT_VERBATIM,
+    message:
+      `ACK does not echo the inbound MSH-10 verbatim (HL7 v2.5.1 §2.9.2.2): ` +
+      `inbound MSH-10 = 0x${inboundHex}, emitted MSA-2 = ${echoedId === null ? echoedHex : `0x${echoedHex}`}. ` +
+      `The sender keys its in-flight store on the inbound bytes, so it will NOT match this ACK ` +
+      `(ACK timeout -> resend -> duplicate message).`,
+  };
+}
+
+/**
+ * Serialize a built ACK message into a framed `MllpAck` result, encoding it with
+ * the same codec the inbound was decoded with, and verifying the MSA-2 echo.
  * @internal
  */
 function toMllpAck(params: {
@@ -152,12 +313,18 @@ function toMllpAck(params: {
   readonly mode: AckMode | undefined;
   readonly warnings: readonly MllpAckWarning[];
   readonly options: BuildMllpAckOptions;
+  readonly encoding: BufferEncoding;
+  /** Inbound bytes to verify the MSA-2 echo against; `undefined` skips the check. */
+  readonly verifyAgainst: Buffer | undefined;
 }): MllpAck {
-  const { ack, requestedCode, code, correlationId, mode, warnings, options } = params;
-  const payload = Buffer.from(ack.toString(), options.encoding ?? "utf8");
+  const { ack, requestedCode, code, correlationId, mode, warnings, options, encoding } = params;
+  const payload = Buffer.from(ack.toString(), encoding);
   const frame = encodeFrame(payload, {
     allowDelimiterBytesInPayload: options.allowDelimiterBytesInPayload ?? false,
   });
+
+  const echoWarning = verifyVerbatimEcho(payload, params.verifyAgainst);
+  const allWarnings = echoWarning === null ? warnings : [...warnings, echoWarning];
 
   const result: MllpAck = {
     frame,
@@ -167,7 +334,7 @@ function toMllpAck(params: {
     code,
     correlationId,
     mode,
-    warnings: Object.freeze([...warnings]),
+    warnings: Object.freeze([...allWarnings]),
   };
   return Object.freeze(result);
 }
@@ -188,6 +355,7 @@ function buildUnparseableFallback(
   requestedCode: AckCode,
   fatalCode: string,
   options: BuildMllpAckOptions,
+  encoding: BufferEncoding,
 ): MllpAck {
   // The downgrade pair lives UPSTREAM (single source of truth) — this adapter
   // never carries its own AA→AE / CA→CE copy.
@@ -209,6 +377,12 @@ function buildUnparseableFallback(
     mode: undefined,
     warnings,
     options,
+    encoding,
+    // MSA-2 is INTENTIONALLY empty here — the inbound could not be parsed, so there is no
+    // control id to echo and we refuse to fabricate one. Running the verbatim check would
+    // report that deliberate choice as a violation; `MLLP_ACK_INBOUND_UNPARSEABLE` (above)
+    // is the accurate warning for this case, and it is already attached.
+    verifyAgainst: undefined,
   });
 }
 
@@ -223,10 +397,38 @@ function buildUnparseableFallback(
  * that case, re-derive an in-realm `Hl7Message` by round-tripping through
  * `.toString()` — cheap, and the wire format is the one true interchange
  * boundary between two copies of the same library.
+ *
+ * ## Why a `Buffer` is decoded here rather than handed to `parseHL7`
+ *
+ * `parseHL7(buffer)` does its own charset resolution (MSH-18 discovery, or an
+ * `options.charset` override) and decodes through a WHATWG `TextDecoder`. That is
+ * the right behaviour for reading *clinical text* — and the wrong one for an ACK
+ * builder, which needs the control ID to survive as **bytes**:
+ *
+ *   * `TextDecoder` has no byte-faithful codec. Its `iso-8859-1` label is aliased
+ *     by the WHATWG Encoding Standard to **windows-1252**, which maps `0x8B` to
+ *     `U+2039` and `0x9C` to `U+0153` — re-encoding those does not give back the
+ *     bytes that arrived. `utf8` (the default when MSH-18 is absent) folds every
+ *     invalid sequence onto `U+FFFD`, collapsing all high-bit bytes onto one value.
+ *   * Node's `Buffer` `latin1` codec, by contrast, IS a 1:1 byte↔code-unit map, so
+ *     `Buffer.from(buf.toString("latin1"), "latin1")` is the identity for every
+ *     byte string.
+ *
+ * So we decode the bytes ourselves with the resolved `encoding` and hand `parseHL7`
+ * a `string`, which it takes verbatim. Charset is the *caller's* concern (MSH-18,
+ * and the `Buffer`-first API rule) — this adapter's concern is that the control ID
+ * it echoes is the one that arrived.
  * @internal
  */
-function resolveInbound(peer: Hl7Peer, inbound: Hl7Message | Buffer | string): Hl7Message {
-  if (typeof inbound === "string" || Buffer.isBuffer(inbound)) {
+function resolveInbound(
+  peer: Hl7Peer,
+  inbound: Hl7Message | Buffer | string,
+  encoding: BufferEncoding,
+): Hl7Message {
+  if (Buffer.isBuffer(inbound)) {
+    return peer.parseHL7(inbound.toString(encoding));
+  }
+  if (typeof inbound === "string") {
     return peer.parseHL7(inbound);
   }
   const isPeerNative: boolean = inbound instanceof peer.Hl7Message;
@@ -267,12 +469,17 @@ export function buildMllpAck(
   const peer = loadHl7Peer();
   assertKnownAckCode(peer, options.code);
 
+  // ONE codec for the whole build — the inbound decode and the outbound encode are
+  // the same choice, because an asymmetric pair is exactly what breaks the verbatim
+  // MSA-2 echo (§2.9.2.2) and with it the sender's ACK correlation.
+  const encoding = resolveEncoding(inbound, options);
+
   let msg: Hl7Message;
   try {
-    msg = resolveInbound(peer, inbound);
+    msg = resolveInbound(peer, inbound, encoding);
   } catch (err) {
     if (err instanceof peer.Hl7ParseError) {
-      return buildUnparseableFallback(peer, options.code, err.code, options);
+      return buildUnparseableFallback(peer, options.code, err.code, options, encoding);
     }
     throw err;
   }
@@ -309,6 +516,8 @@ export function buildMllpAck(
     mode,
     warnings,
     options,
+    encoding,
+    verifyAgainst: inboundBytes(inbound, encoding),
   });
 }
 
@@ -441,6 +650,10 @@ export function buildAckCR(
  */
 export function detectMode(inbound: Hl7Message | Buffer | string): AckMode {
   const peer = loadHl7Peer();
-  const msg = resolveInbound(peer, inbound);
+  // Same byte-faithful decode as `buildMllpAck` (see `resolveInbound`), so a
+  // high-bit byte anywhere in the message cannot make the two disagree about
+  // which message they are looking at. MSH-15/16 are ASCII either way, so this
+  // is about consistency, not about the mode itself.
+  const msg = resolveInbound(peer, inbound, BYTES_INBOUND_ENCODING);
   return peer.detectAckMode(msg);
 }
