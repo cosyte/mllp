@@ -30,11 +30,57 @@ const SEGMENT_SEPARATOR_CR = 0x0d;
 const SEGMENT_SEPARATOR_LF = 0x0a;
 
 /**
+ * Decode used for MSH-10 / MSA-2 control-ID extraction: `latin1`, NOT `ascii`.
+ *
+ * Node's `ascii` codec masks the high bit (`byte & 0x7f`), so it is a **lossy**
+ * decode of the raw HL7 v2 bytes. Two consequences, both of which land squarely
+ * on ACK correlation:
+ *
+ *   1. **Key collision.** The correlator keys its live store, its graveyard, and
+ *      its ACK lookups by the extracted control-ID *string*. Under `ascii`, the
+ *      distinct control IDs `A\x8B` and `A\x0B` both decode to `A\x0B`, so two
+ *      concurrently in-flight sends collapse onto one key: the second `enqueue()`
+ *      overwrites the first in the `Map`, and the first send's promise can never
+ *      be settled by its own ACK. `latin1` is a 1:1 byte↔code-unit mapping, so
+ *      every distinct byte string stays a distinct key.
+ *   2. **Corrupted observability.** The extracted ID is what we hand to
+ *      `MLLP_ACK_UNMATCHED_CONTROL_ID` / `MLLP_ACK_AFTER_TIMEOUT` warnings and to
+ *      `MllpTimeoutError.messageControlId`. A masked ID is a control ID that never
+ *      existed on the wire — it misdirects exactly the operator who is trying to
+ *      trace a lost message.
+ *
+ * Reachable whenever MSH-18 declares a non-ASCII charset (e.g. `8859/1`), where
+ * high-bit bytes in a control ID are legal. This mirrors the identical `ascii` →
+ * `latin1` correction made in `buildRawAck` (`src/server/ack.ts`), so for the
+ * `|`-delimited messages `buildRawAck` supports, the server echoing MSH-10 into
+ * MSA-2 and the client reading it back out now agree byte-for-byte.
+ *
+ * Two scope limits, both pre-existing and deliberately NOT widened here:
+ *   * `buildRawAck` hardcodes `|` as the field separator, while these extractors
+ *     read it dynamically from `buf[3]` (MSH-1 *defines* it — HL7 v2.5.1 §2.5.4).
+ *     Under a custom separator the two still disagree; that is `buildRawAck`'s
+ *     gap, not the decode's.
+ *   * The `ack-from-hl7` subpath round-trips the control ID through `utf8`, so it
+ *     does not agree with either of the above for high-bit IDs.
+ *
+ * The key is byte-faithful, not text: under a multi-byte charset (`UNICODE UTF-8`)
+ * a control ID reads back as its `latin1` bytes. Correlation stays correct — the
+ * map is injective for any charset, which is the property the key needs, and the
+ * one a charset-driven decode would lose (every invalid UTF-8 sequence folds onto
+ * `U+FFFD`, re-introducing exactly the collision this fixes).
+ */
+const CONTROL_ID_ENCODING = "latin1" as const;
+
+/**
  * Extract MSH-10 (Message Control ID) from an HL7 v2 payload.
  *
  * Pure byte-level scan — never throws, returns `null` for malformed input
  * (Postel's Law decoder side; CLAUDE.md guardrail). The field separator is
  * detected dynamically from `buf[3]` (the byte immediately after `MSH`).
+ *
+ * The field bytes are decoded as `latin1` (see {@link CONTROL_ID_ENCODING}) — a
+ * lossless 1:1 byte↔code-unit mapping, so a high-bit control-ID byte survives
+ * into the correlation key rather than being masked into a different ID.
  *
  * @example
  * ```typescript
@@ -73,7 +119,7 @@ export function extractMshControlId(buf: Buffer): string | null {
         fieldStart = i + 1;
       } else if (fieldIndex === 10) {
         if (fieldStart >= i) return null; // empty MSH-10
-        return buf.subarray(fieldStart, i).toString("ascii");
+        return buf.subarray(fieldStart, i).toString(CONTROL_ID_ENCODING);
       }
     }
   }
@@ -87,6 +133,10 @@ export function extractMshControlId(buf: Buffer): string | null {
  * The field separator is taken from `buf[3]` (MSH establishes it for the whole
  * message). The MSA segment is located by scanning segment boundaries
  * (`\r` / `\n`).
+ *
+ * Decoded as `latin1` (see {@link CONTROL_ID_ENCODING}), matching both
+ * `extractMshControlId` and `buildRawAck`'s verbatim MSH-10 → MSA-2 echo — so an
+ * ACK for a high-bit control ID looks up the key the send actually enqueued.
  *
  * @example
  * ```typescript
@@ -134,7 +184,7 @@ export function extractMsaControlId(buf: Buffer): string | null {
             fieldStart = i + 1;
           } else if (fieldIndex === 3) {
             if (fieldStart >= i) return null; // empty MSA-2
-            return buf.subarray(fieldStart, i).toString("ascii");
+            return buf.subarray(fieldStart, i).toString(CONTROL_ID_ENCODING);
           }
         }
       }
