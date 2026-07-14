@@ -30,6 +30,7 @@ import { createClient } from "../../src/client/client.js";
 import { extractMsaControlId, extractMshControlId } from "../../src/client/correlator.js";
 import { Connection } from "../../src/connection/index.js";
 import { FrameReader } from "../../src/framing/index.js";
+import { buildRawAck } from "../../src/server/ack.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 
 /** MSH-10 = `A<0x8B>C` — a high-bit control ID, legal under MSH-18 = `8859/1`. */
@@ -252,5 +253,31 @@ describe("ack-from-hl7 — end-to-end cosyte client ↔ cosyte ack-from-hl7 serv
 
     expect(extractMsaControlId(ack)).toBe(extractMshControlId(inbound));
     await client.close();
+  });
+});
+
+describe("ack-from-hl7 — the parser RE-SERIALIZES MSH-10; every case it cannot copy warns", () => {
+  // buildMllpAck builds through @cosyte/hl7, which re-emits MSH-10 in canonical form rather
+  // than copying its bytes. Four things that form does not preserve. Each is a DIFFERENT
+  // control id on the wire, so each is an ACK the sender cannot match — and each must warn.
+  // buildRawAck (parser-free, a byte copy) holds all four; the last assertion proves it.
+  const cases: ReadonlyArray<readonly [string, string, string]> = [
+    ["an escape sequence", "ID\\X", "ID\\E\\X"],
+    ["trailing whitespace", "MSG42 ", "MSG42"],
+    ["leading whitespace", " MSG42", "MSG42"],
+  ];
+
+  it.each(cases)("%s in MSH-10 is re-serialized — and warns", (_name, id, reserialized) => {
+    const inbound = inboundWithControlId(Buffer.from(id, "latin1"));
+    const ack = buildAckAA(inbound);
+
+    expect(extractMsaControlId(ack.payload)).toBe(reserialized);
+    expect(extractMsaControlId(ack.payload)).not.toBe(id); // NOT verbatim
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+  });
+
+  it.each(cases)("buildRawAck copies the bytes instead, so %s round-trips", (_name, id) => {
+    const inbound = inboundWithControlId(Buffer.from(id, "latin1"));
+    expect(extractMsaControlId(buildRawAck(inbound, "AA"))).toBe(id);
   });
 });

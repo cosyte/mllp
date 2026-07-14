@@ -48,13 +48,25 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
     `string` / `Hl7Message` input keeps its `utf8` default (the caller already chose the decode).
   - The MSH read is now **one** implementation — `readMshSegment` in `src/internal/control-id.ts` —
     genuinely *called* by all three consumers: the client correlator, `buildRawAck`, and
-    `buildMllpAck`'s verbatim check. `buildRawAck` previously re-derived its own read
-    (`payload.toString("latin1").split(...)`, hunting for an `MSH` anywhere in the payload), and the
-    two disagreed on real inputs: on a truncated MSH followed by a PID the correlator keyed on one
-    string while `buildRawAck` echoed another, and on a payload with a leading `LF` the correlator
-    gave up while `buildRawAck` happily ACKed. Every such disagreement is an ACK the sender cannot
-    match. `MSH` must now **lead** the payload (§2.5.1) for any consumer to read it, so "unreadable"
-    is one answer rather than three.
+    `buildMllpAck`. `buildRawAck` previously re-derived its own read
+    (`payload.toString("latin1").split("\r")`, hunting for an `MSH` anywhere in the payload), and
+    the two disagreed on real inputs: on a truncated MSH followed by a `PID` the correlator keyed on
+    the PID's MRN while `buildRawAck` echoed an empty MSA-2; on a payload with a **leading `CR`** —
+    which the MLLP decoder passes straight through — `buildRawAck` echoed MSH-10 correctly while the
+    correlator, requiring `MSH` at byte 0, gave up. Every such disagreement is an ACK the sender
+    cannot match.
+  - They now agree at the **tolerant** fixed point, not a lossy one: `readMshSegment` **locates** the
+    `MSH` (the first `CR`/`LF`-delimited segment starting with `MSH`) instead of demanding it at byte
+    0, so a leading `CR`/`LF` or an `FHS`/`BHS` batch header (§2.10.3) cannot hide a control ID that
+    is plainly present — and *then* bounds the field scan at that segment's terminator. Both rules
+    are needed and neither may be traded for the other. An interim version of this fix forced
+    agreement by requiring `MSH` at byte 0 everywhere, which "resolved" the leading-`CR`
+    disagreement by degrading the side that was **right**: `buildRawAck` began emitting a positive
+    `AA` with an empty MSA-2, **silently**, for a message whose MSH-10 was there to read — a
+    tolerance regression that manufactured the very duplicate-message failure this item exists to
+    close. A lenient reader may never drop data that is present (Postel's Law). `buildMllpAck` is
+    re-based on the located `MSH` before parsing for the same reason, since `parseHL7` requires `MSH`
+    to be the first segment.
 - **`buildRawAck` assumed `|` was the field separator instead of reading MSH-1
   (MLLP-ACK-UTF8, sibling).** MSH-1 *is* the field separator (HL7 v2.5.1 §2.5.4) — the byte at
   offset 3 of the MSH segment defines it — and the client-side scanners had always read it

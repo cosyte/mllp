@@ -143,11 +143,21 @@ const DEFAULT_FIELD_SEPARATOR = "|";
  * message it answers — but a delimiter is a byte we then write ourselves, all
  * over the ACK. `VT` (0x0B) and `FS` (0x1C) are the MLLP framing bytes, and `CR`
  * / `LF` are segment terminators: any of them adopted as an encoding character
- * would make the ACK unframeable (`encodeFrame` is strict) or unparseable. A
- * payload can legitimately carry those bytes — the decoder tolerates them behind
+ * would put that byte at every component boundary of the ACK. A payload can
+ * legitimately carry those bytes — the decoder tolerates them behind
  * `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` — so this is reachable from peer-controlled
- * input. Fall back to the HL7 defaults: an ACK that frames and parses beats an
- * ACK that cannot be sent at all.
+ * input. Fall back to the HL7 defaults.
+ *
+ * **This guards the DELIMITERS ONLY — it is not a guarantee that the ACK frames.**
+ * A `VT`/`FS` inside echoed field *content* (MSH-3..6, MSH-10) is still copied
+ * verbatim, so the ACK payload can still contain a framing byte and strict
+ * `encodeFrame` will still throw `MLLP_PAYLOAD_CONTAINS_VT`/`_FS`. That is
+ * contained, not prevented: `MllpServer._dispatchAck` catches it, surfaces a
+ * connection `'error'`, and the message goes **un-ACKed** so the sender resends —
+ * fail-safe, but a real outcome, not a non-event. Echoing content verbatim is
+ * required by §2.9.2.2 and this builder will not corrupt a control ID to make its
+ * own framing easier; the delimiter guard exists only so that a nonsense MSH-2
+ * cannot *multiply* one stray byte into a structurally broken ACK.
  *
  * The equivalent rule for MSH-1 lives in `src/internal/control-id.ts`, where it
  * belongs: an unusable field separator makes the message unreadable for *every*
@@ -160,12 +170,13 @@ const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
  * Build a minimal original-mode HL7 v2 acknowledgement from raw inbound payload bytes,
  * **without a parser** (parser-driven ACKs are the `@cosyte/mllp/ack-from-hl7` subpath).
  *
- * Splits the payload on `CR`/`LF` to locate the `MSH` segment, reads the field separator
- * from **MSH-1** and the encoding characters from **MSH-2**, then splits the segment on
- * that separator to read fields. The ACK swaps sender/receiver per HL7 ACK rules, echoes
- * the inbound MSH-10 into MSA-2 (§2.9.2.2), sets MSA-1 to `code`, and — for negative
- * codes — adds a **static, PHI-free** MSA-3 reason. A fresh control ID fills the ACK's
- * own MSH-10.
+ * Locates the `MSH` segment (the first `CR`/`LF`-delimited segment starting with `MSH` —
+ * so a leading `CR` or an `FHS`/`BHS` batch header does not hide it), reads the field
+ * separator from **MSH-1** and the encoding characters from **MSH-2**, then splits that
+ * segment on that separator to read fields. The ACK swaps sender/receiver per HL7 ACK
+ * rules, echoes the inbound MSH-10 into MSA-2 (§2.9.2.2), sets MSA-1 to `code`, and — for
+ * negative codes — adds a **static, PHI-free** MSA-3 reason. A fresh control ID fills the
+ * ACK's own MSH-10.
  *
  * ## Why the delimiters are read, not assumed
  *
@@ -191,12 +202,20 @@ const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
  * The MSH read is `readMshSegment` from `src/internal/control-id.ts` — the same call the
  * client's correlator makes to derive the key it will later match this ACK against. That
  * is deliberate and it is the whole point: this builder used to re-derive the read itself
- * (`payload.toString("latin1").split(...)`, hunting for an `MSH` anywhere in the payload),
- * and the two disagreed on real inputs. On `MSH|^~\&|EPIC|HOSP|MIRTH|LAB\rPID|...` the
- * correlator keyed on one string while this builder echoed a different one; on a payload
- * with a leading `LF` the correlator gave up while this builder happily ACKed. Every such
- * disagreement is an ACK the sender cannot match → timeout → resend → **duplicate clinical
- * message**. One scan, one answer, or the guarantee is worthless.
+ * (`payload.toString("latin1").split("\r")`, hunting for an `MSH` anywhere in the
+ * payload), and the two disagreed on real inputs. On a **truncated MSH** followed by a
+ * `PID` the correlator keyed on the PID's MRN while this builder echoed an empty MSA-2. On
+ * a payload with a **leading `CR`** — which the MLLP decoder passes straight through, and
+ * which real senders emit — this builder found the `MSH` and echoed MSH-10 correctly while
+ * the correlator, requiring `MSH` at byte 0, gave up. Every such disagreement is an ACK the
+ * sender cannot match → timeout → resend → **duplicate clinical message**.
+ *
+ * The fix is one scan — but note *which* scan. The first attempt made them agree by
+ * requiring `MSH` at byte 0 everywhere, which "resolved" the leading-`CR` disagreement by
+ * degrading the side that had been **right**: `buildRawAck` began emitting a positive `AA`
+ * with an empty MSA-2, silently, for a message whose MSH-10 was plainly present. Agreement
+ * is not the goal; agreeing on the *correct*, *tolerant* answer is. A lenient reader may
+ * never drop data that is there (Postel's Law — CLAUDE.md).
  *
  * **Never throws** and **never copies payload content** beyond the routing/control
  * metadata above — `readMshSegment` stops at the MSH's segment terminator, so no field of

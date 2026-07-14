@@ -98,22 +98,76 @@ const UNSAFE_FIELD_SEPARATORS: ReadonlySet<number> = new Set([
   0x1c, // FS — MLLP end block
 ]);
 
+/** True iff the `CR`/`LF`-delimited segment starting at `i` is an `MSH`. @internal */
+function isMshSegmentAt(buf: Buffer, i: number): boolean {
+  return (
+    i + 3 < buf.length &&
+    buf[i] === ASCII_M &&
+    buf[i + 1] === ASCII_S &&
+    buf[i + 2] === ASCII_H &&
+    !UNSAFE_FIELD_SEPARATORS.has(buf[i + 3] as number)
+  );
+}
+
+/** Index of the byte after the `CR`/`LF`-delimited segment starting at `i`. @internal */
+function segmentEnd(buf: Buffer, i: number): number {
+  let end = i;
+  while (
+    end < buf.length &&
+    buf[end] !== SEGMENT_SEPARATOR_CR &&
+    buf[end] !== SEGMENT_SEPARATOR_LF
+  ) {
+    end++;
+  }
+  return end;
+}
+
 /**
- * The field separator this message declares in MSH-1, or `null` if it declares none
- * we can use.
+ * Locate the message's `MSH` segment: the **first** `CR`/`LF`-delimited segment whose
+ * first three bytes are `MSH` and whose 4th byte is a usable field separator. Returns
+ * its `[start, end)` bounds, or `null` if the payload has no such segment.
  *
- * `MSH` must **lead** the payload: HL7 v2.5.1 §2.5.1 makes MSH the first segment of
- * every message, and a payload that does not begin with it is not one we can read.
- * (This is also the only rule under which all three consumers can agree — see the
- * module docblock. `buildRawAck` used to hunt for an `MSH` anywhere in the payload
- * and would happily ACK a message the correlator had already given up on.)
+ * ## Why we search rather than demand `MSH` at byte 0
+ *
+ * §2.5.1 does make `MSH` the first segment of a *message*, and it is tempting to read
+ * that as "byte 0 or it is not HL7" — that is what an earlier version of this module
+ * did, to force its three consumers into agreement. It was a **tolerance regression**,
+ * and it caused the exact harm this module exists to prevent. Two shapes reach us with
+ * a perfectly good MSH-10 that is not at byte 0:
+ *
+ *   * **A leading `CR`.** The MLLP decoder passes it straight through into the payload
+ *     (it special-cases only `VT`/`FS`), and real senders emit it.
+ *   * **A batch header.** `FHS`/`BHS` precede the `MSH` (§2.10.3).
+ *
+ * Under the byte-0 rule both read as "no MSH", so `buildRawAck` emitted a **positive
+ * `AA` with an empty MSA-2 and no warning**: the sender — which keyed on the MSH-10 it
+ * sent — cannot correlate it, times out, resends, and the receiver commits a
+ * **duplicate clinical message**. Silently discarding a field that is *present* is the
+ * worst thing a lenient reader can do, and this package's decoder is emphatically
+ * lenient (Postel's Law; see CLAUDE.md).
+ *
+ * The consumers still agree — they simply agree at the **tolerant** fixed point rather
+ * than the lossy one. Agreement was never the hard part; agreeing on the *right* answer
+ * is.
  * @internal
  */
-function readFieldSeparator(buf: Buffer): number | null {
-  if (buf.length < 4) return null;
-  if (buf[0] !== ASCII_M || buf[1] !== ASCII_S || buf[2] !== ASCII_H) return null;
-  const fieldSep = buf[3] as number;
-  return UNSAFE_FIELD_SEPARATORS.has(fieldSep) ? null : fieldSep;
+function findMshSegment(buf: Buffer): { start: number; end: number } | null {
+  let segStart = 0;
+  while (segStart < buf.length) {
+    const end = segmentEnd(buf, segStart);
+    if (isMshSegmentAt(buf, segStart)) return { start: segStart, end };
+    // Advance past this segment's terminator bytes (handles `CRLF` as one break).
+    let next = end;
+    while (
+      next < buf.length &&
+      (buf[next] === SEGMENT_SEPARATOR_CR || buf[next] === SEGMENT_SEPARATOR_LF)
+    ) {
+      next++;
+    }
+    if (next === segStart) return null; // no progress — malformed
+    segStart = next;
+  }
+  return null;
 }
 
 /** The MSH segment, decoded and split into its fields. @internal */
@@ -135,9 +189,11 @@ export interface MshSegment {
  * Pure byte-level, never throws, returns `null` for anything it cannot read (Postel's
  * Law decoder side; CLAUDE.md guardrail). It:
  *
- *   * requires the payload to lead with `MSH` ({@link readFieldSeparator});
+ *   * **locates** the MSH — the first `CR`/`LF`-delimited segment that starts with
+ *     `MSH` — rather than demanding it at byte 0, so a leading `CR` or an `FHS`/`BHS`
+ *     batch header cannot hide a control ID that is plainly there ({@link findMshSegment});
  *   * takes the field separator from MSH-1 rather than assuming `|` (§2.5.4);
- *   * **stops at the first `CR`/`LF`** — the segment terminator bounds the segment;
+ *   * **bounds the field scan at that segment's terminator**;
  *   * decodes only that segment, as `latin1` (see {@link CONTROL_ID_ENCODING}), so a
  *     high-bit byte survives and a 16 MB payload is not decoded to read its header.
  *
@@ -153,6 +209,11 @@ export interface MshSegment {
  * mis-read one at that. A field that does not exist must read as absent, never as the
  * next segment's contents.
  *
+ * The two rules are independent, and both are needed. Bounding the scan is what kills
+ * the PID-3 read. **Locating** the MSH (rather than demanding it at byte 0) is what
+ * stops the bound from turning into a tolerance regression that silently drops a
+ * control ID which is present — see {@link findMshSegment}.
+ *
  * @example
  * ```typescript
  * const msh = readMshSegment(payloadBuffer);
@@ -162,22 +223,37 @@ export interface MshSegment {
  * @internal
  */
 export function readMshSegment(buf: Buffer): MshSegment | null {
-  const sep = readFieldSeparator(buf);
-  if (sep === null) return null;
+  const at = findMshSegment(buf);
+  if (at === null) return null;
 
-  // Bound the segment at its terminator BEFORE reading any field out of it.
-  let segEnd = 3;
-  while (
-    segEnd < buf.length &&
-    buf[segEnd] !== SEGMENT_SEPARATOR_CR &&
-    buf[segEnd] !== SEGMENT_SEPARATOR_LF
-  ) {
-    segEnd++;
-  }
-
-  const fieldSep = String.fromCharCode(sep);
-  const fields = buf.subarray(0, segEnd).toString(CONTROL_ID_ENCODING).split(fieldSep);
+  // The separator is MSH-1 — the 4th byte OF THE MSH SEGMENT, wherever that segment
+  // begins. `findMshSegment` has already rejected an unusable one.
+  const fieldSep = String.fromCharCode(buf[at.start + 3] as number);
+  // `at.end` is the segment's terminator: the field split cannot reach past it.
+  const fields = buf.subarray(at.start, at.end).toString(CONTROL_ID_ENCODING).split(fieldSep);
   return { fieldSep, fields };
+}
+
+/**
+ * The payload re-based on its `MSH` segment: everything from the located `MSH` onward,
+ * with any leading `CR`/`LF` or `FHS`/`BHS` batch header dropped. Returns `buf`
+ * unchanged when there is no `MSH` to find (let the caller's parser report that).
+ *
+ * This exists so the **parser-backed** ACK builder can be as tolerant as the byte-level
+ * scanners. `@cosyte/hl7`'s `parseHL7` requires `MSH` to be the first segment and throws
+ * `NO_MSH_SEGMENT` otherwise, so a leading `CR` — which the MLLP decoder passes straight
+ * through — or a batch header would send `buildMllpAck` down its unparseable fallback
+ * (a warned, non-positive `AE` with no correlation id) for a message whose MSH-10 is
+ * perfectly readable. Re-basing first means all three consumers agree at the tolerant
+ * fixed point rather than two of them being tolerant and the third not.
+ *
+ * Nothing is lost by dropping what precedes the `MSH`: an ACK is built from the MSH
+ * alone, and the verbatim check still runs against the **original**, un-rebased bytes.
+ * @internal
+ */
+export function sliceFromMsh(buf: Buffer): Buffer {
+  const at = findMshSegment(buf);
+  return at === null || at.start === 0 ? buf : buf.subarray(at.start);
 }
 
 /**
@@ -205,10 +281,11 @@ export function extractMshControlId(buf: Buffer): string | null {
 /**
  * Extract MSA-2 (acknowledged Message Control ID) from an HL7 v2 ACK payload.
  *
- * Pure byte-level scan — never throws, returns `null` for malformed input.
- * The field separator is taken from `buf[3]` (MSH establishes it for the whole
- * message). The MSA segment is located by scanning segment boundaries
- * (`\r` / `\n`).
+ * Pure byte-level scan — never throws, returns `null` for malformed input. The field
+ * separator comes from the ACK's own MSH-1, read through {@link readMshSegment} — the
+ * same tolerant locate every other read in this module uses, so an ACK whose `MSH` is
+ * not at byte 0 is still read rather than silently discarded. The `MSA` segment is
+ * then located by scanning segment boundaries (`\r` / `\n`).
  *
  * Decoded as `latin1` (see {@link CONTROL_ID_ENCODING}), matching both
  * {@link extractMshControlId} and `buildRawAck`'s verbatim MSH-10 → MSA-2 echo —
@@ -224,13 +301,10 @@ export function extractMshControlId(buf: Buffer): string | null {
  * @internal
  */
 export function extractMsaControlId(buf: Buffer): string | null {
-  // Same MSH-1 rule as every other read in this module (MSH must lead; a framing or
-  // segment byte is not a usable separator) — so the ACK is read under exactly the
-  // separator the message declares, and an ACK this package refuses to read is one
-  // no consumer here will claim to have read.
-  const sep = readFieldSeparator(buf);
-  if (sep === null) return null;
-  const fieldSep = sep;
+  // MSH-1 establishes the separator for the whole message, including its MSA.
+  const msh = readMshSegment(buf);
+  if (msh === null) return null;
+  const fieldSep = msh.fieldSep.charCodeAt(0);
   const end = buf.length;
   let segStart = 0;
   while (segStart < end) {

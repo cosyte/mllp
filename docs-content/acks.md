@@ -167,26 +167,31 @@ if (ack.warnings.some((w) => w.code === MLLP_ACK_CONTROL_ID_NOT_VERBATIM)) {
 conn.send(ack.frame);
 ```
 
-Two things provoke it, both real:
+Four things provoke it, all real. The first is yours; the other three are `@cosyte/hl7`'s
+serializer, which **re-emits MSH-10 rather than copying its bytes** — so anything its canonical form
+does not preserve, it cannot echo verbatim:
 
 1. **Overriding `encoding`** to a codec that cannot round-trip the inbound bytes. The default never
    does; set it only when the receiving system genuinely demands a specific codec.
-2. **An inbound that declares non-default delimiters** (`MSH-1`/`MSH-2`). `@cosyte/hl7` always emits
-   the HL7 default `|^~\&`, so an MSH-10 of `ID#X` under a `#` component separator is re-delimited to
-   `ID^X` — different bytes, unmatchable key. Use **`buildRawAck`** (the root export) for such a
-   peer: it is parser-free and echoes the inbound's own `MSH-1`/`MSH-2`, so it holds the verbatim
-   guarantee under *any* delimiter set.
+2. **Non-default delimiters** (`MSH-1`/`MSH-2`). `@cosyte/hl7` always emits the HL7 default `|^~\&`,
+   so an MSH-10 of `ID#X` under a `#` component separator is re-delimited to `ID^X`.
+3. **Escape sequences.** The parser unescapes on read and **re-escapes on write**, so an MSH-10 of
+   `ID\X` comes back as `ID\E\X` — semantically the same id, different bytes, unmatchable key.
+4. **Whitespace.** Fields are **trimmed**, so an MSH-10 of `MSG42 ` comes back as `MSG42`.
 
-The parser also **trims field whitespace**, so a control ID with leading or trailing whitespace
-cannot survive `buildMllpAck` verbatim either. It warns; `buildRawAck` has no such limit.
+All four warn. And all four have the same answer: use **`buildRawAck`** (the root export, and what
+the server's `autoAck` path uses). It is parser-free — it copies the MSH-10 bytes rather than
+re-serializing them — so it holds the verbatim guarantee under *any* delimiter set, escape, or
+padding.
 
 ### Limits of the builder
 
 - **It trusts your disposition.** It never decides clinical accept/reject — you choose `AA`/`AE`/`AR`
   from your own commit outcome.
-- **MSA-2 is byte-verbatim under the HL7 default delimiters**, and *loud* — never silently wrong —
-  when it cannot be (above). Escapes still normalize through the parser (`\X41\` → `A`), and
-  trailing insignificant empties canonicalize.
+- **MSA-2 is byte-verbatim for a plain control ID under the HL7 default delimiters** — including a
+  high-bit one — and *loud*, never silently wrong, in the four cases where it cannot be (above:
+  a lossy `encoding`, non-default delimiters, an escape sequence in MSH-10, or padding whitespace).
+  It is the parser's canonical re-serialization, not a byte copy; `buildRawAck` is the byte copy.
 - **No enhanced-mode two-phase sequencing.** The helpers build any of the six codes; *when* to send an
   accept-ack versus an application-ack is your orchestration.
 - **No MLLP Release 2 commit-ack bytes.** See [Limitations](./limitations.md).

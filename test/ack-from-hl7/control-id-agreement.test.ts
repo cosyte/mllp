@@ -23,6 +23,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildAckAA } from "../../src/ack-from-hl7/index.js";
+import { encodeFrame, FrameReader } from "../../src/framing/index.js";
 import { extractMsaControlId, extractMshControlId } from "../../src/client/correlator.js";
 import { readMshSegment } from "../../src/internal/control-id.js";
 import { buildRawAck } from "../../src/server/ack.js";
@@ -148,13 +149,78 @@ describe("the three call sites agree on what a control ID is", () => {
     expect(fromHl7).toBe(correlator);
   });
 
-  it("agrees under a custom field separator", () => {
+  it("agrees under a custom field separator, INCLUDING buildMllpAck", () => {
+    // A delimiter-free control id survives `@cosyte/hl7`'s re-delimiting intact, so all
+    // three agree here — `buildMllpAck` included. (It is only when the id itself contains
+    // one of the inbound's own delimiters, e.g. `ID#X` under a `#` component separator,
+    // that upstream's fixed `|^~\&` output cannot represent it. That case must WARN, and
+    // control-id-verbatim.test.ts asserts it does.)
     const payload = Buffer.from("MSH!^~\\&!A!B!C!D!ts!!ADT^A01!CID001!P!2.5.1\r", "latin1");
-    const { correlator, rawAck } = threeReadings(payload);
+    const { correlator, rawAck, fromHl7 } = threeReadings(payload);
     expect(correlator).toBe("CID001");
     expect(rawAck).toBe("CID001");
-    // `buildMllpAck` cannot hold this one — @cosyte/hl7 always emits `|^~\&` — but it is
-    // required to WARN rather than emit a silently unmatchable ACK. Covered in
-    // control-id-verbatim.test.ts and the property suite.
+    expect(fromHl7).toBe("CID001");
+  });
+});
+
+describe("the MSH is LOCATED, not demanded at byte 0 (tolerance is not negotiable)", () => {
+  /** Drive a payload through the real decoder, then the real auto-ACK builder. */
+  function throughTheWire(payload: Buffer): { delivered: Buffer; ackMsa2: string | null } {
+    let delivered: Buffer | null = null;
+    const reader = new FrameReader({
+      onFrame: (p) => {
+        delivered = p;
+      },
+      onWarning: () => {},
+    });
+    reader.push(encodeFrame(payload));
+    if (delivered === null) throw new Error("decoder delivered no frame");
+    const d: Buffer = delivered;
+    return { delivered: d, ackMsa2: extractMsaControlId(buildRawAck(d, "AA")) };
+  }
+
+  // Both shapes carry MSH-10 = MSG00042. Both are peer-reachable. Requiring `MSH` at byte 0
+  // made buildRawAck emit a positive AA with an EMPTY MSA-2 and no warning — the sender,
+  // keying on the MSH-10 it sent, cannot correlate it → timeout → resend → duplicate
+  // clinical message. Silently dropping a field that is present is the one thing a lenient
+  // reader must never do.
+  const MSH = "MSH|^~\\&|EPIC|HOSP|MIRTH|LAB|20260714120000||ADT^A01|MSG00042|P|2.5.1";
+
+  it("a LEADING CR does not hide the control ID (the decoder passes it through)", () => {
+    const { delivered, ackMsa2 } = throughTheWire(
+      Buffer.from(`\r${MSH}\rPID|1||MRN00042\r`, "latin1"),
+    );
+    expect(extractMshControlId(delivered)).toBe("MSG00042");
+    expect(ackMsa2).toBe("MSG00042");
+  });
+
+  it("a LEADING LF does not hide the control ID", () => {
+    const { delivered, ackMsa2 } = throughTheWire(Buffer.from(`\n${MSH}\r`, "latin1"));
+    expect(extractMshControlId(delivered)).toBe("MSG00042");
+    expect(ackMsa2).toBe("MSG00042");
+  });
+
+  it("an FHS/BHS batch header does not hide the control ID (§2.10.3)", () => {
+    const batch = `FHS|^~\\&|SENDER\rBHS|^~\\&|SENDER\r${MSH}\rPID|1||MRN00042\r`;
+    const { delivered, ackMsa2 } = throughTheWire(Buffer.from(batch, "latin1"));
+    expect(extractMshControlId(delivered)).toBe("MSG00042");
+    expect(ackMsa2).toBe("MSG00042");
+  });
+
+  it("a located MSH is still BOUNDED at its own terminator (both rules hold at once)", () => {
+    // Truncated MSH behind a batch header: the MSH must be found, AND the scan must stop at
+    // its CR rather than walking into the PID. Neither rule may be traded for the other.
+    const truncated = "FHS|^~\\&\rMSH|^~\\&|EPIC|HOSP|MIRTH|LAB\rPID|1||MRN00042||DOE^SYNTH\r";
+    const { delivered } = throughTheWire(Buffer.from(truncated, "latin1"));
+    expect(extractMshControlId(delivered)).toBeNull();
+    expect(buildRawAck(delivered, "AA").toString("latin1")).not.toContain("MRN00042");
+  });
+
+  it("a payload with NO MSH anywhere still reads as unreadable", () => {
+    const { delivered, ackMsa2 } = throughTheWire(
+      Buffer.from("FHS|^~\\&\rPID|1||MRN00042\r", "latin1"),
+    );
+    expect(extractMshControlId(delivered)).toBeNull();
+    expect(ackMsa2).toBeNull();
   });
 });
