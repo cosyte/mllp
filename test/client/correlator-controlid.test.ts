@@ -1,9 +1,11 @@
 /**
  * Correlator controlId-mode tests (PLAN-03).
  *
- * Two test suites:
+ * Three test suites:
  *   1. MSH-10 / MSA-2 byte-level extractors (Task 1)
  *   2. Correlator.matchAck() controlId branch incl. graveyard hit + unmatched (Task 2)
+ *   3. High-bit control IDs — the `latin1` (not `ascii`) decode (Task 3,
+ *      MLLP-CORRELATOR-ASCII)
  *
  * Pure data-structure tests over an injected fake clock — no real timers.
  */
@@ -16,6 +18,8 @@ import {
 } from "../../src/client/correlator.js";
 import type { CorrelatorOptions, PendingAck } from "../../src/client/correlator.js";
 import type { WarningCode } from "../../src/framing/index.js";
+import { encodeFrame } from "../../src/framing/index.js";
+import { buildRawAck } from "../../src/server/ack.js";
 
 const noop = (): void => {
   /* noop */
@@ -112,7 +116,7 @@ describe("Correlator (controlId mode) — Task 1: MSH-10 / MSA-2 extractors", ()
     expect(extractMsaControlId(truncated)).toBeNull();
   });
 
-  it("Test 10: extracts ASCII (control IDs are documented ASCII-only)", () => {
+  it("Test 10: extracts a printable-ASCII control ID byte-exactly", () => {
     const buf = Buffer.from(
       "MSH|^~\\&|S|F|R|F2|20260501101010||ADT^A01|abc-123_XYZ|P|2.5",
       "ascii",
@@ -304,5 +308,143 @@ describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", 
     // The defensive branch fires onUnmatchedAck('') so observers see the anomaly.
     expect(onUnmatchedAck).toHaveBeenCalledTimes(1);
     expect(onUnmatchedAck).toHaveBeenCalledWith("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3 — high-bit control IDs (MLLP-CORRELATOR-ASCII)
+//
+// The extractors decode MSH-10 / MSA-2 as `latin1`, not `ascii`. Node's `ascii`
+// codec masks the high bit (`byte & 0x7f`), which silently rewrites a control ID.
+// Every test below is written to FAIL under the old `ascii` decode: the masked
+// value is named and asserted against, never asserted away.
+//
+// Reachable when MSH-18 declares a non-ASCII charset (`8859/1` in these
+// fixtures), where high-bit bytes are legal inside an ST-typed control ID.
+//
+// Two distinct hazards, one fixture each:
+//   * 0xC9 (LATIN CAPITAL LETTER E WITH ACUTE) masks to 0x49 ('I') — an ordinary
+//     printable letter. So `MSG\u00c91` and `MSGI1` are two legal, DIFFERENT wire
+//     control IDs that `ascii` collapses onto ONE correlation key. That is the
+//     collision the backlog item names.
+//   * 0x8B masks to 0x0B — a VT, the MLLP start-block byte. `ascii` manufactures
+//     a framing delimiter out of an ordinary payload byte.
+// ---------------------------------------------------------------------------
+
+/** MSH-10 `MSG\u00c91` — high-bit byte, legal under an 8859/1 charset. */
+const HIGH_BIT_ID = "MSG\u00c91";
+/** What `ascii` decoded HIGH_BIT_ID to (0xC9 & 0x7F === 0x49, 'I') — itself a real control ID. */
+const MASKED_TWIN = "MSGI1";
+/** MSH-10 whose high-bit byte 0x8B masks to 0x0B (VT) under `ascii`. */
+const VT_MASKING_ID = "MSG\u008b1";
+
+/** An HL7 v2 payload (latin1 bytes, MSH-18 = 8859/1) whose MSH-10 is `controlId`. */
+function payloadWithControlId(controlId: string): Buffer {
+  return Buffer.from(
+    `MSH|^~\\&|SENDER|FAC|RECV|FAC2|20260501101010||ADT^A01|${controlId}|P|2.5||||||8859/1\r`,
+    "latin1",
+  );
+}
+
+/** An HL7 v2 ACK (latin1 bytes) whose MSA-2 echoes `controlId`. */
+function ackWithControlId(controlId: string): Buffer {
+  return Buffer.from(
+    `MSH|^~\\&|RECV|FAC2|SENDER|FAC|20260501101010||ACK|ACK00001|P|2.5||||||8859/1\rMSA|AA|${controlId}\r`,
+    "latin1",
+  );
+}
+
+describe("Correlator (controlId mode) — Task 3: high-bit control IDs", () => {
+  it("Test 20: extractMshControlId preserves a high-bit MSH-10 byte verbatim", () => {
+    const extracted = extractMshControlId(payloadWithControlId(HIGH_BIT_ID));
+    expect(extracted).toBe(HIGH_BIT_ID);
+    // `ascii` would have masked 0xC9 -> 0x49. Pin that we do NOT get that string.
+    expect(extracted).not.toBe(MASKED_TWIN);
+    // The extracted key re-encodes to the exact bytes that were on the wire.
+    expect(Buffer.from(extracted as string, "latin1")).toEqual(
+      Buffer.from([0x4d, 0x53, 0x47, 0xc9, 0x31]),
+    );
+  });
+
+  it("Test 21: extractMsaControlId preserves a high-bit MSA-2 byte verbatim", () => {
+    const extracted = extractMsaControlId(ackWithControlId(HIGH_BIT_ID));
+    expect(extracted).toBe(HIGH_BIT_ID);
+    expect(extracted).not.toBe(MASKED_TWIN);
+    expect(Buffer.from(extracted as string, "latin1")).toEqual(
+      Buffer.from([0x4d, 0x53, 0x47, 0xc9, 0x31]),
+    );
+  });
+
+  it("Test 22: two control IDs differing solely in the high bit extract to DIFFERENT keys", () => {
+    const high = extractMshControlId(payloadWithControlId(HIGH_BIT_ID));
+    const masked = extractMshControlId(payloadWithControlId(MASKED_TWIN));
+    expect(high).toBe(HIGH_BIT_ID);
+    expect(masked).toBe(MASKED_TWIN);
+    // The bug: under `ascii` both of these decoded to "MSGI1".
+    expect(high).not.toBe(masked);
+  });
+
+  it("Test 23: no framing byte is synthesized — 0x8B does not decode into a VT (0x0B)", () => {
+    const extracted = extractMshControlId(payloadWithControlId(VT_MASKING_ID));
+    expect(extracted).toBe(VT_MASKING_ID);
+    // Under `ascii` the correlation key itself would have contained the MLLP
+    // start-block byte (and the same masking on an echoed ACK payload would make
+    // `encodeFrame` (strict) reject the ACK outright).
+    expect(extracted).not.toContain("\u000b");
+    expect(Buffer.from(extracted as string, "latin1").includes(0x0b)).toBe(false);
+    expect(extractMsaControlId(ackWithControlId(VT_MASKING_ID))).toBe(VT_MASKING_ID);
+  });
+
+  it("Test 24: high-bit twins do not collide in the live store — each ACK settles its own send", () => {
+    const { correlator } = controlIdHarness();
+    // Keys come from the real extractor over real payload bytes, so the test
+    // exercises the decode rather than hand-written string keys.
+    const highKey = extractMshControlId(payloadWithControlId(HIGH_BIT_ID));
+    const maskedKey = extractMshControlId(payloadWithControlId(MASKED_TWIN));
+    const resolveHigh = vi.fn();
+    const resolveMasked = vi.fn();
+
+    const k1 = correlator.enqueue(Buffer.from("frame-high"), highKey, resolveHigh, noopReject);
+    const k2 = correlator.enqueue(
+      Buffer.from("frame-masked"),
+      maskedKey,
+      resolveMasked,
+      noopReject,
+    );
+    expect(k1).not.toBe(k2);
+    // Under `ascii` the second enqueue OVERWROTE the first in the Map (same key)
+    // and size would be 1 — the first send could then never be settled by its ACK.
+    expect(correlator.size).toBe(2);
+
+    // The peer ACKs the plain-ASCII twin first; it must settle that entry only.
+    const maskedAck = ackWithControlId(MASKED_TWIN);
+    const m1 = correlator.matchAck(maskedAck, extractMsaControlId(maskedAck));
+    expect(m1?.frame.toString()).toBe("frame-masked");
+    expect(correlator.size).toBe(1);
+
+    const highAck = ackWithControlId(HIGH_BIT_ID);
+    const m2 = correlator.matchAck(highAck, extractMsaControlId(highAck));
+    expect(m2?.frame.toString()).toBe("frame-high");
+    expect(correlator.size).toBe(0);
+  });
+
+  it("Test 25: agrees with buildRawAck — a server-echoed MSH-10 round-trips into the same key", () => {
+    // The consistency claim of this fix, across both control-ID code paths:
+    // buildRawAck (server: MSH-10 -> MSA-2, latin1) and the client extractors.
+    for (const id of [HIGH_BIT_ID, VT_MASKING_ID, MASKED_TWIN]) {
+      const payload = payloadWithControlId(id);
+      const sendKey = extractMshControlId(payload);
+      const ack = buildRawAck(payload, "AA");
+      const ackKey = extractMsaControlId(ack);
+      expect(sendKey).toBe(id);
+      expect(ackKey).toBe(sendKey);
+    }
+    // The ACK carries the ORIGINAL high-bit byte...
+    const ack8b = buildRawAck(payloadWithControlId(VT_MASKING_ID), "AA");
+    expect(ack8b.includes(0x8b)).toBe(true);
+    // ...and no VT/FS was manufactured out of it, so encodeFrame accepts the ACK.
+    expect(ack8b.includes(0x0b)).toBe(false);
+    expect(ack8b.includes(0x1c)).toBe(false);
+    expect(() => encodeFrame(ack8b)).not.toThrow();
   });
 });

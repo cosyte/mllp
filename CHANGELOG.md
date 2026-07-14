@@ -14,6 +14,26 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **The client's ACK correlator masked the high bit out of the correlation key
+  (MLLP-CORRELATOR-ASCII).** `extractMshControlId` / `extractMsaControlId` decoded MSH-10 / MSA-2
+  with `ascii` (`byte & 0x7f`) — the same class of bug the Phase 10 entry below fixed in
+  `buildRawAck`, left behind on the client side since Phase 5, so the server's MSH-10 → MSA-2 echo
+  and the client's read-back did not agree on what a control ID *is*. The extracted string **is**
+  the correlator's key (live store, graveyard, ACK lookup), so a lossy decode is a lossy key: the
+  two legal, distinct control IDs `MSGÉ1` and `MSGI1` (`0xC9 & 0x7F === 0x49`) collapsed onto one
+  key, the second `enqueue()` overwrote the first in the `Map`, and the first send could never be
+  settled by its own ACK. The masked ID was also what reached `MLLP_ACK_UNMATCHED_CONTROL_ID` /
+  `MLLP_ACK_AFTER_TIMEOUT` observers and `MllpTimeoutError.messageControlId` — an ID that was never
+  on the wire, misdirecting the operator tracing a lost message. Reachable when MSH-18 declares a
+  non-ASCII charset (e.g. `8859/1`). Fixed: both extractors decode `latin1` (1:1 byte↔code-unit, so
+  distinct bytes stay distinct keys and no VT/FS can be synthesized). Six tests added under
+  `test/client/correlator-controlid.test.ts`, each failing under the old decode, one of them a
+  cross-path round-trip pinning `buildRawAck`'s echo and the client extractors to the same key.
+  Pure-ASCII control IDs are unaffected. **Scope:** the two paths agree byte-for-byte for the
+  `|`-delimited messages `buildRawAck` supports — it still hardcodes `|` where the extractors read
+  the separator from MSH-1, and the `ack-from-hl7` subpath still round-trips control IDs through
+  `utf8`. Both are pre-existing and untouched here.
+
 - **A peer could crash the server with one high-bit byte, and corrupt the ACK control ID
   (Phase 10).** `buildRawAck` decoded the inbound message with `ascii`, which masks the high bit
   (`byte & 0x7f`). Two consequences, both serious. **Spec:** MSA-2 must echo the inbound MSH-10
