@@ -19,6 +19,7 @@ import { createClient } from "../../src/client/client.js";
 import { extractMsaControlId, extractMshControlId } from "../../src/client/correlator.js";
 import { Connection } from "../../src/connection/index.js";
 import { encodeFrame, FrameReader } from "../../src/framing/index.js";
+import { readMshSegment } from "../../src/internal/control-id.js";
 import { buildRawAck } from "../../src/server/ack.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 
@@ -215,13 +216,18 @@ describe("buildRawAck — the ACK's MSH-2 never collides with its MSH-1 (§2.5.4
       "latin1",
     );
     const ack = buildRawAck(inbound, "AA");
-    const text = ack.toString("latin1");
 
-    // The ACK's own MSH-2 must be non-empty and must not contain the ACK's own MSH-1.
-    const ackFieldSep = text.charAt(3);
-    const ackMsh2 = text.split("\r")[0]?.split(ackFieldSep)[1] ?? "";
-    expect(ackMsh2, `sep=${sep}`).not.toBe("");
-    expect(ackMsh2.includes(ackFieldSep), `sep=${sep}`).toBe(false);
+    // Read the ACK back with the SAME scanner a receiver would use, and check the fields land
+    // where they belong. Asserting only "MSH-2 is non-empty" is too weak: with MSH-1 = `~` and
+    // the colliding default `^~\&`, MSH-2 reads back as the non-empty-but-WRONG `^`, and every
+    // later field is shifted by one. Pinning MSH-2 to the exact delimiter set, and MSH-9 to
+    // `ACK`, is what makes all four separators bite.
+    const msh = readMshSegment(ack);
+    expect(msh, `sep=${sep}`).not.toBeNull();
+    expect(msh?.fields[1], `sep=${sep}`).toBe("^~\\&"); // MSH-2, intact
+    expect(msh?.fields[8], `sep=${sep}`).toBe("ACK"); // MSH-9 — proves nothing shifted
+    expect(msh?.fieldSep.length, `sep=${sep}`).toBe(1);
+    expect(msh?.fields[1]?.includes(msh.fieldSep), `sep=${sep}`).toBe(false); // MSH-2 ∌ MSH-1
 
     // And — the point of the whole file — the control ID still echoes, so the sender still
     // correlates. A well-formed ACK that cannot be matched would be a worse trade.

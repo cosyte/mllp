@@ -85,10 +85,16 @@ export const CONTROL_ID_ENCODING = "latin1" as const;
  * MSH-1 *is* the field separator (§2.5.4), but a segment terminator (`CR`/`LF`) or
  * an MLLP framing byte (`VT`/`FS`) cannot be one: the first would end the segment it
  * is supposed to delimit, and the second cannot be written back into an ACK without
- * making the ACK unframeable. A payload can carry those bytes — the decoder tolerates
- * them behind `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` — so this is reachable from
- * peer-controlled input. Every consumer treats such a message as unreadable, which is
- * what keeps them in agreement.
+ * making the ACK unframeable (strict `encodeFrame` throws `MLLP_PAYLOAD_CONTAINS_VT`/`_FS`).
+ *
+ * **How a payload with such a byte reaches us — and how it does NOT.** It does *not* come
+ * from the decoder: `FrameReader` can never deliver a payload containing a `VT` or an `FS`.
+ * A mid-payload `VT` makes it discard the bytes accumulated so far and start over
+ * (`MLLP_TRAILING_BYTES`); an `FS` *ends* the payload, and a non-`CR` after it throws
+ * `MLLP_FS_WITHOUT_CR`. The route that IS real is far simpler: `buildRawAck` is a **public
+ * export**, so a caller can hand any `Buffer` straight to it, decoder or no decoder. These
+ * scanners are also called on **outbound** payloads the caller supplies. That is reason
+ * enough to guard, and it is the honest one.
  * @internal
  */
 const UNSAFE_FIELD_SEPARATORS: ReadonlySet<number> = new Set([

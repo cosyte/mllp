@@ -104,8 +104,11 @@ Each yields a *different* MSH-10, and so an ACK the sender cannot match. On a **
 of them is silent — the result carries `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. And all five have the same
 answer: **`buildRawAck`**
 (the root export, and what the server's `autoAck` path uses) is parser-free — it copies the MSH-10
-bytes — so it holds the verbatim guarantee under any delimiter set, escape, padding, or empty
-component. See [ACKs](./acks.md).
+bytes — so it holds the verbatim guarantee across escapes, padding, empty components, and custom
+delimiters alike. Not *quite* unconditionally: an inbound that declares a colliding `MSH-1` (e.g. `^`)
+with no usable `MSH-2` forces the ACK onto the HL7 default delimiters, and a `|` inside such a
+message's MSH-10 then cannot survive into MSA-2 — the ACK carries an empty one. That inbound is
+already malformed twice over (§2.16 requires MSH-2). See [ACKs](./acks.md).
 
 And it is a **`Buffer`** guarantee. On a `string` / `Hl7Message` inbound the wire bytes were decoded
 before `buildMllpAck` ever saw them, so it re-encodes your text with the same codec it decoded it

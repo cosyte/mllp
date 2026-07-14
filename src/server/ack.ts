@@ -143,21 +143,25 @@ const DEFAULT_FIELD_SEPARATOR = "|";
  * message it answers — but a delimiter is a byte we then write ourselves, all
  * over the ACK. `VT` (0x0B) and `FS` (0x1C) are the MLLP framing bytes, and `CR`
  * / `LF` are segment terminators: any of them adopted as an encoding character
- * would put that byte at every component boundary of the ACK. A payload can
- * legitimately carry those bytes — the decoder tolerates them behind
- * `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` — so this is reachable from peer-controlled
- * input. Fall back to the HL7 defaults.
+ * would put that byte at every component boundary of the ACK. Fall back to the
+ * HL7 defaults.
  *
- * **This guards the DELIMITERS ONLY — it is not a guarantee that the ACK frames.**
- * A `VT`/`FS` inside echoed field *content* (MSH-3..6, MSH-10) is still copied
- * verbatim, so the ACK payload can still contain a framing byte and strict
- * `encodeFrame` will still throw `MLLP_PAYLOAD_CONTAINS_VT`/`_FS`. That is
- * contained, not prevented: `MllpServer._dispatchAck` catches it, surfaces a
- * connection `'error'`, and the message goes **un-ACKed** so the sender resends —
- * fail-safe, but a real outcome, not a non-event. Echoing content verbatim is
- * required by §2.9.2.2 and this builder will not corrupt a control ID to make its
- * own framing easier; the delimiter guard exists only so that a nonsense MSH-2
- * cannot *multiply* one stray byte into a structurally broken ACK.
+ * **Where such a payload comes from.** Not from the decoder — `FrameReader` cannot
+ * deliver a payload containing a `VT` or an `FS`: a mid-payload `VT` makes it discard
+ * what it has accumulated and start over (`MLLP_TRAILING_BYTES`), and an `FS` *ends*
+ * the payload, with a non-`CR` after it throwing `MLLP_FS_WITHOUT_CR`. (The
+ * `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` codes are thrown by **`encodeFrame`**, on the way
+ * out — never by the decoder, on the way in.) The real route is that `buildRawAck` is a
+ * **public export**: a caller can hand it any `Buffer` at all, having never gone near
+ * the decoder. That is why the guard exists.
+ *
+ * **It guards the DELIMITERS ONLY — it is not a guarantee that the ACK frames.** A
+ * `VT`/`FS` inside echoed field *content* (MSH-3..6, MSH-10) is still copied verbatim,
+ * so such a caller can still produce an ACK payload carrying a framing byte, and strict
+ * `encodeFrame` will throw on it. Echoing content verbatim is required by §2.9.2.2 and
+ * this builder will not corrupt a control ID to make its own framing easier; the
+ * delimiter guard exists only so that a nonsense MSH-1/MSH-2 cannot *multiply* one stray
+ * byte across every field boundary of the ACK.
  *
  * The equivalent rule for MSH-1 lives in `src/internal/control-id.ts`, where it
  * belongs: an unusable field separator makes the message unreadable for *every*
