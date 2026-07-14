@@ -1321,13 +1321,24 @@ export class MllpServer extends EventEmitter {
     // TOTAL by contract: this is reached from `void`-ed async tasks (`_sendCommitAck`, the
     // transport-accept branch), so a throw here becomes an **unhandled rejection that kills the
     // process** — and it would do so on peer-controlled input. `encodeFrame` is strict and throws
-    // `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` if the ACK payload contains a framing byte. That is
-    // unreachable from `buildRawAck` now that it decodes/encodes as `latin1` (a delivered payload
-    // cannot itself hold a VT/FS, and `latin1` can no longer synthesize one) — but a caller's
-    // `autoAck: fn` can return arbitrary bytes, and defending the process must not depend on the
-    // caller's discipline. A build/frame failure is surfaced as a connection `'error'` and the
-    // message goes un-ACKed (fail-safe: better an un-ACKed message the sender will resend than a
-    // dead server), never as a process kill.
+    // `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` if the ACK payload contains a framing byte.
+    //
+    // On the auto-ACK path this is **hard to provoke, but not impossible, and the containment is
+    // what makes that safe.** `buildRawAck` decodes and encodes as `latin1`, a 1:1 byte↔code-unit
+    // map, so it cannot *synthesize* a framing byte the way `ascii` masking once did
+    // (`0x8B & 0x7F` = VT — the Phase 10 bug): it only ever echoes bytes that were already in the
+    // inbound. A delivered payload never contains a VT (`FrameReader` discards its accumulator on a
+    // mid-payload VT — `MLLP_TRAILING_BYTES`), so an echoed VT is not a concern here. It CAN,
+    // however, contain an FS: under the `allowMissingLeadingVt` tolerance a non-VT, non-whitespace
+    // first byte becomes payload byte 0, and FS (0x1C) qualifies — so an FS echoed out of MSH-10
+    // into MSA-2 reaches this `encodeFrame`, which throws `MLLP_PAYLOAD_CONTAINS_FS`. (Those codes
+    // are thrown by `encodeFrame`, on the way out; the decoder never emits them.) And a caller's
+    // `autoAck: fn` can of course return arbitrary bytes.
+    //
+    // Whichever route, defending the process must not depend on the caller's — or the peer's —
+    // discipline. A build/frame failure is surfaced as a connection `'error'` and the message goes
+    // un-ACKed (fail-safe: better an un-ACKed message the sender will resend than a dead server),
+    // never as a process kill.
     let framed: Buffer;
     try {
       framed = encodeFrame(ackPayload);
