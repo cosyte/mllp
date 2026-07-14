@@ -95,7 +95,7 @@ transport-accept — "received and framed", not "processed".
 - **Explicit 6-state connection machine** (`CONNECTING | CONNECTED | DRAINING | RECONNECTING | DISCONNECTED | CLOSED`) with `stateChange` events — never socket flags.
 - **Lenient decoder, strict encoder** (Postel's Law) with **11 stable warning codes** carrying byte offsets. Tolerance is opt-in per flag; the server ships tolerant defaults.
 - **TLS (MLLPS)** — verification on by default, mutual TLS (`clientAuth: 'NONE' | 'WANT' | 'MUST'`), a TLS 1.2 floor per IHE ATNA ITI-19, and bind-safety guardrails (`127.0.0.1` default, wildcard binds require opt-in). `AbortSignal` on every awaitable and `Symbol.asyncDispose` on every closeable.
-- **PHI-safe diagnostics** — no error, warning, event payload, or stats object ever echoes message content.
+- **PHI-safe diagnostics** — no error, warning, event payload, or stats object ever echoes a *run* of message content; a framing error carries at most the single byte at the structural violation.
 - **In-memory transport** (`@cosyte/mllp/testing`) — a deterministic, socket-free test double for fast, reliable tests.
 - **`@cosyte/hl7` as an optional peer** — the `@cosyte/mllp/ack-from-hl7` subpath builds ACKs from parsed messages when it's installed.
 - **Zero runtime dependencies.** Node stdlib only.

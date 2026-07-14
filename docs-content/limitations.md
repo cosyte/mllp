@@ -26,6 +26,28 @@ receiver never having got it. Both look like a timeout.
 queue them, or replay them. There is no write-ahead log in this package. If you need one, it lives in
 your application, not here.
 
+## It does not drain in-flight messages on `close()`
+
+`close()` **rejects** every in-flight send (`MllpConnectionError({ phase: 'close' })`) rather than
+waiting for their ACKs. The `DRAINING` state exists in the connection machine, but no drain hook is
+wired to it today, so `drainTimeoutMs` does not currently bound an in-flight ACK wait on the client —
+there is no such wait.
+
+A message in flight at shutdown is therefore an **unknown**, not a failure: it may have been
+committed by the receiver with the ACK arriving after you stopped listening. Await your sends before
+closing if that matters, and rely on receiver-side idempotency (`MSH-10` + `MSH-7`). See
+[Connection, reconnect & backpressure](./reliability.md).
+
+## A fatal framing error drops the connection
+
+If the decoder throws — an oversized frame, or a structural violation whose tolerance opt-in is off —
+that **connection** is destroyed. It is not resynchronized, because after a throw the reader's
+position in the byte stream is untrustworthy and guessing where the next message starts is how one
+gets silently mis-split. The failure is contained to the one connection (a server keeps serving every
+other peer, and never crashes the process), but bytes already in that connection's partial frame are
+gone. If a peer's quirk is expected, use the tolerance opt-ins — see
+[Framing & tolerance](./framing.md).
+
 ## It does not decide clinical acceptance
 
 The package builds *conformant* ACKs and structurally enforces *never-`AA`-without-commit*. It does

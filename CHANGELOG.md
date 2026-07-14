@@ -14,6 +14,22 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **A fatal framing error crashed the whole process (Phase 10).** `Connection` fed
+  `FrameReader.push(chunk)` straight from the transport's data callback with no `try`/`catch`. On a
+  real socket that callback **is** the `'data'` listener, so a `MllpFramingError` escaped as an
+  **uncaught exception**, killing the process — every other connection and every in-flight durable
+  commit with it. Reachable on a **default server from a single byte**: `SERVER_DEFAULT_FRAMING`
+  leaves `allowMissingLeadingVt` off, so any non-whitespace byte where a `VT` was expected threw
+  `MLLP_MISSING_LEADING_VT` (`MLLP_FRAME_TOO_LARGE` reached the same path). The existing suites
+  missed it because the in-memory transport wraps delivery in `try`/`finally`, re-routing the throw
+  to the *writer* rather than leaving it uncaught — only a real socket reproduces it. Now the error
+  surfaces as a frozen `'error'` event (`phase: 'receive'`, the `MllpFramingError` preserved as
+  `cause` so the stable `code` and `byteOffset` survive) and **only that connection** is destroyed;
+  a server drops the one bad peer and keeps serving. The connection is destroyed rather than
+  resynchronized deliberately: after a throw the reader's position in the byte stream is
+  untrustworthy, and guessing where the next frame begins is how a clinical message gets silently
+  mis-split. New regression suite `test/server/framing-error-containment.test.ts` (real loopback
+  sockets; verified to fail with unhandled errors without the fix).
 - **Release pipeline could not have released (Phase 10).** The shared `cosyte/.github` release
   workflow drives Changesets with `version: pnpm run version`, but no `version` script existed —
   it failed with `ERR_PNPM_NO_SCRIPT`, so the "Version Packages" PR could never be opened. Added
@@ -27,10 +43,24 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 - **`VERSION` had a literal type in the published `.d.ts` (Phase 10).** It declared
   `const VERSION = "0.0.0"`, leaking the current release into consumers' types and turning an
   equality check against any other version into a compile error. Now `VERSION: string`.
-- **Docs accuracy (Phase 10).** `docs-content/intro.md` described the decoder as liberal outright.
-  It is **strict by default** — tolerance is opt-in per flag, and it is `MllpServer` that ships
-  tolerant defaults (`allowFsOnly`, `allowLfAfterFs`, `allowLeadingWhitespace`;
-  `allowMissingLeadingVt` stays off even there).
+- **Docs accuracy (Phase 10).** Found by the conformance gate, which refuted the first cut of the
+  new guide:
+  - `docs-content/intro.md` described the decoder as liberal outright. It is **strict by default** —
+    tolerance is opt-in per flag, and it is `MllpServer` that ships tolerant defaults (`allowFsOnly`,
+    `allowLfAfterFs`, `allowLeadingWhitespace`; `allowMissingLeadingVt` stays off even there).
+  - `MLLP_TRAILING_BYTES` is **not** benign junk between frames. It fires on a `VT` appearing
+    *mid-payload* — which **discards the accumulated partial payload**, i.e. a **truncated**
+    message — and on a stray byte after `FS` under `allowFsOnly`. Now documented as something to
+    alert on rather than ignore.
+  - **`close()` does not drain in-flight messages** — it *rejects* them with
+    `MllpConnectionError({ phase: 'close' })`. No drain hook is wired to the `DRAINING` state, so
+    `drainTimeoutMs` does not currently bound an in-flight ACK wait on the client. A message in
+    flight at shutdown is an **unknown**, not a failure: the receiver may have committed it. Now
+    stated honestly in the reliability guide and the limitations page, with the "await your sends,
+    then close" pattern.
+  - The absolute PHI claim ("never echoes message content") is now precise: diagnostics never echo a
+    *run* of content, but the single-byte `snippet` on `MLLP_MISSING_LEADING_VT` is by definition the
+    first byte of unframed content.
 
 ### Added
 

@@ -237,7 +237,20 @@ export class Connection extends EventEmitter {
     this._transport.onData((chunk) => {
       this._bytesIn += chunk.length;
       this._lastByteInAt = new Date();
-      this._reader.push(chunk);
+      try {
+        this._reader.push(chunk);
+      } catch (err) {
+        // A fatal framing error must NEVER escape the transport's data callback. On a real
+        // socket this callback IS the `'data'` listener, so a throw here becomes an uncaught
+        // exception that kills the entire process — taking every OTHER connection and every
+        // in-flight durable commit with it. One junk byte from one misbehaving peer must not
+        // be able to do that.
+        //
+        // Reachable on a DEFAULT server: `SERVER_DEFAULT_FRAMING` leaves `allowMissingLeadingVt`
+        // off, so any non-whitespace byte where a VT was expected throws MLLP_MISSING_LEADING_VT.
+        // `MLLP_FRAME_TOO_LARGE` reaches here too.
+        this._onFatalFramingError(err instanceof Error ? err : new Error(String(err)));
+      }
     });
     this._transport.onClose(() => {
       this._onTransportClose();
@@ -493,6 +506,30 @@ export class Connection extends EventEmitter {
       // Use CLOSED (terminal) for unexpected peer close here.
       this._transition("CLOSED", "peer closed");
     }
+  }
+
+  /**
+   * Handle a fatal framing error thrown out of `FrameReader.push` (FRAME-FATAL).
+   *
+   * Contract: surface it as a connection `'error'` (payload frozen, `phase: 'receive'`, the
+   * original `MllpFramingError` preserved as `cause` so consumers keep the stable `code` and
+   * `byteOffset`), then **destroy this connection only**.
+   *
+   * Why destroy rather than resynchronize: once `push` has thrown, the reader's position within
+   * the byte stream is no longer trustworthy — the next bytes could be the middle of a message.
+   * Guessing where the next frame starts is how a clinical message gets silently mis-split, so
+   * the connection is dropped instead. `CLOSED` is terminal, so a client does not auto-reconnect
+   * into it: a peer emitting unframeable bytes is a compatibility problem, not a network blip,
+   * and retrying would just loop. A server drops that one peer and keeps serving everyone else.
+   *
+   * If a peer's quirk is *expected* (trailing junk, keepalive bytes, a missing leading VT), the
+   * decoder's tolerance opt-ins are the supported answer — they turn the throw into a warning.
+   */
+  private _onFatalFramingError(err: Error): void {
+    if (this._state === "CLOSED") return;
+    const connErr = new MllpConnectionError(err.message, { cause: err, phase: "receive" });
+    this.emit("error", Object.freeze({ connectionId: this.connectionId, error: connErr }));
+    this.destroy(err);
   }
 
   private _onTransportError(err: Error): void {

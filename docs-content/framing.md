@@ -75,7 +75,7 @@ a code is a breaking change — log pipelines and dashboards key on them.
 | `MLLP_FS_WITHOUT_CR` | Frame ended `<FS>` with no trailing `<CR>`. |
 | `MLLP_LF_AFTER_FS` | A stray `<LF>` followed `<FS>` — common from line-oriented senders. |
 | `MLLP_LEADING_WHITESPACE` | Padding bytes before `<VT>`. |
-| `MLLP_TRAILING_BYTES` | Bytes between one frame's `<CR>` and the next `<VT>` (keepalives, junk). |
+| `MLLP_TRAILING_BYTES` | **Not benign junk — read this one.** Emitted in two places: a `<VT>` appearing *mid-payload* (the partial payload accumulated so far is **discarded** and a new frame started — i.e. a **truncated** message), and a stray byte after `<FS>` under `allowFsOnly`. |
 | `MLLP_PAYLOAD_CONTAINS_VT` | **Encoder, strict:** payload contains `0x0B`. Throws. |
 | `MLLP_PAYLOAD_CONTAINS_FS` | **Encoder, strict:** payload contains `0x1C`. Throws. |
 | `MLLP_EMPTY_PAYLOAD` | Nothing between `<VT>` and `<FS>`. |
@@ -83,39 +83,62 @@ a code is a breaking change — log pipelines and dashboards key on them.
 | `MLLP_ACK_UNMATCHED_CONTROL_ID` | An inbound ACK's MSA-2 matched no pending send. |
 | `MLLP_ACK_AFTER_TIMEOUT` | A late ACK arrived after its send had already timed out. |
 
-`MLLP_EMPTY_PAYLOAD` and `MLLP_TRAILING_BYTES` remain *warnings* even under `strict: true` — they
-describe bytes around a well-formed frame, not a broken one.
+`MLLP_EMPTY_PAYLOAD` and `MLLP_TRAILING_BYTES` remain *warnings* — never throws — even under
+`strict: true`. Do not read `MLLP_TRAILING_BYTES` as cosmetic, though: its mid-payload `<VT>` case
+means a message was **truncated**, and it is worth alerting on.
 
 A twelfth code, `MLLP_ACK_INBOUND_UNPARSEABLE`, is scoped to the
 [`ack-from-hl7`](./acks.md) subpath and appears in `MllpAck.warnings`, not in the framing registry.
 
-## Bounded accumulators
+## What throws, and what happens when it does
 
-A decoder that buffers until it sees `<FS>` is a memory-exhaustion vector: a peer that opens a
-socket, sends `<VT>`, and then streams forever will grow your process until it dies.
+`FrameReader.push()` **throws** `MllpFramingError` in two situations:
 
-`FrameReader` is bounded. `maxFrameSizeBytes` defaults to **16 MB**; crossing it throws
-`MllpFramingError('MLLP_FRAME_TOO_LARGE')` and the accumulator is not grown further.
+1. **`MLLP_FRAME_TOO_LARGE`** — the accumulator crossed `maxFrameSizeBytes`. A decoder that buffers
+   until it sees `<FS>` is otherwise a memory-exhaustion vector: a peer that opens a socket, sends
+   `<VT>`, and then streams forever would grow your process until it died. The default cap is
+   **16 MB**.
 
-```ts
-new FrameReader({ onFrame, maxFrameSizeBytes: 4 * 1024 * 1024 }); // 4 MiB
-```
+   ```ts
+   new FrameReader({ onFrame, maxFrameSizeBytes: 4 * 1024 * 1024 }); // 4 MiB
+   ```
 
-This is the **one sanctioned fatal** on the decode path. Every other deviation is either tolerated
-with a warning or rejected as a framing error — the lenient decoder never throws on a merely
-*strange* frame, only on one that will not fit.
+2. **A structural violation whose tolerance opt-in is off** — `MLLP_MISSING_LEADING_VT`,
+   `MLLP_FS_WITHOUT_CR`, or `MLLP_LF_AFTER_FS`. Since a bare `FrameReader` is strict by default,
+   *all three* throw unless you enable them. On an `MllpServer`, two are enabled by default — but
+   `allowMissingLeadingVt` is **not**, so a single non-whitespace byte where a `<VT>` was expected
+   throws on a default server.
+
+**A throw kills the connection, never the process.** `Connection` catches it, surfaces it as a
+frozen `'error'` event (`phase: 'receive'`, with the `MllpFramingError` preserved as `cause` so the
+stable `code` and `byteOffset` survive), and destroys **that connection only**. A server drops the
+one bad peer and keeps serving everyone else.
+
+The connection is dropped rather than resynchronized on purpose: once `push` has thrown, the reader's
+position within the byte stream is no longer trustworthy, and guessing where the next frame begins is
+how a clinical message gets silently mis-split.
+
+If a peer's quirk is *expected* — it pads with junk, omits the leading `<VT>`, sends bare `<FS>` —
+the tolerance opt-ins above are the supported answer. They turn the throw into a warning and recover
+the payload.
 
 ## Diagnostics never echo payload bytes
 
-`MllpFramingError.snippet` carries **at most the single framing-boundary byte that broke the
-structure** — never a run of payload content. The payload of an HL7 v2 message is PHI, and an error
-message is the easiest way for PHI to escape into a log aggregator.
+`MllpFramingError.snippet` carries **at most a single byte** — the one at the structural violation —
+and **never a run of payload content**. The payload of an HL7 v2 message is PHI, and an error message
+is the easiest way for PHI to escape into a log aggregator.
 
 - `MLLP_FRAME_TOO_LARGE` carries an **empty** snippet. The anomaly is the frame's *size*, not any
   particular byte, so there is nothing to show.
 - `MLLP_PAYLOAD_CONTAINS_VT` / `_FS` carry **only the offending delimiter byte** — itself a control
   byte the `code` already names.
+- `MLLP_MISSING_LEADING_VT` / `MLLP_FS_WITHOUT_CR` carry the **one byte found where a framing byte
+  was expected**. Being fully precise: that byte is not itself a framing byte, so on a
+  missing-`<VT>` stream it is the first byte of the unframed content (typically the `M` of `MSH`).
+  One byte, never a run — but if even that is more than your threat model allows, do not log
+  `snippet` directly.
 
-Warning `message` fields are stable, human-readable descriptions and likewise never contain payload
-bytes. Correlate on `code` + `byteOffset`, and if you need the message itself, log it deliberately
-through your own PHI-aware channel.
+Warning `message` fields are stable, human-readable descriptions and never contain payload bytes.
+
+Correlate on `code` + `byteOffset`, and if you need the message itself, log it deliberately through
+your own PHI-aware channel.

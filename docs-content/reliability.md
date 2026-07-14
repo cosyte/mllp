@@ -111,19 +111,42 @@ const client = createClient({
 Set `pipeline: false` to collapse the in-flight set to one — strict send → await-ACK → send. Slower,
 and required by peers that cannot handle concurrent messages on one connection.
 
-## Graceful shutdown
+## Shutdown — and what it does *not* do for in-flight messages
 
-`close()` moves the connection to `DRAINING`: no new sends are accepted, in-flight messages keep
-awaiting their ACKs, and the socket closes once they settle or `drainTimeoutMs` (default 30 s)
-expires. This is what stops a rolling deploy from turning in-flight clinical messages into unknowns.
+⚠️ **Read this before you rely on `close()` during a deploy.**
+
+`close()` **rejects every in-flight send immediately**. It does *not* wait for their ACKs. Each
+pending `send()` promise rejects with `MllpConnectionError({ phase: 'close' })`, and the connection
+then closes. The `DRAINING` state exists in the machine, but no drain hook is wired to it today —
+`drainTimeoutMs` (default 30 s) is therefore not currently what bounds an in-flight ACK wait on the
+client, because there is no such wait.
+
+**This means a message in flight at shutdown becomes an *unknown*, not a failure.** The rejection
+tells you the send did not complete *locally*. It does **not** tell you the receiver did not commit
+it — the message may well have been written, with the ACK arriving after you stopped listening. It
+is the same at-least-once boundary as an ACK timeout, and it is resolved the same way: by the
+receiver's idempotency on `MSH-10` + `MSH-7`, not by this library.
+
+If you need in-flight messages to settle before you exit, **await them yourself** before calling
+`close()`:
+
+```ts
+const inFlight = messages.map((m) => client.send(m));
+await Promise.allSettled(inFlight); // settle first —
+await client.close(); //                 — then close
+```
 
 Every closeable implements `Symbol.asyncDispose`, and every awaitable takes an `AbortSignal`:
 
 ```ts
 await using client = await createStarterClient({ host, port });
 await client.send(payload, { signal: AbortSignal.timeout(5_000) });
-// disposed — drained — on scope exit, including on throw
+// disposed on scope exit (including on throw) — note this closes, it does not drain
 ```
+
+Server-side, `close()` stops accepting new connections and closes existing ones. A commit-gated
+`onMessage` handler that is mid-`await` is **not** waited on, so the same rule applies: durability is
+your handler's job, and it must not depend on the process staying alive to finish.
 
 ## Observability
 
