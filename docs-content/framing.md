@@ -114,12 +114,19 @@ frozen `'error'` event (`phase: 'receive'`, `connectionCause: 'framing-fatal'`, 
 `MllpFramingError` preserved as `cause` so the stable `code` and `byteOffset` survive), and destroys
 **that connection only**. A server drops the one bad peer and keeps serving everyone else.
 
-This holds even when *your* code is the thing that throws. Every event `Connection` emits —
-`'message'`, `'warning'`, `'error'`, and the five lifecycle events — is dispatched with containment,
-because all of them can be reached synchronously from inside the socket's `'data'` callback. A
-throwing subscriber is reported on `'error'` and cannot take the process down with it. (A throwing
-`'error'` subscriber is the one exception that is simply swallowed: reporting is what just failed, so
-there is nowhere left to report it to.)
+This holds even when *your* code is the thing that throws. Node calls event listeners
+**synchronously**, so a throwing subscriber unwinds the stack it was called from — and on this
+package's hot paths that stack bottoms out in a socket callback. Every event emitted by `Connection`,
+`MllpServer`, and `MllpClient` is therefore dispatched with containment: a throwing subscriber is
+reported on `'error'` and cannot take the process down with it, nor skip the work queued behind it.
+That last part matters as much as the crash: a throwing `'nack'` subscriber must not be able to
+suppress the negative ACK, and a throwing `'message'` subscriber must not be able to break ACK
+correlation. (A throwing `'error'` subscriber is the one case simply swallowed — reporting is what
+just failed, so there is nowhere left to report it to.)
+
+The one deliberate exception: if your **server** hits an accept-loop error (`EMFILE`/`ENFILE`) and you
+have **no** `'error'` listener attached, it still crashes loudly, on purpose. A silent accept outage
+on a healthcare listener is worse than a loud one.
 
 The connection is dropped rather than resynchronized on purpose: once `push` has thrown, the reader's
 position within the byte stream is no longer trustworthy, and guessing where the next frame begins is

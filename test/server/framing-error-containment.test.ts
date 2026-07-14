@@ -260,3 +260,101 @@ describe("fatal framing errors are contained to one connection", () => {
     }
   });
 });
+
+/**
+ * STRUCTURAL — the rule the previous rounds kept getting wrong.
+ *
+ * The hazard belongs to the **call stack**, not to a class. `Connection`, `MllpServer` and
+ * `MllpClient` all emit from callbacks we do not own (a socket's `'data'`/`'secureConnect'`
+ * listener, `net.Server`'s `'connection'` listener, `tls.Server`'s `'tlsClientError'` listener,
+ * the `catch` of a `void`-ed async ACK task). Scoping containment to `Connection` alone left four
+ * live process-kills in the other two classes — including a throwing `'nack'` subscriber that ALSO
+ * suppressed the fail-safe negative ACK.
+ *
+ * So: attach a throwing subscriber to EVERY event of the server and the client at once, and drive
+ * a real exchange through it. A new event emitted uncontained from a callback fails this.
+ */
+describe("STRUCTURAL: no emit from any class may escape a transport/accept callback", () => {
+  const SERVER_EVENTS = [
+    "listening",
+    "connection",
+    "message",
+    "nack",
+    "error",
+    "close",
+    "securityWarning",
+    "tlsClientError",
+  ] as const;
+
+  it("a throwing subscriber on EVERY MllpServer event still serves, and still sends the fail-safe ACK", async () => {
+    const server = createServer({
+      autoAck: "AA",
+      onMessage: async (payload) => {
+        // Commit fails for the second message → must still produce a negative ACK, even though
+        // the 'nack' subscriber throws.
+        if (payload.includes("FAIL")) throw new Error("commit failed");
+        await Promise.resolve();
+      },
+    });
+    for (const e of SERVER_EVENTS) {
+      server.on(e, () => {
+        throw new Error(`consumer bug in the ${e} handler`);
+      });
+    }
+
+    const port = await listen(server);
+    try {
+      // Happy path: commit succeeds → AA, despite throwing 'connection'/'message' subscribers.
+      expect(await exchange(port, PAYLOAD)).toContain("MSA|AA");
+
+      // Failure path: commit throws → the negative ACK MUST still reach the sender, even though
+      // the 'nack' subscriber throws inside the catch of a void-ed async task. Suppressing this
+      // ACK would leave the sender waiting on a message the server had already failed to commit.
+      expect(await exchange(port, `${PAYLOAD}FAIL\r`)).toContain("MSA|AE");
+
+      // And a junk byte on top of all that still does not take the server down.
+      const bad = await connect(port);
+      const closed = new Promise<void>((resolve) => bad.once("close", () => resolve()));
+      bad.write(Buffer.from([0x58]));
+      await closed;
+
+      expect(await exchange(port, PAYLOAD)).toContain("MSA|AA");
+    } finally {
+      await server.close().catch(() => undefined);
+    }
+  });
+
+  it("a throwing subscriber on EVERY MllpClient event still connects, sends, and closes", async () => {
+    const { createClient } = await import("../../src/client/client.js");
+    const server = createServer({ autoAck: "AA" });
+    const port = await listen(server);
+
+    const CLIENT_EVENTS = [
+      "connect",
+      "disconnect",
+      "reconnecting",
+      "close",
+      "message",
+      "warning",
+      "error",
+      "stateChange",
+      "securityWarning",
+    ] as const;
+
+    try {
+      const client = createClient({ host: "127.0.0.1", port });
+      for (const e of CLIENT_EVENTS) {
+        client.on(e, () => {
+          throw new Error(`consumer bug in the ${e} handler`);
+        });
+      }
+
+      await client.connect();
+      const ack = await client.send(Buffer.from(PAYLOAD, "ascii"));
+      expect(ack.toString("ascii")).toContain("MSA|AA");
+      await client.close();
+    } finally {
+      await server.close().catch(() => undefined);
+    }
+  });
+});

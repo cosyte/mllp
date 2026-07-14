@@ -33,6 +33,7 @@ import { EventEmitter } from "node:events";
 import { Connection } from "../connection/index.js";
 import type { ConnectionState, StateChangeEvent } from "../connection/index.js";
 import { MllpConnectionError } from "../connection/index.js";
+import { safeEmit, safeEmitError } from "../internal/safe-emit.js";
 import { NetTransport, TlsTransport } from "../transport/index.js";
 import type { Transport } from "../transport/index.js";
 import type { TlsOptions } from "../transport/tls-options.js";
@@ -694,6 +695,22 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
+   * Emit a client event, containing a throwing subscriber.
+   *
+   * Every event this client emits is reached from a callback we do not own — a socket's
+   * `'connect'`/`'secureConnect'`/`'data'`/`'error'` listener, or a backoff timer. A throwing
+   * subscriber would unwind into it and kill the process, and on several paths it would also skip
+   * the work queued after the emit (the `resolve()` of `connect()`, the backoff scheduling).
+   *
+   * See `src/internal/safe-emit.ts`. The throw is re-surfaced on `'error'`.
+   */
+  private _emitContained(event: string, payload: unknown): void {
+    safeEmit(this, event, payload, (err) => {
+      safeEmitError(this, Object.freeze({ error: err }));
+    });
+  }
+
+  /**
    * Emit the per-connection insecure-TLS warning (Phase 8) when
    * `tls.allowUnverified === true` — fires on EVERY successful
    * `secureConnect`, initial connect and every reconnect. Emits both a frozen
@@ -714,7 +731,11 @@ export class MllpClient extends EventEmitter {
       port: this._opts.port,
       timestamp: new Date(),
     });
-    this.emit("securityWarning", warning);
+    // Contained: this is reached from the socket's 'secureConnect' listener. A throwing
+    // subscriber (a security-audit hook — exactly the kind of thing that subscribes here) would
+    // both kill the process AND skip the resolve() that follows in onSocketConnect, hanging
+    // connect() forever.
+    this._emitContained("securityWarning", warning);
     process.emitWarning(message, { code: MLLP_TLS_VERIFY_DISABLED });
   }
 
@@ -746,7 +767,7 @@ export class MllpClient extends EventEmitter {
         onWarning: (code, ctx) => {
           // PLAN-06 (OBS-01, D-26) — aggregate Correlator-emitted warning counts.
           this._aggregatedWarningsByCode[code] = (this._aggregatedWarningsByCode[code] ?? 0) + 1;
-          this.emit(
+          this._emitContained(
             "warning",
             Object.freeze({
               code,
@@ -769,8 +790,8 @@ export class MllpClient extends EventEmitter {
             Buffer.alloc(0),
             `Unmatched ACK control ID${controlId === "" ? "" : `: ${controlId}`}`,
           );
-          this.emit(
-            "error",
+          safeEmitError(
+            this,
             Object.freeze({
               connectionId: this._connection?.connectionId ?? conn.connectionId,
               error: err,
@@ -820,7 +841,10 @@ export class MllpClient extends EventEmitter {
         byteOffset: number;
         warnings: readonly MllpWarning[];
       }) => {
-        this.emit("message", Object.freeze({ ...e }));
+        // Contained: a throwing 'message' subscriber used to abort this handler BEFORE
+        // _onAckPayload ran — so the ACK never reached the correlator and send() hung forever.
+        // An observer must never be able to break ACK correlation.
+        this._emitContained("message", Object.freeze({ ...e }));
         // Plan 05 — last-bytes-received signal resets dead-peer timer
         // (D-11 "last bytes/ACK received").
         this._armDeadPeerTimer();
@@ -829,19 +853,19 @@ export class MllpClient extends EventEmitter {
     );
     // PLAN-01 lifecycle re-emitters preserved unchanged.
     conn.on("connect", (e: unknown) => {
-      this.emit("connect", Object.freeze({ ...(e as object) }));
+      this._emitContained("connect", Object.freeze({ ...(e as object) }));
     });
     conn.on("disconnect", (e: unknown) => {
-      this.emit("disconnect", Object.freeze({ ...(e as object) }));
+      this._emitContained("disconnect", Object.freeze({ ...(e as object) }));
     });
     conn.on("reconnecting", (e: unknown) => {
-      this.emit("reconnecting", Object.freeze({ ...(e as object) }));
+      this._emitContained("reconnecting", Object.freeze({ ...(e as object) }));
     });
     conn.on("close", (e: unknown) => {
-      this.emit("close", Object.freeze({ ...(e as object) }));
+      this._emitContained("close", Object.freeze({ ...(e as object) }));
     });
     conn.on("warning", (w: MllpWarning) => {
-      this.emit("warning", w);
+      this._emitContained("warning", w);
       // Plan 05 — Connection 'warning' is also a "bytes received" signal.
       this._armDeadPeerTimer();
     });
@@ -857,11 +881,9 @@ export class MllpClient extends EventEmitter {
         const inner = (wrapper as { cause?: unknown }).cause;
         this._lastError = inner instanceof Error ? inner : wrapper;
       }
-      // Server precedent: only re-emit if a listener is attached, to avoid
-      // ERR_UNHANDLED_ERROR crashing the process (T-05-01-03 mitigation).
-      if (this.listenerCount("error") > 0) {
-        this.emit("error", e);
-      }
+      // Guards the unlistened case (ERR_UNHANDLED_ERROR would crash the process — T-05-01-03)
+      // AND contains a throwing 'error' subscriber. See src/internal/safe-emit.ts.
+      safeEmitError(this, e);
     });
     this._connection = conn;
 
@@ -1029,9 +1051,9 @@ export class MllpClient extends EventEmitter {
     } catch (hookErr) {
       // Strategy threw — bail to CLOSED, surface error.
       this._lastError = hookErr instanceof Error ? hookErr : new Error(String(hookErr));
-      if (this.listenerCount("error") > 0) {
-        this.emit(
-          "error",
+      {
+        safeEmitError(
+          this,
           Object.freeze({
             connectionId: this._connection?.connectionId ?? "<none>",
             error: this._lastError,
@@ -1051,7 +1073,11 @@ export class MllpClient extends EventEmitter {
     }
 
     // Emit 'reconnecting' with populated fields (Phase 3 D-CR-01 promise).
-    this.emit(
+    //
+    // Contained: a throwing subscriber here used to skip the backoff scheduling immediately below,
+    // so auto-reconnect silently never fired again — the connection just stopped retrying, with no
+    // error that named the cause.
+    this._emitContained(
       "reconnecting",
       Object.freeze({
         connectionId: this._connection?.connectionId ?? "<none>",
@@ -1247,7 +1273,7 @@ export class MllpClient extends EventEmitter {
    */
   private _onAckMatched(matched: PendingAck, ackPayload: Buffer): void {
     const latencyMs = matched.sentAt !== null ? Date.now() - matched.sentAt : 0;
-    this.emit(
+    this._emitContained(
       "ack",
       Object.freeze({
         payload: ackPayload,
@@ -1281,7 +1307,7 @@ export class MllpClient extends EventEmitter {
     const belowCount = corr.size < this._hwmCount;
     const belowBytes = corr.queueBytes < this._hwmBytes;
     if (belowCount && belowBytes) {
-      this.emit(
+      this._emitContained(
         "drain",
         Object.freeze({
           queueDepth: corr.size,
@@ -1304,7 +1330,10 @@ export class MllpClient extends EventEmitter {
    * Called from the SINGLE 'stateChange' listener registered in _attachConnection.
    */
   private _onStateChange(e: StateChangeEvent): void {
-    this.emit("stateChange", Object.freeze({ ...e }));
+    // Contained: everything below (dead-peer timer, the _handleDisconnect reconnect trigger) must
+    // run even if a subscriber throws. A throwing 'stateChange' tap used to silently disable
+    // auto-reconnect.
+    this._emitContained("stateChange", Object.freeze({ ...e }));
     // HOOK_EXTENSION_POINT: state-change
     // Plan 05 — dead-peer timer arm/clear (D-14). Cleared on every
     // transition OUT of CONNECTED; re-armed on entry TO CONNECTED.
