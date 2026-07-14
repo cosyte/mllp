@@ -144,6 +144,92 @@ describe("fatal framing errors are contained to one connection", () => {
     }
   });
 
+  it("a BARE Connection with no 'error' listener still does not crash the process", async () => {
+    // The first cut of this fix only relocated the crash: `emit('error')` on an EventEmitter with
+    // no listener throws ERR_UNHANDLED_ERROR, and that throw happened inside the new catch block —
+    // escaping the socket 'data' callback exactly as the MllpFramingError used to. MllpServer and
+    // MllpClient both attach an 'error' listener, which masked it; `Connection` is a public export
+    // and need not. Deliberately attach NO 'error' listener here.
+    const net = await import("node:net");
+    const { Connection } = await import("../../src/connection/connection.js");
+    const { NetTransport } = await import("../../src/transport/net-transport.js");
+
+    // A raw peer that greets with one non-MLLP byte.
+    const rogue = net.createServer((s) => s.write(Buffer.from([0x58])));
+    await new Promise<void>((resolve) => rogue.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = rogue.address() as { port: number };
+
+    try {
+      const sock = await connect(port);
+      const conn = new Connection({ transport: new NetTransport(sock) });
+      const states: string[] = [];
+      conn.on("stateChange", (e: { to: string }) => states.push(e.to));
+      // NO conn.on('error', …) — that is the whole point of this test.
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+
+      // Survived (an uncaught exception would have failed the run), and torn itself down.
+      expect(conn.state).toBe("CLOSED");
+      expect(states).toContain("CLOSED");
+    } finally {
+      await new Promise<void>((resolve) => rogue.close(() => resolve()));
+    }
+  });
+
+  it("does NOT auto-reconnect-loop against a peer that is not speaking MLLP", async () => {
+    // A fatal framing error is a COMPATIBILITY failure, not a network blip. Classifying it
+    // transient made `createStarterClient` (autoReconnect defaults true) retry forever — an
+    // unbounded reconnect storm against a misconfigured peer. It must be permanent.
+    const net = await import("node:net");
+    const { createClient } = await import("../../src/client/client.js");
+
+    let accepts = 0;
+    const httpish = net.createServer((s) => {
+      accepts += 1;
+      s.write(Buffer.from("HTTP/1.1 200 OK\r\n", "ascii")); // wrong protocol on the MLLP port
+    });
+    await new Promise<void>((resolve) => httpish.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = httpish.address() as { port: number };
+
+    try {
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        autoReconnect: true,
+        initialDelayMs: 10, // if it looped, it would loop FAST
+        maxDelayMs: 20,
+      });
+      client.on("error", () => undefined); // don't care about the payload, just the retry count
+      await client.connect().catch(() => undefined);
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      await client.close().catch(() => undefined);
+
+      // With a 10 ms backoff, a loop would rack up dozens of accepts in 500 ms.
+      expect(accepts).toBeLessThanOrEqual(2);
+    } finally {
+      await new Promise<void>((resolve) => httpish.close(() => resolve()));
+    }
+  });
+
+  it("a throwing 'message' subscriber does not kill the connection or suppress the ACK", async () => {
+    // `onFrame` dispatches synchronously inside `FrameReader.push()`, so a throwing subscriber
+    // unwinds through push() and out of the socket 'data' handler. Contained per-subscriber: the
+    // ACK still goes out, and the throw is never mislabeled as a peer framing fault.
+    const server = createServer({ autoAck: "AA" });
+    server.on("message", () => {
+      throw new Error("consumer bug in message handler");
+    });
+    server.on("error", () => undefined);
+
+    const port = await listen(server);
+    try {
+      expect(await exchange(port, PAYLOAD)).toContain("MSA|AA");
+    } finally {
+      await server.close().catch(() => undefined);
+    }
+  });
+
   it("a peer whose quirk is expected can be tolerated instead — the opt-ins turn the throw into a warning", async () => {
     // The supported answer for a peer that really does omit the leading VT.
     const warnings: string[] = [];

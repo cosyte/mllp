@@ -1106,7 +1106,23 @@ export class MllpServer extends EventEmitter {
         });
 
         // D-03: emit 'message' BEFORE any ACK dispatch.
-        this.emit("message", Object.freeze({ payload, meta }));
+        //
+        // Contained: a `'message'` subscriber is an OBSERVER (a metrics tap, a logger). The ACK
+        // decision belongs to the commit contract below — `ServerOptions.onMessage` is the
+        // durable-commit step, not this event. An observer that throws must therefore not be able
+        // to suppress the ACK: before containment, one broken logger silently turned every message
+        // into a no-ACK, so every sender resent forever with nothing to diagnose it by. The throw
+        // is surfaced on `'error'` instead, and the commit contract proceeds untouched.
+        try {
+          this.emit("message", Object.freeze({ payload, meta }));
+        } catch (err) {
+          this._emitErrorIfListened(
+            Object.freeze({
+              connectionId,
+              error: err instanceof Error ? err : new Error(String(err)),
+            }),
+          );
+        }
 
         const autoAck = this._opts.autoAck;
         if (autoAck === "AA") {

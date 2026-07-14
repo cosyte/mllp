@@ -110,13 +110,19 @@ A twelfth code, `MLLP_ACK_INBOUND_UNPARSEABLE`, is scoped to the
    throws on a default server.
 
 **A throw kills the connection, never the process.** `Connection` catches it, surfaces it as a
-frozen `'error'` event (`phase: 'receive'`, with the `MllpFramingError` preserved as `cause` so the
-stable `code` and `byteOffset` survive), and destroys **that connection only**. A server drops the
-one bad peer and keeps serving everyone else.
+frozen `'error'` event (`phase: 'receive'`, `connectionCause: 'framing-fatal'`, with the
+`MllpFramingError` preserved as `cause` so the stable `code` and `byteOffset` survive), and destroys
+**that connection only**. A server drops the one bad peer and keeps serving everyone else. (The
+`'error'` emit is itself guarded, so a bare `Connection` with no `'error'` listener is torn down
+quietly rather than raising Node's `ERR_UNHANDLED_ERROR` — which would have put the crash right back.)
 
 The connection is dropped rather than resynchronized on purpose: once `push` has thrown, the reader's
 position within the byte stream is no longer trustworthy, and guessing where the next frame begins is
 how a clinical message gets silently mis-split.
+
+`framing-fatal` is classified **permanent**, so a client does **not** auto-reconnect into it — a peer
+speaking something that is not MLLP (an HTTP probe on the wrong port, a health check) would otherwise
+be retried forever. See [Connection, reconnect & backpressure](./reliability.md).
 
 If a peer's quirk is *expected* — it pads with junk, omits the leading `<VT>`, sends bare `<FS>` —
 the tolerance opt-ins above are the supported answer. They turn the throw into a warning and recover

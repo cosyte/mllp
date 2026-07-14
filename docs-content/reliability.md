@@ -13,14 +13,16 @@ what it hands back to you.
 
 ## The connection is an explicit state machine
 
-Never socket flags. `connection.state` is exactly one of six values:
+Never socket flags. `connection.state` is exactly one of six values, and the legal transitions are
+exactly these:
 
 ```
-CONNECTING → CONNECTED ⇄ DRAINING
-                 ↓
-           DISCONNECTED → RECONNECTING → CONNECTING
-                 ↓
-              CLOSED  (terminal)
+CONNECTING    → CONNECTED | RECONNECTING | CLOSED
+CONNECTED     → DRAINING | RECONNECTING | DISCONNECTED | CLOSED
+DRAINING      → DISCONNECTED | CLOSED
+RECONNECTING  → CONNECTING | CLOSED
+DISCONNECTED  → CLOSED          ← note: DISCONNECTED does NOT go back to RECONNECTING
+CLOSED        → (terminal)
 ```
 
 | State | Meaning |
@@ -40,9 +42,17 @@ subscribers cannot mutate shared state.
 client.on("stateChange", ({ from, to, reason }) => logger.info({ from, to, reason }));
 ```
 
+**What you will actually observe on a client reconnect.** `MllpClient` builds a **fresh
+`Connection`** for each attempt rather than cycling one connection through `RECONNECTING`. So the
+`stateChange` stream you see across a reconnect is `CONNECTED → DISCONNECTED` on the old connection,
+then `CONNECTING → CONNECTED` on the new one. The client's own **`'reconnecting'` event** is what
+tells you a retry is in progress — dashboard on that, not on a `RECONNECTING` state you will not see.
+
 ## Auto-reconnect
 
-Off by default — an explicit `autoReconnect: true` opts in.
+`createClient` leaves it **off** — pass `autoReconnect: true` to opt in. **`createStarterClient`
+turns it on for you** (it is the batteries-included path), so if you started from the quickstart you
+already have it.
 
 ```ts
 const client = createClient({
@@ -61,11 +71,21 @@ network blip reconnects every client on the floor in the same millisecond and yo
 thundering herd against an interface engine that is already unwell.
 
 **Only transient errors are retried.** The classifier (exported as `isTransientConnectionError`)
-distinguishes a network blip — retry it — from a permanent, *configuration-shaped* failure. TLS
-verification failures (`connectionCause: 'tls-verify'`) and TLS protocol failures
-(`'tls-handshake'`) are classified **permanent** and halt reconnection, transitioning to `CLOSED`.
-Auto-reconnecting into a certificate error is not resilience; it is an infinite loop against an
-endpoint that is either misconfigured or being MITM'd.
+distinguishes a network blip — retry it — from a permanent, *configuration-shaped* failure.
+Auto-reconnecting into a misconfiguration is not resilience; it is an infinite loop against an
+endpoint that cannot possibly answer, and the backoff turns it into a storm.
+
+Classified **permanent** (reconnection halts):
+
+| Cause | Why retrying is pointless |
+|---|---|
+| `tls-verify` | Certificate verification failed. The next attempt meets the same certificate. |
+| `tls-handshake` | TLS protocol failure (`ERR_SSL_*`, `EPROTO`, OpenSSL alerts). Same. |
+| `framing-fatal` | The peer is not speaking MLLP — an HTTP probe, a health check, a wrong-port misconfiguration — or is emitting frames past the size cap. Every reconnect meets the same bytes. |
+| `ENOTFOUND`, `EACCES` | The name does not resolve; the port is not permitted. |
+
+Everything else (`ECONNRESET`, `ETIMEDOUT`, `ECONNREFUSED`, `EPIPE`, …) is treated as transient and
+retried — Postel's Law, applied to peer behavior.
 
 Supply `retryStrategy` for full control — it receives a frozen `RetryContext` and returns the next
 delay, or `null` to stop retrying.

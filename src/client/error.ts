@@ -226,6 +226,12 @@ export function isTransientConnectionError(err: unknown): boolean {
       if (isTlsVerificationErrorCode(code)) return false;
       // Node TLS alert codes → permanent (Phase 8; recur on every attempt).
       if (code.startsWith("ERR_SSL_")) return false;
+      // A fatal MLLP framing error → permanent (MLLP-10). The peer is not speaking MLLP (an HTTP
+      // probe, a health check, a wrong-port misconfiguration) or is emitting frames past the size
+      // cap. Every reconnect meets the same bytes, so retrying is an unbounded reconnect storm
+      // against a peer that is already misconfigured — the same reasoning that makes the TLS
+      // classes permanent. A compatibility failure is not a network blip.
+      if (code.startsWith("MLLP_")) return false;
       // Default: transient (Postel's Law — be permissive about peer behavior).
       return true;
   }

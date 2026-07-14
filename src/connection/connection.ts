@@ -21,7 +21,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { Transport } from "../transport/index.js";
-import { FrameReader } from "../framing/index.js";
+import { FrameReader, MllpFramingError } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
 import { MllpConnectionError } from "./error.js";
 import type { ConnectionErrorPhase } from "./error.js";
@@ -240,16 +240,23 @@ export class Connection extends EventEmitter {
       try {
         this._reader.push(chunk);
       } catch (err) {
-        // A fatal framing error must NEVER escape the transport's data callback. On a real
-        // socket this callback IS the `'data'` listener, so a throw here becomes an uncaught
-        // exception that kills the entire process — taking every OTHER connection and every
-        // in-flight durable commit with it. One junk byte from one misbehaving peer must not
-        // be able to do that.
+        // Nothing may escape the transport's data callback. On a real socket this callback IS
+        // the `'data'` listener, so a throw here becomes an uncaught exception that kills the
+        // entire process — taking every OTHER connection and every in-flight durable commit
+        // with it. One junk byte from one misbehaving peer must not be able to do that.
         //
         // Reachable on a DEFAULT server: `SERVER_DEFAULT_FRAMING` leaves `allowMissingLeadingVt`
         // off, so any non-whitespace byte where a VT was expected throws MLLP_MISSING_LEADING_VT.
         // `MLLP_FRAME_TOO_LARGE` reaches here too.
-        this._onFatalFramingError(err instanceof Error ? err : new Error(String(err)));
+        //
+        // The two classes are kept DISTINCT on purpose. A framing error is the peer's fault; a
+        // subscriber bug is ours. Reporting the second as the first would tell an operator the
+        // peer sent bad bytes when in fact our own handler threw.
+        if (err instanceof MllpFramingError) {
+          this._onFatalFramingError(err);
+        } else {
+          this._onInternalReceiveError(err instanceof Error ? err : new Error(String(err)));
+        }
       }
     });
     this._transport.onClose(() => {
@@ -509,26 +516,82 @@ export class Connection extends EventEmitter {
   }
 
   /**
+   * Emit on `'error'` only when a listener is attached.
+   *
+   * Node throws `ERR_UNHANDLED_ERROR` when `'error'` is emitted on an `EventEmitter` with no
+   * listener. Every `'error'` emission in this class is reached from inside a transport callback
+   * (the socket's `'data'`/`'error'` listener), so an unguarded emit would become an **uncaught
+   * exception that kills the process** — the exact failure the containment above exists to
+   * prevent, merely relocated one frame up the stack.
+   *
+   * `Connection` is a public export and can legitimately be driven with no `'error'` listener
+   * (`MllpServer` and `MllpClient` each attach one; a bare `Connection` need not). The connection
+   * is still torn down and `'stateChange'`/`'close'` still fire, so a caller is never blind —
+   * they simply do not get the typed error object they never asked for. Mirrors
+   * `MllpServer._emitErrorIfListened`.
+   */
+  private _emitErrorIfListened(error: MllpConnectionError): void {
+    if (this.listenerCount("error") === 0) return;
+    try {
+      this.emit("error", Object.freeze({ connectionId: this.connectionId, error }));
+    } catch {
+      // A throwing `'error'` subscriber must not escape either. This method is called from inside
+      // socket callbacks AND from inside catch blocks, so a throw here would unwind straight out of
+      // the socket handler — the same process kill, reached by a third route. This is the one place
+      // a throw is deliberately swallowed: reporting is what just failed, so there is nowhere left
+      // to report it to.
+    }
+  }
+
+  /**
    * Handle a fatal framing error thrown out of `FrameReader.push` (FRAME-FATAL).
    *
-   * Contract: surface it as a connection `'error'` (payload frozen, `phase: 'receive'`, the
-   * original `MllpFramingError` preserved as `cause` so consumers keep the stable `code` and
-   * `byteOffset`), then **destroy this connection only**.
+   * Contract: surface it as a connection `'error'` (frozen payload, `phase: 'receive'`,
+   * `connectionCause: 'framing-fatal'`, the original `MllpFramingError` preserved as `cause` so
+   * consumers keep the stable `code` and `byteOffset`), then **destroy this connection only**.
    *
    * Why destroy rather than resynchronize: once `push` has thrown, the reader's position within
    * the byte stream is no longer trustworthy — the next bytes could be the middle of a message.
    * Guessing where the next frame starts is how a clinical message gets silently mis-split, so
-   * the connection is dropped instead. `CLOSED` is terminal, so a client does not auto-reconnect
-   * into it: a peer emitting unframeable bytes is a compatibility problem, not a network blip,
-   * and retrying would just loop. A server drops that one peer and keeps serving everyone else.
+   * the connection is dropped instead. A server drops that one peer and keeps serving everyone
+   * else.
+   *
+   * `'framing-fatal'` is classified **permanent** by `isTransientConnectionError`, so a client
+   * does **not** auto-reconnect into it. That matters: a peer speaking something that is not MLLP
+   * (an HTTP probe, a health check, a wrong-port misconfiguration) would otherwise be retried
+   * forever, and the backoff would become an unbounded reconnect storm against an interface
+   * engine that is already unwell. A compatibility failure is not a network blip.
    *
    * If a peer's quirk is *expected* (trailing junk, keepalive bytes, a missing leading VT), the
    * decoder's tolerance opt-ins are the supported answer — they turn the throw into a warning.
    */
-  private _onFatalFramingError(err: Error): void {
+  private _onFatalFramingError(err: MllpFramingError): void {
     if (this._state === "CLOSED") return;
-    const connErr = new MllpConnectionError(err.message, { cause: err, phase: "receive" });
-    this.emit("error", Object.freeze({ connectionId: this.connectionId, error: connErr }));
+    this._emitErrorIfListened(
+      new MllpConnectionError(err.message, {
+        cause: err,
+        phase: "receive",
+        connectionCause: "framing-fatal",
+      }),
+    );
+    this.destroy(err);
+  }
+
+  /**
+   * Backstop for a NON-framing throw escaping `FrameReader.push` — i.e. our own bug, or a
+   * subscriber's, rather than the peer's bytes.
+   *
+   * `_onFrameDecoded` already contains subscriber throws at the dispatch site, so this should be
+   * unreachable. It exists because "unreachable" and "cannot kill the process from inside a
+   * socket `'data'` handler" are different claims, and only the second one is safe to bet a
+   * clinical interface on. Reported honestly as an internal receive error — never dressed up as
+   * a peer framing fault.
+   */
+  private _onInternalReceiveError(err: Error): void {
+    if (this._state === "CLOSED") return;
+    this._emitErrorIfListened(
+      new MllpConnectionError(err.message, { cause: err, phase: "receive" }),
+    );
     this.destroy(err);
   }
 
@@ -542,8 +605,10 @@ export class Connection extends EventEmitter {
             ? "close"
             : "receive";
 
-    const connErr = new MllpConnectionError(err.message, { cause: err, phase });
-    this.emit("error", Object.freeze({ connectionId: this.connectionId, error: connErr }));
+    // Guarded: this runs inside the transport's error callback, so an unlistened emit would throw
+    // ERR_UNHANDLED_ERROR straight out of the socket's 'error' listener and kill the process. A
+    // bare Connection (no 'error' listener) previously died on an ordinary ECONNRESET.
+    this._emitErrorIfListened(new MllpConnectionError(err.message, { cause: err, phase }));
     if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
 
     // CONNECTING and RECONNECTING have no path to DISCONNECTED — use CLOSED
@@ -560,8 +625,37 @@ export class Connection extends EventEmitter {
     // Only deliver messages when in an active state (CONNECTED or DRAINING)
     if (this._state !== "CONNECTED" && this._state !== "DRAINING") return;
     const event = Object.freeze({ payload, connectionId: this.connectionId, byteOffset, warnings });
-    this.emit("message", event);
-    this._opts.onMessage?.(payload);
+
+    // `onFrame` is dispatched SYNCHRONOUSLY from inside `FrameReader.push()`, which is itself
+    // called from the transport's data callback. A throwing subscriber — a metrics tap, a logger,
+    // an ordinary consumer bug — would therefore unwind through `push()` and out of the socket's
+    // `'data'` listener, killing the process, and on the way it would suppress the ACK for a
+    // message the application may already have handled.
+    //
+    // Contain each subscriber independently (the WARN-06 pattern already used for warnings): one
+    // bad subscriber cannot silence the other, cannot suppress the ACK, and cannot be mistaken
+    // for a peer framing fault.
+    this._dispatchContained(() => {
+      this.emit("message", event);
+    });
+    this._dispatchContained(() => {
+      this._opts.onMessage?.(payload);
+    });
+  }
+
+  /**
+   * Run a subscriber callback, containing any throw as a connection `'error'` rather than letting
+   * it unwind into the socket callback that (transitively) invoked us.
+   */
+  private _dispatchContained(fn: () => void): void {
+    try {
+      fn();
+    } catch (err) {
+      const cause = err instanceof Error ? err : new Error(String(err));
+      this._emitErrorIfListened(
+        new MllpConnectionError(cause.message, { cause, phase: "receive" }),
+      );
+    }
   }
 
   private _onFramingWarning(w: MllpWarning): void {
@@ -587,7 +681,15 @@ export class Connection extends EventEmitter {
       }
     }
 
-    // EventEmitter broadcast (aggregate warning stream)
-    this.emit("warning", enriched);
+    // EventEmitter broadcast (aggregate warning stream).
+    //
+    // Contained for the same reason as the per-connection subscriber above: this runs synchronously
+    // inside `FrameReader.push()`, itself inside the socket's 'data' callback, so a throwing
+    // 'warning' listener would unwind out of the data handler and kill the process. WARN-06 already
+    // promises a throwing warning handler "must not disrupt frame processing" — it was only half
+    // honored (the `onWarning` option was guarded; the event broadcast was not).
+    this._dispatchContained(() => {
+      this.emit("warning", enriched);
+    });
   }
 }

@@ -14,22 +14,50 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
-- **A fatal framing error crashed the whole process (Phase 10).** `Connection` fed
-  `FrameReader.push(chunk)` straight from the transport's data callback with no `try`/`catch`. On a
-  real socket that callback **is** the `'data'` listener, so a `MllpFramingError` escaped as an
-  **uncaught exception**, killing the process — every other connection and every in-flight durable
-  commit with it. Reachable on a **default server from a single byte**: `SERVER_DEFAULT_FRAMING`
-  leaves `allowMissingLeadingVt` off, so any non-whitespace byte where a `VT` was expected threw
-  `MLLP_MISSING_LEADING_VT` (`MLLP_FRAME_TOO_LARGE` reached the same path). The existing suites
-  missed it because the in-memory transport wraps delivery in `try`/`finally`, re-routing the throw
-  to the *writer* rather than leaving it uncaught — only a real socket reproduces it. Now the error
-  surfaces as a frozen `'error'` event (`phase: 'receive'`, the `MllpFramingError` preserved as
-  `cause` so the stable `code` and `byteOffset` survive) and **only that connection** is destroyed;
-  a server drops the one bad peer and keeps serving. The connection is destroyed rather than
-  resynchronized deliberately: after a throw the reader's position in the byte stream is
-  untrustworthy, and guessing where the next frame begins is how a clinical message gets silently
-  mis-split. New regression suite `test/server/framing-error-containment.test.ts` (real loopback
-  sockets; verified to fail with unhandled errors without the fix).
+- **Anything throwing on the receive path crashed the whole process — three routes, all closed
+  (Phase 10).** `FrameReader.push()` runs synchronously inside the transport's data callback, which
+  on a real socket **is** the `'data'` listener, so any throw there is an **uncaught exception** that
+  kills the process — every other connection and every in-flight durable commit with it. The
+  conformance gate found three routes, each revealed by fixing the previous one:
+  1. **The decoder's own throw** — `Connection` fed `push(chunk)` with no `try`/`catch`. Reachable on
+     a **default server from a single byte**: `SERVER_DEFAULT_FRAMING` leaves `allowMissingLeadingVt`
+     off, so any non-whitespace byte where a `VT` was expected threw `MLLP_MISSING_LEADING_VT`
+     (`MLLP_FRAME_TOO_LARGE` reached the same path). One stray keepalive character from a real
+     interface engine was enough.
+  2. **`emit('error')` with no listener** — Node raises `ERR_UNHANDLED_ERROR`, and that throw happened
+     *inside the catch block added for (1)*, escaping by the identical route. `MllpServer`/
+     `MllpClient` each attach an `'error'` listener, which masked it; `Connection` is a public export
+     and need not.
+  3. **A throwing `'message'`/`'warning'`/`'error'` subscriber** — `onFrame` dispatches synchronously
+     inside `push()`, so an ordinary consumer bug (a metrics tap, a logger) unwound through the socket
+     handler too.
+
+  Now: a fatal framing error surfaces as a frozen `'error'` event (`phase: 'receive'`,
+  `connectionCause: 'framing-fatal'`, the `MllpFramingError` preserved as `cause` so the stable
+  `code`/`byteOffset` survive) and **only that connection** is destroyed — a server drops the one bad
+  peer and keeps serving. Every `'error'` emit is guarded by `listenerCount` and wrapped. Subscriber
+  throws are contained per-subscriber at the dispatch site — what WARN-06 always promised but only
+  half-implemented (the `onWarning` *option* was guarded; the event broadcast was not). The
+  connection is destroyed rather than resynchronized deliberately: after a throw the reader's position
+  in the byte stream is untrustworthy, and guessing where the next frame begins is how a clinical
+  message gets silently mis-split. The existing suites missed all of this because the in-memory
+  transport wraps delivery in `try`/`finally`, re-routing the throw to the *writer*; only a real
+  socket reproduces it. New suites: `test/server/framing-error-containment.test.ts` (real loopback
+  sockets) and `test/connection/receive-containment.test.ts` (drives the data callback directly) —
+  both verified to fail without the fixes.
+- **A fatal framing error triggered an unbounded reconnect storm (Phase 10).**
+  `isTransientConnectionError` switches on `err.code` and fell through to `default: return true`, so a
+  `MllpFramingError` was classified **transient**. `createStarterClient` (where `autoReconnect`
+  defaults **on**) therefore retried forever against a peer that was not speaking MLLP — an HTTP probe,
+  a health check, a wrong-port misconfiguration — with the backoff hammering an interface engine that
+  was already misconfigured. `MLLP_*` codes are now **permanent**, alongside the TLS classes and for
+  the same reason: every reconnect meets the same bytes.
+- **A throwing `'message'` observer suppressed the ACK (Phase 10).** `MllpServer` emits `'message'` to
+  observers *before* ACK dispatch (D-03), so an observer that threw aborted the handler before the ACK
+  was sent — one broken logger silently turned every message into a no-ACK, and every sender resent
+  forever with nothing to diagnose it by. The emit is now contained: the throw surfaces on `'error'`
+  and the commit contract proceeds untouched. The ACK decision belongs to `ServerOptions.onMessage`
+  (the durable-commit step), not to a metrics tap.
 - **Release pipeline could not have released (Phase 10).** The shared `cosyte/.github` release
   workflow drives Changesets with `version: pnpm run version`, but no `version` script existed —
   it failed with `ERR_PNPM_NO_SCRIPT`, so the "Version Packages" PR could never be opened. Added
@@ -64,6 +92,9 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Added
 
+- **`ConnectionErrorCause` gains `'framing-fatal'` (Phase 10).** Public union. Attached to the
+  `'error'` event when the decoder throws; classified **permanent** by `isTransientConnectionError`,
+  so a client never auto-reconnects into a peer that is not speaking MLLP.
 - **Release readiness for `0.0.1` (Phase 10).**
   - **Publish pipeline proven without burning a version.** New `publish:dry` script
     (`pnpm publish --dry-run --no-git-checks`). Verified end to end: the `prepublishOnly` chain

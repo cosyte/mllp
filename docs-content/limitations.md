@@ -38,14 +38,18 @@ committed by the receiver with the ACK arriving after you stopped listening. Awa
 closing if that matters, and rely on receiver-side idempotency (`MSH-10` + `MSH-7`). See
 [Connection, reconnect & backpressure](./reliability.md).
 
-## A fatal framing error drops the connection
+## A fatal framing error drops the connection, and is not retried
 
 If the decoder throws — an oversized frame, or a structural violation whose tolerance opt-in is off —
-that **connection** is destroyed. It is not resynchronized, because after a throw the reader's
-position in the byte stream is untrustworthy and guessing where the next message starts is how one
-gets silently mis-split. The failure is contained to the one connection (a server keeps serving every
-other peer, and never crashes the process), but bytes already in that connection's partial frame are
-gone. If a peer's quirk is expected, use the tolerance opt-ins — see
+that **connection** is destroyed. It is not resynchronized: after a throw the reader's position in
+the byte stream is untrustworthy, and guessing where the next message starts is how one gets silently
+mis-split. Bytes already accumulated in that connection's partial frame are **lost**.
+
+The failure is contained to the one connection — a server keeps serving every other peer — and it is
+classified `framing-fatal`, i.e. **permanent**, so a client does not reconnect into it. That is
+deliberate (a peer speaking the wrong protocol would otherwise be retried forever), but it means a
+client facing a peer that emits *occasional* junk will **stop**, not heal. If a peer's quirk is
+expected, use the tolerance opt-ins so the bytes are a warning rather than a fatal — see
 [Framing & tolerance](./framing.md).
 
 ## It does not decide clinical acceptance
