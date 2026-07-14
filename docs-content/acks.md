@@ -183,15 +183,18 @@ preserve, it cannot echo verbatim:
 Each yields a *different* MSH-10 on the wire, and so an ACK the sender cannot match. All five warn.
 And all five have the same answer: use **`buildRawAck`** (the root export, and what the server's
 `autoAck` path uses). It is parser-free — it copies the MSH-10 bytes rather than re-serializing them
-— so it holds the verbatim guarantee across escapes, padding, empty components, and custom
-delimiters alike.
+— so it holds the verbatim guarantee across escapes, padding, empty components, and **any** delimiter
+set.
 
-One caveat, so this is not read as absolute: `buildRawAck` emits its own ACK under the HL7 default
-delimiters when the inbound's would collide (an inbound declaring `MSH-1` = `^` with no usable
-`MSH-2`). If such a message *also* carries the ACK's field separator `|` inside MSH-10, that
-character cannot survive into MSA-2, and the ACK goes out with an empty one — a positive `AA` the
-sender cannot correlate. It needs an inbound that is already malformed twice over (§2.16 requires
-MSH-2), and it behaves no worse than the previous release line, but it is not "any delimiter set".
+That last claim is exact, and it turns on one invariant worth stating: `buildRawAck` always emits the
+ACK under the **inbound's own** field separator, never a substituted one. MSH-10 is a product of
+splitting the inbound MSH *on* that separator, so it provably cannot contain it — and MSA-2 is read
+back by splitting on that same separator, so the echo round-trips byte-for-byte regardless of what the
+control ID contains (a `|`, a `^`, an escape, anything). When an inbound declares a field separator
+that collides with the HL7 default encoding characters (`MSH-1` = `^`/`~`/`\`/`&`) and offers no
+usable `MSH-2` of its own, `buildRawAck` substitutes only the one colliding **encoding** character —
+it does **not** touch the field separator, precisely because the field separator is the only byte that
+could truncate MSA-2.
 
 ### Pass a `Buffer`. The guarantee is a byte guarantee.
 

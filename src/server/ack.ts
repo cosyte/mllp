@@ -137,6 +137,20 @@ const DEFAULT_ENCODING_CHARACTERS = "^~\\&";
 const DEFAULT_FIELD_SEPARATOR = "|";
 
 /**
+ * Stand-in for whichever HL7 default encoding character collides with the inbound's MSH-1.
+ *
+ * Reached only when an inbound declares a field separator that is one of `^ ~ \ &` AND declares no
+ * usable MSH-2 of its own — a message already malformed twice over (§2.16 requires MSH-2). We
+ * substitute the one colliding character rather than change the ACK's field separator, because
+ * `fieldSep` is the only byte that can truncate MSA-2 (see {@link buildRawAck}).
+ *
+ * `#` is chosen because it is not one of the four HL7 defaults, so the substitution can never
+ * collide with the three characters it sits beside; and it is not `CR`/`LF`/`VT`/`FS`, so it cannot
+ * break segmentation or framing. It is only ever *a* delimiter for a message that declared none.
+ */
+const ENCODING_CHAR_SUBSTITUTE = "#";
+
+/**
  * Encoding characters (MSH-2) we refuse to echo into the ACK we build.
  *
  * The inbound's MSH-1/MSH-2 are echoed so the ACK's *structure* matches the
@@ -146,14 +160,15 @@ const DEFAULT_FIELD_SEPARATOR = "|";
  * would put that byte at every component boundary of the ACK. Fall back to the
  * HL7 defaults.
  *
- * **Where such a payload comes from.** Not from the decoder — `FrameReader` cannot
- * deliver a payload containing a `VT` or an `FS`: a mid-payload `VT` makes it discard
- * what it has accumulated and start over (`MLLP_TRAILING_BYTES`), and an `FS` *ends*
- * the payload, with a non-`CR` after it throwing `MLLP_FS_WITHOUT_CR`. (The
- * `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` codes are thrown by **`encodeFrame`**, on the way
- * out — never by the decoder, on the way in.) The real route is that `buildRawAck` is a
- * **public export**: a caller can hand it any `Buffer` at all, having never gone near
- * the decoder. That is why the guard exists.
+ * **Where such a payload comes from.** The plainest route is that `buildRawAck` is a
+ * **public export**: a caller can hand it any `Buffer` at all, having never gone near the
+ * decoder. It can also arrive off the wire — a mid-payload `VT` makes `FrameReader` discard
+ * what it accumulated and start over (`MLLP_TRAILING_BYTES`), so a *delivered* payload never
+ * contains a `VT`, but a delivered payload CAN contain an `FS`: under the
+ * `allowMissingLeadingVt` tolerance a non-VT, non-whitespace first byte becomes payload byte 0,
+ * and `FS` (0x1C) is neither. (The `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` codes are thrown by
+ * **`encodeFrame`**, on the way out — never by the decoder, on the way in.) The guard does not
+ * rest on the decoder screening these out; it rests on the public export.
  *
  * **It guards the DELIMITERS ONLY — it is not a guarantee that the ACK frames.** A
  * `VT`/`FS` inside echoed field *content* (MSH-3..6, MSH-10) is still copied verbatim,
@@ -272,18 +287,38 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
 
   // MSH-2 must not contain MSH-1 (§2.5.4, §2.16 — the delimiters are distinct characters).
   // `declaredEnc` structurally cannot: it is a product of splitting ON `fieldSep`. The DEFAULT
-  // fallback can. An inbound declaring MSH-1 = `^` with no usable MSH-2 would take `^~\&`, whose
-  // first character IS the field separator — so the ACK we emit reads back with an EMPTY MSH-2
-  // and every later MSH field shifted by one. When the delimiters collide, emit the ACK under
-  // the HL7 defaults ENTIRELY (MSH-1 and MSH-2 together, the one pair guaranteed consistent).
+  // fallback can — an inbound declaring MSH-1 = `^` with no usable MSH-2 would take `^~\&`, whose
+  // first character IS the field separator, so the ACK reads back with an EMPTY MSH-2 and every
+  // later MSH field shifted by one.
   //
-  // Note what we do NOT do: fall through to the minimal ACK. That would drop the MSA-2 echo, and
-  // an ACK that is well-formed but uncorrelatable is *worse* than one that is correlatable but
-  // has a malformed header — the sender would time out and resend a duplicate clinical message.
-  // The control-ID echo is the thing this file exists to protect; the header is not.
-  const collides = usableEnc.includes(fieldSep);
-  const s = collides ? DEFAULT_FIELD_SEPARATOR : fieldSep;
-  const encodingChars = collides ? DEFAULT_ENCODING_CHARACTERS : usableEnc;
+  // ## Fix the ENCODING CHARACTERS, never the field separator
+  //
+  // The one thing this builder must not do is change `fieldSep` for the ACK. **`fieldSep` is the
+  // only byte that can truncate MSA-2**, and MSH-10 provably cannot contain it: MSH-10 is a product
+  // of splitting the MSH *on* `fieldSep`. Keep the inbound's separator and the verbatim echo is
+  // guaranteed by construction. Swap it for `|` and that guarantee evaporates — because under
+  // §2.5.4 a `|` inside an `^`-delimited message is **ordinary data**, needing no escape. An
+  // earlier version of this guard did exactly that, and an MSH-10 of `ID|X` went out as
+  // `MSA|AA|ID|X`, which a receiver reads back as **`ID`**: silently TRUNCATED.
+  //
+  // Truncated is far worse than empty. Empty correlates to nothing; truncated is *plausible*, and
+  // can match a **different** in-flight send — settling it, so `send()` resolves and the sender
+  // forgets a message the receiver never acknowledged, while the message that WAS acknowledged
+  // stays in flight and resends. One silently lost clinical message and one duplicate, from a
+  // single positive `AA`.
+  //
+  // So: keep `fieldSep`, and pick encoding characters that do not contain it. The encoding
+  // characters cannot truncate MSA-2 (the MSA scan splits on `fieldSep` alone), so substituting one
+  // is free — it costs only the component/repetition/escape/subcomponent *semantics* of a message
+  // that declared none (its MSH-2 was empty or unusable; §2.16 requires it).
+  //
+  // Note what we still do NOT do: fall through to the minimal ACK. That drops the MSA-2 echo, and
+  // an ACK that is well-formed but uncorrelatable is worse than one that correlates with an
+  // imperfect header. The control-ID echo is the thing this file exists to protect.
+  const s = fieldSep;
+  const encodingChars = usableEnc.includes(fieldSep)
+    ? usableEnc.replace(fieldSep, ENCODING_CHAR_SUBSTITUTE)
+    : usableEnc;
 
   const sendingApp = fields[2] ?? "";
   const sendingFacility = fields[3] ?? "";

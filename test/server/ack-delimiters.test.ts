@@ -132,8 +132,8 @@ describe("buildRawAck — tolerates LF/CRLF segment terminators (Postel's Law)",
 
 describe("buildRawAck — refuses an unusable MSH-1, and always stays framable", () => {
   it("a framing byte (VT) as the field separator falls back to a minimal ACK", () => {
-    // A payload CAN carry VT/FS (the decoder tolerates it behind MLLP_PAYLOAD_CONTAINS_VT).
-    // Adopting one as the ACK's field separator would make the ACK unframeable — strict
+    // A caller can hand buildRawAck (a public export) any Buffer, including one with a VT/FS as
+    // MSH-1. Adopting one as the ACK's field separator would make the ACK unframeable — strict
     // `encodeFrame` would throw, the message would go un-ACKed, and the peer would resend.
     const msg = Buffer.from("MSH\v^~\\&\vS\vF\vR\vF2\vts\v\vADT\vID1\vP\v2.5\r", "latin1");
     const ack = buildRawAck(msg, "AA");
@@ -203,40 +203,66 @@ describe("buildRawAck — end-to-end correlation under a custom separator", () =
   });
 });
 
-describe("buildRawAck — the ACK's MSH-2 never collides with its MSH-1 (§2.5.4, §2.16)", () => {
+describe("buildRawAck — a colliding MSH-1/MSH-2 never truncates or shifts (§2.5.4, §2.16)", () => {
   // MSH-2 must not contain MSH-1 — they are distinct delimiters. A declared MSH-2 structurally
-  // cannot collide (it is a product of splitting ON the field separator), but the DEFAULT
-  // fallback `^~\&` can: an inbound declaring MSH-1 = `^` with no usable MSH-2 would emit an ACK
-  // whose MSH-2 reads back EMPTY, shifting every later MSH field by one.
+  // cannot collide (it is a product of splitting ON the field separator), but when the inbound
+  // declares no usable MSH-2 the HL7 default fallback `^~\&` DOES contain each of `^ ~ \ &`. The
+  // fix keeps the ACK under the inbound's OWN field separator and substitutes the one colliding
+  // encoding character — it must NOT switch the field separator to `|` (see the truncation test
+  // below for why).
   const collidingSeps = ["^", "~", "\\", "&"] as const;
 
-  it.each(collidingSeps)("MSH-1 = %s with an empty MSH-2 still yields a well-formed ACK", (sep) => {
-    const inbound = Buffer.from(
-      `MSH${sep}${sep}A${sep}B${sep}C${sep}D${sep}ts${sep}${sep}ADT${sep}CID9${sep}P${sep}2.5.1\r`,
-      "latin1",
-    );
-    const ack = buildRawAck(inbound, "AA");
+  it.each(collidingSeps)(
+    "MSH-1 = %s with an empty MSH-2 stays well-formed AND correlating",
+    (sep) => {
+      const inbound = Buffer.from(
+        `MSH${sep}${sep}A${sep}B${sep}C${sep}D${sep}ts${sep}${sep}ADT${sep}CID9${sep}P${sep}2.5.1\r`,
+        "latin1",
+      );
+      const ack = buildRawAck(inbound, "AA");
 
-    // Read the ACK back with the SAME scanner a receiver would use, and check the fields land
-    // where they belong. Asserting only "MSH-2 is non-empty" is too weak: with MSH-1 = `~` and
-    // the colliding default `^~\&`, MSH-2 reads back as the non-empty-but-WRONG `^`, and every
-    // later field is shifted by one. Pinning MSH-2 to the exact delimiter set, and MSH-9 to
-    // `ACK`, is what makes all four separators bite.
-    const msh = readMshSegment(ack);
-    expect(msh, `sep=${sep}`).not.toBeNull();
-    expect(msh?.fields[1], `sep=${sep}`).toBe("^~\\&"); // MSH-2, intact
-    expect(msh?.fields[8], `sep=${sep}`).toBe("ACK"); // MSH-9 — proves nothing shifted
-    expect(msh?.fieldSep.length, `sep=${sep}`).toBe(1);
-    expect(msh?.fields[1]?.includes(msh.fieldSep), `sep=${sep}`).toBe(false); // MSH-2 ∌ MSH-1
+      // Read the ACK back with the SAME scanner a receiver would use, and check the fields land
+      // where they belong.
+      const msh = readMshSegment(ack);
+      expect(msh, `sep=${sep}`).not.toBeNull();
+      // The ACK keeps the inbound's field separator (that is what protects MSA-2)...
+      expect(msh?.fieldSep, `sep=${sep}`).toBe(sep);
+      // ...and MSH-2 is the HL7 defaults with the one colliding char swapped out, so it is
+      // non-empty and does not contain MSH-1.
+      expect(msh?.fields[1], `sep=${sep}`).not.toBe("");
+      expect(msh?.fields[1]?.includes(sep), `sep=${sep}`).toBe(false); // MSH-2 ∌ MSH-1
+      expect(msh?.fields[8], `sep=${sep}`).toBe("ACK"); // MSH-9 — proves nothing shifted
 
-    // And — the point of the whole file — the control ID still echoes, so the sender still
-    // correlates. A well-formed ACK that cannot be matched would be a worse trade.
-    expect(extractMsaControlId(ack), `sep=${sep}`).toBe("CID9");
-    expect(extractMsaControlId(ack), `sep=${sep}`).toBe(extractMshControlId(inbound));
-  });
+      // And — the point of the whole file — the control ID still echoes, so the sender correlates.
+      expect(extractMsaControlId(ack), `sep=${sep}`).toBe("CID9");
+      expect(extractMsaControlId(ack), `sep=${sep}`).toBe(extractMshControlId(inbound));
+    },
+  );
 
-  it("a declared MSH-2 is still echoed when it does not collide", () => {
-    // No regression: the collision guard must not fire on ordinary messages.
+  it.each(collidingSeps)(
+    "MSH-1 = %s with a `|` inside MSH-10 echoes VERBATIM — never truncated to `ID`",
+    (sep) => {
+      // THE blocker. Under §2.5.4, MSH-1 defines the separator, so a `|` inside an
+      // `^`-delimited message's MSH-10 is ORDINARY DATA. An earlier collision guard switched the
+      // ACK's separator to `|`, and `ID|X` went out as `MSA|AA|ID|X` — which a receiver reads
+      // back as `ID`: silently TRUNCATED, and truncated is worse than empty because it can match
+      // a DIFFERENT in-flight send and falsely settle it (one message lost, one duplicated).
+      const inbound = Buffer.from(
+        `MSH${sep}${sep}EPIC${sep}HOSP${sep}MIRTH${sep}LAB${sep}ts${sep}${sep}ADT${sep}ID|X${sep}P${sep}2.5.1\rOBX|1|NM|GLU||450\r`,
+        "latin1",
+      );
+      const ack = buildRawAck(inbound, "AA");
+
+      // Verbatim: the whole `ID|X`, not `ID`.
+      expect(extractMsaControlId(ack), `sep=${sep}`).toBe("ID|X");
+      expect(extractMsaControlId(ack), `sep=${sep}`).toBe(extractMshControlId(inbound));
+      // The ACK stayed under the inbound's separator — which is what made the `|` survive.
+      expect(readMshSegment(ack)?.fieldSep, `sep=${sep}`).toBe(sep);
+    },
+  );
+
+  it("a declared MSH-2 is still echoed untouched when it does not collide", () => {
+    // No regression: the substitution must fire ONLY on the colliding-default case.
     const ack = buildRawAck(inbound({ sep: "!", enc: "#~\\&", id: "ID#X" }), "AA");
     expect(ack.toString("latin1").startsWith("MSH!#~\\&!")).toBe(true);
     expect(extractMsaControlId(ack)).toBe("ID#X");

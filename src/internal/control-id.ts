@@ -87,14 +87,15 @@ export const CONTROL_ID_ENCODING = "latin1" as const;
  * is supposed to delimit, and the second cannot be written back into an ACK without
  * making the ACK unframeable (strict `encodeFrame` throws `MLLP_PAYLOAD_CONTAINS_VT`/`_FS`).
  *
- * **How a payload with such a byte reaches us — and how it does NOT.** It does *not* come
- * from the decoder: `FrameReader` can never deliver a payload containing a `VT` or an `FS`.
- * A mid-payload `VT` makes it discard the bytes accumulated so far and start over
- * (`MLLP_TRAILING_BYTES`); an `FS` *ends* the payload, and a non-`CR` after it throws
- * `MLLP_FS_WITHOUT_CR`. The route that IS real is far simpler: `buildRawAck` is a **public
- * export**, so a caller can hand any `Buffer` straight to it, decoder or no decoder. These
- * scanners are also called on **outbound** payloads the caller supplies. That is reason
- * enough to guard, and it is the honest one.
+ * **How a payload with such a byte reaches us.** The plainest route is that `buildRawAck` is
+ * a **public export**, so a caller can hand any `Buffer` straight to it, decoder or no
+ * decoder; these scanners also run on **outbound** payloads the caller supplies. But it can
+ * come off the wire too: a `VT` mid-payload makes `FrameReader` discard what it accumulated
+ * and start over (`MLLP_TRAILING_BYTES`), so a *delivered* payload never contains a `VT` — but
+ * a delivered payload CAN contain an `FS`. Under the `allowMissingLeadingVt` tolerance a non-VT,
+ * non-whitespace first byte is taken as payload byte 0, and `FS` (0x1C) is neither, so
+ * `FS "MSH…" FS CR` delivers a payload whose byte 0 is `0x1C`. Either way the guard is
+ * warranted, and neither route depends on the false premise that the decoder screens these out.
  * @internal
  */
 const UNSAFE_FIELD_SEPARATORS: ReadonlySet<number> = new Set([

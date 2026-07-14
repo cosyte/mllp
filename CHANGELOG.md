@@ -218,11 +218,21 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   `^~\&` **without checking them against MSH-1**. For an inbound declaring MSH-1 = `^` (or `~`, `\`,
   `&`), the fallback's first character *is* the field separator, so the emitted ACK read back with an
   **empty MSH-2** and every later MSH field shifted by one (§2.5.4, §2.16 — the delimiters must be
-  distinct). Fixed: when the delimiters would collide, the ACK is emitted under the HL7 defaults
-  entirely (MSH-1 and MSH-2 together — the one pair guaranteed consistent). It deliberately does
-  **not** fall through to the minimal ACK, which would drop the MSA-2 echo: an ACK that is
-  well-formed but uncorrelatable is worse than one that correlates with a malformed header. The
-  control-ID echo is the thing being protected.
+  distinct). Fixed: `buildRawAck` substitutes only the one colliding **encoding character** and keeps
+  the inbound's **field separator** unchanged.
+  - Keeping the field separator is the load-bearing part. The field separator is the only byte that
+    can truncate MSA-2, and MSH-10 provably cannot contain it (MSH-10 is a product of splitting the
+    inbound MSH *on* it). An interim fix instead switched the ACK's field separator to `|` — and
+    since a `|` inside an `^`-delimited message's MSH-10 is *ordinary data* (§2.5.4), an MSH-10 of
+    `ID|X` went out as `MSA|AA|ID|X`, which a receiver reads back as **`ID`**: silently **truncated**.
+    Truncated is worse than empty — `ID` is *plausible*, so it can match a **different** in-flight
+    send and falsely settle it, losing one clinical message (its `send()` resolves though it was
+    never acknowledged) and duplicating another (the one actually acknowledged stays in flight and
+    resends). Substituting the encoding character avoids all of this: the ACK stays under the
+    inbound's own delimiters, so the echo round-trips byte-for-byte whatever the control ID contains.
+  - It deliberately does **not** fall through to the minimal ACK, which would drop the MSA-2 echo: an
+    ACK that is well-formed but uncorrelatable is worse than one that correlates with an imperfect
+    header. The control-ID echo is the thing being protected.
 
 ### Added
 

@@ -2,8 +2,11 @@
 "@cosyte/mllp": patch
 ---
 
-ACKs now echo the inbound MSH-10 into MSA-2 **byte-verbatim** (HL7 v2.5.1 §2.9.2.2), on both ACK
-builders and for any delimiter set (MLLP-ACK-UTF8).
+ACKs now echo the inbound MSH-10 into MSA-2 **byte-verbatim** (HL7 v2.5.1 §2.9.2.2) (MLLP-ACK-UTF8).
+`buildRawAck` (the root export, and the server's `autoAck` path) holds this for **any** delimiter set;
+`buildMllpAck` (the `ack-from-hl7` subpath) holds it for a plain control ID under the HL7 default
+delimiters and **warns** (`MLLP_ACK_CONTROL_ID_NOT_VERBATIM`) in the cases it cannot represent — a
+lossy `encoding`, non-default delimiters, an escape sequence, padding, or a trailing empty component.
 
 `ack-from-hl7`'s `buildMllpAck` decoded the inbound through the peer parser's charset machinery but
 re-encoded the ACK through a hardcoded `utf8`. The two are not inverses: a control-ID byte `0x8B`
@@ -38,7 +41,15 @@ client correlates with, so a non-matchable ACK is loud rather than silent. The w
 lengths and withholds the field values — MSH-10 is inbound payload content, and a warning goes to a
 log.
 
-The verbatim guarantee (and the warning when it breaks) is a **`Buffer`** guarantee: on a `string` /
-`Hl7Message` inbound the wire bytes are decoded before `buildMllpAck` sees them, so a codec-induced
-mismatch is structurally invisible to the check. Documented, scoped, and tested — pass a `Buffer`.
-Also fixes `buildRawAck` emitting an ACK whose default MSH-2 collided with an inbound MSH-1 of `^`.
+The `buildMllpAck` verbatim guarantee (and the warning when it breaks) is a **`Buffer`** guarantee: on
+a `string` / `Hl7Message` inbound the wire bytes are decoded before `buildMllpAck` sees them, so a
+codec-induced mismatch is structurally invisible to the check. Documented, scoped, and tested — pass a
+`Buffer`.
+
+`buildRawAck` reads MSH-2 (the encoding characters) from the inbound and echoes them into the ACK. When
+the inbound declares no usable MSH-2, the HL7 default `^~\&` is used — but if the inbound's field
+separator is one of `^ ~ \ &`, that default *contains* the separator, which would corrupt the ACK
+header (§2.16 — the delimiters must be distinct). `buildRawAck` substitutes only the one colliding
+encoding character and **keeps the inbound's field separator unchanged**, because the field separator
+is the only byte that can truncate MSA-2: switching it to `|` would silently truncate an MSH-10 like
+`ID|X` down to `ID`, which — being plausible — could falsely settle a *different* in-flight send.

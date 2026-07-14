@@ -1323,20 +1323,22 @@ export class MllpServer extends EventEmitter {
     // process** — and it would do so on peer-controlled input. `encodeFrame` is strict and throws
     // `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` if the ACK payload contains a framing byte.
     //
-    // That is **unreachable from `buildRawAck` on this path**, and for two independent reasons.
-    // First, a *delivered* payload cannot itself hold a VT or an FS: `FrameReader` discards the
-    // bytes it has accumulated when it meets a mid-payload VT (`MLLP_TRAILING_BYTES`), and an FS
-    // *ends* the payload — a non-CR after it throws `MLLP_FS_WITHOUT_CR`. Second, `buildRawAck`
-    // decodes and encodes as `latin1`, which is a 1:1 byte↔code-unit map, so it cannot *synthesize*
-    // a framing byte the way `ascii` masking once did (`0x8B & 0x7F` = VT — the Phase 10 bug).
-    // (`MLLP_PAYLOAD_CONTAINS_VT`/`_FS` are thrown by `encodeFrame`, on the way out; the decoder
-    // never emits them.)
+    // On the auto-ACK path this is **hard to provoke, but not impossible, and the containment is
+    // what makes that safe.** `buildRawAck` decodes and encodes as `latin1`, a 1:1 byte↔code-unit
+    // map, so it cannot *synthesize* a framing byte the way `ascii` masking once did
+    // (`0x8B & 0x7F` = VT — the Phase 10 bug): it only ever echoes bytes that were already in the
+    // inbound. A delivered payload never contains a VT (`FrameReader` discards its accumulator on a
+    // mid-payload VT — `MLLP_TRAILING_BYTES`), so an echoed VT is not a concern here. It CAN,
+    // however, contain an FS: under the `allowMissingLeadingVt` tolerance a non-VT, non-whitespace
+    // first byte becomes payload byte 0, and FS (0x1C) qualifies — so an FS echoed out of MSH-10
+    // into MSA-2 reaches this `encodeFrame`, which throws `MLLP_PAYLOAD_CONTAINS_FS`. (Those codes
+    // are thrown by `encodeFrame`, on the way out; the decoder never emits them.) And a caller's
+    // `autoAck: fn` can of course return arbitrary bytes.
     //
-    // The containment is still not optional, because this path is reachable another way: a caller's
-    // `autoAck: fn` can return arbitrary bytes, and defending the process must not depend on the
-    // caller's discipline. A build/frame failure is surfaced as a connection `'error'` and the
-    // message goes un-ACKed (fail-safe: better an un-ACKed message the sender will resend than a
-    // dead server), never as a process kill.
+    // Whichever route, defending the process must not depend on the caller's — or the peer's —
+    // discipline. A build/frame failure is surfaced as a connection `'error'` and the message goes
+    // un-ACKed (fail-safe: better an un-ACKed message the sender will resend than a dead server),
+    // never as a process kill.
     let framed: Buffer;
     try {
       framed = encodeFrame(ackPayload);
