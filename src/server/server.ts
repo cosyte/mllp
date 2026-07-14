@@ -1318,8 +1318,32 @@ export class MllpServer extends EventEmitter {
    * time out waiting and may retry. The server never crashes.
    */
   private _dispatchAck(conn: Connection, ackPayload: Buffer): void {
-    // Connection.send() writes raw bytes — encodeFrame adds VT + payload + FS + CR.
-    const sent = conn.send(encodeFrame(ackPayload));
+    // TOTAL by contract: this is reached from `void`-ed async tasks (`_sendCommitAck`, the
+    // transport-accept branch), so a throw here becomes an **unhandled rejection that kills the
+    // process** — and it would do so on peer-controlled input. `encodeFrame` is strict and throws
+    // `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` if the ACK payload contains a framing byte. That is
+    // unreachable from `buildRawAck` now that it decodes/encodes as `latin1` (a delivered payload
+    // cannot itself hold a VT/FS, and `latin1` can no longer synthesize one) — but a caller's
+    // `autoAck: fn` can return arbitrary bytes, and defending the process must not depend on the
+    // caller's discipline. A build/frame failure is surfaced as a connection `'error'` and the
+    // message goes un-ACKed (fail-safe: better an un-ACKed message the sender will resend than a
+    // dead server), never as a process kill.
+    let framed: Buffer;
+    try {
+      framed = encodeFrame(ackPayload);
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err : new Error(String(err));
+      safeEmitError(
+        conn,
+        Object.freeze({
+          connectionId: conn.connectionId,
+          error: new MllpConnectionError("ACK could not be framed", { cause, phase: "send" }),
+        }),
+      );
+      return;
+    }
+
+    const sent = conn.send(framed);
     if (!sent) {
       safeEmitError(
         conn,

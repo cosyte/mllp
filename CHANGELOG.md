@@ -14,6 +14,20 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **A peer could crash the server with one high-bit byte, and corrupt the ACK control ID
+  (Phase 10).** `buildRawAck` decoded the inbound message with `ascii`, which masks the high bit
+  (`byte & 0x7f`). Two consequences, both serious. **Spec:** MSA-2 must echo the inbound MSH-10
+  **verbatim** (HL7 v2.5.1 §2.9.2.2), but a control-ID byte `0x8B` silently became `0x0B` — a
+  *different* id — breaking the sender's own ACK correlation for any non-ASCII charset. **Safety:**
+  `0x8B → 0x0B` is a **VT** and `0x9C → 0x1C` is an **FS**, so `ascii` *synthesized framing
+  delimiters* from ordinary payload bytes; a peer sending one high-bit byte in an echoed MSH field
+  made the ACK payload contain a real VT/FS, which `encodeFrame` (strict) rejected — and that throw
+  escaped the `void`-ed `_sendCommitAck`, **crashing the whole server on peer-controlled input with
+  no consumer bug at all**, and suppressing the fail-safe ACK. Fixed: `buildRawAck` uses `latin1`
+  (byte-exact; a delivered payload cannot itself contain VT/FS, and `latin1` cannot synthesize
+  one), and `_dispatchAck` is now **total** — a frame failure (still reachable via a caller's
+  `autoAck: fn`) surfaces as a connection `'error'` and the message goes un-ACKed (fail-safe: the
+  sender resends), never a process kill. New suite `test/server/ack-serialization-safety.test.ts`.
 - **Anything throwing on the receive path crashed the whole process — four routes, all closed
   (Phase 10).** `FrameReader.push()` runs synchronously inside the transport's data callback, which
   on a real socket **is** the `'data'` listener, so any throw there is an **uncaught exception** that
