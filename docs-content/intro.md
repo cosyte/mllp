@@ -92,12 +92,18 @@ for manual mode (`respond()` / `conn.send()`).
 
 ## Framing and tolerance
 
-The encoder is strict: it always emits canonical `VT + payload + FS + CR`. The decoder is liberal —
-real-world senders drop the leading `VT`, append a stray `LF`, or pad with whitespace — and surfaces
-each deviation as a warning with a **stable code** and byte offset rather than failing the frame
-(Postel's Law). Codes such as `MLLP_MISSING_LEADING_VT` and `MLLP_TRAILING_BYTES` are part of the
-public API. Accumulators are bounded: frames past `maxFrameSizeBytes` (16 MB default) throw
-`MLLP_FRAME_TOO_LARGE` instead of growing unbounded.
+The encoder is strict: it always emits canonical `VT + payload + FS + CR`. The decoder is liberal
+where you let it be — real-world senders drop the leading `VT`, append a stray `LF`, or pad with
+whitespace, and each tolerated deviation surfaces as a warning with a **stable code** and byte offset
+rather than failing the frame (Postel's Law). Codes such as `MLLP_MISSING_LEADING_VT` and
+`MLLP_TRAILING_BYTES` are part of the public API.
+
+Note that **tolerance is opt-in**: a bare `FrameReader` is *strict* by default, while `MllpServer`
+ships tolerant defaults (`allowFsOnly`, `allowLfAfterFs`, `allowLeadingWhitespace`) because it is the
+side that must accept what real senders emit. Accumulators are bounded: frames past
+`maxFrameSizeBytes` (16 MB default) throw `MLLP_FRAME_TOO_LARGE` instead of growing unbounded.
+
+See [Framing & tolerance](./framing.md) for the flag-by-flag table and the full warning-code registry.
 
 ## Testing without sockets
 
@@ -138,22 +144,20 @@ ACK — the disposition downgrades (`AA`→`AE`, `CA`→`CE`) and the result car
 could not be parsed at all). Warnings carry codes and structural context only — never message
 content.
 
-### Known limitations (`ack-from-hl7`)
-
-- **The builder trusts the caller's disposition.** It never decides clinical accept/reject —
-  choose `AA`/`AE`/`AR` from your own commit outcome (the Phase-6 commit contract).
-- **MSA-2 is the inbound MSH-10's canonical re-serialization, not its original bytes.** Plain
-  and delimiter-bearing ids (`ID^X`) echo byte-exact; hex escapes decode (`\X41\` → `A`),
-  preserved formatting/vendor escapes re-emit as escaped literal text, custom-delimiter
-  senders are re-delimited spec-cleanly, and trailing insignificant empties canonicalize.
-- **`encoding` other than the default `"utf8"` can silently mangle non-ASCII header content**
-  (single-byte encodings map out-of-repertoire characters with no warning).
-- **No enhanced-mode two-phase sequencing** — the helpers build any of the six codes; *when*
-  to send an accept-ack vs an application-ack is the server/caller's orchestration.
-- **No MLLP Release 2 commit-ack bytes** (`<SB><ACK><EB><CR>`) — R2 is a possible future,
-  opt-in phase.
+The builder's own limits — it trusts your disposition, MSA-2 is a canonical re-serialization rather
+than the inbound's original bytes, and there is no enhanced-mode sequencing — are covered in
+[ACKs & the commit contract](./acks.md).
 
 ## Next
 
-- Read the **API reference** for every export, generated from source.
+- **[Framing & tolerance](./framing.md)** — the wire format, the opt-in tolerance flags, the stable
+  warning codes, and the PHI contract on diagnostics.
+- **[ACKs & the commit contract](./acks.md)** — the page to read before you put this in front of a
+  clinical system.
+- **[Connection, reconnect & backpressure](./reliability.md)** — the 6-state machine, backoff,
+  dead-peer detection, and load shedding.
+- **[MLLPS / TLS](./tls.md)** — mutual TLS, the ATNA TLS 1.2 floor, bind safety.
+- **[Known limitations & non-goals](./limitations.md)** — what *not* to trust this package to do.
+  Read it before you depend on it.
+- The **API reference** for every export, generated from source.
 - For parsing the payloads this transport carries, see **`@cosyte/hl7`**.

@@ -154,7 +154,17 @@ const NACK_TEXT: Readonly<Record<NegativeAckCode, string>> = Object.freeze({
 export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
   const msaTail = code === "AE" || code === "AR" ? `|${NACK_TEXT[code]}` : "";
 
-  const str = payload.toString("ascii");
+  // `latin1`, NOT `ascii`. Node's `ascii` codec masks the high bit (`byte & 0x7f`), which is wrong
+  // twice over:
+  //   1. **Spec (HL7 v2.5.1 §2.9.2.2):** MSA-2 must echo the inbound MSH-10 **verbatim**. Under
+  //      `ascii`, a control ID byte `0x8B` becomes `0x0B` — a *different* control ID, silently
+  //      breaking the sender's own ACK correlation for any non-ASCII charset (MSH-18).
+  //   2. **Safety:** `0x8B → 0x0B` is a **VT**, and `0x9C → 0x1C` is an **FS**. `ascii` therefore
+  //      *manufactures framing delimiters* out of ordinary payload bytes, so a peer sending one
+  //      high-bit byte in an echoed MSH field would make the ACK payload contain a real VT/FS —
+  //      which `encodeFrame` (strict) rejects. `latin1` is a 1:1 byte↔code-unit mapping, so every
+  //      byte round-trips exactly and no delimiter can be synthesized.
+  const str = payload.toString("latin1");
   const segments = str.split("\r");
   const mshSegment = segments.find((seg) => seg.startsWith("MSH"));
 
@@ -165,7 +175,7 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
     // No MSH to echo: emit a well-formed ACK carrying the requested code, no payload content.
     return Buffer.from(
       `MSH|^~\\&|||||${now}||ACK|${newControlId}|P|2.3\rMSA|${code}|${msaTail}\r`,
-      "ascii",
+      "latin1",
     );
   }
 
@@ -185,7 +195,10 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
     `MSH|^~\\&|${receivingApp}|${receivingFacility}|${sendingApp}|${sendingFacility}|${now}||ACK|${newControlId}|${processingId}|${version}\r` +
     `MSA|${code}|${inboundControlId}${msaTail}\r`;
 
-  return Buffer.from(ackStr, "ascii");
+  // `latin1` on the way back out too, so a high-bit byte echoed from the inbound MSH-10 is
+  // preserved rather than re-masked. Paired with the `latin1` decode above, the inbound control ID
+  // round-trips byte-exact into MSA-2.
+  return Buffer.from(ackStr, "latin1");
 }
 
 /** 14-char HL7 timestamp `YYYYMMDDHHmmss` in UTC. */

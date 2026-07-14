@@ -12,7 +12,134 @@ this file is maintained by hand (Changesets handles the version bump and publish
 The first pre-alpha release (`0.0.1`) will ship the v1 MLLP transport surface below. The package
 begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` until first alpha).
 
+### Fixed
+
+- **A peer could crash the server with one high-bit byte, and corrupt the ACK control ID
+  (Phase 10).** `buildRawAck` decoded the inbound message with `ascii`, which masks the high bit
+  (`byte & 0x7f`). Two consequences, both serious. **Spec:** MSA-2 must echo the inbound MSH-10
+  **verbatim** (HL7 v2.5.1 §2.9.2.2), but a control-ID byte `0x8B` silently became `0x0B` — a
+  *different* id — breaking the sender's own ACK correlation for any non-ASCII charset. **Safety:**
+  `0x8B → 0x0B` is a **VT** and `0x9C → 0x1C` is an **FS**, so `ascii` *synthesized framing
+  delimiters* from ordinary payload bytes; a peer sending one high-bit byte in an echoed MSH field
+  made the ACK payload contain a real VT/FS, which `encodeFrame` (strict) rejected — and that throw
+  escaped the `void`-ed `_sendCommitAck`, **crashing the whole server on peer-controlled input with
+  no consumer bug at all**, and suppressing the fail-safe ACK. Fixed: `buildRawAck` uses `latin1`
+  (byte-exact; a delivered payload cannot itself contain VT/FS, and `latin1` cannot synthesize
+  one), and `_dispatchAck` is now **total** — a frame failure (still reachable via a caller's
+  `autoAck: fn`) surfaces as a connection `'error'` and the message goes un-ACKed (fail-safe: the
+  sender resends), never a process kill. New suite `test/server/ack-serialization-safety.test.ts`.
+- **Anything throwing on the receive path crashed the whole process — four routes, all closed
+  (Phase 10).** `FrameReader.push()` runs synchronously inside the transport's data callback, which
+  on a real socket **is** the `'data'` listener, so any throw there is an **uncaught exception** that
+  kills the process — every other connection and every in-flight durable commit with it. The
+  conformance gate refuted the fix three times, each round surfacing a route the previous fix had
+  missed — **four** in total:
+  1. **The decoder's own throw** — `Connection` fed `push(chunk)` with no `try`/`catch`. Reachable on
+     a **default server from a single byte**: `SERVER_DEFAULT_FRAMING` leaves `allowMissingLeadingVt`
+     off, so any non-whitespace byte where a `VT` was expected threw `MLLP_MISSING_LEADING_VT`
+     (`MLLP_FRAME_TOO_LARGE` reached the same path). One stray keepalive character from a real
+     interface engine was enough.
+  2. **`emit('error')` with no listener** — Node raises `ERR_UNHANDLED_ERROR`, and that throw happened
+     *inside the catch block added for (1)*, escaping by the identical route. `MllpServer`/
+     `MllpClient` each attach an `'error'` listener, which masked it; `Connection` is a public export
+     and need not.
+  3. **A throwing `'message'`/`'warning'` subscriber** — `onFrame` dispatches synchronously inside
+     `push()`, so an ordinary consumer bug (a metrics tap, a logger) unwound through the socket
+     handler too.
+  4. **The five lifecycle emits** — `destroy()` → `_transition()` → `emit('stateChange'|'close'|…)`
+     runs *inside* the catch block added for (1), and a throw raised inside a `catch` is **not**
+     caught by that block. A throwing `'close'` subscriber plus one stray byte still killed the
+     process, four frames up.
+
+  Enumerating routes one at a time is what produced a fourth, so the rule is now **structural: no
+  `emit()` in `Connection` may reach a transport callback.** All eight events dispatch through
+  containment, pinned by a test that attaches a throwing subscriber to every one of them at once.
+
+  Now: a fatal framing error surfaces as a frozen `'error'` event (`phase: 'receive'`,
+  `connectionCause: 'framing-fatal'`, the `MllpFramingError` preserved as `cause` so the stable
+  `code`/`byteOffset` survive) and **only that connection** is destroyed — a server drops the one bad
+  peer and keeps serving. Every `'error'` emit is guarded by `listenerCount` and wrapped. Subscriber
+  throws are contained per-subscriber at the dispatch site — what WARN-06 always promised but only
+  half-implemented (the `onWarning` *option* was guarded; the event broadcast was not). A fatal
+  framing error is also reported **exactly once** now — `destroy(err)` forwards the reason to
+  `transport.destroy(err)`, which made a real socket echo it back through `_onTransportError` and
+  emit a second, causeless `'error'`, double-counting on an alerting dashboard. The
+  connection is destroyed rather than resynchronized deliberately: after a throw the reader's position
+  in the byte stream is untrustworthy, and guessing where the next frame begins is how a clinical
+  message gets silently mis-split. The existing suites missed all of this because the in-memory
+  transport wraps delivery in `try`/`finally`, re-routing the throw to the *writer*; only a real
+  socket reproduces it. New suites: `test/server/framing-error-containment.test.ts` (real loopback
+  sockets) and `test/connection/receive-containment.test.ts` (drives the data callback directly) —
+  both verified to fail without the fixes.
+- **A fatal framing error triggered an unbounded reconnect storm (Phase 10).**
+  `isTransientConnectionError` switches on `err.code` and fell through to `default: return true`, so a
+  `MllpFramingError` was classified **transient**. `createStarterClient` (where `autoReconnect`
+  defaults **on**) therefore retried forever against a peer that was not speaking MLLP — an HTTP probe,
+  a health check, a wrong-port misconfiguration — with the backoff hammering an interface engine that
+  was already misconfigured. `MLLP_*` codes are now **permanent**, alongside the TLS classes and for
+  the same reason: every reconnect meets the same bytes.
+- **A throwing `'message'` observer suppressed the ACK (Phase 10).** `MllpServer` emits `'message'` to
+  observers *before* ACK dispatch (D-03), so an observer that threw aborted the handler before the ACK
+  was sent — one broken logger silently turned every message into a no-ACK, and every sender resent
+  forever with nothing to diagnose it by. The emit is now contained: the throw surfaces on `'error'`
+  and the commit contract proceeds untouched. The ACK decision belongs to `ServerOptions.onMessage`
+  (the durable-commit step), not to a metrics tap.
+- **Release pipeline could not have released (Phase 10).** The shared `cosyte/.github` release
+  workflow drives Changesets with `version: pnpm run version`, but no `version` script existed —
+  it failed with `ERR_PNPM_NO_SCRIPT`, so the "Version Packages" PR could never be opened. Added
+  `version` (`changeset version` → `scripts/sync-version.mjs` → `prettier --write`).
+- **The `VERSION` export would have lied about the release (Phase 10).** `VERSION` was hardcoded
+  `"0.0.0"` in `src/index.ts`, while `changeset version` bumps only `package.json` — the published
+  `0.0.1` would have exported `"0.0.0"`. `scripts/sync-version.mjs` now rewrites the constant from
+  `package.json` inside the `version` script, and `test/sanity.test.ts` compares the export against
+  `package.json` rather than asserting a hardcoded literal against a hardcoded literal (the old
+  test would have stayed green through precisely this drift).
+- **`VERSION` had a literal type in the published `.d.ts` (Phase 10).** It declared
+  `const VERSION = "0.0.0"`, leaking the current release into consumers' types and turning an
+  equality check against any other version into a compile error. Now `VERSION: string`.
+- **Docs accuracy (Phase 10).** Found by the conformance gate, which refuted the first cut of the
+  new guide:
+  - `docs-content/intro.md` described the decoder as liberal outright. It is **strict by default** —
+    tolerance is opt-in per flag, and it is `MllpServer` that ships tolerant defaults (`allowFsOnly`,
+    `allowLfAfterFs`, `allowLeadingWhitespace`; `allowMissingLeadingVt` stays off even there).
+  - `MLLP_TRAILING_BYTES` is **not** benign junk between frames. It fires on a `VT` appearing
+    *mid-payload* — which **discards the accumulated partial payload**, i.e. a **truncated**
+    message — and on a stray byte after `FS` under `allowFsOnly`. Now documented as something to
+    alert on rather than ignore.
+  - **`close()` does not drain in-flight messages** — it *rejects* them with
+    `MllpConnectionError({ phase: 'close' })`. No drain hook is wired to the `DRAINING` state, so
+    `drainTimeoutMs` does not currently bound an in-flight ACK wait on the client. A message in
+    flight at shutdown is an **unknown**, not a failure: the receiver may have committed it. Now
+    stated honestly in the reliability guide and the limitations page, with the "await your sends,
+    then close" pattern.
+  - The absolute PHI claim ("never echoes message content") is now precise: diagnostics never echo a
+    *run* of content, but the single-byte `snippet` on `MLLP_MISSING_LEADING_VT` is by definition the
+    first byte of unframed content.
+
 ### Added
+
+- **`ConnectionErrorCause` gains `'framing-fatal'` (Phase 10).** Public union. Attached to the
+  `'error'` event when the decoder throws; classified **permanent** by `isTransientConnectionError`,
+  so a client never auto-reconnects into a peer that is not speaking MLLP.
+- **Release readiness for `0.0.1` (Phase 10).**
+  - **Publish pipeline proven without burning a version.** New `publish:dry` script
+    (`pnpm publish --dry-run --no-git-checks`). Verified end to end: the `prepublishOnly` chain
+    (clean → typecheck → lint → test → build → `attw`) is green; `changeset version` consumes the
+    pending changesets to exactly **`0.0.1`**; the dry-run packs 24 files (`dist/` + README +
+    LICENSE + CHANGELOG) with public access and no `src/`, `test/`, or `vendor/` leakage;
+    `pack:docs` produces both docs artifacts. **Nothing was published** — the first real publish
+    is a human gate.
+  - **Full `docs-content/` transport guide.** New pages: **Framing & tolerance** (wire format, the
+    opt-in tolerance flags with a `FrameReader`-vs-`MllpServer` default table, the stable
+    warning-code registry, bounded accumulators, the PHI contract on diagnostics); **ACKs & the
+    commit contract** (fail-safe ACK semantics, the three `autoAck` modes, the transport-accept
+    caveat, FIFO-vs-control-id correlation, `ack-from-hl7`); **Connection, reconnect &
+    backpressure** (the 6-state machine, jittered exponential backoff, the transient-vs-permanent
+    classifier, keepalive vs dead-peer timeout, high-water marks, graceful drain); and **Known
+    limitations & non-goals** (at-least-once at best, no queue/replay, no MLLP R2, no Epic/Cerner
+    differential verification, no PKI, not byte-transparent, pre-stable API). Sidebar updated; all
+    examples synthetic.
+  - **README** now documents the commit contract and the non-goals, not just the feature list.
 
 - **Real-world interop, differential conformance & PHI/observability audit (Phase 9).**
   - **PHI hardening (framing).** `MllpFramingError.snippet` no longer carries a run of payload content

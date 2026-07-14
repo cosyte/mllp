@@ -70,7 +70,8 @@ export type ConnectionErrorCause =
   | "fifo-unsafe"
   | "in-flight-orphan"
   | "tls-verify"
-  | "tls-handshake";
+  | "tls-handshake"
+  | "framing-fatal";
 
 /**
  * Thrown (or emitted via `onError`) for socket-layer problems such as

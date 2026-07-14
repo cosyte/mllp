@@ -34,6 +34,7 @@ import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
 import { buildRawAck, resolveNackCode } from "./ack.js";
 import type { AckCode, NegativeAckCode } from "./ack.js";
+import { safeEmit, safeEmitError } from "../internal/safe-emit.js";
 
 /**
  * Wildcard (unspecified-address) bind detection for Phase 8 bind safety —
@@ -490,7 +491,10 @@ export class MllpServer extends EventEmitter {
           code: typeof nodeErr.code === "string" ? nodeErr.code : null,
           timestamp: new Date(),
         });
-        this.emit("tlsClientError", event);
+        // Contained: this runs inside tls.Server's own 'tlsClientError' listener, so a throwing
+        // subscriber would kill the process on a failed handshake — flatly contradicting this
+        // handler's whole purpose ("MUST NOT crash and MUST keep accepting other connections").
+        this._emitContained("tlsClientError", event);
       });
     } else {
       this._netServer = netCreateServer();
@@ -515,9 +519,15 @@ export class MllpServer extends EventEmitter {
     //     which throws — Node's fail-loud convention is deliberately kept
     //     for runtime accept-loop errors (EMFILE/ENFILE): a silent accept
     //     outage on a healthcare listener must be impossible.
+    // MLLP-10 refinement: the deliberate fail-loud branch below is PRESERVED exactly (unlistened +
+    // serving ⇒ unguarded re-emit ⇒ throw), but a *throwing subscriber* is a different thing from
+    // an unobservable accept outage, and it must not crash the server. When a listener exists, the
+    // emit is contained.
     this._netServer.on("error", (err: Error) => {
-      if (this.listenerCount("error") > 0 || this._listening) {
-        this.emit("error", err);
+      if (this.listenerCount("error") > 0) {
+        safeEmitError(this, err); // contained — a throwing 'error' subscriber is not fail-loud
+      } else if (this._listening) {
+        this.emit("error", err); // DELIBERATE: unlistened + serving ⇒ Node's fail-loud convention
       }
     });
   }
@@ -877,7 +887,8 @@ export class MllpServer extends EventEmitter {
     // If no active connections, we're done — emit 'close' and resolve
     // No abort handler registered on this path — nothing to remove.
     if (this._connections.size === 0) {
-      this.emit("close", Object.freeze({}));
+      // Contained: a throwing 'close' subscriber must not reject close() nor skip its cleanup.
+      this._emitContained("close", Object.freeze({}));
       return Promise.resolve();
     }
 
@@ -909,8 +920,8 @@ export class MllpServer extends EventEmitter {
         signal.removeEventListener("abort", abortHandler);
       }
     }
-    // Emit 'close' after all connections have drained (SERVER-10: frozen payload)
-    this.emit("close", Object.freeze({}));
+    // Emit 'close' after all connections have drained (SERVER-10: frozen payload). Contained.
+    this._emitContained("close", Object.freeze({}));
   }
 
   /**
@@ -1003,10 +1014,26 @@ export class MllpServer extends EventEmitter {
    * NOT use it (its while-serving branch re-emits unguarded to keep Node's
    * fail-loud convention).
    */
+  /**
+   * Emit a server event, containing a throwing subscriber.
+   *
+   * Every event this server emits is reachable from a callback we do not own — the `net.Server`
+   * `'connection'` listener, the `tls.Server` `'tlsClientError'` listener, a socket's `'data'`
+   * listener (via `Connection`), or the `catch` block of a `void`-ed async ACK task. A throwing
+   * subscriber would therefore unwind into that callback and kill the process (or reject a void-ed
+   * promise, which does the same and additionally skips the rest of the method).
+   *
+   * See `src/internal/safe-emit.ts` for the full rationale. The throw is re-surfaced on `'error'`.
+   */
+  private _emitContained(event: string, payload: unknown): void {
+    safeEmit(this, event, payload, (err) => {
+      this._emitErrorIfListened(err);
+    });
+  }
+
   private _emitErrorIfListened(errEvent: unknown): void {
-    if (this.listenerCount("error") > 0) {
-      this.emit("error", errEvent);
-    }
+    // Guards the unlistened case AND contains a throwing 'error' subscriber — see safe-emit.ts.
+    safeEmitError(this, errEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -1106,7 +1133,23 @@ export class MllpServer extends EventEmitter {
         });
 
         // D-03: emit 'message' BEFORE any ACK dispatch.
-        this.emit("message", Object.freeze({ payload, meta }));
+        //
+        // Contained: a `'message'` subscriber is an OBSERVER (a metrics tap, a logger). The ACK
+        // decision belongs to the commit contract below — `ServerOptions.onMessage` is the
+        // durable-commit step, not this event. An observer that throws must therefore not be able
+        // to suppress the ACK: before containment, one broken logger silently turned every message
+        // into a no-ACK, so every sender resent forever with nothing to diagnose it by. The throw
+        // is surfaced on `'error'` instead, and the commit contract proceeds untouched.
+        try {
+          this.emit("message", Object.freeze({ payload, meta }));
+        } catch (err) {
+          this._emitErrorIfListened(
+            Object.freeze({
+              connectionId,
+              error: err instanceof Error ? err : new Error(String(err)),
+            }),
+          );
+        }
 
         const autoAck = this._opts.autoAck;
         if (autoAck === "AA") {
@@ -1131,8 +1174,12 @@ export class MllpServer extends EventEmitter {
         ? this._extractPeerCertificateSummary(socket as TLSSocket)
         : null;
 
-    // Emit server-level 'connection' event with frozen payload
-    this.emit(
+    // Emit server-level 'connection' event with frozen payload.
+    //
+    // Contained: `_onSocketAccepted` runs inside the net.Server/tls.Server 'connection' listener,
+    // so a throwing subscriber (an audit logger, an allow-list check) would kill the whole server
+    // on the next accept.
+    this._emitContained(
       "connection",
       Object.freeze({
         connectionId: conn.connectionId,
@@ -1205,9 +1252,20 @@ export class MllpServer extends EventEmitter {
       const nack: NegativeAckCode = resolveNackCode(err);
       code = nack;
       // PHI-safe observability: control ID + outcome only, never the payload or error text.
-      this.emit("nack", Object.freeze({ connectionId: conn.connectionId, ackCode: nack }));
+      //
+      // CONTAINED, and this one is load-bearing. This emit sits inside a `catch` block of an
+      // `async` method that the caller `void`s — so a throwing `'nack'` subscriber (a metrics tap,
+      // an alerting hook) would (a) reject the void-ed promise → unhandled rejection → process
+      // death, and (b) skip the `_dispatchAck` below, so **the negative ACK would never be sent**.
+      // The sender would be left waiting on an acknowledgement for a message the server had already
+      // failed to commit. A broken metrics tap must never be able to suppress the fail-safe ACK.
+      this._emitContained(
+        "nack",
+        Object.freeze({ connectionId: conn.connectionId, ackCode: nack }),
+      );
     }
 
+    // Unconditional: reached whether the handler committed or threw, and no subscriber can skip it.
     this._dispatchAck(conn, buildRawAck(payload, code));
   }
 
@@ -1225,7 +1283,10 @@ export class MllpServer extends EventEmitter {
       .then(() => handler(payload, meta, conn))
       .catch((err: unknown) => {
         const connErr = err instanceof Error ? err : new Error(String(err));
-        conn.emit("error", Object.freeze({ connectionId: conn.connectionId, error: connErr }));
+        // safeEmitError, not conn.emit: a raw emit bypasses Connection's containment, so an
+        // unlistened or throwing 'error' subscriber would unwind into this void-ed async task
+        // (unhandled rejection → process death).
+        safeEmitError(conn, Object.freeze({ connectionId: conn.connectionId, error: connErr }));
       });
   }
 
@@ -1245,7 +1306,8 @@ export class MllpServer extends EventEmitter {
       this._dispatchAck(conn, ackPayload);
     } catch (err: unknown) {
       const connErr = err instanceof Error ? err : new Error(String(err));
-      conn.emit("error", Object.freeze({ connectionId: conn.connectionId, error: connErr }));
+      // See above — never a raw conn.emit from inside a callback/async catch.
+      safeEmitError(conn, Object.freeze({ connectionId: conn.connectionId, error: connErr }));
     }
   }
 
@@ -1256,11 +1318,35 @@ export class MllpServer extends EventEmitter {
    * time out waiting and may retry. The server never crashes.
    */
   private _dispatchAck(conn: Connection, ackPayload: Buffer): void {
-    // Connection.send() writes raw bytes — encodeFrame adds VT + payload + FS + CR.
-    const sent = conn.send(encodeFrame(ackPayload));
+    // TOTAL by contract: this is reached from `void`-ed async tasks (`_sendCommitAck`, the
+    // transport-accept branch), so a throw here becomes an **unhandled rejection that kills the
+    // process** — and it would do so on peer-controlled input. `encodeFrame` is strict and throws
+    // `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` if the ACK payload contains a framing byte. That is
+    // unreachable from `buildRawAck` now that it decodes/encodes as `latin1` (a delivered payload
+    // cannot itself hold a VT/FS, and `latin1` can no longer synthesize one) — but a caller's
+    // `autoAck: fn` can return arbitrary bytes, and defending the process must not depend on the
+    // caller's discipline. A build/frame failure is surfaced as a connection `'error'` and the
+    // message goes un-ACKed (fail-safe: better an un-ACKed message the sender will resend than a
+    // dead server), never as a process kill.
+    let framed: Buffer;
+    try {
+      framed = encodeFrame(ackPayload);
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err : new Error(String(err));
+      safeEmitError(
+        conn,
+        Object.freeze({
+          connectionId: conn.connectionId,
+          error: new MllpConnectionError("ACK could not be framed", { cause, phase: "send" }),
+        }),
+      );
+      return;
+    }
+
+    const sent = conn.send(framed);
     if (!sent) {
-      conn.emit(
-        "error",
+      safeEmitError(
+        conn,
         Object.freeze({
           connectionId: conn.connectionId,
           error: new MllpConnectionError("ACK dropped: socket backpressure", {
