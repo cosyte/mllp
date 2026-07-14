@@ -190,6 +190,12 @@ export function isTlsProtocolError(err: unknown): boolean {
  *   which also catches `EPROTO`/alert-bearing OpenSSL errors that this
  *   generic classifier (which cannot know the connection was TLS) leaves
  *   transient.
+ * - `MLLP_*` (any {@link MllpFramingError} code — a fatal decoder throw, surfaced with
+ *   `connectionCause: 'framing-fatal'`) → **permanent** (`false`) (MLLP-10). The peer is not
+ *   speaking MLLP — an HTTP probe, a health check, a wrong-port misconfiguration — or is emitting
+ *   frames past `maxFrameSizeBytes`. Every reconnect meets the same bytes, so retrying is an
+ *   unbounded storm against a peer that is already misconfigured. If a peer's quirk is *expected*,
+ *   the decoder's tolerance opt-ins are the supported answer — they make it a warning, not a fatal.
  * - non-Error / unknown / no-code → **transient** (`true`) — Postel's Law
  *   default. Reconnect attempts are bounded by `retryStrategy` and the
  *   30s backoff cap, so the default is safe.

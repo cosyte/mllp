@@ -312,7 +312,11 @@ export class Connection extends EventEmitter {
     this._remotePort = remotePort;
     this._connectedAt = new Date();
     this._transition("CONNECTED");
-    this.emit("connect", Object.freeze({ connectionId: this.connectionId }));
+    // Contained like every other emit in this class — `notifyConnect` is called from the
+    // transport's connect callback, so a throwing subscriber would unwind into it.
+    this._dispatchContained(() => {
+      this.emit("connect", Object.freeze({ connectionId: this.connectionId }));
+    });
   }
 
   /**
@@ -480,21 +484,38 @@ export class Connection extends EventEmitter {
       // Illegal transition — silently ignore to preserve FSM integrity (T-03-03-04)
       return;
     }
+    // The state is committed BEFORE any subscriber runs, so a throwing subscriber can never leave
+    // the FSM half-transitioned.
     this._state = to;
     const event = Object.freeze<StateChangeEvent>(
       reason !== undefined ? { from, to, reason } : { from, to },
     );
-    this.emit("stateChange", event);
+
+    // Every lifecycle emit is contained. `_transition` is reached from `destroy()`, which is
+    // called from inside the `catch` block on the receive path — and a throw raised inside a catch
+    // block is NOT caught by that block. A throwing 'stateChange'/'close' subscriber would
+    // therefore unwind straight out of the socket's 'data' listener and kill the process, which is
+    // the same defect as the decoder throw, just four frames up. Contain at the source: no emit in
+    // this class is allowed to reach a transport callback.
+    this._dispatchContained(() => {
+      this.emit("stateChange", event);
+    });
 
     // Fire semantic lifecycle events
     if (to === "DISCONNECTED") {
-      this.emit("disconnect", Object.freeze({ connectionId: this.connectionId }));
+      this._dispatchContained(() => {
+        this.emit("disconnect", Object.freeze({ connectionId: this.connectionId }));
+      });
     }
     if (to === "RECONNECTING") {
-      this.emit("reconnecting", Object.freeze({ connectionId: this.connectionId }));
+      this._dispatchContained(() => {
+        this.emit("reconnecting", Object.freeze({ connectionId: this.connectionId }));
+      });
     }
     if (to === "CLOSED") {
-      this.emit("close", Object.freeze({ connectionId: this.connectionId }));
+      this._dispatchContained(() => {
+        this.emit("close", Object.freeze({ connectionId: this.connectionId }));
+      });
     }
   }
 
@@ -605,11 +626,16 @@ export class Connection extends EventEmitter {
             ? "close"
             : "receive";
 
+    // Terminal states first. `destroy(err)` forwards the reason to `transport.destroy(err)`, which
+    // makes the socket re-surface the same error here — so emitting before this guard reported a
+    // single fatal framing error TWICE: once with `connectionCause: 'framing-fatal'`, then again
+    // bare. That double-counts on an alerting dashboard and the echo carries no cause.
+    if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
+
     // Guarded: this runs inside the transport's error callback, so an unlistened emit would throw
     // ERR_UNHANDLED_ERROR straight out of the socket's 'error' listener and kill the process. A
     // bare Connection (no 'error' listener) previously died on an ordinary ECONNRESET.
     this._emitErrorIfListened(new MllpConnectionError(err.message, { cause: err, phase }));
-    if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
 
     // CONNECTING and RECONNECTING have no path to DISCONNECTED — use CLOSED
     const target: ConnectionState =

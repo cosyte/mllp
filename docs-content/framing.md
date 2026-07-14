@@ -112,9 +112,14 @@ A twelfth code, `MLLP_ACK_INBOUND_UNPARSEABLE`, is scoped to the
 **A throw kills the connection, never the process.** `Connection` catches it, surfaces it as a
 frozen `'error'` event (`phase: 'receive'`, `connectionCause: 'framing-fatal'`, with the
 `MllpFramingError` preserved as `cause` so the stable `code` and `byteOffset` survive), and destroys
-**that connection only**. A server drops the one bad peer and keeps serving everyone else. (The
-`'error'` emit is itself guarded, so a bare `Connection` with no `'error'` listener is torn down
-quietly rather than raising Node's `ERR_UNHANDLED_ERROR` — which would have put the crash right back.)
+**that connection only**. A server drops the one bad peer and keeps serving everyone else.
+
+This holds even when *your* code is the thing that throws. Every event `Connection` emits —
+`'message'`, `'warning'`, `'error'`, and the five lifecycle events — is dispatched with containment,
+because all of them can be reached synchronously from inside the socket's `'data'` callback. A
+throwing subscriber is reported on `'error'` and cannot take the process down with it. (A throwing
+`'error'` subscriber is the one exception that is simply swallowed: reporting is what just failed, so
+there is nowhere left to report it to.)
 
 The connection is dropped rather than resynchronized on purpose: once `push` has thrown, the reader's
 position within the byte stream is no longer trustworthy, and guessing where the next frame begins is

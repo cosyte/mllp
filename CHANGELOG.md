@@ -18,7 +18,8 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   (Phase 10).** `FrameReader.push()` runs synchronously inside the transport's data callback, which
   on a real socket **is** the `'data'` listener, so any throw there is an **uncaught exception** that
   kills the process — every other connection and every in-flight durable commit with it. The
-  conformance gate found three routes, each revealed by fixing the previous one:
+  conformance gate refuted the fix three times, each round surfacing a route the previous fix had
+  missed — **four** in total:
   1. **The decoder's own throw** — `Connection` fed `push(chunk)` with no `try`/`catch`. Reachable on
      a **default server from a single byte**: `SERVER_DEFAULT_FRAMING` leaves `allowMissingLeadingVt`
      off, so any non-whitespace byte where a `VT` was expected threw `MLLP_MISSING_LEADING_VT`
@@ -28,16 +29,27 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
      *inside the catch block added for (1)*, escaping by the identical route. `MllpServer`/
      `MllpClient` each attach an `'error'` listener, which masked it; `Connection` is a public export
      and need not.
-  3. **A throwing `'message'`/`'warning'`/`'error'` subscriber** — `onFrame` dispatches synchronously
-     inside `push()`, so an ordinary consumer bug (a metrics tap, a logger) unwound through the socket
+  3. **A throwing `'message'`/`'warning'` subscriber** — `onFrame` dispatches synchronously inside
+     `push()`, so an ordinary consumer bug (a metrics tap, a logger) unwound through the socket
      handler too.
+  4. **The five lifecycle emits** — `destroy()` → `_transition()` → `emit('stateChange'|'close'|…)`
+     runs *inside* the catch block added for (1), and a throw raised inside a `catch` is **not**
+     caught by that block. A throwing `'close'` subscriber plus one stray byte still killed the
+     process, four frames up.
+
+  Enumerating routes one at a time is what produced a fourth, so the rule is now **structural: no
+  `emit()` in `Connection` may reach a transport callback.** All eight events dispatch through
+  containment, pinned by a test that attaches a throwing subscriber to every one of them at once.
 
   Now: a fatal framing error surfaces as a frozen `'error'` event (`phase: 'receive'`,
   `connectionCause: 'framing-fatal'`, the `MllpFramingError` preserved as `cause` so the stable
   `code`/`byteOffset` survive) and **only that connection** is destroyed — a server drops the one bad
   peer and keeps serving. Every `'error'` emit is guarded by `listenerCount` and wrapped. Subscriber
   throws are contained per-subscriber at the dispatch site — what WARN-06 always promised but only
-  half-implemented (the `onWarning` *option* was guarded; the event broadcast was not). The
+  half-implemented (the `onWarning` *option* was guarded; the event broadcast was not). A fatal
+  framing error is also reported **exactly once** now — `destroy(err)` forwards the reason to
+  `transport.destroy(err)`, which made a real socket echo it back through `_onTransportError` and
+  emit a second, causeless `'error'`, double-counting on an alerting dashboard. The
   connection is destroyed rather than resynchronized deliberately: after a throw the reader's position
   in the byte stream is untrustworthy, and guessing where the next frame begins is how a clinical
   message gets silently mis-split. The existing suites missed all of this because the in-memory

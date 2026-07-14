@@ -7,14 +7,22 @@
  * that listener as an **uncaught exception and kills the process**, taking every other connection
  * and every in-flight durable commit with it.
  *
- * The conformance gate found this three times over, each fix revealing the next route:
+ * The conformance gate refuted the fix three times, each round surfacing a route the previous fix
+ * had not considered:
  *   1. the decoder's own throw (unguarded `push`),
- *   2. `emit('error')` with no listener → Node's `ERR_UNHANDLED_ERROR`, thrown from inside the
- *      catch block that was supposed to be the fix,
- *   3. a throwing subscriber (`'message'`/`'warning'`/`'error'`) unwinding through `push`.
+ *   2. `emit('error')` with no listener → Node's `ERR_UNHANDLED_ERROR`, raised from inside the very
+ *      catch block that was supposed to be the fix for (1),
+ *   3. a throwing `'message'`/`'warning'` subscriber unwinding through `push`,
+ *   4. `destroy()` → `_transition()` → the five lifecycle emits — called from INSIDE the catch
+ *      block, and a throw raised inside a catch is not caught by it.
+ *
+ * Enumerating routes one at a time is how you get a fourth one, so the invariant is now structural:
+ * **no emit in `Connection` may reach a transport callback.** The "EVERY public event" test below is
+ * the one that actually holds the line; the rest document the individual regressions.
  *
  * These tests drive the transport's data callback directly, so an escape fails the test rather than
- * being masked. Each one is a route to a dead process if it regresses.
+ * being masked — which is exactly why the existing suites never caught any of it (the in-memory
+ * transport's try/finally re-routes the throw to the writer).
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -25,6 +33,7 @@ import type { Transport } from "../../src/transport/index.js";
 
 function makeMockTransport() {
   let dataFn: ((c: Buffer) => void) | null = null;
+  let errorFn: ((e: Error) => void) | null = null;
   const write: Mock<(buf: Buffer) => boolean> = vi
     .fn<(buf: Buffer) => boolean>()
     .mockReturnValue(true);
@@ -37,12 +46,16 @@ function makeMockTransport() {
     },
     onConnect: () => undefined,
     onClose: () => undefined,
-    onError: () => undefined,
+    onError: (fn) => {
+      errorFn = fn;
+    },
   };
   return {
     transport: t,
     /** Drive the data callback exactly as a socket would. A throw here escapes to the test. */
     data: (chunk: Buffer) => dataFn?.(chunk),
+    /** Drive the error callback exactly as a socket would. */
+    error: (e: Error) => errorFn?.(e),
   };
 }
 
@@ -187,7 +200,45 @@ describe("receive-path containment", () => {
     expect(errors[0]?.error.message).toContain("a string, not an Error");
   });
 
-  it("a throwing 'error' subscriber cannot escape — the last route to a dead process", () => {
+  it("STRUCTURAL: a throwing subscriber on EVERY public event, all at once, cannot escape", () => {
+    // This gate refuted the containment fix three times, each time via a route the previous fix
+    // had not considered: the decoder throw, then the unlistened 'error' emit, then the 'message'/
+    // 'warning' subscribers, then the lifecycle emits from destroy(). Enumerating routes one at a
+    // time is how you get a fourth one.
+    //
+    // So assert the INVARIANT instead of the instances: no emit in Connection may reach a
+    // transport callback. Attach a throwing listener to every public event simultaneously and
+    // drive both a clean frame and a fatal. If someone adds a ninth event and emits it unguarded
+    // from the receive path, this test fails.
+    const events = [
+      "connect",
+      "stateChange",
+      "disconnect",
+      "reconnecting",
+      "close",
+      "message",
+      "warning",
+      "error",
+    ] as const;
+
+    const mock = makeMockTransport();
+    const conn = new Connection({ transport: mock.transport });
+    for (const e of events) {
+      conn.on(e, () => {
+        throw new Error(`consumer bug in the ${e} handler`);
+      });
+    }
+
+    expect(() => conn.notifyConnect(null, null)).not.toThrow();
+    expect(() => mock.data(emptyFrame())).not.toThrow(); // clean frame + a warning
+    expect(() => mock.data(frame("MSH|^~\\&|A|B|C|D"))).not.toThrow(); // clean frame
+    expect(() => mock.data(Buffer.from([0x58]))).not.toThrow(); // fatal → destroy → lifecycle
+    expect(() => mock.error(new Error("ECONNRESET"))).not.toThrow(); // transport error path
+
+    expect(conn.state).toBe("CLOSED");
+  });
+
+  it("a throwing 'error' subscriber cannot escape — reporting is what just failed", () => {
     const mock = makeMockTransport();
     const conn = new Connection({ transport: mock.transport });
     conn.notifyConnect(null, null);
@@ -200,6 +251,48 @@ describe("receive-path containment", () => {
 
     expect(() => mock.data(Buffer.from([0x58]))).not.toThrow();
     expect(conn.state).toBe("CLOSED");
+  });
+
+  // The fourth route. `destroy()` → `_transition()` → emit('stateChange'/'close'/'disconnect') runs
+  // INSIDE the catch block on the receive path, and a throw raised inside a catch is not caught by
+  // it. So a throwing lifecycle subscriber unwound out of the socket 'data' listener exactly like
+  // the decoder throw did — four frames up. Every lifecycle emit is now contained too.
+  for (const event of ["stateChange", "close", "disconnect", "connect"] as const) {
+    it(`a throwing '${event}' subscriber cannot escape the receive path`, () => {
+      const mock = makeMockTransport();
+      const conn = new Connection({ transport: mock.transport });
+      conn.on(event, () => {
+        throw new Error(`consumer bug in the ${event} handler`);
+      });
+      conn.on("error", () => undefined);
+
+      // 'connect' fires from notifyConnect; the rest fire from the destroy() inside the catch.
+      expect(() => conn.notifyConnect(null, null)).not.toThrow();
+      expect(() => mock.data(Buffer.from([0x58]))).not.toThrow();
+      expect(conn.state).toBe("CLOSED");
+    });
+  }
+
+  it("reports a fatal framing error exactly ONCE, not twice", () => {
+    // destroy(err) forwards the reason to transport.destroy(err), which makes a real socket
+    // re-surface the same error through _onTransportError. Emitting before the terminal-state
+    // guard reported it twice — once with connectionCause 'framing-fatal', then again bare —
+    // double-counting on an alerting dashboard.
+    const mock = makeMockTransport();
+    const conn = new Connection({ transport: mock.transport });
+    conn.notifyConnect(null, null);
+
+    const errors: ConnErrorEvent[] = [];
+    conn.on("error", (e: ConnErrorEvent) => {
+      errors.push(e);
+    });
+
+    mock.data(Buffer.from([0x58]));
+    // Simulate the socket echoing the destroy reason back, as a real net.Socket does.
+    mock.error(new Error("Expected VT (0x0B) to start MLLP frame"));
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.error.connectionCause).toBe("framing-fatal");
   });
 
   it("a NON-framing throw out of the reader is contained and reported honestly, not as a peer framing fault", () => {
