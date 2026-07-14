@@ -19,6 +19,8 @@
  *     `buildMessage` always emits `|^~\&`; where it cannot, it must say so with
  *     `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` rather than emit a silently unmatchable
  *     ACK. Both halves of that are asserted.
+ *
+ * Fixtures are synthetic-only (DOE/SYNTH/TEST names, invented MRNs) — never PHI.
  */
 
 import fc from "fast-check";

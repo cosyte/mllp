@@ -152,7 +152,10 @@ WHATWG Encoding Standard to **windows-1252**, which does not round-trip `0x80`�
 Every build is then **checked** against the same byte-level scanners the `@cosyte/mllp` client uses
 to correlate. If MSA-2 does not match the inbound MSH-10 byte-for-byte, the ACK still goes out — a
 mismatched ACK tells the peer *something*, which beats silence — but it carries a
-`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` warning naming both byte strings in hex. **Check your warnings.**
+`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` warning. The warning reports the two byte *lengths* and
+withholds the field values: MSH-10 is inbound payload content, a warning goes to a log, and a log is
+not a place PHI may reach. You already hold both byte strings — your inbound `payload`, and the
+returned `MllpAck.payload`. **Check your warnings.**
 
 ```ts
 import { buildAckAA, MLLP_ACK_CONTROL_ID_NOT_VERBATIM } from "@cosyte/mllp/ack-from-hl7";

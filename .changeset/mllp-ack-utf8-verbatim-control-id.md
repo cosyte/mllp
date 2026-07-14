@@ -18,7 +18,17 @@ default.
 `!`-delimited message produced an ACK with **no correlation id at all**. It now reads MSH-1, echoes
 the inbound's own MSH-1/MSH-2, and tolerates `LF`/`CRLF` segment terminators.
 
-The three places that each re-derived "read the control ID" — and each got it wrong differently —
-are now one shared implementation. Adds the stable warning code
+Most seriously, the MSH-10 scan never stopped at the segment terminator, so on a **truncated MSH**
+it counted separators on past the `CR` and returned the *next segment's* field. Against
+`MSH|^~\&|EPIC|HOSP|MIRTH|LAB` + `PID|1||MRN00042|…` it returned **`PID-3` — the patient's MRN** —
+as the control ID, which the client then used as its correlation key and reported in
+`MllpTimeoutError.messageControlId` and its unmatched-ACK warnings. A patient identifier in a log
+line, and a mis-read one. The scan is now bounded at the segment terminator: a field that does not
+exist reads as absent, never as the next segment's contents.
+
+The three places that each re-derived "read the MSH" — and each got it wrong differently — now
+genuinely share one implementation. Adds the stable warning code
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`: `buildMllpAck` verifies its own output against the scanners the
-client correlates with, so a non-matchable ACK is loud rather than silent.
+client correlates with, so a non-matchable ACK is loud rather than silent. The warning reports byte
+lengths and withholds the field values — MSH-10 is inbound payload content, and a warning goes to a
+log.

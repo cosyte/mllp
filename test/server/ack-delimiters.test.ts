@@ -9,6 +9,8 @@
  * correlation id at all**. The sender cannot match that, times out, and resends →
  * duplicate clinical message. The client-side scanners have always read MSH-1
  * dynamically; this is the builder catching up to them.
+ *
+ * Fixtures are synthetic-only (DOE/SYNTH/TEST names, invented MRNs) — never PHI.
  */
 
 import { describe, expect, it } from "vitest";

@@ -13,6 +13,8 @@
  * The end-to-end test in this file is the one that matters: a real `MllpClient`
  * in controlId mode talking to a server that ACKs with `buildAckAA`, over the
  * in-memory transport. That is the exact cosyte↔cosyte channel the bug broke.
+ *
+ * Fixtures are synthetic-only (DOE/SYNTH/TEST names, invented MRNs) — never PHI.
  */
 
 import { describe, expect, it } from "vitest";
@@ -134,8 +136,27 @@ describe("ack-from-hl7 — a non-verbatim echo is LOUD, never silent", () => {
     const warning = ack.warnings.find((w) => w.code === MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
     expect(warning).toBeDefined();
     expect(warning?.message).toContain("§2.9.2.2");
-    // The message names the bytes, in hex — routing metadata, never clinical content.
-    expect(warning?.message).toContain("418b43");
+    // It reports SHAPE, not content: byte lengths, never the field bytes.
+    expect(warning?.message).toContain("3 bytes");
+  });
+
+  it("the warning carries NO inbound field content — not raw, not hex (PHI)", () => {
+    // A warning goes to a log, and MSH-10 is inbound payload content. An earlier version of
+    // this check hex-encoded the control ids into the message; paired with a scanner that ran
+    // past the segment terminator, that rendered the patient's MRN into a log line. Both are
+    // fixed, and this test holds the line: no field VALUE, in any encoding, ever.
+    // The high-bit byte is what makes the `ascii` round-trip fail and the warning fire; the
+    // identifier-shaped prefix is what must NOT come back out in it.
+    const id = Buffer.concat([Buffer.from("MRN00042", "latin1"), Buffer.from([0x8b])]);
+    const ack = buildMllpAck(inboundWithControlId(id), { code: "AA", encoding: "ascii" });
+    const warning = ack.warnings.find((w) => w.code === MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+    expect(warning).toBeDefined();
+
+    const msg = warning?.message ?? "";
+    expect(msg).not.toContain("MRN00042"); // raw
+    expect(msg).not.toContain(id.toString("hex")); // hex — the exact old leak
+    expect(msg).not.toContain(id.toString("base64")); // and no other rendering
+    expect(msg).toContain("9 bytes"); // shape only
   });
 
   it("`utf8` on a high-bit inbound warns — this is the exact pre-fix default", () => {
@@ -163,8 +184,22 @@ describe("ack-from-hl7 — a non-verbatim echo is LOUD, never silent", () => {
     expect(codes).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
   });
 
-  it("an inbound with no MSH-10 does not warn NOT_VERBATIM (nothing to echo)", () => {
+  it("an inbound with an empty-but-present MSH-10 does not warn NOT_VERBATIM", () => {
     const inbound = Buffer.from("MSH|^~\\&|S|F|R|F2|20260714120000||ADT^A01||P|2.5.1\r", "latin1");
+    const ack = buildAckAA(inbound);
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+  });
+
+  it("a TRUNCATED MSH followed by another segment does not warn NOT_VERBATIM", () => {
+    // The case the empty-MSH-10 fixture above could never reach: the MSH stops *before*
+    // MSH-10 and a real segment follows it. This is where the old scanner ran past the CR
+    // and produced PID-3 as the "control id" — so the check compared against a field that
+    // does not exist and warned that the ACK had failed to echo it. Its own contract says
+    // it never warns on a comparison it could not perform.
+    const inbound = Buffer.from(
+      "MSH|^~\\&|EPIC|HOSP|MIRTH|LAB\rPID|1||MRN00042||DOE^SYNTH^Q||19850312|F\r",
+      "latin1",
+    );
     const ack = buildAckAA(inbound);
     expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
   });

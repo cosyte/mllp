@@ -14,6 +14,21 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **The MSH-10 scan ran past the segment terminator and returned the patient's MRN as the
+  correlation key (MLLP-ACK-UTF8; found by the conformance gate).** `extractMshControlId` counted
+  field separators without ever stopping at `CR`/`LF`. On a **truncated MSH** — one with fewer than
+  10 fields, which is malformed, but is precisely what a broken peer sends — the count therefore ran
+  *past the segment terminator* and kept counting inside the next segment. Given
+  `MSH|^~\&|EPIC|HOSP|MIRTH|LAB` + `PID|1||MRN00042|…`, the "MSH-10" it returned was **`PID-3`: the
+  patient's medical record number**. `MllpClient.send()` calls this on every outbound payload in
+  controlId mode, so that value became the correlator's key, and was carried into
+  `MllpTimeoutError.messageControlId` and the `MLLP_ACK_UNMATCHED_CONTROL_ID` /
+  `MLLP_ACK_AFTER_TIMEOUT` warnings — **a patient identifier in a log line, and a mis-read one at
+  that**, plus a correlation key that is not the control ID the peer will ACK. Present since Phase 5
+  and untouched by MLLP-CORRELATOR-ASCII, which fixed the *decode* of this scan but not its
+  *bounds*. Fixed: the scan is now `readMshSegment`, which bounds the MSH at its terminator before
+  reading any field out of it. A field that does not exist reads as **absent**, never as the next
+  segment's contents.
 - **`ack-from-hl7` could not echo a control ID verbatim, so a cosyte client could not correlate a
   cosyte server's ACK (MLLP-ACK-UTF8).** `buildMllpAck` decoded the inbound through the peer
   parser's charset machinery and re-encoded the ACK through a hardcoded **`utf8`**. The two are not
@@ -31,8 +46,15 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
     **windows-1252** (`0x8B` → `U+2039`), which does not round-trip `0x80`–`0x9F` at all — so the
     decode had to be taken away from the charset-aware parser and done on the bytes directly.
     `string` / `Hl7Message` input keeps its `utf8` default (the caller already chose the decode).
-  - The three scanners are now **one** implementation, `src/internal/control-id.ts`, shared by the
-    client correlator, `buildRawAck`, and `buildMllpAck`.
+  - The MSH read is now **one** implementation — `readMshSegment` in `src/internal/control-id.ts` —
+    genuinely *called* by all three consumers: the client correlator, `buildRawAck`, and
+    `buildMllpAck`'s verbatim check. `buildRawAck` previously re-derived its own read
+    (`payload.toString("latin1").split(...)`, hunting for an `MSH` anywhere in the payload), and the
+    two disagreed on real inputs: on a truncated MSH followed by a PID the correlator keyed on one
+    string while `buildRawAck` echoed another, and on a payload with a leading `LF` the correlator
+    gave up while `buildRawAck` happily ACKed. Every such disagreement is an ACK the sender cannot
+    match. `MSH` must now **lead** the payload (§2.5.1) for any consumer to read it, so "unreadable"
+    is one answer rather than three.
 - **`buildRawAck` assumed `|` was the field separator instead of reading MSH-1
   (MLLP-ACK-UTF8, sibling).** MSH-1 *is* the field separator (HL7 v2.5.1 §2.5.4) — the byte at
   offset 3 of the MSH segment defines it — and the client-side scanners had always read it
@@ -175,7 +197,9 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   `ack-from-hl7`-scoped, emitted in `MllpAck.warnings`, not through the framing registry (13 codes
   total now). `buildMllpAck` **verifies** every ACK it builds against the very byte-level scanners the
   `@cosyte/mllp` client uses to correlate, and warns when MSA-2 is not byte-identical to the inbound
-  MSH-10 (HL7 v2.5.1 §2.9.2.2), naming both byte strings in hex. The ACK is still emitted — a
+  MSH-10 (HL7 v2.5.1 §2.9.2.2). The warning reports the two byte **lengths** and withholds the
+  field values — MSH-10 is inbound payload content and a warning goes to a log. The ACK is still
+  emitted — a
   mismatched ACK beats silence — but the mismatch can no longer pass unremarked, because a
   non-verbatim MSA-2 *is* an ACK the sender cannot match. It fires for an `encoding` override that
   cannot round-trip the inbound bytes, and for an inbound declaring non-default delimiters or a

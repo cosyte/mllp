@@ -20,11 +20,7 @@
 import type { AckCode, AckErrorDetail, AckMode, Hl7Message } from "@cosyte/hl7";
 
 import { encodeFrame } from "../framing/encoder.js";
-import {
-  CONTROL_ID_ENCODING,
-  extractMsaControlId,
-  extractMshControlId,
-} from "../internal/control-id.js";
+import { extractMsaControlId, extractMshControlId } from "../internal/control-id.js";
 
 import { loadHl7Peer } from "./peer.js";
 import type { Hl7Peer } from "./peer.js";
@@ -268,10 +264,30 @@ function inboundBytes(
  * correlation assertion: if it passes, a `@cosyte/mllp` sender will match this
  * ACK to its send.
  *
- * Returns `null` when the check passes, or cannot be made at all — MSH-10 is
- * absent (the peer's own no-correlation fail-safe already warns), or the inbound's
- * MSH cannot be located byte-wise (it does not lead with `MSH`, e.g. it is still
- * MLLP-framed). We never warn on a comparison we could not actually perform.
+ * Returns `null` when the check passes, or cannot be made at all — the inbound has no
+ * readable MSH (it does not lead with `MSH`, e.g. it is still MLLP-framed), or it
+ * carries no MSH-10 (the peer's own no-correlation fail-safe already warns about that).
+ * We never warn on a comparison we could not actually perform.
+ *
+ * ## The message names NO field content — deliberately
+ *
+ * An earlier version hex-encoded both control IDs into the warning text, reasoning that
+ * a control ID is routing metadata rather than clinical content and that an operator
+ * tracing a lost message needs the bytes. That reasoning was wrong twice:
+ *
+ *   1. **It is not this function's call to make.** MSH-10 is inbound payload content,
+ *      this module's contract is that its warnings carry *never any inbound payload
+ *      bytes*, and a warning goes to a log — which in this domain is a place PHI must
+ *      not reach. A field is not safe to log merely because it is *usually* an opaque id.
+ *   2. **It was demonstrably PHI.** Paired with a scanner that ran past the segment
+ *      terminator (since fixed — see `readMshSegment`), a truncated MSH made "MSH-10"
+ *      resolve to PID-3, and this warning rendered the patient's **MRN** in hex. The
+ *      scanner bug is fixed; withholding the bytes stays, as defence in depth: the next
+ *      such bug must not have a paved road into a log line.
+ *
+ * The warning says *that* the echo broke and what to compare. Nothing is lost — the
+ * caller already holds both byte strings (the inbound is their own `payload`; the ACK is
+ * the `MllpAck.payload` this call returns).
  * @internal
  */
 function verifyVerbatimEcho(
@@ -284,19 +300,19 @@ function verifyVerbatimEcho(
   const echoedId = extractMsaControlId(ackPayload);
   if (echoedId === inboundId) return null;
 
-  // The ids are `latin1` — 1:1 with bytes — so hex is a faithful, PHI-free rendering
-  // of exactly what differs. A control id is routing metadata, not clinical content,
-  // and the operator tracing a lost message needs to see the bytes.
-  const inboundHex = Buffer.from(inboundId, CONTROL_ID_ENCODING).toString("hex");
-  const echoedHex =
-    echoedId === null ? "<absent>" : Buffer.from(echoedId, CONTROL_ID_ENCODING).toString("hex");
+  // Byte LENGTHS only — never the bytes themselves. The ids are `latin1`, which is 1:1
+  // with bytes, so `.length` is a byte count. A length is a shape, not content.
+  const inboundLen = String(inboundId.length);
+  const echoed = echoedId === null ? "absent" : `${String(echoedId.length)} bytes`;
   return {
     code: MLLP_ACK_CONTROL_ID_NOT_VERBATIM,
     message:
       `ACK does not echo the inbound MSH-10 verbatim (HL7 v2.5.1 §2.9.2.2): ` +
-      `inbound MSH-10 = 0x${inboundHex}, emitted MSA-2 = ${echoedId === null ? echoedHex : `0x${echoedHex}`}. ` +
+      `inbound MSH-10 is ${inboundLen} bytes, emitted MSA-2 is ${echoed}, and they differ. ` +
       `The sender keys its in-flight store on the inbound bytes, so it will NOT match this ACK ` +
-      `(ACK timeout -> resend -> duplicate message).`,
+      `(ACK timeout -> resend -> duplicate message). ` +
+      `Field values are withheld — MSH-10 is inbound payload content and this warning goes to a log; ` +
+      `compare your inbound payload against MllpAck.payload to see the bytes.`,
   };
 }
 

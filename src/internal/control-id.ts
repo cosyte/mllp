@@ -80,17 +80,112 @@ const SEGMENT_SEPARATOR_LF = 0x0a;
 export const CONTROL_ID_ENCODING = "latin1" as const;
 
 /**
- * Extract MSH-10 (Message Control ID) from an HL7 v2 payload.
+ * MSH-1 values we refuse to read a message with.
  *
- * Pure byte-level scan — never throws, returns `null` for malformed input
- * (Postel's Law decoder side; CLAUDE.md guardrail). The field separator is
- * detected dynamically from `buf[3]` (the byte immediately after `MSH`), because
- * MSH-1 *is* the field separator (HL7 v2.5.1 §2.5.4) — it is never assumed to
- * be `|`.
+ * MSH-1 *is* the field separator (§2.5.4), but a segment terminator (`CR`/`LF`) or
+ * an MLLP framing byte (`VT`/`FS`) cannot be one: the first would end the segment it
+ * is supposed to delimit, and the second cannot be written back into an ACK without
+ * making the ACK unframeable. A payload can carry those bytes — the decoder tolerates
+ * them behind `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` — so this is reachable from
+ * peer-controlled input. Every consumer treats such a message as unreadable, which is
+ * what keeps them in agreement.
+ * @internal
+ */
+const UNSAFE_FIELD_SEPARATORS: ReadonlySet<number> = new Set([
+  SEGMENT_SEPARATOR_CR,
+  SEGMENT_SEPARATOR_LF,
+  0x0b, // VT — MLLP start block
+  0x1c, // FS — MLLP end block
+]);
+
+/**
+ * The field separator this message declares in MSH-1, or `null` if it declares none
+ * we can use.
  *
- * The field bytes are decoded as `latin1` (see {@link CONTROL_ID_ENCODING}) — a
- * lossless 1:1 byte↔code-unit mapping, so a high-bit control-ID byte survives
- * into the correlation key rather than being masked into a different ID.
+ * `MSH` must **lead** the payload: HL7 v2.5.1 §2.5.1 makes MSH the first segment of
+ * every message, and a payload that does not begin with it is not one we can read.
+ * (This is also the only rule under which all three consumers can agree — see the
+ * module docblock. `buildRawAck` used to hunt for an `MSH` anywhere in the payload
+ * and would happily ACK a message the correlator had already given up on.)
+ * @internal
+ */
+function readFieldSeparator(buf: Buffer): number | null {
+  if (buf.length < 4) return null;
+  if (buf[0] !== ASCII_M || buf[1] !== ASCII_S || buf[2] !== ASCII_H) return null;
+  const fieldSep = buf[3] as number;
+  return UNSAFE_FIELD_SEPARATORS.has(fieldSep) ? null : fieldSep;
+}
+
+/** The MSH segment, decoded and split into its fields. @internal */
+export interface MshSegment {
+  /** MSH-1 — the field separator this message declares (§2.5.4). One `latin1` char. */
+  readonly fieldSep: string;
+  /**
+   * The MSH segment split on {@link fieldSep}. `[0]` is the literal `"MSH"`, `[1]` is
+   * MSH-2 (the encoding characters), and thereafter the index **is** the field number:
+   * `[9]` is MSH-10, `[10]` is MSH-11, `[11]` is MSH-12.
+   */
+  readonly fields: readonly string[];
+}
+
+/**
+ * Read the MSH segment of an HL7 v2 payload — **the** scan, which every consumer in
+ * this package goes through.
+ *
+ * Pure byte-level, never throws, returns `null` for anything it cannot read (Postel's
+ * Law decoder side; CLAUDE.md guardrail). It:
+ *
+ *   * requires the payload to lead with `MSH` ({@link readFieldSeparator});
+ *   * takes the field separator from MSH-1 rather than assuming `|` (§2.5.4);
+ *   * **stops at the first `CR`/`LF`** — the segment terminator bounds the segment;
+ *   * decodes only that segment, as `latin1` (see {@link CONTROL_ID_ENCODING}), so a
+ *     high-bit byte survives and a 16 MB payload is not decoded to read its header.
+ *
+ * ## The segment terminator is load-bearing, not a detail
+ *
+ * An earlier version of this scan counted field separators without ever stopping at
+ * the segment terminator. On a **truncated MSH** — `MSH|^~\&|EPIC|HOSP|MIRTH|LAB\r`,
+ * which has only 6 fields — the count therefore ran *past the `CR`* and kept counting
+ * separators inside the next segment. The "MSH-10" it returned was `PID-3`: the
+ * patient's **MRN**. That value became the client's correlation key, and was carried
+ * into `MllpTimeoutError.messageControlId` and the `MLLP_ACK_UNMATCHED_CONTROL_ID` /
+ * `MLLP_ACK_AFTER_TIMEOUT` warnings — a patient identifier in a log line, and a
+ * mis-read one at that. A field that does not exist must read as absent, never as the
+ * next segment's contents.
+ *
+ * @example
+ * ```typescript
+ * const msh = readMshSegment(payloadBuffer);
+ * // msh?.fields[9] === 'MSG00001'; msh?.fieldSep === '|'
+ * ```
+ *
+ * @internal
+ */
+export function readMshSegment(buf: Buffer): MshSegment | null {
+  const sep = readFieldSeparator(buf);
+  if (sep === null) return null;
+
+  // Bound the segment at its terminator BEFORE reading any field out of it.
+  let segEnd = 3;
+  while (
+    segEnd < buf.length &&
+    buf[segEnd] !== SEGMENT_SEPARATOR_CR &&
+    buf[segEnd] !== SEGMENT_SEPARATOR_LF
+  ) {
+    segEnd++;
+  }
+
+  const fieldSep = String.fromCharCode(sep);
+  const fields = buf.subarray(0, segEnd).toString(CONTROL_ID_ENCODING).split(fieldSep);
+  return { fieldSep, fields };
+}
+
+/**
+ * Extract MSH-10 (Message Control ID) from an HL7 v2 payload — the correlation key.
+ *
+ * A thin read off {@link readMshSegment}: `null` when the payload has no readable MSH,
+ * when the MSH segment is too short to reach MSH-10, or when MSH-10 is present but
+ * empty. It is **never** a value taken from another segment.
  *
  * @example
  * ```typescript
@@ -101,39 +196,10 @@ export const CONTROL_ID_ENCODING = "latin1" as const;
  * @internal
  */
 export function extractMshControlId(buf: Buffer): string | null {
-  if (buf.length < 4) return null;
-  if (buf[0] !== ASCII_M || buf[1] !== ASCII_S || buf[2] !== ASCII_H) {
-    return null;
-  }
-  const fieldSep = buf[3] as number;
-  // MSH layout when split by `fieldSep`:
-  //   [0]'MSH'  [1]encChars  [2]MSH-3 ... [9]MSH-10 ...
-  // Iteration: count separators starting at byte 3 (the first separator).
-  // Increment fieldIndex on each separator. Capture range when fieldIndex
-  // transitions 9→10 (i.e. just consumed MSH-10's closing separator).
-  let fieldIndex = 0;
-  let fieldStart = 0;
-  const end = buf.length;
-  // Iterate up to AND INCLUDING `end` so a buffer ending at MSH-10 (no
-  // trailing separator) still closes the field cleanly via the synthetic
-  // terminator (treated as a fieldSep at i === end).
-  for (let i = 3; i <= end; i++) {
-    const isSynthetic = i === end;
-    const b = isSynthetic ? fieldSep : (buf[i] as number);
-    const isFieldSep = b === fieldSep;
-    const isSegEnd = b === SEGMENT_SEPARATOR_CR || b === SEGMENT_SEPARATOR_LF;
-    if (isFieldSep || isSegEnd) {
-      fieldIndex++;
-      if (fieldIndex === 9) {
-        if (isSegEnd) return null; // segment ended before MSH-10
-        fieldStart = i + 1;
-      } else if (fieldIndex === 10) {
-        if (fieldStart >= i) return null; // empty MSH-10
-        return buf.subarray(fieldStart, i).toString(CONTROL_ID_ENCODING);
-      }
-    }
-  }
-  return null;
+  const msh = readMshSegment(buf);
+  if (msh === null) return null;
+  const id = msh.fields[9];
+  return id === undefined || id === "" ? null : id;
 }
 
 /**
@@ -158,11 +224,13 @@ export function extractMshControlId(buf: Buffer): string | null {
  * @internal
  */
 export function extractMsaControlId(buf: Buffer): string | null {
-  if (buf.length < 4) return null;
-  if (buf[0] !== ASCII_M || buf[1] !== ASCII_S || buf[2] !== ASCII_H) {
-    return null;
-  }
-  const fieldSep = buf[3] as number;
+  // Same MSH-1 rule as every other read in this module (MSH must lead; a framing or
+  // segment byte is not a usable separator) — so the ACK is read under exactly the
+  // separator the message declares, and an ACK this package refuses to read is one
+  // no consumer here will claim to have read.
+  const sep = readFieldSeparator(buf);
+  if (sep === null) return null;
+  const fieldSep = sep;
   const end = buf.length;
   let segStart = 0;
   while (segStart < end) {

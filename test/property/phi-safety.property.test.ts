@@ -23,6 +23,7 @@
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 
+import { buildAckAA, buildMllpAck } from "../../src/ack-from-hl7/index.js";
 import { FrameReader } from "../../src/framing/decoder.js";
 import { encodeFrame } from "../../src/framing/encoder.js";
 import { MllpFramingError } from "../../src/framing/error.js";
@@ -197,6 +198,83 @@ describe("PHI-safety: warnings carry structural facts only, never a payload slic
         reader.push(stream);
         for (const w of warnings) {
           expect(leaksMarker(w.message)).toBe(false);
+        }
+      }),
+      { numRuns: 200 },
+    );
+  });
+});
+
+describe("PHI-safety: the ACK builders' warnings carry no message content (MLLP-ACK-UTF8)", () => {
+  /**
+   * The leak this pins shut. `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` used to hex-encode the
+   * inbound MSH-10 into its message, on the reasoning that a control ID is routing
+   * metadata rather than clinical content. But the scanner that produced that "MSH-10"
+   * ran past the segment terminator, so on a TRUNCATED MSH it actually returned PID-3 —
+   * the patient's MRN — and the warning rendered it into a log line. Both are fixed
+   * (`readMshSegment` is bounded; the warning reports byte lengths only), and this is
+   * the property that keeps them fixed: whatever the inbound, an ACK warning may not
+   * echo any field of it.
+   *
+   * Every field below is a distinct marker, so a leak names the field it came from.
+   */
+  const MSH10 = "CTLZZZ1";
+  const MRN = "MRNZZZ2";
+  const NAME = "NAMZZZ3";
+  const DOB = "19850312";
+
+  /** An inbound whose MSH is truncated at `mshFields`, followed by a PID full of markers. */
+  function inboundTruncatedAt(mshFields: number): Buffer {
+    const all = [
+      "MSH",
+      "^~\\&",
+      "EPIC",
+      "HOSP",
+      "MIRTH",
+      "LAB",
+      "20260714120000",
+      "",
+      "ADT^A01",
+      MSH10,
+      "P",
+      "2.5.1",
+    ];
+    const msh = all.slice(0, mshFields).join("|");
+    return Buffer.from(`${msh}\rPID|1||${MRN}||${NAME}^SYNTH||${DOB}|F\r`, "latin1");
+  }
+
+  const leaks = (text: string): boolean =>
+    [MRN, NAME, DOB, MSH10].some((m) => text.includes(m)) ||
+    [MRN, NAME, DOB, MSH10].some((m) => text.includes(Buffer.from(m, "latin1").toString("hex")));
+
+  it("no ACK warning echoes any inbound field, at ANY MSH truncation point", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 12 }),
+        fc.constantFrom<BufferEncoding>("latin1", "utf8", "ascii"),
+        (mshFields, encoding) => {
+          const inbound = inboundTruncatedAt(mshFields);
+          // Sweep the encodings too: a lossy override is the other way to make the
+          // verbatim check fire, and it must be just as quiet about the bytes.
+          const ack = buildMllpAck(inbound, { code: "AA", encoding });
+          for (const w of ack.warnings) {
+            expect(leaks(w.message), `warning ${w.code} leaked a field`).toBe(false);
+          }
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  it("no ACK PAYLOAD carries a field of any segment after the MSH", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 12 }), (mshFields) => {
+        const inbound = inboundTruncatedAt(mshFields);
+        const text = buildAckAA(inbound).payload.toString("latin1");
+        // MSH-10 legitimately appears in MSA-2 — that is the ACK's whole job. Nothing
+        // from the PID may appear anywhere.
+        for (const marker of [MRN, NAME, DOB]) {
+          expect(text.includes(marker), `ACK payload leaked ${marker}`).toBe(false);
         }
       }),
       { numRuns: 200 },
