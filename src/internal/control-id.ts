@@ -26,6 +26,9 @@ const ASCII_M = 0x4d;
 const ASCII_S = 0x53;
 const ASCII_H = 0x48;
 const ASCII_A = 0x41;
+const ASCII_B = 0x42;
+const ASCII_F = 0x46;
+const ASCII_T = 0x54;
 const SEGMENT_SEPARATOR_CR = 0x0d;
 const SEGMENT_SEPARATOR_LF = 0x0a;
 
@@ -175,6 +178,79 @@ function findMshSegment(buf: Buffer): { start: number; end: number } | null {
     segStart = next;
   }
   return null;
+}
+
+/**
+ * True iff the `CR`/`LF`-delimited segment starting at `i` is an HL7 **batch/file
+ * envelope** header — `FHS`, `BHS`, `BTS`, or `FTS` (§2.10.3). Matched on the
+ * three uppercase ASCII segment-ID bytes only; the 4th byte (the separator) is not
+ * inspected, because the mere *presence* of a batch segment is what disqualifies a
+ * single-message ACK, regardless of that segment's own delimiter. @internal
+ */
+function isBatchEnvelopeSegmentAt(buf: Buffer, i: number): boolean {
+  if (i + 2 >= buf.length) return false;
+  const a = buf[i] as number;
+  const b = buf[i + 1] as number;
+  const c = buf[i + 2] as number;
+  // FHS / FTS
+  if (a === ASCII_F && ((b === ASCII_H && c === ASCII_S) || (b === ASCII_T && c === ASCII_S))) {
+    return true;
+  }
+  // BHS / BTS
+  if (a === ASCII_B && ((b === ASCII_H && c === ASCII_S) || (b === ASCII_T && c === ASCII_S))) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * True iff the payload is **not a single bare HL7 message** — it carries a batch/file
+ * envelope (`FHS`/`BHS`/`BTS`/`FTS`, §2.10.3) or a **second `MSH` segment** (two or more
+ * messages concatenated in one frame, a documented real-world quirk).
+ *
+ * ## Why this is a fail-safe refusal signal, not tolerance
+ *
+ * A single MSA-2 can echo exactly **one** MSH-10. A batch is a *sequence* of messages with
+ * a `BTS-1` count; a concatenated frame is N messages back to back. Either way, a positive
+ * `AA` that names the first control ID silently leaves messages 2..N unacknowledged — the
+ * sender reads "batch accepted", so they are lost outright or time out and resend as
+ * **duplicate clinical messages**. This predicate lets the ACK builders **downgrade to a
+ * loud non-positive answer** for such a payload rather than fabricate a positive
+ * disposition for messages nobody looked at.
+ *
+ * It does **not** parse the batch, re-base on the first `MSH`, or otherwise widen any
+ * reader — it only *detects* the multi-message shape so callers can refuse it. Batch ACK
+ * is its own feature (`MLLP-BATCH`); this is the refusal that keeps the door shut until it
+ * is designed. A normal single message (`MSH` followed by `PID`/`PV1`/`OBR`/…) contains no
+ * batch segment and exactly one `MSH`, so this returns `false` for it.
+ *
+ * Pure byte-level, never throws.
+ *
+ * @internal
+ */
+export function containsBatchOrExtraMessage(buf: Buffer): boolean {
+  let mshCount = 0;
+  let segStart = 0;
+  while (segStart < buf.length) {
+    const end = segmentEnd(buf, segStart);
+    if (isMshSegmentAt(buf, segStart)) {
+      mshCount++;
+      if (mshCount > 1) return true;
+    } else if (isBatchEnvelopeSegmentAt(buf, segStart)) {
+      return true;
+    }
+    // Advance past this segment's terminator bytes (handles `CRLF` as one break).
+    let next = end;
+    while (
+      next < buf.length &&
+      (buf[next] === SEGMENT_SEPARATOR_CR || buf[next] === SEGMENT_SEPARATOR_LF)
+    ) {
+      next++;
+    }
+    if (next === segStart) return false; // no progress — malformed
+    segStart = next;
+  }
+  return false;
 }
 
 /** The MSH segment, decoded and split into its fields. @internal */

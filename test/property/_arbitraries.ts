@@ -136,13 +136,18 @@ function leadingWhitespace(): fc.Arbitrary<MalformedFrame> {
   }));
 }
 
-/** Trailing bytes: a canonical frame, then a stray non-VT byte after the terminator. */
+/**
+ * Trailing bytes: a VT appears **mid-payload**, so the accumulated bytes are discarded and only
+ * the remnant after it is delivered. This is the **reserved** meaning of `MLLP_TRAILING_BYTES`
+ * (see the decoder's `_readPayload`); it is not an inter-frame stray byte (that is
+ * `MLLP_FS_WITHOUT_CR`). Always warns, no opt-in required.
+ */
 function trailingBytes(): fc.Arbitrary<MalformedFrame> {
-  return fc.tuple(safePayloadBytes(), SAFE_PAYLOAD_BYTE).map(([p, stray]) => ({
+  return fc.tuple(safePayloadBytes(), safePayloadBytes()).map(([discarded, remnant]) => ({
     kind: "trailing-bytes" as const,
-    // VT + p + FS + stray  → after FS the reader expects CR; a stray non-CR byte
-    // under allowFsOnly delivers the frame then warns MLLP_TRAILING_BYTES.
-    bytes: Buffer.from([VT, ...p, FS, stray]),
+    // VT + discarded + VT + remnant + FS + CR  → the mid-payload VT abandons `discarded`,
+    // warns MLLP_TRAILING_BYTES on the delivered `remnant` frame, then completes it.
+    bytes: Buffer.from([VT, ...discarded, VT, ...remnant, FS, CR]),
   }));
 }
 

@@ -18,7 +18,12 @@ import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { encodeFrame } from "../../src/framing/index.js";
 import { MllpConnectionError } from "../../src/connection/index.js";
 import { createServer } from "../../src/server/server.js";
-import { buildRawAck, resolveNackCode, MllpAckError } from "../../src/server/ack.js";
+import {
+  buildRawAck,
+  rawAckUncorrelatable,
+  resolveNackCode,
+  MllpAckError,
+} from "../../src/server/ack.js";
 
 import { must } from "../helpers/tracked-servers.js";
 
@@ -154,7 +159,7 @@ describe("SERVER-04: auto-ACK — AA mode via MllpServer over InMemoryTransport"
     await server.close();
   });
 
-  it("autoAck: AA — malformed payload (empty) returns fallback ACK without throwing", async () => {
+  it("autoAck: AA — malformed payload (empty) fail-safe downgrades to AE without throwing", async () => {
     const server = createServer({ autoAck: "AA" });
     await server.listen(0);
 
@@ -187,8 +192,11 @@ describe("SERVER-04: auto-ACK — AA mode via MllpServer over InMemoryTransport"
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000)),
     ]);
 
-    // Should receive some fallback ACK (contains MSA|AA at minimum)
-    expect(ackPayload.toString("ascii")).toContain("MSA|AA");
+    // FAIL-SAFE (MLLP-ACK-FAILSAFE): an empty payload has no readable MSH, so a positive `AA`
+    // the sender cannot correlate is downgraded to a non-positive `AE` — never `MSA|AA`.
+    const ackText = ackPayload.toString("ascii");
+    expect(ackText).toContain("MSA|AE");
+    expect(ackText).not.toContain("MSA|AA");
 
     sock.destroy();
     await server.close();
@@ -573,8 +581,11 @@ describe("buildRawAck — byte-level ACK construction (Phase 6)", () => {
     expect(ack).not.toContain("12345");
   });
 
-  it("missing MSH returns a well-formed ACK carrying the requested code, never throws", () => {
-    expect(buildRawAck(Buffer.allocUnsafe(0), "AA").toString("ascii")).toContain("MSA|AA|");
+  it("missing MSH fail-safe downgrades a positive code and never throws (MLLP-ACK-FAILSAFE)", () => {
+    // No readable MSH ⇒ nothing to correlate ⇒ a requested `AA` must become `AE`, never `MSA|AA`.
+    const emptyAck = buildRawAck(Buffer.allocUnsafe(0), "AA").toString("ascii");
+    expect(emptyAck).toContain("MSA|AE|");
+    expect(emptyAck).not.toContain("MSA|AA");
     const noMsh = buildRawAck(Buffer.from("PID|||12345\rEVN|A01\r", "ascii"), "AE");
     expect(noMsh.toString("ascii")).toContain("MSA|AE|");
     expect(noMsh.toString("ascii")).not.toContain("12345");
@@ -594,5 +605,232 @@ describe("resolveNackCode — handler-failure → negative code mapping", () => 
 
   it("a duck-typed { ackCode: 'AR' } is honored", () => {
     expect(resolveNackCode({ ackCode: "AR" })).toBe("AR");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MLLP-ACK-FAILSAFE — never answer AA for a message you could not correlate.
+// ---------------------------------------------------------------------------
+
+/** A well-formed single message with control ID FRAG01 (used as the post-VT fragment). */
+const GOOD_MSG_FRAG01 =
+  "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|FRAG01|P|2.5\rPID|||999^^^F||ROE^JANE\r";
+
+/** MSH with an empty MSH-10 (control ID field present but empty). */
+const NO_CONTROL_ID = "MSH|^~\\&|SENDER|SFAC|RECV|RFAC|20260424120000||ADT^A01||P|2.5\r";
+
+/** Two complete messages concatenated into one frame (a documented real-world quirk). */
+const CONCATENATED_TWO_MSH =
+  "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|MSG001|P|2.5\rPID|||111\r" +
+  "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|MSG002|P|2.5\rPID|||222\r";
+
+/** An FHS/BHS batch envelope wrapping a single message (§2.10.3). */
+const BATCH_ENVELOPE =
+  "FHS|^~\\&|A|B\rBHS|^~\\&|A|B\r" +
+  "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|MSG001|P|2.5\rPID|||111\r" +
+  "BTS|1\rFTS|1\r";
+
+describe("MLLP-ACK-FAILSAFE — buildRawAck refuses a positive ACK it cannot correlate", () => {
+  const positiveStays = (payload: string, id: string): void => {
+    const ack = buildRawAck(Buffer.from(payload, "latin1"), "AA").toString("latin1");
+    expect(ack).toContain(`MSA|AA|${id}`);
+  };
+  const positiveDowngrades = (payload: string | Buffer): void => {
+    const buf = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "latin1");
+    const ack = buildRawAck(buf, "AA").toString("latin1");
+    expect(ack).toContain("MSA|AE");
+    expect(ack).not.toContain("MSA|AA");
+    // Enhanced-mode positive downgrades symmetrically: CA -> CE.
+    const cAck = buildRawAck(buf, "CA").toString("latin1");
+    expect(cAck).toContain("MSA|CE");
+    expect(cAck).not.toContain("MSA|CA");
+  };
+
+  it("a single correlatable message keeps its positive AA (regression guard)", () => {
+    positiveStays(ADT_A01_PAYLOAD, "MSG001");
+    expect(rawAckUncorrelatable(Buffer.from(ADT_A01_PAYLOAD, "latin1"))).toBe(false);
+  });
+
+  it("(1) an empty MSH-10 downgrades AA -> AE", () => {
+    positiveDowngrades(NO_CONTROL_ID);
+    expect(rawAckUncorrelatable(Buffer.from(NO_CONTROL_ID, "latin1"))).toBe(true);
+  });
+
+  it("(2) two concatenated MSH messages downgrade AA -> AE (do NOT ACK only the first)", () => {
+    const ack = buildRawAck(Buffer.from(CONCATENATED_TWO_MSH, "latin1"), "AA").toString("latin1");
+    // The positive disposition is the harm — it must never be AA. (A downgraded AE may still
+    // echo the first frame's MSH-10, which correctly settles a one-message-per-frame sender's
+    // single in-flight entry and triggers a full-frame resend — that is not a false positive.)
+    expect(ack).toContain("MSA|AE");
+    expect(ack).not.toContain("MSA|AA");
+    expect(rawAckUncorrelatable(Buffer.from(CONCATENATED_TWO_MSH, "latin1"))).toBe(true);
+  });
+
+  it("(3) a SP/TAB/BOM before MSH downgrades AA -> AE (MSH heads no segment)", () => {
+    positiveDowngrades(` ${ADT_A01_PAYLOAD}`); // leading space
+    positiveDowngrades(`\t${ADT_A01_PAYLOAD}`); // leading TAB
+    positiveDowngrades(
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(ADT_A01_PAYLOAD, "latin1")]),
+    ); // UTF-8 BOM
+  });
+
+  it("an FHS/BHS batch envelope downgrades AA -> AE (MLLP-BATCH stays a loud refusal)", () => {
+    positiveDowngrades(BATCH_ENVELOPE);
+    expect(rawAckUncorrelatable(Buffer.from(BATCH_ENVELOPE, "latin1"))).toBe(true);
+  });
+
+  it("a requested NEGATIVE code is never touched — it still echoes what it can", () => {
+    // Concatenated messages with an AE request stay AE and may echo the first id (already negative).
+    const ae = buildRawAck(Buffer.from(CONCATENATED_TWO_MSH, "latin1"), "AE").toString("latin1");
+    expect(ae).toContain("MSA|AE|MSG001");
+  });
+});
+
+describe("MLLP-ACK-FAILSAFE — server auto-ACK downgrades + emits a PHI-safe 'nack'", () => {
+  const VTb = 0x0b;
+  const FSb = 0x1c;
+  const CRb = 0x0d;
+
+  /** Open a socket to a listening server, write `frame`, resolve the first ACK payload (unframed). */
+  async function sendAndAwaitAck(port: number, frame: Buffer): Promise<Buffer> {
+    const net = await import("node:net");
+    const sock = await new Promise<Socket>((resolve, reject) => {
+      const s = net.createConnection({ host: "127.0.0.1", port });
+      s.once("connect", () => resolve(s));
+      s.once("error", reject);
+    });
+    const ack = await new Promise<Buffer>((resolve, reject) => {
+      let buf = Buffer.allocUnsafe(0);
+      sock.on("data", (chunk: Buffer) => {
+        buf = Buffer.concat([buf, chunk]);
+        const fsIdx = buf.indexOf(FSb);
+        if (fsIdx !== -1 && fsIdx + 1 < buf.length && buf[fsIdx + 1] === CRb) {
+          resolve(buf.subarray(1, fsIdx));
+        }
+      });
+      setTimeout(() => reject(new Error("timeout")), 2000);
+      sock.write(frame);
+    });
+    sock.destroy();
+    return ack;
+  }
+
+  it("(4) a raw VT mid-payload: the discarded fragment is downgraded to AE, reason 'discarded-bytes'", async () => {
+    const nacks: Array<{ ackCode: string; reason: string }> = [];
+    const server = createServer({ autoAck: "AA" });
+    server.on("nack", (evt: { ackCode: string; reason: string }) => nacks.push(evt));
+    await server.listen(0);
+    const port = must(server.getStats().port);
+
+    // VT + <clinical bytes that get discarded> + VT + <valid fragment MSH> + FS + CR.
+    // The decoder abandons the accumulator on the mid-payload VT (MLLP_TRAILING_BYTES) and
+    // delivers only FRAG01 — which parses cleanly, so this isolates the discarded-bytes rule
+    // from the uncorrelatable-inbound rule.
+    const discarded = Buffer.from(
+      "MSH|^~\\&|SENDER|SFAC|RECV|RFAC|20260424120000||ADT^A01|REALMSG|P|2.5\rPID|||12345^^^FAC||DOE^JOHN\r",
+      "latin1",
+    );
+    const fragment = Buffer.from(GOOD_MSG_FRAG01, "latin1");
+    const frame = Buffer.concat([
+      Buffer.from([VTb]),
+      discarded,
+      Buffer.from([VTb]),
+      fragment,
+      Buffer.from([FSb, CRb]),
+    ]);
+
+    const ack = (await sendAndAwaitAck(port, frame)).toString("latin1");
+    expect(ack).toContain("MSA|AE");
+    expect(ack).not.toContain("MSA|AA");
+    expect(nacks).toHaveLength(1);
+    expect(must(nacks[0]).ackCode).toBe("AE");
+    expect(must(nacks[0]).reason).toBe("discarded-bytes");
+
+    await server.close();
+  });
+
+  it("an uncorrelatable inbound (no MSH-10) downgrades to AE, reason 'uncorrelatable-inbound'", async () => {
+    const nacks: Array<{ ackCode: string; reason: string }> = [];
+    const server = createServer({ autoAck: "AA" });
+    server.on("nack", (evt: { ackCode: string; reason: string }) => nacks.push(evt));
+    await server.listen(0);
+    const port = must(server.getStats().port);
+
+    const ack = (await sendAndAwaitAck(port, framePayload(NO_CONTROL_ID))).toString("latin1");
+    expect(ack).toContain("MSA|AE");
+    expect(ack).not.toContain("MSA|AA");
+    expect(nacks).toHaveLength(1);
+    expect(must(nacks[0]).reason).toBe("uncorrelatable-inbound");
+
+    await server.close();
+  });
+
+  it("a good single message still gets a positive AA and emits NO 'nack'", async () => {
+    const nacks: unknown[] = [];
+    const server = createServer({ autoAck: "AA" });
+    server.on("nack", (evt) => nacks.push(evt));
+    await server.listen(0);
+    const port = must(server.getStats().port);
+
+    const ack = (await sendAndAwaitAck(port, framePayload(ADT_A01_PAYLOAD))).toString("latin1");
+    expect(ack).toContain("MSA|AA|MSG001");
+    expect(nacks).toHaveLength(0);
+
+    await server.close();
+  });
+
+  it("a valid message pipelined after an FS-without-CR stray-byte frame still gets AA (no bleed)", async () => {
+    // Regression for the conformance-refuter finding: MLLP_TRAILING_BYTES must be reserved for a
+    // mid-payload VT discard. The default `allowFsOnly` path used to also emit it for an
+    // inter-frame stray byte AND mis-attribute it to the NEXT frame — so a perfectly good message
+    // pipelined after `... FS <stray> VT ...` was wrongly downgraded to AE (a duplicate-message bug
+    // introduced by the fix). Both frames here are complete and correlatable → both must be AA.
+    const msg1 = "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|ID1|P|2.5\rPID|||111\r";
+    const msg2 = "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|ID2|P|2.5\rPID|||222\r";
+    // VT msg1 FS <stray 0x58 'X'> VT msg2 FS CR  — frame1 is FS-without-CR + a stray byte.
+    const frame = Buffer.concat([
+      Buffer.from([VTb]),
+      Buffer.from(msg1, "latin1"),
+      Buffer.from([FSb, 0x58, VTb]),
+      Buffer.from(msg2, "latin1"),
+      Buffer.from([FSb, CRb]),
+    ]);
+
+    const nacks: unknown[] = [];
+    const acks: string[] = [];
+    const server = createServer({ autoAck: "AA" });
+    server.on("nack", (evt) => nacks.push(evt));
+    await server.listen(0);
+    const port = must(server.getStats().port);
+
+    const net = await import("node:net");
+    const sock = await new Promise<Socket>((resolve, reject) => {
+      const s = net.createConnection({ host: "127.0.0.1", port });
+      s.once("connect", () => resolve(s));
+      s.once("error", reject);
+    });
+    await new Promise<void>((resolve, reject) => {
+      let buf = Buffer.allocUnsafe(0);
+      sock.on("data", (chunk: Buffer) => {
+        buf = Buffer.concat([buf, chunk]);
+        let fsIdx = buf.indexOf(FSb);
+        while (fsIdx !== -1 && fsIdx + 1 < buf.length && buf[fsIdx + 1] === CRb) {
+          acks.push(buf.subarray(1, fsIdx).toString("latin1"));
+          buf = buf.subarray(fsIdx + 2);
+          fsIdx = buf.indexOf(FSb);
+        }
+        if (acks.length >= 2) resolve();
+      });
+      setTimeout(() => reject(new Error("timeout")), 2000);
+      sock.write(frame);
+    });
+    sock.destroy();
+
+    expect(acks).toHaveLength(2);
+    expect(must(acks[0])).toContain("MSA|AA|ID1");
+    expect(must(acks[1])).toContain("MSA|AA|ID2");
+    expect(nacks).toHaveLength(0);
+
+    await server.close();
   });
 });

@@ -75,7 +75,7 @@ a code is a breaking change — log pipelines and dashboards key on them.
 | `MLLP_FS_WITHOUT_CR` | Frame ended `<FS>` with no trailing `<CR>`. |
 | `MLLP_LF_AFTER_FS` | A stray `<LF>` followed `<FS>` — common from line-oriented senders. |
 | `MLLP_LEADING_WHITESPACE` | Padding bytes before `<VT>`. |
-| `MLLP_TRAILING_BYTES` | **Not benign junk — read this one.** Emitted in two places: a `<VT>` appearing *mid-payload* (the partial payload accumulated so far is **discarded** and a new frame started — i.e. a **truncated** message), and a stray byte after `<FS>` under `allowFsOnly`. |
+| `MLLP_TRAILING_BYTES` | **Not benign junk — read this one.** **Reserved** for a `<VT>` appearing *mid-payload*: the partial payload accumulated so far is **discarded** and a new frame started — i.e. the delivered payload is only the **remnant** of a truncated message. It is frame-scoped (attached to the delivered remnant, never a neighbour) and is what the server's auto-ACK path keys on to refuse a positive `AA` for a destroyed message. (A stray byte after `<FS>` under `allowFsOnly` is reported by `MLLP_FS_WITHOUT_CR`, not this code.) |
 | `MLLP_PAYLOAD_CONTAINS_VT` | **Encoder, strict:** payload contains `0x0B`. Throws. |
 | `MLLP_PAYLOAD_CONTAINS_FS` | **Encoder, strict:** payload contains `0x1C`. Throws. |
 | `MLLP_EMPTY_PAYLOAD` | Nothing between `<VT>` and `<FS>`. |
