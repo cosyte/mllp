@@ -117,9 +117,15 @@ with: the codec cancels on both sides, and a codec-induced mismatch is **structu
 check cannot be extended to catch this; the bytes are gone by then. Pass a `Buffer`. That is what the
 `Buffer`-first API rule is for.
 
-`buildMllpAck` also **does not ACK an HL7 batch** (§2.10.3). An `FHS`/`BHS` envelope yields the
-warned, non-positive `AE` fallback rather than a positive `AA` correlated to the batch's first
-message — which would tell the sender the whole batch was accepted while messages 2..N went unread.
+Neither builder **ACKs an HL7 batch** (§2.10.3) or a frame of concatenated messages. An `FHS`/`BHS`
+envelope, or a second `MSH` in the same frame, yields the warned, non-positive `AE` — never a
+positive `AA` correlated to the first message, which would tell the sender the whole batch was
+accepted while messages 2..N went unread. `buildMllpAck` refuses via its unparseable fallback;
+`buildRawAck` and the server's auto-ACK path refuse by downgrading a requested positive code. A raw
+`VT` inside a payload is the same class of hazard from the transport side: the decoder discards the
+accumulated bytes (`MLLP_TRAILING_BYTES`) and delivers only the fragment after it, and the auto-ACK
+path downgrades that frame rather than positively acknowledge a destroyed message. Batch ACK is its
+own unbuilt feature (`MLLP-BATCH`).
 
 ## The API is not stable yet
 

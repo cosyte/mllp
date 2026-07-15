@@ -13,10 +13,12 @@ export {
   type ServerStats,
   type MessageMeta,
   type NackEvent,
+  type NackReason,
 } from "./server.js";
 
 export {
   buildRawAck,
+  rawAckUncorrelatable,
   resolveNackCode,
   MllpAckError,
   type AckCode,

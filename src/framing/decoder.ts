@@ -321,8 +321,12 @@ export class FrameReader {
     }
 
     if (byte === VT) {
-      // VT mid-payload: the current partial payload is abandoned.
-      // Emit MLLP_TRAILING_BYTES (always a warning, never a throw) and start fresh.
+      // VT mid-payload: the current partial payload is abandoned and accumulation restarts after
+      // this VT, so the frame that eventually delivers is only the REMNANT after the discard.
+      // Emit MLLP_TRAILING_BYTES (always a warning, never a throw) — this is the code's **reserved**
+      // meaning: "bytes were discarded; the delivered payload is a fragment." It is emitted while
+      // accumulating the remnant frame, so it attaches to that frame (never bled onto another), and
+      // `MllpServer`'s auto-ACK path keys on it to refuse a positive `AA` for a destroyed message.
       this._emitWarning(
         "MLLP_TRAILING_BYTES",
         this._byteOffset,
@@ -433,20 +437,25 @@ export class FrameReader {
           `Strict mode: FS without CR at offset ${this._byteOffset}`,
         );
       }
-      // Deliver the frame, emit FS_WITHOUT_CR, then treat the stray byte as trailing
+      // Deliver the completed frame and flag the missing CR; the stray byte is then dropped and
+      // we return to scanning. The single FS_WITHOUT_CR warning names the stray byte and is
+      // attached to the frame it followed.
+      //
+      // We deliberately do NOT also emit MLLP_TRAILING_BYTES here. That code is **reserved for a
+      // VT appearing mid-payload** (see `_readPayload`), where it means "this delivered payload is
+      // only the remnant after accumulated bytes were discarded" — a signal `MllpServer`'s
+      // auto-ACK path keys on to refuse a positive `AA` for a message whose bytes were destroyed.
+      // Emitting it for an inter-frame stray byte overloaded that meaning AND mis-attributed it:
+      // it was emitted *after* `_deliverFrame()`, so it landed in the NEXT frame's warning
+      // accumulator and made a subsequent, perfectly good message look discarded. FS_WITHOUT_CR
+      // already, correctly, reports this deviation.
       this._emitWarning(
         "MLLP_FS_WITHOUT_CR",
         this._byteOffset,
-        `FS not followed by CR at offset ${this._byteOffset}; got 0x${byte.toString(16).padStart(2, "0")}`,
+        `FS not followed by CR at offset ${this._byteOffset}; got 0x${byte.toString(16).padStart(2, "0")} (dropped)`,
       );
       this._deliverFrame();
       this._state = "SCANNING_FOR_VT";
-      // Emit trailing bytes warning for the stray byte
-      this._emitWarning(
-        "MLLP_TRAILING_BYTES",
-        this._byteOffset,
-        `Unexpected byte 0x${byte.toString(16).padStart(2, "0")} after frame terminator at offset ${this._byteOffset}`,
-      );
       return;
     }
 

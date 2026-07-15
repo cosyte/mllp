@@ -71,11 +71,13 @@ export {
   type ServerStats,
   type MessageMeta,
   type NackEvent,
+  type NackReason,
 } from "./server/index.js";
 
 // Phase 6: fail-safe ACK semantics & the commit contract
 export {
   buildRawAck,
+  rawAckUncorrelatable,
   resolveNackCode,
   MllpAckError,
   type AckCode,

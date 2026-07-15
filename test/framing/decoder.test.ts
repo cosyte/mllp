@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { FrameReader } from "../../src/framing/decoder.js";
 import { MllpFramingError } from "../../src/framing/error.js";
+import { must } from "../helpers/tracked-servers.js";
 
 // Helper: wrap a payload in canonical MLLP framing
 function frame(payload: number[]): Buffer {
@@ -432,6 +433,45 @@ describe("FrameReader — MLLP_TRAILING_BYTES (always a warning)", () => {
     r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]));
     expect(frames).toHaveLength(1);
     expect(frames[0]).toEqual(Buffer.from([0x42]));
+  });
+
+  it("MLLP_TRAILING_BYTES is delivered on the discarded frame itself, not bled to the next", () => {
+    // [VT A VT B FS CR VT C FS CR]: frame1 (B) had a mid-payload discard; frame2 (C) is clean.
+    const perFrame: Array<{ payload: string; codes: string[] }> = [];
+    const r = new FrameReader({
+      onFrame: (p, _off, warnings) => {
+        perFrame.push({ payload: p.toString("latin1"), codes: warnings.map((w) => w.code) });
+      },
+    });
+    r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d, 0x0b, 0x43, 0x1c, 0x0d]));
+    expect(perFrame).toHaveLength(2);
+    expect(must(perFrame[0]).payload).toBe("B");
+    expect(must(perFrame[0]).codes).toContain("MLLP_TRAILING_BYTES");
+    expect(must(perFrame[1]).payload).toBe("C");
+    // The discard belongs to frame 1 ONLY — it must not bleed onto the clean frame 2.
+    expect(must(perFrame[1]).codes).not.toContain("MLLP_TRAILING_BYTES");
+  });
+
+  it("an FS-without-CR stray byte does NOT emit MLLP_TRAILING_BYTES (reserved for mid-payload VT)", () => {
+    // [VT A FS X VT B FS CR]: frame1 (A) is FS-without-CR + stray 'X'; frame2 (B) is clean.
+    // MLLP_TRAILING_BYTES is reserved for a mid-payload VT discard, so neither frame may carry it —
+    // the stray byte is reported by MLLP_FS_WITHOUT_CR instead, and must not bleed onto frame 2.
+    const perFrame: Array<{ payload: string; codes: string[] }> = [];
+    const all: string[] = [];
+    const r = new FrameReader({
+      allowFsOnly: true,
+      onWarning: (w) => all.push(w.code),
+      onFrame: (p, _off, warnings) => {
+        perFrame.push({ payload: p.toString("latin1"), codes: warnings.map((w) => w.code) });
+      },
+    });
+    r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x58, 0x0b, 0x42, 0x1c, 0x0d]));
+    expect(perFrame).toHaveLength(2);
+    expect(must(perFrame[0]).payload).toBe("A");
+    expect(must(perFrame[0]).codes).toContain("MLLP_FS_WITHOUT_CR");
+    expect(must(perFrame[1]).payload).toBe("B");
+    expect(all).not.toContain("MLLP_TRAILING_BYTES");
+    expect(must(perFrame[1]).codes).not.toContain("MLLP_TRAILING_BYTES");
   });
 });
 

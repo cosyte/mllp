@@ -32,7 +32,7 @@ import type { ServerTlsOptions } from "../transport/tls-options.js";
 import { MLLP_BIND_ALL_INTERFACES, type SecurityWarning } from "../transport/security-warnings.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
-import { buildRawAck, resolveNackCode } from "./ack.js";
+import { buildRawAck, rawAckUncorrelatable, resolveNackCode } from "./ack.js";
 import type { AckCode, NegativeAckCode } from "./ack.js";
 import { safeEmit, safeEmitError } from "../internal/safe-emit.js";
 
@@ -136,18 +136,39 @@ export interface MessageMeta {
 }
 
 /**
- * Payload of the server `'nack'` event — emitted when a commit-gated `autoAck: 'AA'`
- * handler throws/rejects and the server responds with a **negative** acknowledgement
- * instead of `AA` (the fail-safe commit contract).
+ * Why the server sent a **negative** acknowledgement instead of `AA` on the auto-ACK path.
+ * A stable, **PHI-free** enum (no payload bytes, no control ID) — safe to log and to key
+ * metrics on.
  *
- * **PHI-safe by construction:** carries only the connection ID and the resolved
- * acknowledgement code — never the payload, the inbound control ID, or the thrown
- * error's message (which may carry PHI). The object is `Object.freeze()`'d before emission.
+ * - `'handler-rejected'` — a commit-gated `onMessage` handler threw/rejected (the commit
+ *   contract: a positive ACK cannot precede a successful commit).
+ * - `'uncorrelatable-inbound'` — the inbound could not carry a correlatable positive ACK
+ *   (no readable `MSH`, an empty MSH-10, or a batch/concatenated-message shape). A positive
+ *   `AA` here names a control ID the sender cannot match → timeout → resend → **duplicate
+ *   clinical message**. See {@link rawAckUncorrelatable}.
+ * - `'discarded-bytes'` — the decoder flagged `MLLP_TRAILING_BYTES` for this frame: a
+ *   mid-payload `VT` made it **discard accumulated bytes** and deliver only the fragment
+ *   after it. The clinical message was destroyed in transit; a positive `AA` would tell the
+ *   sender a message we never received was delivered.
+ */
+export type NackReason = "handler-rejected" | "uncorrelatable-inbound" | "discarded-bytes";
+
+/**
+ * Payload of the server `'nack'` event — emitted whenever the server responds with a
+ * **negative** acknowledgement instead of `AA` on the auto-ACK path (the fail-safe commit
+ * contract). This fires both when a commit-gated `autoAck: 'AA'` handler throws/rejects and
+ * when the server **downgrades** a positive auto-ACK because the inbound could not be
+ * correlated ({@link NackReason}).
+ *
+ * **PHI-safe by construction:** carries only the connection ID, the resolved
+ * acknowledgement code, and a static `reason` — never the payload, the inbound control ID,
+ * or the thrown error's message (which may carry PHI). The object is `Object.freeze()`'d
+ * before emission.
  *
  * @example
  * ```typescript
- * server.on('nack', ({ connectionId, ackCode }) => {
- *   metrics.increment('mllp.nack', { code: ackCode }); // ackCode is 'AE' | 'AR'
+ * server.on('nack', ({ connectionId, ackCode, reason }) => {
+ *   metrics.increment('mllp.nack', { code: ackCode, reason }); // e.g. reason='discarded-bytes'
  * });
  * ```
  */
@@ -156,6 +177,8 @@ export interface NackEvent {
   readonly connectionId: string;
   /** The negative acknowledgement code sent to the peer (`AE` or `AR`). */
   readonly ackCode: NegativeAckCode;
+  /** Why the negative acknowledgement was sent (PHI-free). */
+  readonly reason: NackReason;
 }
 
 /**
@@ -385,8 +408,11 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * surfaced via the `'message'` event and the `onMessage` callback.
  *
  * Public events: `'listening'`, `'connection'`, `'message'`, `'nack'`, `'error'`, `'close'`.
- * The `'nack'` event ({@link NackEvent}) fires when a commit-gated `autoAck: 'AA'` handler
- * fails and the server returns a negative ACK instead of `AA`.
+ * The `'nack'` event ({@link NackEvent}) fires whenever the server returns a negative ACK
+ * instead of `AA` on the auto-ACK path — a commit-gated `autoAck: 'AA'` handler failing, or
+ * a positive auto-ACK **downgraded** because the inbound could not be correlated (an
+ * unreadable/uncorrelatable message, or one whose bytes the decoder discarded). The
+ * {@link NackReason} distinguishes the causes.
  *
  * **`'error'` contract:** underlying `net.Server`/`tls.Server` errors are forwarded to the
  * `'error'` event whenever a listener is attached. With **no** listener, the outcome depends on
@@ -1238,16 +1264,21 @@ export class MllpServer extends EventEmitter {
   ): Promise<void> {
     const handler = this._opts.onMessage;
 
-    // No commit handler: 'AA' is a transport-accept (received+framed only).
+    // No commit handler: 'AA' is a transport-accept (received+framed only) — but still
+    // fail-safe-downgraded if the message cannot carry a correlatable positive ACK.
     if (handler === undefined) {
-      this._dispatchAck(conn, buildRawAck(payload, "AA"));
+      this._dispatchAck(
+        conn,
+        buildRawAck(payload, this._resolveAutoAckPositive(payload, meta, conn)),
+      );
       return;
     }
 
     let code: AckCode;
     try {
       await handler(payload, meta, conn); // durable-commit step
-      code = "AA";
+      // Commit succeeded — but only answer `AA` if the message is one we could correlate.
+      code = this._resolveAutoAckPositive(payload, meta, conn);
     } catch (err: unknown) {
       const nack: NegativeAckCode = resolveNackCode(err);
       code = nack;
@@ -1261,12 +1292,60 @@ export class MllpServer extends EventEmitter {
       // failed to commit. A broken metrics tap must never be able to suppress the fail-safe ACK.
       this._emitContained(
         "nack",
-        Object.freeze({ connectionId: conn.connectionId, ackCode: nack }),
+        Object.freeze({
+          connectionId: conn.connectionId,
+          ackCode: nack,
+          reason: "handler-rejected",
+        }),
       );
     }
 
     // Unconditional: reached whether the handler committed or threw, and no subscriber can skip it.
     this._dispatchAck(conn, buildRawAck(payload, code));
+  }
+
+  /**
+   * Resolve the auto-ACK code for a message the server would otherwise acknowledge
+   * **positively** (`AA`) — the no-handler transport-accept and the post-commit success
+   * paths. Fail-safe: downgrade to `AE` and emit a PHI-safe `'nack'` whenever the message
+   * cannot carry a correlatable positive ACK, so `AA` never names a control ID the sender
+   * cannot match (→ timeout → resend → **duplicate clinical message**).
+   *
+   * Two independent disqualifiers, one from the bytes and one from the frame:
+   *
+   *   - **`rawAckUncorrelatable(payload)`** — no readable `MSH`, an empty MSH-10, or a
+   *     batch/concatenated-message shape. This is the SAME predicate `buildRawAck` enforces
+   *     on the wire; it is re-checked here so the downgrade is **observable** (a `'nack'`
+   *     event) rather than a silent code change inside the builder.
+   *   - **`MLLP_TRAILING_BYTES`** in the frame's warnings — a mid-payload `VT` made the
+   *     decoder discard accumulated bytes and deliver only the fragment after it. The
+   *     clinical message was destroyed in transit, so even a fragment that happens to carry
+   *     a readable MSH must not be positively acknowledged. This condition is invisible to
+   *     `buildRawAck` (it sees only the fragment), which is why it lives here. The code is
+   *     **reserved** for that discard (see the decoder's `_readPayload`) and is emitted while
+   *     accumulating the delivered frame, so it is frame-scoped: it names *this* payload's own
+   *     discard, never a neighbouring frame's trailing junk.
+   *
+   * `'discarded-bytes'` takes precedence in the reason when both hold — it is the root cause.
+   */
+  private _resolveAutoAckPositive(payload: Buffer, meta: MessageMeta, conn: Connection): AckCode {
+    const discarded = meta.warnings.some((w) => w.code === "MLLP_TRAILING_BYTES");
+    const uncorrelatable = rawAckUncorrelatable(payload);
+    if (!discarded && !uncorrelatable) return "AA";
+
+    const reason: NackReason = discarded ? "discarded-bytes" : "uncorrelatable-inbound";
+    // CONTAINED — this runs inside `_sendCommitAck`, a `void`-ed async task. A throwing `'nack'`
+    // subscriber must not unwind into it (unhandled rejection → process death) nor skip the `AE`
+    // that the caller dispatches next. PHI-safe: `reason` and `ackCode` are static, no payload.
+    this._emitContained(
+      "nack",
+      Object.freeze({
+        connectionId: conn.connectionId,
+        ackCode: "AE",
+        reason,
+      }),
+    );
+    return "AE";
   }
 
   /**

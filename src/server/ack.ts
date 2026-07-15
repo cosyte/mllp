@@ -25,7 +25,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { readMshSegment } from "../internal/control-id.js";
+import { containsBatchOrExtraMessage, readMshSegment } from "../internal/control-id.js";
 
 /**
  * HL7 Table 0008 — Acknowledgment Code. A **stable public API**.
@@ -186,6 +186,60 @@ const ENCODING_CHAR_SUBSTITUTE = "#";
 const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
 
 /**
+ * True iff a **positive** raw acknowledgement (`AA`/`CA`) cannot be safely correlated to
+ * this payload, so {@link buildRawAck} (and the server's auto-ACK path) must **downgrade**
+ * it to a non-positive `AE`/`CE` rather than tell the sender "I have it."
+ *
+ * The rule this enforces: **never answer `AA` for a message you could not correlate.** A
+ * positive ACK is a promise the sender may forget the message; if it names a control ID
+ * the sender cannot match — or names one of several messages it never read — the sender
+ * times out and resends, committing a **duplicate clinical message** (or worse, believes a
+ * destroyed message was delivered). Three payload-shaped reasons make a positive ACK
+ * uncorrelatable, all peer-reachable off the wire:
+ *
+ *   1. **No readable `MSH`.** `readMshSegment` returns `null` — e.g. a `BOM`/`SP`/`TAB`
+ *      before `MSH` (which shares the `MSH`'s segment line, so `MSH` heads no segment), or
+ *      a bare fragment delivered after a mid-payload `VT` discard (`MLLP_TRAILING_BYTES`).
+ *      MSA-2 would be empty: an ACK that correlates to nothing.
+ *   2. **Empty MSH-10.** The `MSH` is readable but carries no message control ID, so there
+ *      is nothing to echo — again `MSA|AA|` with an empty MSA-2.
+ *   3. **A batch or concatenated messages.** An `FHS`/`BHS`/`BTS`/`FTS` envelope (§2.10.3)
+ *      or a second `MSH` in the same frame: a single MSA-2 can echo only ONE control ID, so
+ *      a positive ACK naming the first silently drops the rest (see
+ *      {@link containsBatchOrExtraMessage}). Batch ACK is its own feature (`MLLP-BATCH`) —
+ *      until it is designed, a batch must stay a **loud non-positive** answer.
+ *
+ * This is a **refusal**, not a tolerance widening: it never makes an unreadable message
+ * readable, never re-bases on a located `MSH`, never parses a batch. It only recognizes
+ * the shapes for which a positive disposition would be a lie, so the builder can fall back
+ * to `AE`. A **negative** requested code (`AE`/`AR`/`CE`/`CR`) is unaffected — it is
+ * already non-positive, and echoing whatever control ID it can find is still useful.
+ *
+ * Pure, byte-level, never throws.
+ *
+ * @example
+ * ```typescript
+ * import { rawAckUncorrelatable } from '@cosyte/mllp';
+ * rawAckUncorrelatable(oneGoodMessage); // false → AA is safe
+ * rawAckUncorrelatable(twoConcatenatedMsh); // true → downgrade AA to AE
+ * ```
+ */
+export function rawAckUncorrelatable(payload: Buffer): boolean {
+  const msh = readMshSegment(payload);
+  if (msh === null) return true; // (1) no readable MSH
+  const controlId = msh.fields[9];
+  if (controlId === undefined || controlId === "") return true; // (2) empty MSH-10
+  return containsBatchOrExtraMessage(payload); // (3) batch / concatenated messages
+}
+
+/** Non-positive counterpart of a positive HL7 Table 0008 code: `AA`→`AE`, `CA`→`CE`. @internal */
+function downgradePositiveAck(code: AckCode): AckCode {
+  if (code === "AA") return "AE";
+  if (code === "CA") return "CE";
+  return code;
+}
+
+/**
  * Build a minimal original-mode HL7 v2 acknowledgement from raw inbound payload bytes,
  * **without a parser** (parser-driven ACKs are the `@cosyte/mllp/ack-from-hl7` subpath).
  *
@@ -236,14 +290,28 @@ const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
  * is not the goal; agreeing on the *correct*, *tolerant* answer is. A lenient reader may
  * never drop data that is there (Postel's Law — CLAUDE.md).
  *
+ * ## The fail-safe downgrade: never a positive `AA`/`CA` it cannot correlate
+ *
+ * A positive acknowledgement is a promise the sender may forget the message. If it names a
+ * control ID the sender cannot match — or names one message out of several it never read —
+ * the sender times out and resends, committing a **duplicate clinical message**. So a
+ * requested positive code is **downgraded** to its non-positive counterpart (`AA`→`AE`,
+ * `CA`→`CE`) whenever the payload cannot carry a correlatable positive ACK: no readable
+ * `MSH`, an empty MSH-10, or a batch/concatenated-message shape that a single MSA-2 cannot
+ * acknowledge. See {@link rawAckUncorrelatable} for the exact conditions and why each is a
+ * refusal rather than a widened reader. A requested **negative** code (`AE`/`AR`/`CE`/`CR`)
+ * is never touched. This mirrors the parser-backed `buildMllpAck`, which downgrades and
+ * warns on an unparseable inbound — the two builders' fail-safe semantics now agree.
+ *
  * **Never throws** and **never copies payload content** beyond the routing/control
  * metadata above — `readMshSegment` stops at the MSH's segment terminator, so no field of
  * any later segment (PID and friends) can be reached, let alone echoed. On a missing or
- * unreadable `MSH` it returns a minimal well-formed ACK carrying `code` so the caller can
- * still respond.
+ * unreadable `MSH` it returns a minimal well-formed ACK carrying the (downgraded) `code` so
+ * the caller can still respond.
  *
  * @param payload - Raw decoded HL7 v2 payload bytes (MLLP framing already stripped).
- * @param code - MSA-1 acknowledgement code to emit.
+ * @param code - Requested MSA-1 acknowledgement code. A positive `AA`/`CA` is downgraded to
+ *   `AE`/`CE` when the message cannot be correlated (see above).
  * @returns ACK payload bytes (no framing — the caller wraps with `encodeFrame`).
  *
  * @example
@@ -258,12 +326,24 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
   // means that for the correlator too, which is exactly the agreement we need.
   const msh = readMshSegment(payload);
 
+  // FAIL-SAFE: never emit a positive disposition (`AA`/`CA`) for a message we cannot correlate.
+  // A positive ACK the sender cannot match → timeout → resend → duplicate clinical message.
+  // The downgrade is defense in depth here (a direct caller of this public export is protected
+  // even if it never touched the server), and the server's auto-ACK path applies the SAME
+  // predicate so it can emit a `'nack'` observability signal alongside. See
+  // {@link rawAckUncorrelatable}. A requested negative code passes through unchanged.
+  if ((code === "AA" || code === "CA") && rawAckUncorrelatable(payload)) {
+    code = downgradePositiveAck(code);
+  }
+
   const newControlId = randomUUID().replace(/-/g, "").substring(0, 20);
   const now = timestamp14();
 
   if (msh === null) {
-    // No usable MSH to echo: emit a well-formed ACK carrying the requested code, no payload
-    // content. HL7 defaults, since the inbound declared no delimiters we can trust.
+    // No usable MSH to echo: emit a well-formed ACK carrying the (already fail-safe-downgraded)
+    // code, no payload content. HL7 defaults, since the inbound declared no delimiters we can
+    // trust. A positive `AA`/`CA` has been turned into `AE`/`CE` above — there is no control ID
+    // to correlate, so a positive disposition here would be exactly the uncorrelatable lie.
     const s = DEFAULT_FIELD_SEPARATOR;
     const e = DEFAULT_ENCODING_CHARACTERS;
     const tail = code === "AE" || code === "AR" ? `${s}${NACK_TEXT[code]}` : "";

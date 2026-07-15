@@ -66,6 +66,13 @@ This is safe only when something downstream owns durability *before* the ACK goe
 for clinical messages, it is exactly the failure mode described at the top of this page. If you are
 reaching for it, reach for the commit-gated form instead.
 
+Whichever form you use, the auto-ACK path **never answers `AA` for a message it could not
+correlate**. A positive `AA`/`CA` is downgraded to a non-positive `AE`/`CE` when the inbound has no
+readable `MSH`, an empty MSH-10, a batch or concatenated-message shape a single MSA-2 cannot
+acknowledge, or bytes the decoder discarded mid-frame (`MLLP_TRAILING_BYTES`). An uncorrelatable
+positive ACK is worse than a negative one: the sender believes a message you never received was
+delivered, or resends it as a duplicate. The same downgrade guards `buildRawAck` directly.
+
 ## Full control
 
 - **`autoAck: fn`** — `fn(payload, meta, conn)` returns the ACK bytes. You own MSA-1 entirely,
@@ -78,13 +85,18 @@ The `'message'` event always fires **before** the ACK is sent, whichever mode yo
 
 ## Failures are reported PHI-safely
 
-When a commit-gated handler fails, the server emits a `'nack'` event carrying only
-`{ connectionId, ackCode }`. The payload never appears in it — and neither does the thrown error's
-message, which in real systems tends to contain exactly the record that failed to write. Nothing
-from the failure reaches the wire beyond the ACK code itself.
+Whenever the server returns a negative ACK instead of `AA` on the auto-ACK path, it emits a `'nack'`
+event carrying only `{ connectionId, ackCode, reason }`. The payload never appears in it — and
+neither does the thrown error's message, which in real systems tends to contain exactly the record
+that failed to write. Nothing from the failure reaches the wire beyond the ACK code itself. The
+`reason` is a PHI-free enum: `'handler-rejected'` (a commit-gated handler threw/rejected),
+`'uncorrelatable-inbound'` (no readable `MSH`, empty MSH-10, or a batch/concatenated frame), or
+`'discarded-bytes'` (a mid-frame `VT` made the decoder discard bytes and deliver only a fragment).
 
 ```ts
-server.on("nack", ({ connectionId, ackCode }) => metrics.increment("mllp.nack", { ackCode }));
+server.on("nack", ({ connectionId, ackCode, reason }) =>
+  metrics.increment("mllp.nack", { ackCode, reason }),
+);
 ```
 
 ## ACK correlation on the client
@@ -234,8 +246,12 @@ impossible. Split the batch and ACK each message yourself, or handle it with `au
 
 ### Limits of the builder
 
-- **It trusts your disposition.** It never decides clinical accept/reject — you choose `AA`/`AE`/`AR`
-  from your own commit outcome.
+- **It trusts your disposition — with one fail-safe exception.** It never decides clinical
+  accept/reject: you choose `AA`/`AE`/`AR` from your own commit outcome. The exception is a
+  message it cannot correlate — no readable `MSH`, an empty MSH-10, or a batch/concatenated frame —
+  where a requested positive `AA`/`CA` is **downgraded** to `AE`/`CE` rather than fabricate a
+  positive disposition the sender cannot match. Both builders do this (`buildRawAck` on the raw
+  path; `buildMllpAck` on an unparseable inbound).
 - **MSA-2 is byte-verbatim for a plain control ID under the HL7 default delimiters** — including a
   high-bit one — and, **on a `Buffer` inbound**, *loud* rather than silently wrong in the five cases
   where it cannot be (above). It

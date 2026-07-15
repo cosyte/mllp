@@ -14,6 +14,34 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **`buildRawAck` and the server's auto-ACK path said "AA — I've got it" for messages they could not
+  correlate (MLLP-ACK-FAILSAFE).** A positive acknowledgement tells the sender it may forget the
+  message; when the ACK names a control ID the sender cannot match — or names one of several messages
+  it never read — the sender times out and resends, committing a **duplicate clinical message** (or
+  believes a destroyed message was delivered). `buildMllpAck` already downgraded and warned; the raw
+  builder and the default `autoAck: 'AA'` path did not, and four peer-reachable inputs — all
+  pre-existing on `main` — produced a positive `MSA|AA|`: (1) an inbound with an empty MSH-10, (2)
+  **two concatenated `MSH` messages** in one frame (an `AA` naming only the first, message 2 silently
+  unacknowledged), (3) a **`BOM`/`SP`/`TAB` before `MSH`** (the junk shares the MSH's segment line, so
+  `MSH` heads no segment → unreadable → `MSA|AA|` with an empty MSA-2, no warning), and (4) worst,
+  verified over a real socket, a **raw `VT` inside a payload** — the decoder discards the accumulated
+  bytes (`MLLP_TRAILING_BYTES`) and delivers only the *fragment* after it, which the server auto-ACKed
+  `MSA|AA|`: the clinical message destroyed and positively acknowledged. A requested positive code
+  (`AA`/`CA`) is now **downgraded** to `AE`/`CE` whenever the payload cannot carry a correlatable
+  positive ACK — no readable `MSH`, an empty MSH-10, a batch/concatenated-message shape
+  (`FHS`/`BHS`/`BTS`/`FTS` or a second `MSH`), or, on the server path, a frame the decoder flagged
+  with discarded bytes. This is a **refusal**, not a widened reader: it never makes an unreadable
+  message readable, re-bases on a located `MSH`, or parses a batch — batch ACK stays its own unbuilt
+  feature (`MLLP-BATCH`), a loud non-positive answer. The wire downgrade in `buildRawAck` protects any
+  direct caller (defense in depth); the server re-checks the same condition so the downgrade is
+  **observable**, emitting a PHI-safe `'nack'` event with a new `reason`
+  (`'handler-rejected' | 'uncorrelatable-inbound' | 'discarded-bytes'`), never the payload or control
+  ID. New exports: `rawAckUncorrelatable(payload)` and the `NackReason` type. As part of this,
+  `MLLP_TRAILING_BYTES` is now **reserved for the mid-payload `VT` discard** (a frame-scoped signal)
+  and is no longer emitted — nor mis-attributed to the *next* frame — for an inter-frame stray byte
+  under `allowFsOnly`, which `MLLP_FS_WITHOUT_CR` already reports; without that, a good message
+  pipelined after a stray-byte frame would have been wrongly downgraded to `AE` (caught by the
+  conformance gate).
 - **The MSH-10 scan ran past the segment terminator and returned the patient's MRN as the
   correlation key (MLLP-ACK-UTF8; found by the conformance gate).** `extractMshControlId` counted
   field separators without ever stopping at `CR`/`LF`. On a **truncated MSH** — one with fewer than
