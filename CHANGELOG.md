@@ -14,6 +14,12 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **Removed ten orphan gitlinks from `.claude/worktrees/`.** A commit captured local agent worktree
+  state as ten mode-`160000` gitlinks with no `.gitmodules` entry, pointing at objects that never
+  existed in this repo. This is the ADR 0004 failure mode that `iac` and `pathways` each produced;
+  it went unnoticed here. `.claude/worktrees/` is now gitignored so it cannot recur. Repo hygiene
+  only — nothing in `src/`, `test/`, or the published tarball is affected.
+
 - **The Release workflow can actually start.** `.github/workflows/release.yml` calls the shared
   `cosyte/.github` pipeline, which requests `contents`/`id-token`/`pull-requests: write`, but declared
   no `permissions:` of its own — so it inherited the repo default of `contents: read`. A called
