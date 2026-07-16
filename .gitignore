@@ -12,3 +12,9 @@ coverage/
 examples/tls/certs/
 bench/results/
 dist-artifacts/
+
+# Agent worktrees. When committed these become orphan gitlinks (mode 160000 with no .gitmodules
+# entry), which break recursive submodule traversal in the umbrella — see ADR 0004. Ten of them
+# were committed here once already, referencing objects that never existed. They recur; keep
+# them out of the index.
+.claude/worktrees/
