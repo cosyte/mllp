@@ -33,6 +33,21 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **`scripts/sync-version.mjs` hardened against two latent defects, and gated in CI
+  (SYNC-VERSION-HARDENING).** Follow-up hardening on the VERSION-SYNC script; ported byte-identically
+  across `hl7`, `x12`, and `mllp`. (1) The version was spliced into `src/index.ts` via
+  `String.prototype.replace` with a _replacement string_, which interprets `$&`, `$1`, `` $` ``, etc.,
+  so a version like `1.2.3-$&x` would inject the matched text and corrupt the `VERSION` constant while
+  exiting 0 — the replacement is now a replacer _function_, whose return value is inserted literally.
+  (2) The declaration regex was non-global, so `.replace` silently rewrote the _first_ match; a
+  column-0 decoy (e.g. inside a comment) ahead of the real declaration could be edited instead — the
+  script now matches globally, asserts exactly one declaration, and exits non-zero loudly otherwise.
+  Neither defect is reachable through Changesets today and both previously failed loud rather than
+  shipping a lying `VERSION`, so this is hardening, not a fix for an observed break. The
+  `format`/`format:check` globs now cover `scripts/**/*.mjs` so the script is prettier-gated in CI (it
+  was matched by no glob before); widening the gate also reformatted the pre-existing
+  `scripts/generate-test-certs.mjs` (cosmetic quote/wrap only). Build tooling only — no runtime or
+  public-API change.
 - **`ack-from-hl7`: a lossy `{ encoding: "ascii" }` override on a text inbound can no longer corrupt a
   control ID silently (MLLP-ACK-ASCII-OVERRIDE-BLEED).** The residual path the double-encode fix below
   did not close. `MLLP_ACK_CONTROL_ID_UNVERIFIABLE` originally flagged a text inbound by inspecting the
