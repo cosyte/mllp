@@ -131,17 +131,19 @@ export const MLLP_ACK_CONTROL_ID_NOT_VERBATIM = "MLLP_ACK_CONTROL_ID_NOT_VERBATI
  *
  * The guard cannot be grown to catch that; by the time text arrives the bytes are gone.
  * The API can, and does: rather than let the text path pass a codec-sensitive control ID
- * off as verified, `buildMllpAck` refuses to stay silent about it. Whenever the emitted
- * MSA-2 holds a byte outside `0x00`–`0x7F` on a text inbound — under the default text codec
- * (`utf8`), the range where the codec choice is load-bearing — it emits this warning. An
- * all-ASCII control ID round-trips identically under every codec, so the common case stays
- * quiet; a non-ASCII one is flagged as *unverifiable*, not as *known-broken*, because from a
- * decoded string the two are genuinely indistinguishable.
+ * off as verified, `buildMllpAck` refuses to stay silent about it. Whenever the ACK's MSA-2
+ * control ID holds a code unit outside `0x00`–`0x7F` on a text inbound — the range where the
+ * codec choice is load-bearing — it emits this warning. An all-ASCII control ID round-trips
+ * identically under every codec, so the common case stays quiet; a non-ASCII one is flagged as
+ * *unverifiable*, not as *known-broken*, because from a decoded string the two are genuinely
+ * indistinguishable.
  *
- * (A deliberately lossy `encoding` override on a text inbound — `{ encoding: "ascii" }` on a
- * high-bit id — can corrupt *into* the ASCII range and slip past this non-ASCII proxy. That is
- * a pre-existing gap of the strongly-discouraged text-plus-override path, outside this signal's
- * remit, which targets the default; the `Buffer` overload is the answer there too.)
+ * The check reads the **pre-encoding code units** of MSA-2, not the emitted bytes — so a lossy
+ * `{ encoding: "ascii" }` override, which truncates a code unit to its low 8 bits (`str -> byte &
+ * 0xFF`) and so masks a code unit above `0xFF` *into* the ASCII byte range on the way out (`U+0153`
+ * -> `0x53`), cannot slip a corrupted control ID past it silently (MLLP-ACK-ASCII-OVERRIDE-BLEED).
+ * The strongly-discouraged text-plus-override path is covered for the same reason the default `utf8`
+ * text path is; the `Buffer` overload remains the answer.
  *
  * **The fix the warning points at is the `Buffer`-first API rule.** Pass the raw payload —
  * the bytes the server handed you — and you get the real byte-level check (and, if it breaks,
@@ -422,11 +424,20 @@ function verifyVerbatimEcho(
  * `verifyVerbatimEcho` is a tautology on the text path (it re-derives "the inbound bytes"
  * from the same text, with the same codec, that produced the ACK). So instead of comparing
  * — which cannot fail — this looks at the one property that actually signals danger: does the
- * emitted MSA-2 hold a byte the codec choice could have corrupted? The control ID is read
- * back as `latin1`, which is 1:1 with bytes, so any code unit `> 0x7F` **is** a non-ASCII
- * byte. ASCII bytes round-trip identically under `latin1`/`utf8`/`ascii` alike, so an
- * all-ASCII control ID is provably safe from any text input and stays quiet; a non-ASCII one
- * cannot be certified from decoded text and is flagged.
+ * control ID hold a code unit the codec choice could have corrupted? It reads the ACK's MSA-2
+ * as its **pre-encoding code units** (`Field.text`), so any code unit `> 0x7F` is a non-ASCII,
+ * codec-sensitive control ID. ASCII code units round-trip identically under `latin1`/`utf8`/`ascii`
+ * alike, so an all-ASCII control ID is provably safe from any text input and stays quiet; a
+ * non-ASCII one cannot be certified from decoded text and is flagged.
+ *
+ * It reads the pre-encode **code units**, not the emitted **bytes**, on purpose. A lossy
+ * `{ encoding: "ascii" }` override truncates a code unit to its low 8 bits (`str -> byte & 0xFF`),
+ * masking a code unit above `0xFF` *into* the ASCII byte range on the way out (`U+0153` -> `0x53`),
+ * so an emitted-byte proxy would fall silent on exactly the corruption that matters
+ * (MLLP-ACK-ASCII-OVERRIDE-BLEED). The code units still carry the high bit whatever
+ * the codec did to the bytes, and — since encoding ASCII code units can never yield a non-ASCII
+ * byte — this is a strict superset of the emitted-non-ASCII test, so the default `utf8` text path
+ * is unchanged.
  *
  * This is deliberately *unverifiable*, not *not-verbatim*: from a `string` we cannot know
  * whether the caller's decode matched our encode, so we do not claim the echo broke — only
@@ -440,33 +451,43 @@ function verifyVerbatimEcho(
  * @internal
  */
 function verifyTextInboundEcho(
-  ackPayload: Buffer,
+  controlId: string,
   inbound: Hl7Message | Buffer | string,
 ): MllpAckWarning | null {
   if (Buffer.isBuffer(inbound)) return null;
-  const echoedId = extractMsaControlId(ackPayload);
-  if (echoedId === null) return null;
-  // `echoedId` is `latin1` (1:1 with bytes), so a code unit > 0x7F is a non-ASCII byte — under
-  // the default text codec (`utf8`), the range where the codec is load-bearing and, from decoded
-  // text, unverifiable. (A lossy `ascii` override can corrupt into the ASCII range and slip past
-  // this proxy; that discouraged text+override path is a pre-existing gap, not this check's remit.)
+  if (controlId === "") return null;
+  // Inspect the control ID's **pre-encoding code units** — the decoded-text form the caller
+  // handed us, read straight off the built ACK's MSA-2 (`Field.text`), BEFORE it is serialized
+  // to bytes. Any code unit > 0x7F is a non-ASCII, codec-sensitive control ID: on a text inbound
+  // we cannot know whether the caller's decode matched our encode, so the byte-verbatim echo
+  // cannot be verified.
+  //
+  // We check the CODE UNITS, not the emitted bytes, on purpose. A lossy `encoding` override
+  // (`{ encoding: "ascii" }`) truncates a code unit to its low 8 bits (`str -> byte & 0xFF`), so a
+  // code unit above `0xFF` is masked *into* the ASCII byte range on the way out (`U+0153` -> `0x53`),
+  // and an emitted-byte proxy would go quiet on exactly the corruption that matters
+  // (MLLP-ACK-ASCII-OVERRIDE-BLEED). The pre-encode code units still hold the high bit, so they see
+  // it regardless of the codec — and this is a strict superset of the emitted non-ASCII case
+  // (encoding ASCII code units can never produce a non-ASCII byte), so the default `utf8` text path
+  // is unchanged.
   let hasNonAscii = false;
-  for (let i = 0; i < echoedId.length; i++) {
-    if (echoedId.charCodeAt(i) > 0x7f) {
+  for (let i = 0; i < controlId.length; i++) {
+    if (controlId.charCodeAt(i) > 0x7f) {
       hasNonAscii = true;
       break;
     }
   }
   if (!hasNonAscii) return null;
 
-  // Byte LENGTHS only — never the bytes themselves (PHI; see `verifyVerbatimEcho`).
+  // LENGTH (code-unit count) only — never the field content itself (PHI; see `verifyVerbatimEcho`).
   return {
     code: MLLP_ACK_CONTROL_ID_UNVERIFIABLE,
     message:
       `ACK's byte-verbatim echo of MSH-10 (HL7 v2.5.1 §2.9.2.2) cannot be verified: the inbound ` +
       `was decoded text (a string or Hl7Message), not raw bytes, so its wire bytes are gone and ` +
-      `the emitted ${String(echoedId.length)}-byte MSA-2 contains a non-ASCII byte the decode/encode ` +
-      `codec could have altered. It may not correlate at the sender (ACK timeout -> resend -> ` +
+      `the ${String(controlId.length)}-code-unit MSA-2 control ID holds a non-ASCII code unit the ` +
+      `decode/encode codec could have altered (a lossy override such as ascii can even mask it into ` +
+      `the ASCII byte range). It may not correlate at the sender (ACK timeout -> resend -> ` +
       `duplicate message). Pass the raw payload Buffer to get the byte-level guarantee. ` +
       `Field values are withheld — MSH-10 is inbound payload content and this warning goes to a log.`,
   };
@@ -504,10 +525,13 @@ function toMllpAck(params: {
 
   // Two mutually exclusive echo checks, one per input shape. A `Buffer` inbound is checked
   // against its own wire bytes (a real, falsifiable comparison). A `string`/`Hl7Message` cannot
-  // be — the bytes are gone — so it is flagged as unverifiable when the echoed id is non-ASCII.
+  // be — the bytes are gone — so it is flagged as unverifiable when the echoed control ID holds a
+  // non-ASCII code unit. The text check reads the MSA-2 as PRE-ENCODE code units (not the emitted
+  // bytes), so a lossy `ascii` override masking a high bit into the ASCII range cannot hide it.
   const echoWarning = verifyVerbatimEcho(payload, params.verifyAgainst);
+  const echoedControlId = ack.segments("MSA")[0]?.field(2).text ?? "";
   const unverifiableWarning =
-    params.inbound === undefined ? null : verifyTextInboundEcho(payload, params.inbound);
+    params.inbound === undefined ? null : verifyTextInboundEcho(echoedControlId, params.inbound);
   const allWarnings = [
     ...warnings,
     ...(echoWarning === null ? [] : [echoWarning]),

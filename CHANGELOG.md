@@ -33,6 +33,21 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **`ack-from-hl7`: a lossy `{ encoding: "ascii" }` override on a text inbound can no longer corrupt a
+  control ID silently (MLLP-ACK-ASCII-OVERRIDE-BLEED).** The residual path the double-encode fix below
+  did not close. `MLLP_ACK_CONTROL_ID_UNVERIFIABLE` originally flagged a text inbound by inspecting the
+  **emitted** MSA-2 bytes for a non-ASCII value — a proxy with a blind spot on a lossy override. Node's
+  `ascii` codec truncates a code unit to its low 8 bits, so a control-ID code unit above `0xFF` — e.g.
+  `U+0153` (`œ`, what a windows-1252 decode yields for a `0x9C` wire byte) — is masked *into* the ASCII
+  byte range (`0x53`, `'S'`). The emitted MSA-2 is then all-ASCII, the proxy stayed silent, and a
+  positive `AA` went out echoing a **different** control ID the sender cannot correlate (ACK timeout →
+  resend → **duplicate clinical message**). The check now reads the MSA-2's **pre-encoding code units**
+  instead of the emitted bytes, so a non-ASCII code unit is flagged whatever the codec did to the byte —
+  a strict superset of the old test (encoding ASCII code units can never produce a non-ASCII byte), so
+  the default `utf8` text path is unchanged and all-ASCII control IDs stay quiet. No public-surface
+  change; the warning still carries byte/code-unit lengths only (PHI discipline) and names the same
+  remedy: pass the raw `Buffer`.
+
 - **`ack-from-hl7`: the `string`/`Hl7Message` overload no longer double-encodes a high-bit control ID
   silently.** `buildMllpAck` re-encodes a decoded-text inbound with the JS-native `utf8` default, so
   `buildAckAA(payload.toString("latin1"))` on a control ID of `A <0x8B> B` (legal under `MSH-18` =
