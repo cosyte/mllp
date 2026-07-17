@@ -108,6 +108,11 @@ unacked messages, does not decide clinical acceptance, does not speak MLLP **Rel
 no PKI. The full list is in the **Known limitations & non-goals** doc — read it before you depend on
 this.
 
+## Trademarks
+
+Epic, Cerner, Mirth Connect, NextGen, and Google Cloud Healthcare are trademarks of their respective owners. cosyte is not affiliated with, endorsed by, or
+sponsored by any of them — the names identify the engines this package is tested against, and those it is not. See [TRADEMARKS.md](./TRADEMARKS.md).
+
 ## License
 
 MIT
