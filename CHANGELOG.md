@@ -12,6 +12,25 @@ this file is maintained by hand (Changesets handles the version bump and publish
 The first pre-alpha release (`0.0.1`) will ship the v1 MLLP transport surface below. The package
 begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` until first alpha).
 
+### Documentation
+
+- **`docs-content/` brought to the full canonical Diátaxis spine.** The sidebar was a flat list
+  (`intro`, `framing`, `acks`, `reliability`, `tls`, `limitations`); it is now the canonical spine
+  every `@cosyte/*` package shares — Overview → Installation → Quickstart → Core Concepts (`framing`,
+  `acks`) → Guides (`reliability`, `tls`) → API Reference (resolver-injected) → Troubleshooting
+  (`limitations`) — so a developer moving between `@cosyte/hl7` and `@cosyte/mllp` gets one
+  navigation. Adds two new tutorials: **Installation** (prerequisites, the optional `@cosyte/hl7`
+  peer, a runnable smoke test) and **Quickstart** (the framing round-trip, opt-in tolerance with
+  stable warning codes, and the client/server surface). Every example honors the "transport, not
+  parsing" boundary. Runnable snippets are now gated by the shared doc/code-agreement harness
+  (`docSnippetSuite` from `@cosyte/vitest-config/snippets`, wired in `test/docs-content.test.ts`),
+  which extracts each ` ```ts runnable ` block, executes it against the built package, and asserts its
+  `// =>` results — a documented example can never silently drift from the shipped surface. Also
+  corrects two `intro.md` snippets that referenced non-existent API (`createInMemoryTransport` →
+  `InMemoryTransport.pair()`; the receive example's fictional `respond`/`buildAck` → the real
+  `createServer({ onMessage })`). Bumps the `@cosyte/vitest-config` devDependency to `^0.0.2` for the
+  `/snippets` export. Docs and tests only — no runtime or public-API change.
+
 ### Fixed
 
 - **`ack-from-hl7`: the `string`/`Hl7Message` overload no longer double-encodes a high-bit control ID

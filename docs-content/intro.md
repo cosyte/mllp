@@ -48,17 +48,21 @@ next bytes off the wire. Reconnects, backoff, and backpressure are handled for y
 ## Receive messages
 
 ```ts
-import { MllpServer } from "@cosyte/mllp";
+import { createServer } from "@cosyte/mllp";
 
-const server = new MllpServer({ port: 2575 });
-server.on("message", async ({ payload, respond }) => {
-  await respond(buildAck(payload)); // you own the ACK bytes
+const server = createServer({
+  onMessage: (payload, meta) => {
+    // Each inbound message, de-framed for you. `payload` is a raw Buffer —
+    // charset decoding stays with the caller. How you acknowledge is next.
+    route(payload);
+  },
 });
-await server.listen();
+await server.listen(2575, "127.0.0.1");
 ```
 
 The server frames and de-frames for you; you decide what to send back. The payload is a raw
-`Buffer` — charset decoding stays with the caller.
+`Buffer` — charset decoding stays with the caller. The `'message'` event and the `onMessage`
+callback always fire **before** any ACK is sent.
 
 ## Fail-safe ACKs — the commit contract
 
@@ -108,15 +112,18 @@ See [Framing & tolerance](./framing.md) for the flag-by-flag table and the full 
 ## Testing without sockets
 
 ```ts
-import { MllpClient, MllpServer } from "@cosyte/mllp";
-import { createInMemoryTransport } from "@cosyte/mllp/testing";
+import { Connection } from "@cosyte/mllp";
+import { InMemoryTransport } from "@cosyte/mllp/testing";
 
-const { client: clientTransport, server: serverTransport } = createInMemoryTransport();
+// Two connected, in-process ends — a write to one delivers synchronously to the other.
+const [clientSide, serverSide] = InMemoryTransport.pair();
+const conn = new Connection({ transport: clientSide });
+// Drive framing + ACK correlation deterministically against `serverSide`.
 ```
 
 The in-memory transport is a first-class deliverable from the `@cosyte/mllp/testing` subpath.
-Wire a client and server together in-process — deterministic, no ports, no certs — and reserve real
-sockets for integration smoke tests.
+Pair two ends with `InMemoryTransport.pair()` and hand one to a `Connection` — deterministic, no
+ports, no certs — and reserve real sockets for integration smoke tests.
 
 ## ACK from an HL7 message
 
