@@ -1,3 +1,31 @@
 {
-  "docs": ["intro", "framing", "acks", "reliability", "tls", "limitations"]
+  "docs": [
+    "intro",
+    {
+      "type": "category",
+      "label": "Installation",
+      "items": ["installation"]
+    },
+    {
+      "type": "category",
+      "label": "Quickstart",
+      "items": ["quickstart"]
+    },
+    {
+      "type": "category",
+      "label": "Core Concepts",
+      "collapsed": false,
+      "items": ["framing", "acks"]
+    },
+    {
+      "type": "category",
+      "label": "Guides",
+      "items": ["reliability", "tls"]
+    },
+    {
+      "type": "category",
+      "label": "Troubleshooting",
+      "items": ["limitations"]
+    }
+  ]
 }
