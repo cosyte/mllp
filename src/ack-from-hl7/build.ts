@@ -111,6 +111,57 @@ export const MLLP_ACK_INBOUND_UNPARSEABLE = "MLLP_ACK_INBOUND_UNPARSEABLE";
 export const MLLP_ACK_CONTROL_ID_NOT_VERBATIM = "MLLP_ACK_CONTROL_ID_NOT_VERBATIM";
 
 /**
+ * Warning code emitted when the inbound was handed in as **text** (a `string` or an
+ * already-parsed `Hl7Message`) rather than as raw `Buffer` bytes, and the ACK's MSA-2
+ * carries a **non-ASCII** control ID — a combination whose byte-verbatim echo
+ * (HL7 v2.5.1 §2.9.2.2) `buildMllpAck` **cannot verify**, and may silently be breaking.
+ *
+ * ## Why a distinct code from {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM}
+ *
+ * `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` is a *proof of failure*: on a `Buffer` inbound the
+ * wire bytes are in hand, the check compares MSA-2 against them, and it fires only when
+ * they provably differ. This code is the opposite — a *confession that the proof cannot
+ * be run*. A `string`/`Hl7Message` inbound was decoded from its wire bytes **before** this
+ * module ever saw it, so the only thing left to compare the ACK against is that same text
+ * re-encoded with the same codec: the codec cancels on both sides and the verbatim check
+ * becomes a tautology that always passes (see {@link verifyVerbatimEcho}). It would report
+ * clean even for `buildAckAA(payload.toString("latin1"))` on a high-bit control ID — where
+ * a `latin1`-decoded `0x8B` is re-encoded as the two `utf8` bytes `0xC2 0x8B`, a *different*
+ * control ID the sender cannot correlate (timeout → resend → **duplicate clinical message**).
+ *
+ * The guard cannot be grown to catch that; by the time text arrives the bytes are gone.
+ * The API can, and does: rather than let the text path pass a codec-sensitive control ID
+ * off as verified, `buildMllpAck` refuses to stay silent about it. Whenever the emitted
+ * MSA-2 holds a byte outside `0x00`–`0x7F` on a text inbound — under the default text codec
+ * (`utf8`), the range where the codec choice is load-bearing — it emits this warning. An
+ * all-ASCII control ID round-trips identically under every codec, so the common case stays
+ * quiet; a non-ASCII one is flagged as *unverifiable*, not as *known-broken*, because from a
+ * decoded string the two are genuinely indistinguishable.
+ *
+ * (A deliberately lossy `encoding` override on a text inbound — `{ encoding: "ascii" }` on a
+ * high-bit id — can corrupt *into* the ASCII range and slip past this non-ASCII proxy. That is
+ * a pre-existing gap of the strongly-discouraged text-plus-override path, outside this signal's
+ * remit, which targets the default; the `Buffer` overload is the answer there too.)
+ *
+ * **The fix the warning points at is the `Buffer`-first API rule.** Pass the raw payload —
+ * the bytes the server handed you — and you get the real byte-level check (and, if it breaks,
+ * the definite {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM}) instead of this "cannot tell".
+ *
+ * Like its sibling, this warning carries byte **lengths** only — never the field bytes
+ * (MSH-10 is inbound payload content and a warning goes to a log; see {@link verifyVerbatimEcho}).
+ *
+ * @example
+ * ```typescript
+ * import { MLLP_ACK_CONTROL_ID_UNVERIFIABLE, buildAckAA } from '@cosyte/mllp/ack-from-hl7';
+ * const { warnings } = buildAckAA(payload.toString("latin1")); // text inbound, high-bit id
+ * if (warnings.some((w) => w.code === MLLP_ACK_CONTROL_ID_UNVERIFIABLE)) {
+ *   // pass the raw Buffer instead — the echo cannot be verified from decoded text
+ * }
+ * ```
+ */
+export const MLLP_ACK_CONTROL_ID_UNVERIFIABLE = "MLLP_ACK_CONTROL_ID_UNVERIFIABLE";
+
+/**
  * Byte-faithful codec for raw-`Buffer` inbound — the default (HL7 v2.5.1 §2.9.2.2).
  *
  * `latin1` is Node's true ISO-8859-1: a 1:1 map between the 256 byte values and
@@ -176,18 +227,22 @@ export interface BuildMllpAckOptions {
    * it is still a broken ACK. Set this only when the receiving system genuinely demands a
    * specific codec.
    *
-   * **On a `string` / `Hl7Message` inbound the check cannot see a codec problem at all.**
-   * The wire bytes were decoded to text *before* this function saw them, so there is
-   * nothing left to compare the ACK against except that same text — the codec cancels on
-   * both sides and the comparison is a tautology. Concretely,
-   * `buildAckAA(payload.toString("latin1"))` on a high-bit control ID (`0x8B`, legal under
-   * an `MSH-18` of `8859/1`) re-encodes it as the two `utf8` bytes `0xC2 0x8B`, emits a
-   * **different** control ID, and warns about **nothing** — the sender cannot correlate it.
-   * This is not a hole the guard can be grown to cover; the bytes are gone by then.
+   * **On a `string` / `Hl7Message` inbound the verbatim check cannot see a codec problem —
+   * so a *different* warning does the honest thing instead.** The wire bytes were decoded to
+   * text *before* this function saw them, so there is nothing left to compare the ACK against
+   * except that same text: the codec cancels on both sides and {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM}
+   * can never fire. Concretely, `buildAckAA(payload.toString("latin1"))` on a high-bit control ID
+   * (`0x8B`, legal under an `MSH-18` of `8859/1`) re-encodes it as the two `utf8` bytes `0xC2 0x8B`,
+   * emitting a **different** control ID the sender cannot correlate. The verbatim check is blind to
+   * that — but the byte-safety of a text inbound cannot be *proven*, so `buildMllpAck` refuses to
+   * pass it off as verified: whenever the emitted MSA-2 holds a non-ASCII byte on a text inbound it
+   * emits {@link MLLP_ACK_CONTROL_ID_UNVERIFIABLE}, an explicit "cannot verify — pass a `Buffer`".
+   * The guard is not grown to *catch* the mismatch (the bytes are gone by then); the API stops
+   * being silent about the fact that it can't.
    *
    * **`Buffer` is the byte-safe path.** Pass the raw payload. It is what the server hands
    * you, it is what the `Buffer`-first API rule exists for, and it is the only input for
-   * which the verbatim guarantee — or a warning that it broke — actually means anything.
+   * which the verbatim guarantee — or a proof that it broke — actually means anything.
    */
   readonly encoding?: BufferEncoding;
   /**
@@ -296,14 +351,16 @@ function inboundBytes(
  * ACK is encoded with, so on that path the codec **cancels on both sides** and this
  * check is a **tautology**: it cannot, even in principle, catch a codec-induced
  * non-verbatim echo. `buildAckAA(wire.toString("latin1"))` on a `0x8B` control ID emits
- * `0xC2 0x8B` and this function returns `null` — no warning, unmatchable ACK.
+ * `0xC2 0x8B` and this function returns `null` — this proof simply does not apply there.
  *
- * That is not a bug to fix here, and do **not** try to grow the guard to cover it: by
- * the time a `string` reaches us the wire bytes are already gone, and there is nothing
- * left to compare against. It is a real limitation of the `string` overload, documented
- * as such on {@link BuildMllpAckOptions.encoding} and in the package limitations. The
- * check is honest and complete for a `Buffer` inbound — the `Buffer`-first path the API
- * rule points at — and it claims nothing beyond that.
+ * Do **not** try to grow *this* guard to cover the text path: by the time a `string` reaches
+ * us the wire bytes are already gone, and there is nothing left to compare against. The check
+ * is honest and complete for a `Buffer` inbound — the `Buffer`-first path the API rule points
+ * at — and it claims nothing beyond that. The text path is not left silent, though: it is
+ * handled by a *separate* signal, {@link verifyTextInboundEcho} /
+ * {@link MLLP_ACK_CONTROL_ID_UNVERIFIABLE}, which does not attempt the impossible comparison —
+ * it flags a non-ASCII echo on a text inbound as *unverifiable* and points the caller at the
+ * `Buffer` overload. Two inputs, two checks; neither pretends to the other's certainty.
  *
  * Returns `null` when the check passes, or cannot be made at all — the inbound has no
  * readable MSH (it does not lead with `MSH`, e.g. it is still MLLP-framed), or it
@@ -358,6 +415,64 @@ function verifyVerbatimEcho(
 }
 
 /**
+ * The counterpart to {@link verifyVerbatimEcho} for the path that check cannot reach:
+ * a **text** inbound (`string` / `Hl7Message`), whose wire bytes are gone before this
+ * module sees them.
+ *
+ * `verifyVerbatimEcho` is a tautology on the text path (it re-derives "the inbound bytes"
+ * from the same text, with the same codec, that produced the ACK). So instead of comparing
+ * — which cannot fail — this looks at the one property that actually signals danger: does the
+ * emitted MSA-2 hold a byte the codec choice could have corrupted? The control ID is read
+ * back as `latin1`, which is 1:1 with bytes, so any code unit `> 0x7F` **is** a non-ASCII
+ * byte. ASCII bytes round-trip identically under `latin1`/`utf8`/`ascii` alike, so an
+ * all-ASCII control ID is provably safe from any text input and stays quiet; a non-ASCII one
+ * cannot be certified from decoded text and is flagged.
+ *
+ * This is deliberately *unverifiable*, not *not-verbatim*: from a `string` we cannot know
+ * whether the caller's decode matched our encode, so we do not claim the echo broke — only
+ * that we cannot prove it held. The remedy is structural, and the message says so: pass the
+ * raw `Buffer`.
+ *
+ * Returns `null` on a `Buffer` inbound (the verified path — {@link verifyVerbatimEcho} owns
+ * it), on an inbound with no readable MSA-2 to inspect, or when that MSA-2 is pure ASCII.
+ *
+ * Byte **lengths** only in the message, never the bytes — same PHI discipline as its sibling.
+ * @internal
+ */
+function verifyTextInboundEcho(
+  ackPayload: Buffer,
+  inbound: Hl7Message | Buffer | string,
+): MllpAckWarning | null {
+  if (Buffer.isBuffer(inbound)) return null;
+  const echoedId = extractMsaControlId(ackPayload);
+  if (echoedId === null) return null;
+  // `echoedId` is `latin1` (1:1 with bytes), so a code unit > 0x7F is a non-ASCII byte — under
+  // the default text codec (`utf8`), the range where the codec is load-bearing and, from decoded
+  // text, unverifiable. (A lossy `ascii` override can corrupt into the ASCII range and slip past
+  // this proxy; that discouraged text+override path is a pre-existing gap, not this check's remit.)
+  let hasNonAscii = false;
+  for (let i = 0; i < echoedId.length; i++) {
+    if (echoedId.charCodeAt(i) > 0x7f) {
+      hasNonAscii = true;
+      break;
+    }
+  }
+  if (!hasNonAscii) return null;
+
+  // Byte LENGTHS only — never the bytes themselves (PHI; see `verifyVerbatimEcho`).
+  return {
+    code: MLLP_ACK_CONTROL_ID_UNVERIFIABLE,
+    message:
+      `ACK's byte-verbatim echo of MSH-10 (HL7 v2.5.1 §2.9.2.2) cannot be verified: the inbound ` +
+      `was decoded text (a string or Hl7Message), not raw bytes, so its wire bytes are gone and ` +
+      `the emitted ${String(echoedId.length)}-byte MSA-2 contains a non-ASCII byte the decode/encode ` +
+      `codec could have altered. It may not correlate at the sender (ACK timeout -> resend -> ` +
+      `duplicate message). Pass the raw payload Buffer to get the byte-level guarantee. ` +
+      `Field values are withheld — MSH-10 is inbound payload content and this warning goes to a log.`,
+  };
+}
+
+/**
  * Serialize a built ACK message into a framed `MllpAck` result, encoding it with
  * the same codec the inbound was decoded with, and verifying the MSA-2 echo.
  * @internal
@@ -373,6 +488,13 @@ function toMllpAck(params: {
   readonly encoding: BufferEncoding;
   /** Inbound bytes to verify the MSA-2 echo against; `undefined` skips the check. */
   readonly verifyAgainst: Buffer | undefined;
+  /**
+   * The original inbound, to classify the echo's byte-safety. A `Buffer` is verified
+   * against its own bytes ({@link verifyVerbatimEcho}); a `string`/`Hl7Message` gets the
+   * "cannot verify" flag ({@link verifyTextInboundEcho}). `undefined` on the unparseable
+   * fallback path, which has no correlated MSA-2 to classify.
+   */
+  readonly inbound: Hl7Message | Buffer | string | undefined;
 }): MllpAck {
   const { ack, requestedCode, code, correlationId, mode, warnings, options, encoding } = params;
   const payload = Buffer.from(ack.toString(), encoding);
@@ -380,8 +502,17 @@ function toMllpAck(params: {
     allowDelimiterBytesInPayload: options.allowDelimiterBytesInPayload ?? false,
   });
 
+  // Two mutually exclusive echo checks, one per input shape. A `Buffer` inbound is checked
+  // against its own wire bytes (a real, falsifiable comparison). A `string`/`Hl7Message` cannot
+  // be — the bytes are gone — so it is flagged as unverifiable when the echoed id is non-ASCII.
   const echoWarning = verifyVerbatimEcho(payload, params.verifyAgainst);
-  const allWarnings = echoWarning === null ? warnings : [...warnings, echoWarning];
+  const unverifiableWarning =
+    params.inbound === undefined ? null : verifyTextInboundEcho(payload, params.inbound);
+  const allWarnings = [
+    ...warnings,
+    ...(echoWarning === null ? [] : [echoWarning]),
+    ...(unverifiableWarning === null ? [] : [unverifiableWarning]),
+  ];
 
   const result: MllpAck = {
     frame,
@@ -436,10 +567,11 @@ function buildUnparseableFallback(
     options,
     encoding,
     // MSA-2 is INTENTIONALLY empty here — the inbound could not be parsed, so there is no
-    // control id to echo and we refuse to fabricate one. Running the verbatim check would
-    // report that deliberate choice as a violation; `MLLP_ACK_INBOUND_UNPARSEABLE` (above)
+    // control id to echo and we refuse to fabricate one. Running either echo check would
+    // report that deliberate choice as a problem; `MLLP_ACK_INBOUND_UNPARSEABLE` (above)
     // is the accurate warning for this case, and it is already attached.
     verifyAgainst: undefined,
+    inbound: undefined,
   });
 }
 
@@ -585,6 +717,7 @@ export function buildMllpAck(
     options,
     encoding,
     verifyAgainst: inboundBytes(inbound, encoding),
+    inbound,
   });
 }
 

@@ -14,6 +14,21 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **`ack-from-hl7`: the `string`/`Hl7Message` overload no longer double-encodes a high-bit control ID
+  silently.** `buildMllpAck` re-encodes a decoded-text inbound with the JS-native `utf8` default, so
+  `buildAckAA(payload.toString("latin1"))` on a control ID of `A <0x8B> B` (legal under `MSH-18` =
+  `8859/1`) emitted MSA-2 as `A <0xC2 0x8B> B` — a *different* control ID. The sender keyed its
+  in-flight store on `0x8B`, could not match the ACK, timed out, and resent a **duplicate clinical
+  message**. The `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` guard could not see it: on a text inbound it
+  re-derives the inbound bytes from the same text with the same codec, so the comparison is a
+  tautology. The encoding cannot be fixed from decoded text (a string does not remember its codec), so
+  this is an **API-shape** fix: the text path now emits a new, distinct warning code,
+  **`MLLP_ACK_CONTROL_ID_UNVERIFIABLE`** (exported from `@cosyte/mllp/ack-from-hl7`), whenever the
+  emitted MSA-2 holds a non-ASCII byte on a `string`/`Hl7Message` inbound — a *cannot-verify* signal,
+  deliberately separate from the `Buffer`-path *proof-of-mismatch*. An all-ASCII control ID stays
+  quiet; the warning carries byte lengths only (PHI discipline) and names the remedy: pass the raw
+  `Buffer`. Found by the 4th MLLP-ACK-UTF8 conformance-refuter.
+
 - **Removed ten orphan gitlinks from `.claude/worktrees/`.** A commit captured local agent worktree
   state as ten mode-`160000` gitlinks with no `.gitmodules` entry, pointing at objects that never
   existed in this repo. This is the ADR 0004 failure mode that `iac` and `pathways` each produced;
