@@ -229,10 +229,17 @@ The second is the natural call for anyone already holding a decoded payload, and
 *different* control ID the sender cannot correlate — the encoding is unchanged, because from decoded
 text there is no way to know the original bytes to encode back to. What changed is the **silence**:
 because a text inbound's echo cannot be *verified*, `buildMllpAck` no longer passes it off as clean.
-Whenever the emitted MSA-2 holds a non-ASCII byte on a `string`/`Hl7Message` inbound — the only range
-where the codec is load-bearing — it emits **`MLLP_ACK_CONTROL_ID_UNVERIFIABLE`**: an explicit "this
-echo cannot be verified; pass the raw `Buffer` for the byte-level guarantee". An all-ASCII control ID
-round-trips identically under every codec, so the common case stays quiet.
+Whenever the ACK's MSA-2 control ID holds a non-ASCII **code unit** on a `string`/`Hl7Message`
+inbound — the range where the codec is load-bearing — it emits **`MLLP_ACK_CONTROL_ID_UNVERIFIABLE`**:
+an explicit "this echo cannot be verified; pass the raw `Buffer` for the byte-level guarantee". An
+all-ASCII control ID round-trips identically under every codec, so the common case stays quiet.
+
+The check reads the control ID's **pre-encoding code units**, not the emitted bytes, on purpose. A
+lossy `{ encoding: "ascii" }` override truncates a code unit to its low 8 bits, so a value above
+`0xFF` — say `U+0153`, what a windows-1252 decode yields for a `0x9C` wire byte — is masked *into* the
+ASCII byte range (`0x53`, `'S'`). An emitted-byte proxy would fall silent on exactly that corruption
+(MLLP-ACK-ASCII-OVERRIDE-BLEED); the code units carry the high bit whatever the codec did to the byte,
+so the strongly-discouraged text-plus-override path is flagged for the same reason the default is.
 
 ```ts
 import { buildAckAA, MLLP_ACK_CONTROL_ID_UNVERIFIABLE } from "@cosyte/mllp/ack-from-hl7";

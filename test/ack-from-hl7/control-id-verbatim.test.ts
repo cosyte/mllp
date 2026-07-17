@@ -378,3 +378,91 @@ describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee, and the
     expect(hex(extractMsaControlId(asBuffer.payload))).toBe(HIGH_BIT_ID.toString("hex"));
   });
 });
+
+describe("ack-from-hl7 — a lossy `ascii` override on a text inbound cannot corrupt silently (MLLP-ACK-ASCII-OVERRIDE-BLEED)", () => {
+  /**
+   * The residual path the STRING-DOUBLE-ENCODE fix (PR #19) did not close: a `string`/`Hl7Message`
+   * inbound with an explicit `{ encoding: "ascii" }` override and a **non-ASCII control ID**.
+   *
+   * The prior fix flagged the text path by inspecting the EMITTED MSA-2 bytes for a non-ASCII
+   * value — a proxy with a blind spot on a lossy override. Node's `ascii` codec truncates a code
+   * unit to its low 8 bits (`str -> byte & 0xFF`), so a control-ID code unit **above `0xFF`** — e.g.
+   * `U+0153` (`œ`, what a windows-1252 decode yields for a `0x9C` wire byte) — is truncated *into*
+   * the ASCII byte range (`0x0153 & 0xFF = 0x53`, `'S'`). The emitted MSA-2 is then all-ASCII, so
+   * the emitted-byte proxy stays silent — while the control ID on the wire (`MSGS`) is NOT the one
+   * the sender keyed on (`MSGœ`): ACK timeout -> resend -> duplicate clinical message.
+   *
+   * The fix inspects the MSA-2's **pre-encode code units** instead of the emitted bytes, so a
+   * non-ASCII code unit is seen whatever the codec did to the byte. Fixtures are synthetic-only
+   * (see file header). (A high-bit *byte* like `0x8B` in a latin1-decoded string is a code unit
+   * `<= 0xFF`, which `ascii` preserves verbatim — non-ASCII, and already flagged; the residual gap
+   * is specifically the truncated `> 0xFF` code unit, exercised below.)
+   */
+  // A control ID whose text holds a > 0xFF code unit that `ascii` truncates into the ASCII range.
+  const TRUNCATING_ID = "MSGœ"; // U+0153 -> ascii byte 0x53 ('S')
+  const inboundStringWithId = (id: string): string =>
+    `MSH|^~\\&|SEND|FAC|RECV|RFAC|20260714120000||ADT^A01|${id}|P|2.5.1\r`;
+
+  it("the emitted MSA-2 is corrupted INTO the ASCII range — the byte-level proof of the bleed", () => {
+    const ack = buildAckAA(inboundStringWithId(TRUNCATING_ID), { encoding: "ascii" });
+
+    // `ascii` truncated U+0153 -> 0x53: the wire control ID is `MSGS`, a DIFFERENT id.
+    expect(extractMsaControlId(ack.payload)).toBe("MSGS");
+    // Every emitted MSA-2 byte is now <= 0x7F — which is precisely why the prior emitted-byte,
+    // non-ASCII proxy could not see the corruption. This is the bleed, reproduced at byte level.
+    const emitted = Buffer.from(extractMsaControlId(ack.payload) ?? "", "latin1");
+    expect(emitted.every((b) => b <= 0x7f)).toBe(true);
+  });
+
+  it("it is no longer silent — the positive AA carries MLLP_ACK_CONTROL_ID_UNVERIFIABLE", () => {
+    const ack = buildAckAA(inboundStringWithId(TRUNCATING_ID), { encoding: "ascii" });
+
+    // The AA is emitted (fail-safe), but the corrupted, unmatchable control ID is surfaced —
+    // NOT passed off as a clean, verified positive ACK.
+    expect(ack.code).toBe("AA");
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+    // The text path never claims the falsifiable proof it cannot run.
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+  });
+
+  it("an Hl7Message inbound with the same override is flagged too", () => {
+    const msg = parseHL7(inboundStringWithId(TRUNCATING_ID));
+    const ack = buildAckAA(msg, { encoding: "ascii" });
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+  });
+
+  it("a high-bit (<= 0xFF) code unit under ascii is still flagged (ascii preserves it verbatim)", () => {
+    // 0x8B is a code unit <= 0xFF; `ascii` emits it as the non-ASCII byte 0x8B. Already caught
+    // before this fix — asserted here so the fix does not regress the <= 0xFF range.
+    const ack = buildAckAA(inboundWithControlId(HIGH_BIT_ID).toString("latin1"), {
+      encoding: "ascii",
+    });
+    expect(hex(extractMsaControlId(ack.payload))).toBe(HIGH_BIT_ID.toString("hex"));
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+  });
+
+  it("a pure-ASCII control ID with an ascii override stays quiet — no false positive", () => {
+    const ack = buildAckAA(inboundStringWithId("MSG00001"), { encoding: "ascii" });
+    expect(ack.correlationId).toBe("MSG00001");
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+  });
+
+  it("the UNVERIFIABLE warning still carries NO field content on the override path (PHI)", () => {
+    const ack = buildAckAA(inboundStringWithId("MRN00042œ"), { encoding: "ascii" });
+    const warning = ack.warnings.find((w) => w.code === MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+    expect(warning).toBeDefined();
+    const msg = warning?.message ?? "";
+    expect(msg).not.toContain("MRN00042");
+    expect(msg).toContain("§2.9.2.2");
+    expect(msg).toContain("Buffer"); // names the remedy
+  });
+
+  it("the Buffer overload is still the byte-safe path under the same ascii override", () => {
+    // A Buffer inbound with the same lossy override is the falsifiable path: NOT_VERBATIM fires
+    // (proof of mismatch), because a Buffer carries the wire bytes to compare against.
+    const wire = inboundWithControlId(HIGH_BIT_ID);
+    const ack = buildAckAA(wire, { encoding: "ascii" });
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+  });
+});
