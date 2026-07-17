@@ -278,6 +278,13 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Added
 
+- **Trademark notice (`TRADEMARKS.md`).** This package names third-party systems to describe what it
+  interoperates with; the notice records that cosyte is not affiliated with, endorsed by, or
+  sponsored by any of them, that every reference is descriptive, and that the built-in profiles are
+  authored from public sources only. Added to `files` so it ships inside the published tarball, not
+  just on GitHub. Documentation only — no runtime or API change.
+
+
 - **`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` (MLLP-ACK-UTF8).** A new stable warning code —
   `ack-from-hl7`-scoped, emitted in `MllpAck.warnings`, not through the framing registry (13 codes
   total now). `buildMllpAck` **verifies** every ACK it builds against the very byte-level scanners the
