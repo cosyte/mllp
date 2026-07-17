@@ -18,12 +18,14 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { parseHL7 } from "@cosyte/hl7";
 
 import {
   buildAckAA,
   buildAckAE,
   buildMllpAck,
   MLLP_ACK_CONTROL_ID_NOT_VERBATIM,
+  MLLP_ACK_CONTROL_ID_UNVERIFIABLE,
   MLLP_ACK_INBOUND_UNPARSEABLE,
 } from "../../src/ack-from-hl7/index.js";
 import { createClient } from "../../src/client/client.js";
@@ -210,9 +212,54 @@ describe("ack-from-hl7 — text inbound keeps its utf8 default (back-compat)", (
   it("a string inbound is encoded utf8, as before", () => {
     const inbound = "MSH|^~\\&|S|F|R|F2|20260714120000||ADT^A01|ID-é|P|2.5.1\r";
     const ack = buildAckAA(inbound);
-    // The caller handed us text, so their code units are re-encoded utf8.
+    // The caller handed us text, so their code units are re-encoded utf8 — UNCHANGED.
     expect(hex(extractMsaControlId(ack.payload))).toBe(Buffer.from("ID-é", "utf8").toString("hex"));
+    // The encoding did not change; the *honesty* did. A non-ASCII control ID from a string
+    // cannot be byte-verified (the wire bytes are gone), so it is flagged UNVERIFIABLE — NOT
+    // the proof-of-mismatch NOT_VERBATIM, which the text path structurally cannot produce.
     expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+  });
+
+  it("a pure-ASCII string inbound stays quiet — ASCII round-trips under every codec", () => {
+    const inbound = "MSH|^~\\&|S|F|R|F2|20260714120000||ADT^A01|MSG00001|P|2.5.1\r";
+    const ack = buildAckAA(inbound);
+    expect(ack.correlationId).toBe("MSG00001");
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+  });
+
+  it("an Hl7Message inbound with a non-ASCII control ID is UNVERIFIABLE too", () => {
+    // The other half of the text overload: a pre-parsed message has no wire bytes either, so its
+    // echo is just as unverifiable as a string's. Parsed from a latin1 decode so the control ID
+    // keeps its high bit as a single code unit.
+    const msg = parseHL7(inboundWithControlId(HIGH_BIT_ID).toString("latin1"));
+    const ack = buildAckAA(msg);
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+  });
+
+  it("an Hl7Message inbound with a pure-ASCII control ID stays quiet", () => {
+    const msg = parseHL7(
+      inboundWithControlId(Buffer.from("MSG00001", "latin1")).toString("latin1"),
+    );
+    const ack = buildAckAA(msg);
+    expect(ack.correlationId).toBe("MSG00001");
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+  });
+
+  it("the UNVERIFIABLE warning carries NO field content — byte length only (PHI)", () => {
+    // Same PHI discipline as NOT_VERBATIM: an id-shaped prefix + a high bit that trips the flag.
+    const wire = inboundWithControlId(
+      Buffer.concat([Buffer.from("MRN00042", "latin1"), Buffer.from([0x8b])]),
+    );
+    const ack = buildAckAA(wire.toString("latin1"));
+    const warning = ack.warnings.find((w) => w.code === MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+    expect(warning).toBeDefined();
+    const msg = warning?.message ?? "";
+    expect(msg).not.toContain("MRN00042");
+    expect(msg).toContain("§2.9.2.2");
+    expect(msg).toContain("Buffer"); // it names the remedy
   });
 });
 
@@ -284,21 +331,19 @@ describe("ack-from-hl7 — the parser RE-SERIALIZES MSH-10; every case it cannot
   });
 });
 
-describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee (known limitation)", () => {
+describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee, and the string path says so", () => {
   /**
-   * This suite pins a limitation, not a feature. It exists so the scoped claim in the docs
-   * ("loud on a `Buffer` inbound") cannot silently re-broaden into "loud, always" — which is
-   * what it said before the conformance gate caught it.
+   * The byte-verbatim *proof* is a `Buffer` guarantee: only a `Buffer` inbound carries the
+   * wire bytes to compare against, so only there can `verifyVerbatimEcho` fire the falsifiable
+   * `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. On a `string`/`Hl7Message` the wire bytes are already
+   * gone; `inboundBytes` can only re-encode the caller's text with the SAME codec the ACK used,
+   * so that comparison is a tautology and the proof does not apply.
    *
-   * `verifyVerbatimEcho` compares the ACK against `inboundBytes(inbound, encoding)`. For a
-   * `string`/`Hl7Message` the wire bytes are already gone, so that helper re-encodes the
-   * caller's text with the SAME codec the ACK is encoded with — the codec cancels on both
-   * sides and the comparison becomes a tautology. A codec-induced mismatch is therefore
-   * structurally invisible on the string path, and no guard placed here can see it.
-   *
-   * The underlying double-encode is a PRE-EXISTING correlation bug (byte-identical on
-   * `origin/main`) and is filed separately. Do not "fix" it by growing the guard — you
-   * cannot; the bytes are gone. The fix is to pass a `Buffer`.
+   * What USED to be a silent hole here (`buildAckAA(payload.toString("latin1"))` double-encoding
+   * a high-bit control ID and warning about nothing) is now handled by the API, not the guard:
+   * the text path emits `MLLP_ACK_CONTROL_ID_UNVERIFIABLE` — an explicit "cannot verify, pass a
+   * Buffer" — whenever the echoed id is non-ASCII. The encoding still happens the same way (we do
+   * not silently re-interpret the caller's text); we simply refuse to imply it was verified.
    */
   it("a Buffer inbound echoes a high-bit control ID verbatim, with no warning", () => {
     const ack = buildAckAA(inboundWithControlId(HIGH_BIT_ID));
@@ -306,15 +351,30 @@ describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee (known l
     expect(ack.warnings).toHaveLength(0);
   });
 
-  it("the SAME message as a string double-encodes it — and CANNOT warn (this is the hole)", () => {
+  it("the SAME message as a string double-encodes it — and now warns UNVERIFIABLE", () => {
     const wire = inboundWithControlId(HIGH_BIT_ID);
     const ack = buildAckAA(wire.toString("latin1")); // the natural call if you hold decoded text
 
-    // 0x8B goes out as the two utf8 bytes 0xC2 0x8B — a DIFFERENT control ID.
+    // The encoding is unchanged: 0x8B still goes out as the two utf8 bytes 0xC2 0x8B — a
+    // DIFFERENT control ID. This item does not (and cannot) make the string path byte-safe.
     expect(hex(extractMsaControlId(ack.payload))).toBe("41c28b43");
     expect(hex(extractMsaControlId(ack.payload))).not.toBe(HIGH_BIT_ID.toString("hex"));
 
-    // And the guard is blind to it. Asserted so nobody can claim otherwise in the docs.
+    // What it DOES fix: the silence. The verbatim proof still cannot run (so NOT_VERBATIM stays
+    // absent — claiming a proof we did not perform would be dishonest), but the text path is no
+    // longer silent about being unverifiable.
     expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+  });
+
+  it("passing the Buffer instead upgrades the same message to a verified, silent echo", () => {
+    // The remedy the warning names, exercised: the exact same message as bytes is byte-safe.
+    const wire = inboundWithControlId(HIGH_BIT_ID);
+    const asString = buildAckAA(wire.toString("latin1"));
+    const asBuffer = buildAckAA(wire);
+
+    expect(asString.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
+    expect(asBuffer.warnings).toHaveLength(0);
+    expect(hex(extractMsaControlId(asBuffer.payload))).toBe(HIGH_BIT_ID.toString("hex"));
   });
 });

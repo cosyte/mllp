@@ -87,8 +87,9 @@ a code is a breaking change — log pipelines and dashboards key on them.
 `strict: true`. Do not read `MLLP_TRAILING_BYTES` as cosmetic, though: its mid-payload `<VT>` case
 means a message was **truncated**, and it is worth alerting on.
 
-A twelfth code, `MLLP_ACK_INBOUND_UNPARSEABLE`, is scoped to the
-[`ack-from-hl7`](./acks.md) subpath and appears in `MllpAck.warnings`, not in the framing registry.
+Three further codes — `MLLP_ACK_INBOUND_UNPARSEABLE`, `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`, and
+`MLLP_ACK_CONTROL_ID_UNVERIFIABLE` — are scoped to the [`ack-from-hl7`](./acks.md) subpath and appear
+in `MllpAck.warnings`, not in the framing registry.
 
 ## What throws, and what happens when it does
 

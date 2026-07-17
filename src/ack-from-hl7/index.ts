@@ -32,6 +32,7 @@ export {
   detectMode,
   MLLP_ACK_INBOUND_UNPARSEABLE,
   MLLP_ACK_CONTROL_ID_NOT_VERBATIM,
+  MLLP_ACK_CONTROL_ID_UNVERIFIABLE,
 } from "./build.js";
 export type { BuildMllpAckOptions, MllpAck, MllpAckWarning } from "./build.js";
 

@@ -109,13 +109,17 @@ delimiter set. It always emits the ACK under the inbound's own field separator (
 one), and MSH-10 provably cannot contain that separator, so the echo round-trips byte-for-byte
 whatever the control ID contains. See [ACKs](./acks.md).
 
-And it is a **`Buffer`** guarantee. On a `string` / `Hl7Message` inbound the wire bytes were decoded
-before `buildMllpAck` ever saw them, so it re-encodes your text with the same codec it decoded it
-with: the codec cancels on both sides, and a codec-induced mismatch is **structurally invisible**.
-`buildAckAA(payload.toString("latin1"))` on a high-bit control ID (`0x8B`) emits the two `utf8` bytes
-`0xC2 0x8B` — a *different* control ID the sender cannot correlate — and warns about **nothing**. The
-check cannot be extended to catch this; the bytes are gone by then. Pass a `Buffer`. That is what the
-`Buffer`-first API rule is for.
+And the *verbatim proof* is a **`Buffer`** guarantee. On a `string` / `Hl7Message` inbound the wire
+bytes were decoded before `buildMllpAck` ever saw them, so it re-encodes your text with the same codec
+it decoded it with: the codec cancels on both sides, and `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` — a
+byte-for-byte comparison — cannot fire. `buildAckAA(payload.toString("latin1"))` on a high-bit control
+ID (`0x8B`) emits the two `utf8` bytes `0xC2 0x8B`, a *different* control ID the sender cannot
+correlate. The encoding cannot be fixed from here (decoded text does not remember its bytes), and the
+verbatim check cannot catch it (the bytes are gone) — but the API no longer stays **silent** about it.
+Whenever the emitted MSA-2 holds a non-ASCII byte on a text inbound, `buildMllpAck` emits
+**`MLLP_ACK_CONTROL_ID_UNVERIFIABLE`** — a distinct "cannot verify this echo; pass a `Buffer`" signal,
+separate from the `Buffer`-path proof-of-mismatch. An all-ASCII control ID round-trips under every
+codec and stays quiet. Pass a `Buffer`. That is what the `Buffer`-first API rule is for.
 
 Neither builder **ACKs an HL7 batch** (§2.10.3) or a frame of concatenated messages. An `FHS`/`BHS`
 envelope, or a second `MSH` in the same frame, yields the warned, non-positive `AE` — never a

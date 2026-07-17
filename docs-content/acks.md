@@ -210,26 +210,44 @@ could truncate MSA-2.
 
 ### Pass a `Buffer`. The guarantee is a byte guarantee.
 
-Everything above — the verbatim echo, and the warning when it breaks — holds for a **`Buffer`**
-inbound, and *only* for a `Buffer`. A `Buffer` is the wire bytes, so `buildMllpAck` can compare what
-it emitted against what actually arrived.
+The verbatim *proof* — the byte-for-byte comparison, and `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` when it
+fails — holds for a **`Buffer`** inbound, and *only* for a `Buffer`. A `Buffer` is the wire bytes, so
+`buildMllpAck` can compare what it emitted against what actually arrived.
 
 Hand it a `string` (or an already-parsed `Hl7Message`) and the wire bytes are **already gone**. It
-re-encodes your text with the same codec it decodes it with, so the codec cancels on both sides and a
-codec-induced mismatch becomes structurally invisible — it warns about nothing:
+re-encodes your text with the same codec it decodes it with, so the codec cancels on both sides and
+the verbatim proof cannot run:
 
 ```ts
 const wire = /* MSH-10 = A <0x8B> B — legal under MSH-18 = 8859/1 */;
 
-buildAckAA(wire);                        // MSA-2 = A <0x8B> B   ✅ verbatim
-buildAckAA(wire.toString("latin1"));     // MSA-2 = A <0xC2 0x8B> B   ❌ and NO warning
+buildAckAA(wire);                        // MSA-2 = A <0x8B> B         ✅ verbatim, verified
+buildAckAA(wire.toString("latin1"));     // MSA-2 = A <0xC2 0x8B> B    ⚠️ different id — and it SAYS so
 ```
 
-The second is the natural call for anyone already holding a decoded payload — and it silently emits a
-*different* control ID, which the sender cannot correlate: timeout, resend, duplicate message. This
-is not something the check can be extended to catch; by the time a `string` arrives, there is nothing
-left to compare. It is why the package is `Buffer`-first on every public surface. **Pass the raw
-payload.**
+The second is the natural call for anyone already holding a decoded payload, and it still emits a
+*different* control ID the sender cannot correlate — the encoding is unchanged, because from decoded
+text there is no way to know the original bytes to encode back to. What changed is the **silence**:
+because a text inbound's echo cannot be *verified*, `buildMllpAck` no longer passes it off as clean.
+Whenever the emitted MSA-2 holds a non-ASCII byte on a `string`/`Hl7Message` inbound — the only range
+where the codec is load-bearing — it emits **`MLLP_ACK_CONTROL_ID_UNVERIFIABLE`**: an explicit "this
+echo cannot be verified; pass the raw `Buffer` for the byte-level guarantee". An all-ASCII control ID
+round-trips identically under every codec, so the common case stays quiet.
+
+```ts
+import { buildAckAA, MLLP_ACK_CONTROL_ID_UNVERIFIABLE } from "@cosyte/mllp/ack-from-hl7";
+
+const ack = buildAckAA(decodedText);
+if (ack.warnings.some((w) => w.code === MLLP_ACK_CONTROL_ID_UNVERIFIABLE)) {
+  // Pass the raw payload Buffer instead — the echo cannot be verified from decoded text.
+}
+```
+
+It is a *cannot-verify* signal, not a *known-broken* one: from a decoded string the two are
+genuinely indistinguishable (a caller who decoded with `latin1` and re-encodes with `latin1` is
+byte-safe; one who decoded with `latin1` and lets the `utf8` default re-encode is not — and the
+string looks identical either way). This is why the package is `Buffer`-first on every public
+surface. **Pass the raw payload.**
 
 ### `ack-from-hl7` refuses an HL7 batch, loudly
 
