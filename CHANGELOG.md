@@ -12,6 +12,24 @@ this file is maintained by hand (Changesets handles the version bump and publish
 The first pre-alpha release (`0.0.1`) will ship the v1 MLLP transport surface below. The package
 begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` until first alpha).
 
+### Security
+
+- **Repo-side PHI commit-scanner (`scripts/phi-scan.ts`), matching the `@cosyte/hl7` pilot.**
+  mllp transports HL7 v2 payloads (MLLP wraps HL7 in `VT … FS CR`), so its data fixtures
+  (`test/**` `.frame.bin` frames) carry the same PHI shapes hl7's do. The scanner is a direct
+  port of hl7's HL7 v2 segment/field-position-aware detector (names, DOB, SSN, MRN/account,
+  address, phone, email, and a site-defined `Z…`-segment name backstop) with one transport-layer
+  addition: it **unwraps the MLLP frame** — strips the `VT` start-block and trailing `FS CR`
+  end-block — before the HL7-aware scan, so a framed fixture's payload is scanned exactly as an
+  un-framed `.hl7` file and the framing bytes cannot defeat delimiter/segment detection. The
+  unwrap only ever removes framing bytes, so malformed frames (missing end-block, double-framing)
+  cannot bypass it; non-HL7 binary byte/buffer fixtures fall through to a conservative dashed-SSN
+  + email pass — no crash, no false positive. Anything not in the synthetic allow-list
+  (`scripts/phi-allow-list.txt`) is a hit. Wired like hl7: `pnpm phi-scan`, a `simple-git-hooks`
+  `pre-commit` running `phi-scan --staged`, and `run-phi-scan: true` on the CI caller; adds
+  `phi-scan-overrides.md` (the audited bypass log) and `test/scripts/phi-scan.test.ts`. Tooling /
+  safety only — no runtime or public-API change.
+
 ### Documentation
 
 - **`docs-content/` brought to the full canonical Diátaxis spine.** The sidebar was a flat list
