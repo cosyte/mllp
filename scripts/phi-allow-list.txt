@@ -1,0 +1,146 @@
+# scripts/phi-allow-list.txt
+#
+# PHI-scan allow-list — the positive declaration that a fixture's identifiers
+# are synthetic. `scripts/phi-scan.ts` reads this file; any realistic-PHI-shaped
+# token NOT covered here is a hit.
+#
+# mllp is a TRANSPORT/framing library: it wraps HL7 v2 messages in MLLP frames
+# (`VT + payload + FS CR`). Its data fixtures are therefore MLLP-framed HL7 v2
+# messages (`test/**/*.frame.bin`), whose PHI shapes are IDENTICAL to `@cosyte/hl7`'s.
+# The scanner strips the MLLP frame, then runs the same HL7 v2 segment/field-aware
+# detection hl7 uses. A framed binary fixture is byte-strict at the front (the VT
+# start-block, then the MSH segment), so it cannot carry an inline `# synthetic:
+# true` header — that would break every framing test. This allow-list is therefore
+# the synthetic-fixture declaration mechanism, the same approach `@cosyte/hl7`,
+# `@cosyte/dicom` (binary `.dcm`) and `@cosyte/x12` (byte-strict `.edi`) use.
+#
+# Format: `<TAG> <value>` per line. `#` comments and blank lines are ignored.
+#   NAME <token>          synthetic person-name word (XPN / XCN name components +
+#                         site-defined Z-segment names), matched case-insensitively
+#   DOB <YYYYMMDD|YYYY>   synthetic date of birth (PID-7 / NK1-16), normalized
+#   ADDR <street line>    synthetic street address (XAD component 1, e.g. PID-11),
+#                         matched case-insensitively
+#   ID <value>            synthetic id that legitimately matches an SSN / bare-MRN
+#                         (6-9 digit) shape (PID-19, CX SS-typed, PID-3/-18)
+#   EMAILDOMAIN <domain>  reserved / test email domain that is allowed to appear
+#
+# To add a new synthetic fixture: reuse the tokens below, or append new ones here
+# and commit. Adding a token is a reviewed, intentional act — never silent.
+
+# --- Tokens in the committed differential golden frames -------------------------
+# test/differential/fixtures/r1-adt-a01.frame.bin : PID `900000001^^^FAC^MR`,
+#   `DOE^JANE^Q`, DOB 19700101
+# test/differential/fixtures/r1-oru-r01.frame.bin : PID `900000002^^^FAC^MR`,
+#   `ROE^RICHARD`
+# The `900000000`-range MRNs are a synthetic reserved block (never a real MRN).
+ID 900000001
+ID 900000002
+
+# --- Synthetic patient / person surnames (XPN comp1 / XCN comp2) ---
+NAME DOE
+NAME ROE
+NAME POE
+NAME COE
+NAME LEE
+NAME SMITH
+NAME JONES
+NAME BROWN
+NAME WELBY
+NAME WILSON
+NAME JOHNSON
+NAME MÜLLER
+NAME ZÖRB
+NAME PUBLIC
+# Classic placeholder / test surnames used across the corpus
+NAME TEST
+NAME CHILD
+NAME MERGETEST
+NAME LINKTEST
+NAME MOVETEST
+NAME YEARTEST
+NAME MIDNIGHTTEST
+NAME ZONETEST
+# CJK synthetic names (charset / unicode fixtures)
+NAME 山田
+NAME 太郎
+NAME 李
+NAME 明
+
+# --- Synthetic given / middle names (XPN comp2-3 / XCN comp3-4) ---
+NAME JOHN
+NAME JANE
+NAME MARY
+NAME SAM
+NAME ANNA
+NAME ALAN
+NAME ALEX
+NAME PAT
+NAME ROBERT
+NAME RICHARD
+NAME KAREN
+NAME MARCUS
+NAME SUE
+NAME MAYA
+NAME RENÉE
+NAME JÜRGEN
+NAME TESTER
+NAME PATIENT
+# Merge / link / move story-role given names (MRG-7 / PID-5 across the ADT set)
+NAME SURVIVOR
+NAME SURVIVORTWO
+NAME SURVIVORTHREE
+NAME PRIOR
+NAME PRIORTWO
+NAME PRIORTHREE
+NAME TARGET
+NAME SOURCE
+NAME PARTYONE
+NAME PARTYTWO
+# Batch per-message uniqueness tags placed in the PID-5 middle-name slot
+NAME MSGA
+NAME MSGB
+NAME MSGC
+NAME MSGD
+NAME MSGE
+
+# --- Synthetic dates of birth (PID-7 / NK1-16), normalized YYYYMMDD or YYYY ---
+DOB 1970
+DOB 19601231
+DOB 19620305
+DOB 19630712
+DOB 19650301
+DOB 19651122
+DOB 19700101
+DOB 19700401
+DOB 19720202
+DOB 19720310
+DOB 19750220
+DOB 19750301
+DOB 19750701
+DOB 19771120
+DOB 19800101
+DOB 19800115
+DOB 19850312
+DOB 19850601
+DOB 19850615
+DOB 19851108
+DOB 19880705
+DOB 19881130
+DOB 19900101
+DOB 19901212
+DOB 19910215
+DOB 20000101
+DOB 20180405
+DOB 20190810
+DOB 20200101
+
+# --- Synthetic street addresses (XAD component 1, e.g. PID-11) ---
+ADDR 123 Main St
+ADDR 456 Elm St
+ADDR 789 Oak St
+
+# --- Reserved / test email domains ---
+EMAILDOMAIN example.com
+EMAILDOMAIN example.org
+EMAILDOMAIN example.net
+EMAILDOMAIN example.test

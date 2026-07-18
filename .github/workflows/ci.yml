@@ -15,6 +15,10 @@ permissions:
 
 jobs:
   # Universal gates from the shared pipeline (typecheck, lint, format, test, coverage, build, attw,
-  # dual ESM/CJS smoke, actionlint) on the standard Node matrix.
+  # dual ESM/CJS smoke, actionlint) on the standard Node matrix. mllp ships a PHI scanner (it
+  # transports HL7 v2 payloads, so its fixtures carry the same PHI shapes hl7's do), so the shared
+  # pipeline's optional PHI-scan step is switched on.
   ci:
     uses: cosyte/.github/.github/workflows/ci.yml@main
+    with:
+      run-phi-scan: true
