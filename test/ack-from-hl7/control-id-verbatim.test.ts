@@ -467,17 +467,27 @@ describe("ack-from-hl7 — a lossy `ascii` override on a text inbound cannot cor
   });
 });
 
-describe("ack-from-hl7 — a non-text codec on the text path is rejected at the boundary (MLLP-ACK-NONTEXT-CODEC-FRAME)", () => {
+describe("ack-from-hl7 — a non-text codec is rejected at the boundary on every input shape (MLLP-ACK-NONTEXT-CODEC-FRAME / -BUFFER)", () => {
   /**
-   * A `string` / `Hl7Message` inbound uses the resolved codec only to serialize the ACK back to
-   * bytes (`Buffer.from(ack.toString(), codec)`). A **non-text** codec does not serialize
-   * characters at all: `base64`/`base64url`/`hex` reinterpret the ACK *string* as encoded data and
-   * decode it to unrelated bytes; `utf16le`/`ucs2` NUL-pad every byte. Either way the emitted frame
-   * is wholesale garbage a receiver cannot parse — its `extractMsaControlId` returns `null` and the
-   * ACK-FAILSAFE path downgrades to `AE` (so this class was always fail-safe, never silent
-   * corruption). But a frame nothing can read is a caller mistake, so `buildMllpAck` throws a
-   * `TypeError` at the boundary rather than hand back an unusable ACK. Text codecs (`utf8`/`ascii`/
-   * `latin1`) are unaffected, and the `Buffer` overload is deliberately untouched.
+   * The resolved codec serializes the built ACK back to bytes (`Buffer.from(ack.toString(),
+   * codec)`). A **non-text** codec does not serialize characters at all: `base64`/`base64url`/`hex`
+   * reinterpret the ACK *string* as encoded data and decode it to unrelated bytes; `utf16le`/`ucs2`
+   * NUL-pad every byte. Either way the emitted frame is wholesale garbage a receiver cannot parse.
+   * A frame nothing can read is a caller mistake, so `buildMllpAck` throws a `TypeError` at the
+   * boundary rather than hand back an unusable ACK. Text codecs (`utf8`/`ascii`/`latin1`/`binary`)
+   * are unaffected.
+   *
+   * This applies to a **`Buffer`** inbound too (MLLP-ACK-NONTEXT-CODEC-BUFFER). An earlier iteration
+   * scoped the guard to the text path, believing a lossy `Buffer` override was already caught loudly
+   * by the byte-level `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check. That holds for a lossy *charset*
+   * codec (`ascii` masking a high bit) but NOT for a genuinely non-text one: a non-text codec
+   * garbles the *inbound* decode so it never parses as `MSH`, routing to the unparseable fallback
+   * whose MSA-2 is empty — the NOT_VERBATIM check short-circuits and never runs — and then serializes
+   * that fallback ACK to garbage bytes that ~3–4 % of the time (identically on Node 22 and 24)
+   * contain a `VT`/`FS` byte and make the strict frame encoder throw a nondeterministic
+   * `MllpFramingError`. So it was never the "loud AE" it was documented to be; it was an unreadable
+   * frame that sometimes crashed. The legitimate byte-level escape hatch (a *charset* codec on a
+   * `Buffer`) is preserved and asserted below.
    *
    * Fixtures are synthetic-only (SEND/FAC/RECV, invented control IDs) — never PHI.
    */
@@ -488,7 +498,7 @@ describe("ack-from-hl7 — a non-text codec on the text path is rejected at the 
     it(`a string inbound with { encoding: "${enc}" } throws a TypeError`, () => {
       expect(() => buildAckAA(inboundStr, { encoding: enc })).toThrow(TypeError);
       expect(() => buildAckAA(inboundStr, { encoding: enc })).toThrow(
-        /not supported on the text path/,
+        /not a serializable ACK codec/,
       );
     });
 
@@ -534,16 +544,31 @@ describe("ack-from-hl7 — a non-text codec on the text path is rejected at the 
     expect(ack.correlationId).toBe("MSG00001");
   });
 
-  it("a Buffer inbound with a non-text codec is NOT rejected — the escape hatch is preserved, and still fail-safe", () => {
-    // The guard is text-path only: a Buffer override is the documented escape hatch, so it must NOT
-    // throw. On a Buffer a `base64` codec garbles the *inbound decode* too, so this routes through
-    // the unparseable fallback — a loud, non-positive `AE` (the AA is downgraded), never a silent
-    // positive. The point of the test is that the Buffer path is untouched by the boundary guard and
-    // remains fail-safe by its existing machinery.
+  for (const enc of NON_TEXT) {
+    it(`a Buffer inbound with { encoding: "${enc}" } is rejected too (MLLP-ACK-NONTEXT-CODEC-BUFFER)`, () => {
+      // A non-text codec on a Buffer garbles the inbound decode (it never parses as MSH, so it
+      // always routes to the unparseable fallback with an empty MSA-2 — the NOT_VERBATIM check
+      // never runs) and serializes the fallback ACK to garbage bytes that intermittently trip the
+      // strict frame encoder (`MllpFramingError`, ~3-4% of calls, identically on Node 22 and 24).
+      // It was never the "loud AE" escape hatch it was documented to be, so it is rejected at the
+      // boundary deterministically — never handed back as an unreadable frame or a coin-flip throw.
+      const wire = Buffer.from(inboundStr, "latin1");
+      expect(() => buildAckAA(wire, { encoding: enc })).toThrow(TypeError);
+      expect(() => buildAckAA(wire, { encoding: enc })).toThrow(/not a serializable ACK codec/);
+    });
+  }
+
+  it("the legitimate Buffer escape hatch — a *charset* codec — still builds a correlated frame", () => {
+    // The byte-level escape hatch the docs promise ("a receiving system that demands a specific
+    // byte-level codec") is a CHARSET codec, all of which remain accepted on a Buffer. latin1 is
+    // byte-verbatim (the default); ascii/utf8 round-trip an all-ASCII control ID cleanly. None of
+    // these is touched by the non-text-codec guard.
     const wire = Buffer.from(inboundStr, "latin1");
-    expect(() => buildAckAA(wire, { encoding: "base64" })).not.toThrow();
-    const ack = buildAckAA(wire, { encoding: "base64" });
-    expect(ack.code).toBe("AE"); // requested AA, fail-safe-downgraded — never a silent positive
-    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_INBOUND_UNPARSEABLE);
+    for (const enc of ["latin1", "ascii", "utf8", "binary"] as const) {
+      const ack = buildAckAA(wire, { encoding: enc });
+      expect(ack.code).toBe("AA");
+      expect(ack.correlationId).toBe("MSG00001");
+      expect(extractMsaControlId(ack.payload)).toBe("MSG00001");
+    }
   });
 });

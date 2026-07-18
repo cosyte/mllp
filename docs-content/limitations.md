@@ -121,15 +121,20 @@ Whenever the emitted MSA-2 holds a non-ASCII byte on a text inbound, `buildMllpA
 separate from the `Buffer`-path proof-of-mismatch. An all-ASCII control ID round-trips under every
 codec and stays quiet. Pass a `Buffer`. That is what the `Buffer`-first API rule is for.
 
-A **non-text** `encoding` override on the text path is a step past even that — and it is **rejected**,
-not warned. `"base64"`/`"base64url"`/`"hex"` reinterpret the ACK *string* as encoded data, and
-`"utf16le"`/`"ucs2"` NUL-pad every byte, so the emitted frame is wholesale garbage a receiver cannot
-parse (its `extractMsaControlId` returns `null` and the ACK-FAILSAFE path downgrades to `AE` — so the
-class was always fail-safe, never silent). Because a garbage frame is a caller mistake rather than a
-runtime condition, `buildMllpAck` throws a `TypeError` at the boundary for a non-text codec on a
-`string`/`Hl7Message` inbound (MLLP-ACK-NONTEXT-CODEC-FRAME); only text codecs (`"utf8"`/`"ascii"`/
-`"latin1"`) are accepted there. The `Buffer` overload is untouched — any codec is allowed on it, and a
-lossy one surfaces as the loud `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof instead.
+A **non-text** `encoding` override is a step past even that — and it is **rejected**, not warned, on
+**every** input shape. `"base64"`/`"base64url"`/`"hex"` reinterpret the ACK *string* as encoded data,
+and `"utf16le"`/`"ucs2"` NUL-pad every byte, so the emitted frame is wholesale garbage a receiver
+cannot parse. Because a garbage frame is a caller mistake rather than a runtime condition,
+`buildMllpAck` throws a `TypeError` at the boundary for a non-text codec (MLLP-ACK-NONTEXT-CODEC-FRAME
+/ -BUFFER); only text codecs (`"utf8"`/`"ascii"`/`"latin1"`/`"binary"`) are accepted. This includes a
+`Buffer` inbound: a non-text codec there garbles the *inbound* decode into the unparseable fallback
+(empty MSA-2, so the `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof never runs) and then serializes the
+fallback ACK to garbage bytes that ~3–4 % of the time — identically on Node 22 and 24 — contain a
+`VT`/`FS` byte and trip the strict frame encoder with a nondeterministic `MllpFramingError`. It was
+never the "loud AE" escape hatch it was documented to be. The legitimate byte-level escape hatch is
+untouched: a **charset** codec on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that
+still surfaces as the loud `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof) is what serves a peer that
+demands a specific byte-level codec.
 
 Neither builder **ACKs an HL7 batch** (§2.10.3) or a frame of concatenated messages. An `FHS`/`BHS`
 envelope, or a second `MSH` in the same frame, yields the warned, non-positive `AE` — never a
