@@ -188,6 +188,27 @@ const BYTES_INBOUND_ENCODING: BufferEncoding = "latin1";
 const TEXT_INBOUND_ENCODING: BufferEncoding = "utf8";
 
 /**
+ * The codecs {@link buildMllpAck} accepts on the **text path** — a `string` /
+ * `Hl7Message` inbound. The character-faithful single-byte / UTF-8 codecs, under which
+ * `Buffer.from(ackText, codec)` serializes the ACK's characters to a byte stream a peer
+ * reads back as HL7: `utf8`/`utf-8` (the default), `ascii`, and `latin1`/`binary`.
+ *
+ * Every *other* `BufferEncoding` is a **non-text** codec that does not serialize
+ * characters at all — `base64`/`base64url`/`hex` reinterpret the ACK **string** as
+ * encoded data and decode it to unrelated bytes; `utf16le`/`ucs2` interleave a NUL after
+ * every ASCII byte. Either way the emitted frame is wholesale garbage, so they are
+ * rejected on the text path (see {@link assertTextPathEncoding}).
+ * @internal
+ */
+const TEXT_PATH_ENCODINGS: ReadonlySet<string> = new Set([
+  "utf8",
+  "utf-8",
+  "ascii",
+  "latin1",
+  "binary",
+]);
+
+/**
  * Options for {@link buildMllpAck} and its six convenience wrappers.
  *
  * @example
@@ -245,6 +266,17 @@ export interface BuildMllpAckOptions {
    * **`Buffer` is the byte-safe path.** Pass the raw payload. It is what the server hands
    * you, it is what the `Buffer`-first API rule exists for, and it is the only input for
    * which the verbatim guarantee — or a proof that it broke — actually means anything.
+   *
+   * **On the text path, only a *text* codec is accepted.** A `string` / `Hl7Message` inbound
+   * uses this codec solely to serialize the ACK back to bytes, so it must be one that writes
+   * characters as a byte stream the peer can read as HL7: `"utf8"` (default), `"ascii"`, or
+   * `"latin1"`. A **non-text** codec — `"base64"`/`"base64url"`/`"hex"` (which reinterpret the
+   * ACK *string* as encoded data) or `"utf16le"`/`"ucs2"` (which NUL-pad every byte) — would
+   * emit a wholesale-garbage frame the receiver cannot parse, so `buildMllpAck` **throws a
+   * `TypeError`** for it here rather than hand back an unusable ACK
+   * (MLLP-ACK-NONTEXT-CODEC-FRAME). This restriction is text-path only: on a `Buffer` inbound
+   * any codec is allowed (a lossy one is caught loudly by {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM}),
+   * because there the wire bytes are in hand to verify against.
    */
   readonly encoding?: BufferEncoding;
   /**
@@ -316,6 +348,53 @@ function resolveEncoding(
 ): BufferEncoding {
   if (options.encoding !== undefined) return options.encoding;
   return Buffer.isBuffer(inbound) ? BYTES_INBOUND_ENCODING : TEXT_INBOUND_ENCODING;
+}
+
+/**
+ * Reject a **non-text** codec on the **text path** (a `string` / `Hl7Message` inbound),
+ * loudly and before anything is emitted.
+ *
+ * On a text inbound the resolved codec is used only to serialize the built ACK back to
+ * bytes (`Buffer.from(ack.toString(), codec)`). A *text* codec ({@link TEXT_PATH_ENCODINGS}
+ * — `utf8`/`ascii`/`latin1`) writes the ACK's characters as a byte stream the peer reads
+ * back as HL7. A *non-text* codec does not: `base64`/`base64url`/`hex` reinterpret the ACK
+ * **string** as encoded data and decode it to unrelated bytes, and `utf16le`/`ucs2`
+ * interleave a NUL after every byte — so the emitted frame is wholesale garbage the receiver
+ * cannot parse.
+ *
+ * That failure is *already* fail-safe downstream — a garbage frame yields no readable MSA-2,
+ * so the receiver's `extractMsaControlId` returns `null` and the ACK-FAILSAFE path downgrades
+ * to a loud `AE` (MLLP-ACK-NONTEXT-CODEC-FRAME). It is **not** the silent-corruption class the
+ * `ascii`-override bleed was (that masks one bad code unit into a plausible ID; this destroys
+ * the whole frame, self-evidently). But a frame nothing can read is a **caller mistake**, not a
+ * runtime condition, and the honest place to report a caller mistake is the boundary — not a
+ * garbage `Buffer` handed back for the caller to write to a socket and discover broken a round
+ * trip later. So this throws a `TypeError` here, exactly as {@link assertKnownAckCode} does for
+ * a bad `code`.
+ *
+ * ## Scoped to the text path — the `Buffer` overload is deliberately untouched
+ *
+ * On a `Buffer` inbound a codec override is the documented (discouraged) escape hatch for a
+ * receiving system that genuinely demands a specific byte-level codec, and a lossy one there is
+ * *already* loud: the wire bytes are in hand, so {@link verifyVerbatimEcho} compares MSA-2
+ * against them byte-for-byte and emits {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM}. From decoded
+ * text those bytes are gone, so there is no falsifiable check to lean on — only a garbage frame
+ * — and this guard fills exactly that gap. It never fires on the `Buffer` path.
+ * @internal
+ */
+function assertTextPathEncoding(
+  inbound: Hl7Message | Buffer | string,
+  encoding: BufferEncoding,
+): void {
+  if (Buffer.isBuffer(inbound)) return;
+  if (TEXT_PATH_ENCODINGS.has(encoding.toLowerCase())) return;
+  throw new TypeError(
+    `buildMllpAck: encoding ${JSON.stringify(encoding)} is not supported on the text path ` +
+      `(a string or Hl7Message inbound). Serializing an ACK to a non-text codec ` +
+      `(base64/base64url/hex/utf16le/ucs2) produces a wholesale-garbage frame the receiver ` +
+      `cannot parse. Use a text codec ("utf8", "ascii", or "latin1"), or pass the raw payload ` +
+      `Buffer if the receiving system genuinely demands a specific byte-level codec.`,
+  );
 }
 
 /**
@@ -676,7 +755,10 @@ function resolveInbound(
  *   the caller's concern if they parsed the inbound themselves.
  *
  * @throws {MllpPeerMissingError} when `@cosyte/hl7` is not installed.
- * @throws {TypeError} when `options.code` is not a known HL7 Table 0008 code.
+ * @throws {TypeError} when `options.code` is not a known HL7 Table 0008 code, or when
+ *   `options.encoding` is a **non-text** codec (`base64`/`base64url`/`hex`/`utf16le`/`ucs2`)
+ *   on a `string` / `Hl7Message` inbound — it would serialize a garbage frame
+ *   (MLLP-ACK-NONTEXT-CODEC-FRAME). See {@link BuildMllpAckOptions.encoding}.
  *
  * @example
  * ```typescript
@@ -696,6 +778,12 @@ export function buildMllpAck(
   // the same choice, because an asymmetric pair is exactly what breaks the verbatim
   // MSA-2 echo (§2.9.2.2) and with it the sender's ACK correlation.
   const encoding = resolveEncoding(inbound, options);
+
+  // Fail loud at the boundary on a non-text codec (`base64`/`hex`/`utf16le`/…) over a text
+  // inbound: it would serialize the ACK to a wholesale-garbage frame the receiver cannot parse.
+  // See {@link assertTextPathEncoding}. The `Buffer` overload is untouched (its lossy-override
+  // case is caught loudly by the byte-level NOT_VERBATIM check instead).
+  assertTextPathEncoding(inbound, encoding);
 
   let msg: Hl7Message;
   try {

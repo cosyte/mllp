@@ -466,3 +466,84 @@ describe("ack-from-hl7 — a lossy `ascii` override on a text inbound cannot cor
     expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
   });
 });
+
+describe("ack-from-hl7 — a non-text codec on the text path is rejected at the boundary (MLLP-ACK-NONTEXT-CODEC-FRAME)", () => {
+  /**
+   * A `string` / `Hl7Message` inbound uses the resolved codec only to serialize the ACK back to
+   * bytes (`Buffer.from(ack.toString(), codec)`). A **non-text** codec does not serialize
+   * characters at all: `base64`/`base64url`/`hex` reinterpret the ACK *string* as encoded data and
+   * decode it to unrelated bytes; `utf16le`/`ucs2` NUL-pad every byte. Either way the emitted frame
+   * is wholesale garbage a receiver cannot parse — its `extractMsaControlId` returns `null` and the
+   * ACK-FAILSAFE path downgrades to `AE` (so this class was always fail-safe, never silent
+   * corruption). But a frame nothing can read is a caller mistake, so `buildMllpAck` throws a
+   * `TypeError` at the boundary rather than hand back an unusable ACK. Text codecs (`utf8`/`ascii`/
+   * `latin1`) are unaffected, and the `Buffer` overload is deliberately untouched.
+   *
+   * Fixtures are synthetic-only (SEND/FAC/RECV, invented control IDs) — never PHI.
+   */
+  const inboundStr = "MSH|^~\\&|SEND|FAC|RECV|RFAC|20260714120000||ADT^A01|MSG00001|P|2.5.1\r";
+  const NON_TEXT: readonly BufferEncoding[] = ["base64", "base64url", "hex", "utf16le", "ucs2"];
+
+  for (const enc of NON_TEXT) {
+    it(`a string inbound with { encoding: "${enc}" } throws a TypeError`, () => {
+      expect(() => buildAckAA(inboundStr, { encoding: enc })).toThrow(TypeError);
+      expect(() => buildAckAA(inboundStr, { encoding: enc })).toThrow(
+        /not supported on the text path/,
+      );
+    });
+
+    it(`an Hl7Message inbound with { encoding: "${enc}" } throws a TypeError too`, () => {
+      const msg = parseHL7(inboundStr);
+      expect(() => buildMllpAck(msg, { code: "AA", encoding: enc })).toThrow(TypeError);
+    });
+  }
+
+  it("case-insensitive: an upper-case non-text codec label is rejected too", () => {
+    expect(() => buildAckAA(inboundStr, { encoding: "UTF-16LE" as BufferEncoding })).toThrow(
+      TypeError,
+    );
+  });
+
+  it("the error names the remedy (a text codec or the Buffer overload) and carries no field content", () => {
+    // MSG00001 is an ASCII control ID; assert the static message never echoes it (PHI discipline —
+    // the guard throws before parsing, so no field can leak, but hold the line explicitly).
+    const idBearing = "MSH|^~\\&|SEND|FAC|RECV|RFAC|20260714120000||ADT^A01|MRN00042|P|2.5.1\r";
+    let caught: unknown;
+    try {
+      buildAckAA(idBearing, { encoding: "base64" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TypeError);
+    const message = caught instanceof Error ? caught.message : "";
+    expect(message).not.toContain("MRN00042");
+    expect(message).toContain("Buffer");
+    expect(message).toMatch(/utf8|ascii|latin1/);
+  });
+
+  it("the supported text codecs still build a frame on the text path (no regression)", () => {
+    for (const enc of ["utf8", "ascii", "latin1"] as const) {
+      const ack = buildAckAA(inboundStr, { encoding: enc });
+      expect(ack.correlationId).toBe("MSG00001");
+      expect(extractMsaControlId(ack.payload)).toBe("MSG00001");
+    }
+  });
+
+  it("the default text path (no override) is unaffected", () => {
+    const ack = buildAckAA(inboundStr);
+    expect(ack.correlationId).toBe("MSG00001");
+  });
+
+  it("a Buffer inbound with a non-text codec is NOT rejected — the escape hatch is preserved, and still fail-safe", () => {
+    // The guard is text-path only: a Buffer override is the documented escape hatch, so it must NOT
+    // throw. On a Buffer a `base64` codec garbles the *inbound decode* too, so this routes through
+    // the unparseable fallback — a loud, non-positive `AE` (the AA is downgraded), never a silent
+    // positive. The point of the test is that the Buffer path is untouched by the boundary guard and
+    // remains fail-safe by its existing machinery.
+    const wire = Buffer.from(inboundStr, "latin1");
+    expect(() => buildAckAA(wire, { encoding: "base64" })).not.toThrow();
+    const ack = buildAckAA(wire, { encoding: "base64" });
+    expect(ack.code).toBe("AE"); // requested AA, fail-safe-downgraded — never a silent positive
+    expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_INBOUND_UNPARSEABLE);
+  });
+});

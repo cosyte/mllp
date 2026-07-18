@@ -33,6 +33,22 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **`ack-from-hl7`: a non-text `encoding` override on a text inbound is rejected at the boundary
+  instead of emitting a garbage frame (MLLP-ACK-NONTEXT-CODEC-FRAME).** On a `string` / `Hl7Message`
+  inbound the resolved codec is used only to serialize the ACK back to bytes. A **text** codec
+  (`utf8`/`ascii`/`latin1`) writes the ACK's characters as a byte stream a peer reads back as HL7; a
+  **non-text** one does not — `base64`/`base64url`/`hex` reinterpret the ACK *string* as encoded data
+  and decode it to unrelated bytes, and `utf16le`/`ucs2` NUL-pad every byte — so the emitted frame is
+  wholesale garbage the receiver cannot parse. This was never the silent-corruption class the
+  `ascii`-override bleed (above) was: a garbage frame has no readable MSA-2, so the receiver's
+  `extractMsaControlId` returns `null` and the ACK-FAILSAFE path already downgrades to a loud `AE`.
+  The gap was ergonomic — the unusable ACK was handed back to be written to a socket and found broken
+  a round trip later. `buildMllpAck` now throws a `TypeError` at the boundary for a non-text codec on
+  a text inbound (exactly as it already does for an unknown `code`), naming the remedy: use a text
+  codec, or pass the raw `Buffer`. Scoped to the text path only — on a `Buffer` inbound a codec
+  override remains the documented escape hatch, and a lossy one there is still caught loudly by the
+  byte-level `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check. Default `utf8`/`latin1` paths and all-ASCII
+  control IDs are unaffected; no warning code or other public type changes.
 - **`scripts/sync-version.mjs` hardened against two latent defects, and gated in CI
   (SYNC-VERSION-HARDENING).** Follow-up hardening on the VERSION-SYNC script; ported byte-identically
   across `hl7`, `x12`, and `mllp`. (1) The version was spliced into `src/index.ts` via

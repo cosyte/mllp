@@ -121,6 +121,16 @@ Whenever the emitted MSA-2 holds a non-ASCII byte on a text inbound, `buildMllpA
 separate from the `Buffer`-path proof-of-mismatch. An all-ASCII control ID round-trips under every
 codec and stays quiet. Pass a `Buffer`. That is what the `Buffer`-first API rule is for.
 
+A **non-text** `encoding` override on the text path is a step past even that — and it is **rejected**,
+not warned. `"base64"`/`"base64url"`/`"hex"` reinterpret the ACK *string* as encoded data, and
+`"utf16le"`/`"ucs2"` NUL-pad every byte, so the emitted frame is wholesale garbage a receiver cannot
+parse (its `extractMsaControlId` returns `null` and the ACK-FAILSAFE path downgrades to `AE` — so the
+class was always fail-safe, never silent). Because a garbage frame is a caller mistake rather than a
+runtime condition, `buildMllpAck` throws a `TypeError` at the boundary for a non-text codec on a
+`string`/`Hl7Message` inbound (MLLP-ACK-NONTEXT-CODEC-FRAME); only text codecs (`"utf8"`/`"ascii"`/
+`"latin1"`) are accepted there. The `Buffer` overload is untouched — any codec is allowed on it, and a
+lossy one surfaces as the loud `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof instead.
+
 Neither builder **ACKs an HL7 batch** (§2.10.3) or a frame of concatenated messages. An `FHS`/`BHS`
 envelope, or a second `MSH` in the same frame, yields the warned, non-positive `AE` — never a
 positive `AA` correlated to the first message, which would tell the sender the whole batch was

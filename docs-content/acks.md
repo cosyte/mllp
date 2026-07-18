@@ -256,6 +256,31 @@ byte-safe; one who decoded with `latin1` and lets the `utf8` default re-encode i
 string looks identical either way). This is why the package is `Buffer`-first on every public
 surface. **Pass the raw payload.**
 
+### On the text path, only a *text* codec is accepted
+
+The `encoding` override on a `string` / `Hl7Message` inbound is used to serialize the ACK back to
+bytes, so it must be a codec that writes characters as a byte stream a peer can read as HL7: `"utf8"`
+(the default), `"ascii"`, or `"latin1"`. A **non-text** codec is not:
+
+- `"base64"` / `"base64url"` / `"hex"` reinterpret the ACK **string** as encoded data and decode it to
+  unrelated bytes;
+- `"utf16le"` / `"ucs2"` interleave a NUL after every byte.
+
+Either way the emitted frame is wholesale garbage the receiver cannot parse — so `buildMllpAck`
+**throws a `TypeError` at the boundary** rather than hand back an unusable ACK:
+
+```ts
+buildAckAA(decodedText, { encoding: "base64" }); // ❌ throws TypeError — non-text codec on the text path
+buildAckAA(decodedText, { encoding: "utf8" });   // ✅ text codec — fine
+```
+
+This is a caller mistake, caught loudly and immediately, not a silent corruption — a garbage frame
+downstream is itself fail-safe (no readable MSA-2 → the receiver's ACK-FAILSAFE downgrades to `AE`),
+but a frame nothing can read is not worth emitting. The restriction is **text-path only**: on a
+`Buffer` inbound any codec is allowed (a lossy one is caught loudly by
+`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` instead), because there the wire bytes are in hand to verify
+against. If a receiving system genuinely demands a specific byte-level codec, pass a `Buffer`.
+
 ### `ack-from-hl7` refuses an HL7 batch, loudly
 
 An HL7 batch (§2.10.3) is `[FHS] { [BHS] { MSH … } [BTS] } [FTS]` — a **sequence** of messages.
