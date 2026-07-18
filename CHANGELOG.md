@@ -33,6 +33,26 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **`ack-from-hl7`: a non-text `encoding` override is now rejected on a `Buffer` inbound too, not just
+  the text path — and this fixes a flaky `verify` failure (MLLP-ACK-NONTEXT-CODEC-BUFFER).**
+  MLLP-ACK-NONTEXT-CODEC-FRAME (below) spared the `Buffer` path on the belief that a lossy `Buffer`
+  override was already caught loudly by the byte-level `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check. That
+  holds for a lossy **charset** codec (`ascii` masking a high bit) but not for a genuinely non-text one.
+  A non-text codec (`base64`/`base64url`/`hex`/`utf16le`/`ucs2`) garbles the **inbound** decode —
+  `buf.toString("base64")` never begins with `MSH`, so it always routes to the unparseable fallback,
+  whose MSA-2 is empty and whose `verifyVerbatimEcho` short-circuits before the NOT_VERBATIM proof can
+  run — and then serializes that fallback ACK with the same codec, decoding the ACK text to random
+  bytes that ~3–4 % of the time contain a `VT`/`FS` byte and make the strict `encodeFrame` throw a
+  nondeterministic `MllpFramingError`. So the path was neither the "loud AE" it was documented to be
+  nor caught by any falsifiable check — it was an unreadable frame that sometimes crashed. It surfaced
+  as CI flake: the `verify` test asserting a reliable `AE` tripped `encodeFrame` on **both** Node 22
+  and Node 24 (the base64 decode is byte-identical across the two — never a runtime divergence, only a
+  coin-flip draw of the fallback's generated MSH-10 that landed differently on the two matrix legs of
+  one run). `buildMllpAck` now throws a `TypeError` at the boundary for a non-text codec on **any**
+  input shape, deterministically. The legitimate byte-level escape hatch is preserved untouched:
+  `latin1` (byte-verbatim default for a `Buffer`), `ascii`, `utf8`, and `binary` are still accepted,
+  and a lossy charset override on a `Buffer` is still caught loudly by
+  `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. No warning code or other public type changes.
 - **`ack-from-hl7`: a non-text `encoding` override on a text inbound is rejected at the boundary
   instead of emitting a garbage frame (MLLP-ACK-NONTEXT-CODEC-FRAME).** On a `string` / `Hl7Message`
   inbound the resolved codec is used only to serialize the ACK back to bytes. A **text** codec

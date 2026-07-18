@@ -256,11 +256,11 @@ byte-safe; one who decoded with `latin1` and lets the `utf8` default re-encode i
 string looks identical either way). This is why the package is `Buffer`-first on every public
 surface. **Pass the raw payload.**
 
-### On the text path, only a *text* codec is accepted
+### Only a *text* codec is accepted — on every input shape
 
-The `encoding` override on a `string` / `Hl7Message` inbound is used to serialize the ACK back to
-bytes, so it must be a codec that writes characters as a byte stream a peer can read as HL7: `"utf8"`
-(the default), `"ascii"`, or `"latin1"`. A **non-text** codec is not:
+The `encoding` override serializes the ACK back to bytes, so it must be a codec that writes
+characters as a byte stream a peer can read as HL7: `"utf8"`, `"ascii"`, `"latin1"`, or `"binary"`.
+A **non-text** codec is not:
 
 - `"base64"` / `"base64url"` / `"hex"` reinterpret the ACK **string** as encoded data and decode it to
   unrelated bytes;
@@ -270,16 +270,21 @@ Either way the emitted frame is wholesale garbage the receiver cannot parse — 
 **throws a `TypeError` at the boundary** rather than hand back an unusable ACK:
 
 ```ts
-buildAckAA(decodedText, { encoding: "base64" }); // ❌ throws TypeError — non-text codec on the text path
-buildAckAA(decodedText, { encoding: "utf8" });   // ✅ text codec — fine
+buildAckAA(decodedText, { encoding: "base64" }); // ❌ throws TypeError — not a serializable ACK codec
+buildAckAA(wireBuffer, { encoding: "base64" });  // ❌ throws too — same reason, on a Buffer
+buildAckAA(wireBuffer, { encoding: "latin1" });  // ✅ charset codec — the byte-level escape hatch
 ```
 
-This is a caller mistake, caught loudly and immediately, not a silent corruption — a garbage frame
-downstream is itself fail-safe (no readable MSA-2 → the receiver's ACK-FAILSAFE downgrades to `AE`),
-but a frame nothing can read is not worth emitting. The restriction is **text-path only**: on a
-`Buffer` inbound any codec is allowed (a lossy one is caught loudly by
-`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` instead), because there the wire bytes are in hand to verify
-against. If a receiving system genuinely demands a specific byte-level codec, pass a `Buffer`.
+This is a caller mistake, caught loudly and immediately. It applies to a **`Buffer` inbound too**
+(MLLP-ACK-NONTEXT-CODEC-BUFFER): a non-text codec there garbles the *inbound* decode so it never
+parses as `MSH` — routing to the unparseable fallback whose MSA-2 is empty, so the
+`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check never runs — and then serializes that fallback ACK to
+garbage bytes that intermittently contain a framing delimiter and trip the strict frame encoder
+(`MllpFramingError`, ~3–4 % of calls, identically on Node 22 and 24). It was never the "loud AE" it
+was once documented to be. The legitimate byte-level escape hatch is unchanged: a **charset** codec
+on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that is still caught loudly by
+`MLLP_ACK_CONTROL_ID_NOT_VERBATIM`) is exactly what serves a receiving system that demands a specific
+byte-level codec.
 
 ### `ack-from-hl7` refuses an HL7 batch, loudly
 
