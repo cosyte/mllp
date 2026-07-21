@@ -11,8 +11,9 @@ sidebar_position: 1
 without configuration. It is **transport, not parsing** — it moves HL7 v2 bytes over TCP and never
 inspects the payload.
 
-> **Status:** pre-alpha (`0.0.x`), not yet published to npm. The command below is the shape it will
-> take at first publish; until then, consume it from source or a workspace link.
+> **Status:** published on npm at `0.0.1` and public — still pre-alpha on the cosyte
+> `0.0.x`-until-first-alpha ladder, so the API can change with no deprecation cycle. The
+> `npm install @cosyte/mllp` command below is live, not aspirational.
 
 ## Prerequisites
 
