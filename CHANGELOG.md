@@ -48,6 +48,12 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   `InMemoryTransport.pair()`; the receive example's fictional `respond`/`buildAck` → the real
   `createServer({ onMessage })`). Bumps the `@cosyte/vitest-config` devDependency to `^0.0.2` for the
   `/snippets` export. Docs and tests only — no runtime or public-API change.
+- **`docs-content/installation.md` publish-status note corrected (README-ORG-SWEEP).** The Status
+  callout said the package was "not yet published to npm" and that the install command was "the shape
+  it will take at first publish" — stale now that `@cosyte/mllp` is published on npm at `0.0.1` and
+  public. Rewritten to state it is published and public, still pre-alpha on the cosyte
+  `0.0.x`-until-first-alpha ladder (no API-stability promise), and that `npm install @cosyte/mllp` is
+  live. Docs only — no runtime or public-API change.
 
 ### Fixed
 
