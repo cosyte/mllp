@@ -1,7 +1,7 @@
 /**
  * PHI-safety property tests (MLLP-9 observability audit).
  *
- * mllp transports raw HL7 v2 payloads — every byte of every payload is assumed to be
+ * mllp transports raw HL7 v2 payloads, every byte of every payload is assumed to be
  * PHI. The framing layer's diagnostic surfaces (`MllpFramingError.snippet` /
  * `.message`, and every `MllpWarning.message`) are the places a payload byte could
  * escape into a log. The invariant this suite pins:
@@ -11,7 +11,7 @@
  * A framing error may name the single boundary byte that violated the structure (its
  * hex is already in the message), but it must never echo a *slice* of the accumulated
  * payload. The one place that used to break this was `MLLP_FRAME_TOO_LARGE`, which
- * copied the last 32 accumulated payload bytes into `snippet` — a field-body slice of
+ * copied the last 32 accumulated payload bytes into `snippet`, a field-body slice of
  * clinical content on a public error field (the too-large frame is a full HL7
  * message). That snippet is now empty; this suite is the regression that keeps it so.
  *
@@ -120,11 +120,11 @@ describe("PHI-safety: no framing throw echoes a payload content slice (MLLP-9)",
           // The load-bearing PHI invariant: the snippet is at most ONE byte (whose hex the
           // message already discloses), so it can never be a *run* of payload content. That
           // single byte may itself be a payload byte (the first byte seen where a VT was
-          // expected), so the invariant is a length cap — not a "snippet is a delimiter" check,
+          // expected), so the invariant is a length cap, not a "snippet is a delimiter" check,
           // and not `leaksMarker(snippet)`, which needs a ≥4-byte window and so can never fire
           // on a ≤1-byte snippet.
           expect(fe.snippet.length).toBeLessThanOrEqual(1);
-          // The message is the one diagnostic surface long enough to leak a run — pin that it
+          // The message is the one diagnostic surface long enough to leak a run, pin that it
           // never echoes marker content.
           expect(leaksMarker(fe.message)).toBe(false);
         },
@@ -150,7 +150,7 @@ describe("PHI-safety: the ENCODER's delimiter-byte throw never carries a payload
 
           let caught: MllpFramingError | undefined;
           try {
-            // strict (default) — a delimiter byte in the payload throws
+            // strict (default), a delimiter byte in the payload throws
             encodeFrame(payload);
           } catch (err) {
             expect(err).toBeInstanceOf(MllpFramingError);
@@ -159,7 +159,7 @@ describe("PHI-safety: the ENCODER's delimiter-byte throw never carries a payload
           expect(caught).toBeDefined();
           const fe = caught as MllpFramingError;
           expect(["MLLP_PAYLOAD_CONTAINS_VT", "MLLP_PAYLOAD_CONTAINS_FS"]).toContain(fe.code);
-          // At most the single offending delimiter byte — never a run of payload content.
+          // At most the single offending delimiter byte, never a run of payload content.
           expect(fe.snippet.length).toBeLessThanOrEqual(1);
           expect(leaksMarker(fe.snippet)).toBe(false);
           expect(leaksMarker(fe.message)).toBe(false);
@@ -177,7 +177,7 @@ describe("PHI-safety: warnings carry structural facts only, never a payload slic
         const payload = markerPayload(len);
         const warnings: MllpWarning[] = [];
         // Maximally tolerant reader over a quirk-laden stream: leading whitespace,
-        // missing VT, FS-without-CR, LF-after-FS, trailing junk — every warning path.
+        // missing VT, FS-without-CR, LF-after-FS, trailing junk, every warning path.
         const reader = new FrameReader({
           onFrame: () => {},
           onWarning: (w) => warnings.push(w),
@@ -210,8 +210,8 @@ describe("PHI-safety: the ACK builders' warnings carry no message content (MLLP-
    * The leak this pins shut. `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` used to hex-encode the
    * inbound MSH-10 into its message, on the reasoning that a control ID is routing
    * metadata rather than clinical content. But the scanner that produced that "MSH-10"
-   * ran past the segment terminator, so on a TRUNCATED MSH it actually returned PID-3 —
-   * the patient's MRN — and the warning rendered it into a log line. Both are fixed
+   * ran past the segment terminator, so on a TRUNCATED MSH it actually returned PID-3,
+   * the patient's MRN, and the warning rendered it into a log line. Both are fixed
    * (`readMshSegment` is bounded; the warning reports byte lengths only), and this is
    * the property that keeps them fixed: whatever the inbound, an ACK warning may not
    * echo any field of it.
@@ -271,7 +271,7 @@ describe("PHI-safety: the ACK builders' warnings carry no message content (MLLP-
       fc.property(fc.integer({ min: 1, max: 12 }), (mshFields) => {
         const inbound = inboundTruncatedAt(mshFields);
         const text = buildAckAA(inbound).payload.toString("latin1");
-        // MSH-10 legitimately appears in MSA-2 — that is the ACK's whole job. Nothing
+        // MSH-10 legitimately appears in MSA-2, that is the ACK's whole job. Nothing
         // from the PID may appear anywhere.
         for (const marker of [MRN, NAME, DOB]) {
           expect(text.includes(marker), `ACK payload leaked ${marker}`).toBe(false);

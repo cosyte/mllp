@@ -44,7 +44,7 @@ function buildClientOverPair(opts?: Partial<ClientOptions>): Harness {
   return { client, ackFromPeer };
 }
 
-describe("MllpClient backpressure — count mode (PLAN-05, CLIENT-07)", () => {
+describe("MllpClient backpressure, count mode (PLAN-05, CLIENT-07)", () => {
   it("Test 1: highWaterMark count cap rejects with MllpBackpressureError", async () => {
     const { client } = buildClientOverPair({ highWaterMark: 3 });
     const p1 = client.send(Buffer.from("M1"));
@@ -79,11 +79,11 @@ describe("MllpClient backpressure — count mode (PLAN-05, CLIENT-07)", () => {
   });
 });
 
-describe("MllpClient backpressure — bytes mode (PLAN-05, D-23)", () => {
+describe("MllpClient backpressure, bytes mode (PLAN-05, D-23)", () => {
   it("Test 3: highWaterMark { bytes } cap rejects when bytes would exceed", async () => {
     const { client } = buildClientOverPair({ highWaterMark: { bytes: 100 } });
     // Frame overhead from encodeFrame is +3 bytes (VT + FS + CR). So a 60B
-    // payload becomes 63B framed and a 50B payload becomes 53B framed —
+    // payload becomes 63B framed and a 50B payload becomes 53B framed,
     // first send (63B) fits under 100B, second (63+53=116B) overflows.
     const p1 = client.send(Buffer.alloc(60, 0x41));
     p1.catch(() => {});
@@ -95,7 +95,7 @@ describe("MllpClient backpressure — bytes mode (PLAN-05, D-23)", () => {
   });
 });
 
-describe("MllpClient backpressure — stricter-of-two (PLAN-05, D-23)", () => {
+describe("MllpClient backpressure, stricter-of-two (PLAN-05, D-23)", () => {
   it("Test 4: count + bytes both configured; whichever caps first wins", async () => {
     // count=100 (very loose), bytes=200 (the binding constraint).
     const { client } = buildClientOverPair({
@@ -117,7 +117,7 @@ describe("MllpClient backpressure — stricter-of-two (PLAN-05, D-23)", () => {
   });
 });
 
-describe("MllpClient backpressure — 'wait' mode (PLAN-05, CLIENT-07/CLIENT-11)", () => {
+describe("MllpClient backpressure, 'wait' mode (PLAN-05, CLIENT-07/CLIENT-11)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -167,7 +167,7 @@ describe("MllpClient backpressure — 'wait' mode (PLAN-05, CLIENT-07/CLIENT-11)
     p1.catch(() => {});
     const p2 = client.send(Buffer.from("M2"), { ackTimeoutMs: 100 });
     // Pre-attach a catch to absorb the rejection; expect(...).rejects below
-    // also reads from p2 — vitest re-uses the same Promise.
+    // also reads from p2, vitest re-uses the same Promise.
     const p2Settled = p2.catch((err: unknown) => err);
     // p2 waits for drain; p1 never ACKs and won't expire under the global
     // 10s timeout. p2's wait-timeout (100ms) fires first.

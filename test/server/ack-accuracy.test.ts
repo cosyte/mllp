@@ -2,12 +2,12 @@
  * Accuracy gate for the Phase 6 ACK builder (HL7 v2.5.1 §2.9.2, Table 0008).
  *
  * `buildRawAck` is a one-way construction (raw bytes → ACK), but the two clinically
- * load-bearing facts it carries — the MSA-1 acknowledgement code and the MSA-2 echo of
- * the inbound MSH-10 control ID — must survive verbatim. We prove that with the
+ * load-bearing facts it carries, the MSA-1 acknowledgement code and the MSA-2 echo of
+ * the inbound MSH-10 control ID, must survive verbatim. We prove that with the
  * `@cosyte/test-utils` `roundTripProperty` runner: the in-memory model is
  * `{ code, controlId }`; `serialize` builds an inbound message with that control ID,
  * runs `buildRawAck`, and returns the **MSA segment** (which is fully determined by the
- * model — unlike the ACK's MSH, whose timestamp and fresh control ID are non-deterministic);
+ * model, unlike the ACK's MSH, whose timestamp and fresh control ID are non-deterministic);
  * `parse` reads MSA-1/MSA-2 back out. Equality of the recovered model is the accuracy
  * check (catches a code copy/paste or a control-ID mis-echo that unit examples might miss);
  * the runner's idempotency assertion holds because the MSA segment is deterministic.

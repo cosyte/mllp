@@ -190,7 +190,7 @@ describe("Connection close/destroy semantics (LIFE-05)", () => {
       expect(errorPayload?.error?.phase).toBe("reconnect");
     });
 
-    it("second close() during DRAINING joins first drain — beforeClose called once (WR-03)", async () => {
+    it("second close() during DRAINING joins first drain, beforeClose called once (WR-03)", async () => {
       const [clientT] = InMemoryTransport.pair();
       const conn = new Connection({ transport: clientT });
       conn.notifyConnect(null, null);
@@ -240,7 +240,7 @@ describe("Connection close/destroy semantics (LIFE-05)", () => {
           /* never resolves */
         });
 
-      void conn.close({ drainTimeoutMs: 5000 }); // fire and forget — hangs in DRAINING
+      void conn.close({ drainTimeoutMs: 5000 }); // fire and forget, hangs in DRAINING
       expect(conn.state).toBe("DRAINING");
       conn.destroy(); // interrupt drain
       expect(conn.state).toBe("CLOSED");

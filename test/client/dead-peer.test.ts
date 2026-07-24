@@ -75,10 +75,10 @@ describe("MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)"
       try {
         const client = createClient({
           host: "127.0.0.1",
-          port: 1, // unreachable port — connect attempt fires error
+          port: 1, // unreachable port, connect attempt fires error
           keepaliveIntervalMs: 1234,
         });
-        // Initiate connect; we don't need to wait for it to succeed — just
+        // Initiate connect; we don't need to wait for it to succeed, just
         // for the socket build path to run.
         const cp = client.connect();
         cp.catch(() => {});
@@ -136,7 +136,7 @@ describe("MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)"
         deadPeerTimeoutMs: 100,
       });
       const destroySpy = vi.spyOn(conn, "destroy");
-      // ACK every 50ms — the timer should keep resetting and never fire.
+      // ACK every 50ms, the timer should keep resetting and never fire.
       // Use client.send to register an awaited send; ackFromPeer triggers
       // both the inbound 'message' on the Connection and the 'ack' event
       // on the MllpClient.
@@ -233,7 +233,7 @@ describe("MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)"
         states.push((e as { to: string }).to);
       });
       await vi.advanceTimersByTimeAsync(150);
-      // Trip happened — should NOT see RECONNECTING under autoReconnect:false.
+      // Trip happened, should NOT see RECONNECTING under autoReconnect:false.
       expect(states).not.toContain("RECONNECTING");
       client.destroy();
     });

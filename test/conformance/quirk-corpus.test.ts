@@ -5,7 +5,7 @@
  * already exercise each tolerance path over minimal byte arrays. This corpus is the
  * consolidated *interop* bar: it drives a realistic, multi-segment (synthetic) HL7 v2
  * message through each deviation a tolerant reader must survive in the field, and
- * asserts two things at once —
+ * asserts two things at once,
  *
  *   1. the exact stable warning code / typed error the deviation maps to, and
  *   2. that the recovered payload is **byte-identical** to the clean message (the
@@ -24,7 +24,7 @@ import { type MllpFramingError } from "../../src/framing/error.js";
 import type { MllpWarning } from "../../src/framing/registry.js";
 import { VT, FS, CR, LF } from "../../src/framing/constants.js";
 
-/** A realistic, synthetic ADT^A01 admit — multi-segment, spec-clean, PHI-free. */
+/** A realistic, synthetic ADT^A01 admit, multi-segment, spec-clean, PHI-free. */
 const ADT_A01 = Buffer.from(
   "MSH|^~\\&|SENDING_APP|SENDING_FAC|RECV_APP|RECV_FAC|20260709120000||ADT^A01|MSG00001|P|2.5\r" +
     "EVN|A01|20260709120000\r" +
@@ -80,7 +80,7 @@ describe("quirk corpus: a real HL7 message survives each §3 deviation", () => {
 
   it("§3.3 stray trailing junk after FS+CR → surfaced as MLLP_MISSING_LEADING_VT, never a throw", () => {
     // Junk after a complete frame lands back in SCANNING_FOR_VT: the tolerant reader treats it
-    // as the start of a NEW frame whose leading VT is missing — hence MLLP_MISSING_LEADING_VT,
+    // as the start of a NEW frame whose leading VT is missing, hence MLLP_MISSING_LEADING_VT,
     // NOT MLLP_TRAILING_BYTES (that code is reserved for a VT appearing mid-payload; see the
     // decoder's READING_PAYLOAD branch).
     const bytes = Buffer.concat([frame(ADT_A01), Buffer.from([0x00, 0x7f])]);
@@ -94,7 +94,7 @@ describe("quirk corpus: a real HL7 message survives each §3 deviation", () => {
   });
 
   it("§3.4 non-MLLP keepalive frame (FS without CR, next VT immediately) → MLLP_FS_WITHOUT_CR", () => {
-    // Two back-to-back frames with no CR between them — the 'FS then next VT' keepalive shape.
+    // Two back-to-back frames with no CR between them, the 'FS then next VT' keepalive shape.
     const bytes = Buffer.concat([
       Buffer.from([VT]),
       ADT_A01,
@@ -111,7 +111,7 @@ describe("quirk corpus: a real HL7 message survives each §3 deviation", () => {
   });
 
   it("§3.7 large payload past the accumulator grows-and-decodes intact (no false FRAME_TOO_LARGE)", () => {
-    // 256 KiB forces the 4 KiB accumulator through several doublings — the same
+    // 256 KiB forces the 4 KiB accumulator through several doublings, the same
     // growth path a multi-MB base64-PDF OBX takes, without the multi-MB runtime.
     const big = Buffer.concat([ADT_A01, Buffer.alloc(256 * 1024, 0x41)]);
     const { frames } = decode(frame(big), { maxFrameSizeBytes: 1024 * 1024 });

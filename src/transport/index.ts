@@ -1,10 +1,10 @@
 /**
- * Transport interface — the abstraction boundary between Connection and raw I/O.
+ * Transport interface, the abstraction boundary between Connection and raw I/O.
  *
  * All transports implement this callback-bag contract. Implementations:
- * - `NetTransport` — wraps `net.Socket` (production TCP)
- * - `TlsTransport` — wraps `tls.TLSSocket` (Phase 8 — MLLPS / TLS hardening)
- * - `InMemoryTransport` — deterministic test double (`@cosyte/mllp/testing`)
+ * - `NetTransport`, wraps `net.Socket` (production TCP)
+ * - `TlsTransport`, wraps `tls.TLSSocket` (Phase 8, MLLPS / TLS hardening)
+ * - `InMemoryTransport`, deterministic test double (`@cosyte/mllp/testing`)
  *
  * @example
  * ```typescript
@@ -48,7 +48,7 @@ export interface Transport {
    * Write `buf` to the underlying transport.
    *
    * @returns `true` if the bytes were flushed to the kernel immediately;
-   * `false` if the write was buffered (backpressure — caller should pause sending
+   * `false` if the write was buffered (backpressure, caller should pause sending
    * until the `onDrain` event fires at the Connection layer).
    */
   write(buf: Buffer): boolean;

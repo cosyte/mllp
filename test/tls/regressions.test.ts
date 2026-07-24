@@ -1,21 +1,21 @@
 /**
- * Phase 8 review regressions — real sockets, real TLS, real timers.
+ * Phase 8 review regressions, real sockets, real TLS, real timers.
  *
  * Covers the defects found by the independent gate review of the first
  * Phase 8 cut (the since-removed post-handshake grace window):
  *
  * 1. Zero inbound-frame loss: a TLS peer that writes an MLLP frame
- *    IMMEDIATELY after the handshake must have it delivered — never
+ *    IMMEDIATELY after the handshake must have it delivered, never
  *    silently discarded while the Connection sits in CONNECTING.
  * 2. A TLS server that cleanly end()s right after the handshake behaves
  *    like its plaintext counterpart (no resolve-on-dead-state asymmetry),
  *    and an autoReconnect client recovers the same way plaintext does.
- * 3. mTLS MUST rejection with autoReconnect: true never reconnect-loops —
+ * 3. mTLS MUST rejection with autoReconnect: true never reconnect-loops,
  *    TLS-protocol-shaped errors are classified permanent.
  * 6. The allowUnverified securityWarning fires on the AUTO-reconnect path.
  *
- * (4 — wildcard spellings — lives in test/server/bind-safety.test.ts;
- *  5 — the WANT `authorized` flag — lives here and in the matrix Case 5.)
+ * (4, wildcard spellings, lives in test/server/bind-safety.test.ts;
+ *  5, the WANT `authorized` flag, lives here and in the matrix Case 5.)
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { createServer as tlsCreateServer } from "node:tls";
@@ -84,11 +84,11 @@ describe("Phase 8 TLS regressions", () => {
   }
 
   // Regression 1 ---------------------------------------------------------
-  it("R1: a frame the TLS peer writes IMMEDIATELY after the handshake is delivered — zero loss", async () => {
+  it("R1: a frame the TLS peer writes IMMEDIATELY after the handshake is delivered, zero loss", async () => {
     const { cert, key } = buildServerCertFixture();
     const payload = Buffer.from("MSH|^~\\&|IMMEDIATE|FRAME|X|Y|20260101||ADT^A01|R1|P|2.5\r");
     const rawServer = tlsCreateServer({ cert, key }, (socket: TLSSocket) => {
-      // Write the MLLP frame in the same tick the handshake completes —
+      // Write the MLLP frame in the same tick the handshake completes,
       // the exact window in which the removed grace timer silently
       // discarded inbound frames (Connection was still CONNECTING).
       socket.write(encodeFrame(payload));
@@ -121,7 +121,7 @@ describe("Phase 8 TLS regressions", () => {
     await waitFor(() => tlsClient.state !== "CONNECTED");
     const tlsFinalState = tlsClient.state;
 
-    // Plaintext control — identical server behavior over raw TCP.
+    // Plaintext control, identical server behavior over raw TCP.
     const rawNet = netCreateServer((socket: Socket) => {
       socket.end();
     });
@@ -131,7 +131,7 @@ describe("Phase 8 TLS regressions", () => {
     await waitFor(() => netClient.state !== "CONNECTED");
     const netFinalState = netClient.state;
 
-    // Symmetry: same terminal-ish state on both transports — no
+    // Symmetry: same terminal-ish state on both transports, no
     // TLS-only resolve-on-dead-state asymmetry.
     expect(tlsFinalState).toBe(netFinalState);
   });
@@ -167,12 +167,12 @@ describe("Phase 8 TLS regressions", () => {
   });
 
   // Regression 3 ---------------------------------------------------------
-  it("R3: mTLS MUST rejection with autoReconnect: true — NO reconnect loop (permanent; state CLOSED; attempts 0)", async () => {
+  it("R3: mTLS MUST rejection with autoReconnect: true, NO reconnect loop (permanent; state CLOSED; attempts 0)", async () => {
     const { cert, key } = buildMutualTlsFixture();
     const server = createServer({ tls: { cert, key, ca: cert, clientAuth: "MUST" } });
     mllpServers.push(server);
     server.on("tlsClientError", () => {
-      /* expected — server must not crash */
+      /* expected, server must not crash */
     });
     await server.listen(0, "127.0.0.1");
     const port = must(server.getStats().port);
@@ -197,7 +197,7 @@ describe("Phase 8 TLS regressions", () => {
     try {
       await client.connect();
     } catch {
-      // pre-secureConnect rejection path — nothing more to drive
+      // pre-secureConnect rejection path, nothing more to drive
     }
 
     // The rejection is TLS-protocol-shaped → classified permanent → CLOSED.
@@ -226,7 +226,7 @@ describe("Phase 8 TLS regressions", () => {
     await server.listen(0, "127.0.0.1");
     const port = must(server.getStats().port);
 
-    // Untrusted client cert (self-signed by an unrelated CA) — WANT accepts
+    // Untrusted client cert (self-signed by an unrelated CA), WANT accepts
     // the connection but the cert is NOT verified.
     const untrustedClient = trackClient(
       createClient({
@@ -237,11 +237,11 @@ describe("Phase 8 TLS regressions", () => {
     );
     await untrustedClient.connect();
     // The server-side 'secureConnection' can land a beat after the client's
-    // own secureConnect — wait for it before closing.
+    // own secureConnect, wait for it before closing.
     await waitFor(() => peerCerts.length >= 1);
     await untrustedClient.close();
 
-    // Trusted client cert — verified against the server's ca.
+    // Trusted client cert, verified against the server's ca.
     const trustedClient = trackClient(
       createClient({
         host: "127.0.0.1",

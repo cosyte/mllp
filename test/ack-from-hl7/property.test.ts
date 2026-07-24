@@ -58,7 +58,7 @@ describe("property: buildAckAA correlation over arbitrary control ids", () => {
 
 describe("property: verbatim echo for delimiter-bearing control ids", () => {
   // Vendor-quirk alphabet: alphanumerics plus unescaped ^ & ~ delimiters.
-  // Trailing delimiters excluded — HL7 treats trailing empty components/
+  // Trailing delimiters excluded, HL7 treats trailing empty components/
   // repetitions as insignificant and the spec-clean serializer canonicalizes
   // them (upstream D-02); requires at least one alphanumeric so the id is
   // never all-empty structure.

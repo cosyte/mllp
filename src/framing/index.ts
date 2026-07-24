@@ -1,5 +1,5 @@
 /**
- * MLLP framing codec — canonical MLLP v1 frame encoder and chunked decoder.
+ * MLLP framing codec, canonical MLLP v1 frame encoder and chunked decoder.
  *
  * Implements the VT/FS/CR framing protocol defined in HL7 Appendix C.
  * The encoder is strict (Postel's Law: conservative on write).

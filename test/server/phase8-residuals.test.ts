@@ -1,15 +1,15 @@
 /**
- * Phase 8 residuals (MLLP-8.1) — regression tests for the gate-pass findings:
+ * Phase 8 residuals (MLLP-8.1), regression tests for the gate-pass findings:
  *
  * 1. The pre-existing unlistened-'error' re-emit crash: the constructor-time
  *    net.Server 'error' forwarder runs BEFORE listen()'s once('error')
  *    rejection handler (registration order), so an unguarded
  *    `this.emit('error', err)` on a server with no 'error' listener THREW on
- *    a plain bind error (EADDRINUSE) — crashing instead of rejecting the
+ *    a plain bind error (EADDRINUSE), crashing instead of rejecting the
  *    listen() promise. Also covers the post-close stale-error variant, where
  *    there is no listen() promise to reject into at all.
  * 2. `close({ signal })` with an ALREADY-ABORTED signal during an in-flight
- *    listen() is a no-op AbortError rejection — it does not settle the
+ *    listen() is a no-op AbortError rejection, it does not settle the
  *    pending listen(), which continues and settles on its own bind outcome.
  * 3. The consolidated idempotent settle helper: every listen() outcome clears
  *    the single-flight guard exactly once (re-listen works after an abort).
@@ -23,7 +23,7 @@ import { must, makeServerTracker } from "../helpers/tracked-servers.js";
 
 /**
  * Test-only reach into the private `_netServer` to synthesize a stale
- * post-close (or while-serving) error — there is no public trigger for an
+ * post-close (or while-serving) error, there is no public trigger for an
  * async net.Server error outside the bind window (the exact scenarios the
  * state-scoped guard covers).
  */
@@ -45,7 +45,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
       await occupant.listen(0, "127.0.0.1");
       const port = must(occupant.getStats().port);
 
-      // No 'error' listener attached — before the listener-count guard, the
+      // No 'error' listener attached, before the listener-count guard, the
       // constructor forwarder's emit('error') threw (unlistened EventEmitter
       // 'error') BEFORE listen()'s own once('error') could reject, so this
       // await crashed/hung rather than rejecting.
@@ -82,7 +82,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
       await server.listen(0, "127.0.0.1");
       await server.close();
 
-      // No listen() in flight, no 'error' listener — the only surface is the
+      // No listen() in flight, no 'error' listener, the only surface is the
       // constructor forwarder. Unguarded, this re-emit threw synchronously.
       expect(() => {
         internalNetServer(server).emit("error", new Error("stale bind error"));
@@ -103,7 +103,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
 
     it("WHILE SERVING, an unlistened runtime error keeps Node's fail-loud crash (no silent accept outage)", async () => {
       // Review-pass regression: the guard must be scoped to the bind window
-      // and post-close staleness — a runtime accept-loop error (EMFILE) on a
+      // and post-close staleness, a runtime accept-loop error (EMFILE) on a
       // serving server with no 'error' listener must NOT be silently
       // dropped; the unguarded re-emit throws, per Node convention.
       const server = track(createServer({}));
@@ -165,7 +165,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
 
     it("a throwing 'listening' subscriber cannot suppress the wildcard security warning (round-2 refuter)", async () => {
       // Per-emit containment: with one shared try/catch, a throw in the
-      // 'listening' subscriber skipped the entire securityWarning block —
+      // 'listening' subscriber skipped the entire securityWarning block,
       // a live wildcard bind with ZERO warnings, violating the stable
       // MLLP_BIND_ALL_INTERFACES contract ('securityWarning' event AND
       // process.emitWarning, once at listen).
@@ -194,7 +194,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
       expect(emitWarningSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("double throw — subscriber throws AND the 'error' tap listener throws — still settles", async () => {
+    it("double throw, subscriber throws AND the 'error' tap listener throws, still settles", async () => {
       const server = track(createServer({}));
       server.on("listening", () => {
         throw new Error("subscriber boom");
@@ -221,7 +221,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
       expect((closeResult as DOMException).name).toBe("AbortError");
 
       // The aborted close() performed no work: it neither closed the server
-      // nor settled the in-flight listen() — the bind completes normally.
+      // nor settled the in-flight listen(), the bind completes normally.
       await expect(listenP).resolves.toBeUndefined();
       expect(server.getStats().listening).toBe(true);
 
@@ -231,7 +231,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
     });
   });
 
-  describe("idempotent settle — the single-flight guard never strands", () => {
+  describe("idempotent settle, the single-flight guard never strands", () => {
     it("abort during an in-flight listen() clears the guard; a fresh listen() succeeds", async () => {
       const server = track(createServer({}));
       const ac = new AbortController();
@@ -244,11 +244,11 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
       expect(server.getStats().listening).toBe(true);
     });
 
-    it("abort fired from inside a 'listening' handler is too late — the bind wins, no stranded state", async () => {
+    it("abort fired from inside a 'listening' handler is too late, the bind wins, no stranded state", async () => {
       // Refuter round-1 regression: the abort listener must be dropped
       // BEFORE the success path emits 'listening'/'securityWarning'. Left
       // attached, an abort from inside one of those handlers closed the
-      // just-bound server AFTER listening state was recorded — leaving
+      // just-bound server AFTER listening state was recorded, leaving
       // getStats().listening === true with nothing bound and listen()
       // rejected, wedged until a manual close().
       const server = track(createServer({}));
@@ -261,7 +261,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
       ).resolves.toBeUndefined();
       expect(server.getStats().listening).toBe(true);
 
-      // The recorded state is REAL — the socket accepts a connection.
+      // The recorded state is REAL, the socket accepts a connection.
       const port = must(server.getStats().port);
       await new Promise<void>((resolve, reject) => {
         const sock = netConnect(port, "127.0.0.1");
@@ -307,7 +307,7 @@ describe("Phase 8 residuals (MLLP-8.1)", () => {
       expect(String((result as Error).message)).toMatch(/closed while listen\(\) was in flight/);
       await closeP;
 
-      // Guard cleared exactly once — the server remains re-listenable.
+      // Guard cleared exactly once, the server remains re-listenable.
       await server.listen(0, "127.0.0.1");
       expect(server.getStats().listening).toBe(true);
     });

@@ -1,6 +1,6 @@
 # scripts/phi-allow-list.txt
 #
-# PHI-scan allow-list — the positive declaration that a fixture's identifiers
+# PHI-scan allow-list, the positive declaration that a fixture's identifiers
 # are synthetic. `scripts/phi-scan.ts` reads this file; any realistic-PHI-shaped
 # token NOT covered here is a hit.
 #
@@ -10,7 +10,7 @@
 # The scanner strips the MLLP frame, then runs the same HL7 v2 segment/field-aware
 # detection hl7 uses. A framed binary fixture is byte-strict at the front (the VT
 # start-block, then the MSH segment), so it cannot carry an inline `# synthetic:
-# true` header — that would break every framing test. This allow-list is therefore
+# true` header, that would break every framing test. This allow-list is therefore
 # the synthetic-fixture declaration mechanism, the same approach `@cosyte/hl7`,
 # `@cosyte/dicom` (binary `.dcm`) and `@cosyte/x12` (byte-strict `.edi`) use.
 #
@@ -25,7 +25,7 @@
 #   EMAILDOMAIN <domain>  reserved / test email domain that is allowed to appear
 #
 # To add a new synthetic fixture: reuse the tokens below, or append new ones here
-# and commit. Adding a token is a reviewed, intentional act — never silent.
+# and commit. Adding a token is a reviewed, intentional act, never silent.
 
 # --- Tokens in the committed differential golden frames -------------------------
 # test/differential/fixtures/r1-adt-a01.frame.bin : PID `900000001^^^FAC^MR`,

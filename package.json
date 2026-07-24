@@ -1,7 +1,7 @@
 {
   "name": "@cosyte/mllp",
   "version": "0.0.1",
-  "description": "Production-grade MLLP client and server for Node.js — transport-only sibling to @cosyte/hl7",
+  "description": "Production-grade MLLP client and server for Node.js, transport-only sibling to @cosyte/hl7",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"

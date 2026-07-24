@@ -4,7 +4,7 @@ import { Connection } from "../../src/connection/connection.js";
 import type { StateChangeEvent } from "../../src/connection/connection.js";
 import type { Transport } from "../../src/transport/index.js";
 
-// Minimal Transport mock — stores callbacks and exposes trigger methods
+// Minimal Transport mock, stores callbacks and exposes trigger methods
 function makeMockTransport() {
   let dataFn: ((c: Buffer) => void) | null = null;
   let connectFn: (() => void) | null = null;
@@ -110,7 +110,7 @@ describe("Connection", () => {
     it("does not leak beyond CLOSED (illegal transition is no-op)", () => {
       conn.destroy();
       expect(conn.state).toBe("CLOSED");
-      conn.destroy(); // second destroy — should be no-op
+      conn.destroy(); // second destroy, should be no-op
       expect(conn.state).toBe("CLOSED");
     });
 
@@ -230,7 +230,7 @@ describe("Connection", () => {
       expect(received?.connectionId).toBe(conn.connectionId);
     });
 
-    it("does NOT emit ack event — ack is MllpClient-layer (D-06)", () => {
+    it("does NOT emit ack event, ack is MllpClient-layer (D-06)", () => {
       conn.notifyConnect(null, null);
       const fn = vi.fn();
       conn.on("ack", fn);
@@ -251,7 +251,7 @@ describe("Connection", () => {
     it("does not emit message when in CONNECTING state (frame arrives before notifyConnect)", () => {
       const fn = vi.fn();
       conn.on("message", fn);
-      // Push data before notifyConnect — state is CONNECTING
+      // Push data before notifyConnect, state is CONNECTING
       mock.emit.data(Buffer.from([0x0b, 0x41, 0x1c, 0x0d]));
       expect(fn).not.toHaveBeenCalled();
     });
@@ -267,7 +267,7 @@ describe("Connection", () => {
       const tWarnings: Array<{ connectionId: string | undefined }> = [];
       connWithTolerance.onWarning((w) => tWarnings.push(w));
       connWithTolerance.notifyConnect(null, null);
-      // VT + payload + FS + VT (FS without CR — triggers MLLP_FS_WITHOUT_CR warning)
+      // VT + payload + FS + VT (FS without CR, triggers MLLP_FS_WITHOUT_CR warning)
       mockT.emit.data(Buffer.from([0x0b, 0x41, 0x1c, 0x0b]));
       // Consume the incomplete second frame
       mockT.emit.data(Buffer.from([0x41, 0x1c, 0x0d]));
@@ -437,7 +437,7 @@ describe("Connection", () => {
       c.notifyConnect(null, null);
       // Send 105 frames where each triggers MLLP_FS_WITHOUT_CR (exceeds 100-entry buffer cap)
       for (let i = 0; i < 105; i++) {
-        // Each push: VT + payload + FS + VT (next frame) — triggers MLLP_FS_WITHOUT_CR
+        // Each push: VT + payload + FS + VT (next frame), triggers MLLP_FS_WITHOUT_CR
         mockT.emit.data(Buffer.from([0x0b, 0x41, 0x1c, 0x0b]));
         // Complete the second frame cleanly
         mockT.emit.data(Buffer.from([0x41, 0x1c, 0x0d]));
@@ -476,7 +476,7 @@ describe("Connection", () => {
       expect(mock.mocks.destroy).toHaveBeenCalledWith(err);
     });
 
-    it("is idempotent — second destroy is a no-op", () => {
+    it("is idempotent, second destroy is a no-op", () => {
       conn.destroy();
       expect(() => conn.destroy()).not.toThrow();
       expect(conn.state).toBe("CLOSED");
@@ -541,14 +541,14 @@ describe("Connection", () => {
   });
 
   describe("send()", () => {
-    it("returns false when CLOSED — no bytes written", () => {
+    it("returns false when CLOSED, no bytes written", () => {
       conn.destroy();
       const result = conn.send(Buffer.from([0x41]));
       expect(result).toBe(false);
       expect(mock.mocks.write).not.toHaveBeenCalled();
     });
 
-    it("returns false when DISCONNECTED — no bytes written", () => {
+    it("returns false when DISCONNECTED, no bytes written", () => {
       conn.notifyConnect(null, null);
       mock.emit.close();
       expect(conn.state).toBe("DISCONNECTED");

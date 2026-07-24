@@ -1,9 +1,9 @@
 /**
- * InMemoryTransport — deterministic, socket-free Transport for tests.
+ * InMemoryTransport, deterministic, socket-free Transport for tests.
  *
  * Two connected ends are created via `InMemoryTransport.pair()`.
  * Writes to end A fire end B's registered `onData` handler **synchronously**
- * before `write()` returns — no async ceremony, no `await` in tests.
+ * before `write()` returns, no async ceremony, no `await` in tests.
  *
  * @example
  * ```typescript
@@ -11,7 +11,7 @@
  * const [a, b] = InMemoryTransport.pair();
  * b.onData((chunk) => console.log('received:', chunk));
  * a.write(Buffer.from([0x0b, 0x41, 0x1c, 0x0d]));
- * // b's onData fired synchronously — log printed before this line
+ * // b's onData fired synchronously, log printed before this line
  * ```
  *
  * @packageDocumentation
@@ -23,7 +23,7 @@ import type { Transport } from "../transport/index.js";
  * Deterministic in-memory transport for socket-free tests.
  *
  * Create connected pairs with `InMemoryTransport.pair()`. Writes to one end
- * deliver synchronously to the other end's `onData` handler — no async ceremony,
+ * deliver synchronously to the other end's `onData` handler, no async ceremony,
  * no `await` needed in tests.
  *
  * Supports `split(n)` for chunked-read simulation, `pause()`/`resume()` for
@@ -80,7 +80,7 @@ export class InMemoryTransport implements Transport {
   /**
    * Write `buf` to the peer transport.
    *
-   * If the peer is paused, the buffer is copied and queued — returns `false`
+   * If the peer is paused, the buffer is copied and queued, returns `false`
    * (backpressure signal). Otherwise, the peer's `onData` handler fires
    * synchronously before this method returns.
    *
@@ -92,7 +92,7 @@ export class InMemoryTransport implements Transport {
     if (peer === null || peer._destroyed) return false;
 
     if (peer._paused) {
-      // Queue a copy — caller may reuse buf after write() returns (T-03-02-02)
+      // Queue a copy, caller may reuse buf after write() returns (T-03-02-02)
       peer._pendingChunks.push(Buffer.from(buf));
       return false;
     }
@@ -102,7 +102,7 @@ export class InMemoryTransport implements Transport {
   }
 
   /**
-   * Initiate graceful close — fires `onClose` on this end and on the peer,
+   * Initiate graceful close, fires `onClose` on this end and on the peer,
    * simulating a TCP FIN exchange.
    */
   close(): void {
@@ -113,10 +113,10 @@ export class InMemoryTransport implements Transport {
       try {
         this._onCloseFn();
       } catch {
-        /* swallow — test handlers must not break transport logic */
+        /* swallow, test handlers must not break transport logic */
       }
     }
-    // Simulate peer receiving FIN — fire peer's onClose
+    // Simulate peer receiving FIN, fire peer's onClose
     const peer = this._peer;
     if (peer !== null && !peer._destroyed) {
       peer._destroyed = true;
@@ -236,7 +236,7 @@ export class InMemoryTransport implements Transport {
   }
 
   /**
-   * Resume delivery — flushes all queued chunks to the `onData` handler,
+   * Resume delivery, flushes all queued chunks to the `onData` handler,
    * synchronously, in the order they were written.
    */
   resume(): void {

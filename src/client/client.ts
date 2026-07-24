@@ -1,12 +1,12 @@
 /**
- * MLLP Client — `createClient()` factory and `MllpClient` class.
+ * MLLP Client, `createClient()` factory and `MllpClient` class.
  *
  * Provides the client-side MLLP transport: connect to an MLLP server over TCP,
  * encode and send framed messages, decode inbound ACKs, and surface lifecycle
  * events with frozen payloads. Supports `AbortSignal` cancellation on every
  * awaitable and `Symbol.asyncDispose` for `await using` ergonomics.
  *
- * Phase 5 PLAN-01 shipped the lifecycle scaffolding — `connect()`, `close()`,
+ * Phase 5 PLAN-01 shipped the lifecycle scaffolding, `connect()`, `close()`,
  * `destroy()`, event re-emission. PLAN-02 added `send()` + `MllpTimeoutError`.
  * The `correlateByControlId` option (MSH-10 → MSA-2 ACK matching) lights up
  * out-of-order ACK handling. Subsequent plans add auto-reconnect (Plan 04),
@@ -57,7 +57,7 @@ import {
  * When `connect()` is called WITHOUT a signal, `RetryContext.signal` must
  * still be a real `AbortSignal` (the type is non-optional). This sentinel
  * is constructed once and reused across all signal-less reconnect cycles
- * — no new AbortController is allocated per cycle.
+ * no new AbortController is allocated per cycle.
  *
  * The originating `AbortController` is held in module-private scope and
  * never exposed; hostile callers cannot abort the sentinel (T-05-04-09).
@@ -68,7 +68,7 @@ const NEVER_ABORTING_SIGNAL: AbortSignal = new AbortController().signal;
  * Context passed to a custom `retryStrategy` hook on each reconnect attempt
  * (CLIENT-12, D-15).
  *
- * Frozen via `Object.freeze` before invocation — handlers cannot mutate
+ * Frozen via `Object.freeze` before invocation, handlers cannot mutate
  * (T-05-04-04 mitigation).
  *
  * @example
@@ -91,7 +91,7 @@ export interface RetryContext {
   readonly totalElapsedMs: number;
   /** Ms since the last successful ACK. `Infinity` if no success seen. */
   readonly sinceLastSuccessMs: number;
-  /** CLIENT-18 classification (Composition A — D-16). */
+  /** CLIENT-18 classification (Composition A, D-16). */
   readonly classifiedAs: "transient" | "permanent";
   /**
    * The same `AbortSignal` passed into `connect()`. If no signal was
@@ -103,16 +103,16 @@ export interface RetryContext {
 
 /**
  * Custom reconnect-backoff hook (CLIENT-12). Return `null` to halt
- * reconnection (D-17) — the FSM transitions to `CLOSED`.
+ * reconnection (D-17), the FSM transitions to `CLOSED`.
  */
 export type RetryStrategy = (ctx: RetryContext) => number | null;
 
 /**
  * Combined count + byte-based queue cap. Stricter-of-two wins (D-23).
  *
- * - `number` — count cap only (default 64).
- * - `{ bytes }` — byte cap only.
- * - `{ count, bytes }` — both caps; whichever trips first wins.
+ * - `number`, count cap only (default 64).
+ * - `{ bytes }`, byte cap only.
+ * - `{ count, bytes }`, both caps; whichever trips first wins.
  *
  * @example
  * ```typescript
@@ -127,7 +127,7 @@ export type HighWaterMark = number | { readonly count?: number; readonly bytes?:
 /**
  * Options for {@link createClient} and the {@link MllpClient} constructor.
  *
- * Phase 5 plans extend this incrementally — new fields are additive and optional.
+ * Phase 5 plans extend this incrementally, new fields are additive and optional.
  *
  * @example
  * ```typescript
@@ -145,7 +145,7 @@ export interface ClientOptions {
   readonly drainTimeoutMs?: number;
   /**
    * Per-message ACK timeout in milliseconds (CLIENT-04). The clock starts at
-   * the underlying `write()` flush callback, NOT at the `send()` call —
+   * the underlying `write()` flush callback, NOT at the `send()` call,
    * pre-flush queue time is not charged to the peer. Default: `30_000`.
    */
   readonly ackTimeoutMs?: number;
@@ -172,7 +172,7 @@ export interface ClientOptions {
    * `CONNECTED → DISCONNECTED → RECONNECTING → CONNECTING → CONNECTED`
    * with exponential backoff per D-19 unless overridden by
    * {@link ClientOptions.retryStrategy}. Permanent errors halt and
-   * transition directly to `CLOSED` (Composition A — D-16).
+   * transition directly to `CLOSED` (Composition A, D-16).
    */
   readonly autoReconnect?: boolean;
   /**
@@ -204,8 +204,8 @@ export interface ClientOptions {
   /**
    * Behavior when the high-water mark is exceeded (CLIENT-07).
    *
-   * - `'reject'` (default) — `send()` rejects with `MllpBackpressureError`.
-   * - `'wait'` — `send()` awaits the `'drain'` event OR the per-message
+   * - `'reject'` (default), `send()` rejects with `MllpBackpressureError`.
+   * - `'wait'`, `send()` awaits the `'drain'` event OR the per-message
    *   `ackTimeoutMs` OR `signal` abort, whichever fires first (CLIENT-11).
    *
    * @default 'reject'
@@ -214,9 +214,9 @@ export interface ClientOptions {
   /**
    * Strict serialization send → await-ACK → send (CLIENT-19, D-06).
    *
-   * - `true` (default) — concurrent in-flight sends up to
+   * - `true` (default), concurrent in-flight sends up to
    *   {@link ClientOptions.highWaterMark}.
-   * - `false` — collapses the in-flight set to ≤1 (the unified Correlator's
+   * - `false`, collapses the in-flight set to ≤1 (the unified Correlator's
    *   `maxInFlight=1`); the next `send()` waits for the prior ACK before
    *   reaching the wire.
    *
@@ -244,7 +244,7 @@ export interface ClientOptions {
   readonly deadPeerTimeoutMs?: number;
   /**
    * Enable TLS (MLLPS) for this connection (Phase 8). `true` enables TLS with
-   * all defaults — including certificate verification **on**. Pass a
+   * all defaults, including certificate verification **on**. Pass a
    * {@link TlsOptions} object to customize (`ca`/`cert`/`key`, minimum
    * version, ciphers, `allowUnverified`, …).
    *
@@ -258,13 +258,13 @@ export interface ClientOptions {
 /**
  * Observability snapshot returned by {@link MllpClient.getStats} (OBS-01, D-26).
  *
- * All fields are JSON-serializable (OBS-04) — no Buffers, no class instances,
+ * All fields are JSON-serializable (OBS-04), no Buffers, no class instances,
  * no Maps, no circular references. `lastConnectedAt` and `lastAckAt` are
- * **epoch milliseconds** (numbers), NOT `Date` instances — log-pipeline
+ * **epoch milliseconds** (numbers), NOT `Date` instances, log-pipeline
  * friendly per D-26.
  *
  * `warningsByCode` keys are constrained to the public {@link WarningCode}
- * union — adding/removing a code is a breaking change (CLAUDE.md
+ * union, adding/removing a code is a breaking change (CLAUDE.md
  * stable-codes guardrail enforced at the type boundary, B-05).
  *
  * @example
@@ -275,7 +275,7 @@ export interface ClientOptions {
  * ```
  */
 export interface ClientStats {
-  /** Current FSM state — mirrors `client.state`. */
+  /** Current FSM state, mirrors `client.state`. */
   readonly state: ConnectionState;
   /** Live Connection's id, or `null` before the first connect (or post-CLOSED). */
   readonly connectionId: string | null;
@@ -283,7 +283,7 @@ export interface ClientStats {
   readonly queueDepth: number;
   /** Sum of `frame.length` across live correlator entries. */
   readonly queueBytes: number;
-  /** Entries with `sentAt !== null` — actually written to the wire / awaiting ACK. */
+  /** Entries with `sentAt !== null`, actually written to the wire / awaiting ACK. */
   readonly inFlight: number;
   /**
    * Aggregated warning counts. Keys are constrained to the public
@@ -312,21 +312,21 @@ export interface ClientStats {
 }
 
 /**
- * MLLP client — composes a single Phase 3 {@link Connection} over a {@link NetTransport}
+ * MLLP client, composes a single Phase 3 {@link Connection} over a {@link NetTransport}
  * (production) or any other `Transport` (testing via {@link InMemoryTransport}).
  *
- * Public events — every payload `Object.freeze`'d before emission (D-25):
- * - `'stateChange'` — `{ from, to, reason? }` from the underlying Connection FSM
- * - `'connect'` — `{ connectionId }` once the FSM enters `CONNECTED`
- * - `'disconnect'` — `{ connectionId }` once the FSM enters `DISCONNECTED`
- * - `'reconnecting'` — `{ connectionId, attempt?, delayMs? }` (Plan 04 populates)
- * - `'close'` — `{ connectionId }` once the FSM enters terminal `CLOSED`
- * - `'message'` — `{ payload, connectionId, byteOffset, warnings }` for every inbound frame
- * - `'warning'` — `MllpWarning` enriched with `connectionId` from the Connection layer
- * - `'securityWarning'` — `SecurityWarning` (Phase 8). Emitted on every successful
+ * Public events, every payload `Object.freeze`'d before emission (D-25):
+ * - `'stateChange'`, `{ from, to, reason? }` from the underlying Connection FSM
+ * - `'connect'`, `{ connectionId }` once the FSM enters `CONNECTED`
+ * - `'disconnect'`, `{ connectionId }` once the FSM enters `DISCONNECTED`
+ * - `'reconnecting'`, `{ connectionId, attempt?, delayMs? }` (Plan 04 populates)
+ * - `'close'`, `{ connectionId }` once the FSM enters terminal `CLOSED`
+ * - `'message'`, `{ payload, connectionId, byteOffset, warnings }` for every inbound frame
+ * - `'warning'`, `MllpWarning` enriched with `connectionId` from the Connection layer
+ * - `'securityWarning'`, `SecurityWarning` (Phase 8). Emitted on every successful
  *   `secureConnect` (initial + every reconnect) when `tls.allowUnverified` is `true`
- *   — code `MLLP_TLS_VERIFY_DISABLED`. Also mirrored to `process.emitWarning`.
- * - `'error'` — re-emitted from Connection. Guarded by `listenerCount('error') > 0` so
+ *   with code `MLLP_TLS_VERIFY_DISABLED`. Also mirrored to `process.emitWarning`.
+ * - `'error'`, re-emitted from Connection. Guarded by `listenerCount('error') > 0` so
  *   absence of a listener does NOT crash the process (server precedent).
  *
  * @example
@@ -372,7 +372,7 @@ export class MllpClient extends EventEmitter {
   /** 0-indexed attempt counter for the current reconnect cycle. */
   private _attempt = 0;
   /**
-   * W-02 — total reconnect attempts since construction. Read by PLAN-06 for
+   * W-02, total reconnect attempts since construction. Read by PLAN-06 for
    * `getStats().reconnectAttempts`. Incremented at the entry of every
    * `_handleDisconnect` invocation that proceeds to schedule a backoff.
    */
@@ -395,7 +395,7 @@ export class MllpClient extends EventEmitter {
   private readonly _onBackpressure: "reject" | "wait";
   /** Pipeline flag; default `true` (parallel up to highWaterMark). */
   private readonly _pipeline: boolean;
-  /** Dead-peer idle timer (Plan 05 — D-11). `null` when not armed. */
+  /** Dead-peer idle timer (Plan 05, D-11). `null` when not armed. */
   private _deadPeerTimer: ReturnType<typeof setTimeout> | null = null;
   /** True once the self-'ack' listener that resets the dead-peer timer
    * has been attached. Guards against duplicate listeners on reconnect. */
@@ -409,14 +409,14 @@ export class MllpClient extends EventEmitter {
   /** Listener-removal handle for the abort listener bound in connect(). */
   private _abortListener: { signal: AbortSignal; handler: () => void } | null = null;
   /**
-   * Test-only seam — when set, `_beginReconnectAttempt` builds the new
+   * Test-only seam, when set, `_beginReconnectAttempt` builds the new
    * Connection through this factory instead of opening a real net.Socket.
    *
    * @internal
    */
   private _reconnectFactory: (() => { conn: Connection; arm: () => void }) | null = null;
 
-  // ── PLAN-06 — observability counters for getStats (OBS-01, D-26) ─────────
+  // ── PLAN-06, observability counters for getStats (OBS-01, D-26) ─────────
   /** Total successful `conn.send()` flushes since construction. */
   private _sentTotal = 0;
   /** Total ACKs resolved since construction. */
@@ -452,7 +452,7 @@ export class MllpClient extends EventEmitter {
     this._jitter = opts.jitter ?? 0.2;
     this._retryStrategy = opts.retryStrategy;
 
-    // Plan 05 — backpressure + pipeline (D-23, D-06).
+    // Plan 05, backpressure + pipeline (D-23, D-06).
     const hwm: HighWaterMark = opts.highWaterMark ?? 64;
     if (typeof hwm === "number") {
       this._hwmCount = hwm;
@@ -475,9 +475,9 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Open a TCP (or TLS — Phase 8) connection to the configured `host:port`
+   * Open a TCP (or TLS, Phase 8) connection to the configured `host:port`
    * and attach a Phase 3 {@link Connection} to it. Resolves once the FSM
-   * enters `CONNECTED` — for TLS, on `'secureConnect'` (handshake complete,
+   * enters `CONNECTED`, for TLS, on `'secureConnect'` (handshake complete,
    * including certificate verification when it is on).
    *
    * Rejects with:
@@ -497,11 +497,11 @@ export class MllpClient extends EventEmitter {
    *
    * **TLS 1.3 + mutual TLS caveat (RFC 8446 §4.4.2):** `connect()` resolving
    * does NOT guarantee that a `clientAuth: 'MUST'` server accepted your
-   * client certificate. Under TLS 1.3 the client's handshake — and its
-   * `'secureConnect'` — can complete before the server finishes validating
+   * client certificate. Under TLS 1.3 the client's handshake, and its
+   * `'secureConnect'`, can complete before the server finishes validating
    * the certificate; a rejection then surfaces moments later as a typed
    * post-connect error (`'error'` event with an `ERR_SSL_*`/alert cause,
-   * classified **permanent** — no auto-reconnect loop). ACK correlation via
+   * classified **permanent**, no auto-reconnect loop). ACK correlation via
    * {@link MllpClient.send} remains the delivery guarantee: no send resolves
    * without its ACK, so a rejected session can never silently "deliver".
    *
@@ -546,8 +546,8 @@ export class MllpClient extends EventEmitter {
       let aborted = false;
 
       const { socket, transport } = this._createSocketAndTransport();
-      // Plan 05 — TCP keepalive set on the raw socket BEFORE NetTransport
-      // wrap (CLIENT-08, D-11/A3 — mirrors Phase 4 server). OS-level
+      // Plan 05, TCP keepalive set on the raw socket BEFORE NetTransport
+      // wrap (CLIENT-08, D-11/A3, mirrors Phase 4 server). OS-level
       // half-open detection. No JS-side timer (W-03).
       if (this._opts.keepaliveIntervalMs !== undefined) {
         socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
@@ -577,7 +577,7 @@ export class MllpClient extends EventEmitter {
       const abortHandler = (): void => {
         aborted = true;
         cleanup();
-        // Tear down the in-flight attempt — also clears the correlator so
+        // Tear down the in-flight attempt, also clears the correlator so
         // any sweep timer armed by _attachConnection is released.
         this._teardownCorrelator(
           new MllpConnectionError("connect aborted", {
@@ -593,7 +593,7 @@ export class MllpClient extends EventEmitter {
         if (aborted) return;
         // TLS and plaintext behave identically here: 'secureConnect' (TLS)
         // or 'connect' (plaintext) immediately arms the Connection and
-        // resolves. Deferring notifyConnect for TLS was tried and removed —
+        // resolves. Deferring notifyConnect for TLS was tried and removed,
         // any delay leaves the Connection in CONNECTING while post-handshake
         // frames arrive, and Connection discards frames outside
         // CONNECTED/DRAINING (a silent inbound-frame drop). See the
@@ -626,7 +626,7 @@ export class MllpClient extends EventEmitter {
    *
    * Plaintext (`ClientOptions.tls` unset): a `net.Socket` wrapped in
    * `NetTransport`. TLS (Phase 8): a `tls.TLSSocket` wrapped in
-   * `TlsTransport` — verification defaults **on**
+   * `TlsTransport`, verification defaults **on**
    * (`rejectUnauthorized: !allowUnverified`), floor `minVersion: 'TLSv1.2'`
    * (the IHE ATNA ITI-19 BCP195 floor), `servername` defaulting to
    * `ClientOptions.host`.
@@ -661,12 +661,12 @@ export class MllpClient extends EventEmitter {
    * Wrap a connect-phase socket error as `MllpConnectionError`, classifying
    * TLS failures (Phase 8) into the additive `connectionCause`:
    *
-   * - `'tls-verify'` — certificate-verification failures
+   * - `'tls-verify'`, certificate-verification failures
    *   ({@link isTlsVerificationErrorCode}).
-   * - `'tls-handshake'` — TLS-**protocol**-shaped failures only
+   * - `'tls-handshake'`, TLS-**protocol**-shaped failures only
    *   ({@link isTlsProtocolError}): `ERR_SSL_*`, `EPROTO`, OpenSSL
    *   alert-bearing errors.
-   * - **No `connectionCause`** — pure TCP-level failures (`ECONNREFUSED`,
+   * - **No `connectionCause`**, pure TCP-level failures (`ECONNREFUSED`,
    *   `ETIMEDOUT`, …) even on a TLS-configured connection; these carry the
    *   same shape as plaintext connect failures.
    */
@@ -689,7 +689,7 @@ export class MllpClient extends EventEmitter {
         connectionCause: "tls-handshake",
       });
     }
-    // Pure TCP-level failure on a TLS-configured connection — same shape as
+    // Pure TCP-level failure on a TLS-configured connection, same shape as
     // a plaintext connect failure; no TLS-specific connectionCause.
     return new MllpConnectionError(err.message, { cause: err, phase });
   }
@@ -697,7 +697,7 @@ export class MllpClient extends EventEmitter {
   /**
    * Emit a client event, containing a throwing subscriber.
    *
-   * Every event this client emits is reached from a callback we do not own — a socket's
+   * Every event this client emits is reached from a callback we do not own, a socket's
    * `'connect'`/`'secureConnect'`/`'data'`/`'error'` listener, or a backoff timer. A throwing
    * subscriber would unwind into it and kill the process, and on several paths it would also skip
    * the work queued after the emit (the `resolve()` of `connect()`, the backoff scheduling).
@@ -712,7 +712,7 @@ export class MllpClient extends EventEmitter {
 
   /**
    * Emit the per-connection insecure-TLS warning (Phase 8) when
-   * `tls.allowUnverified === true` — fires on EVERY successful
+   * `tls.allowUnverified === true`, fires on EVERY successful
    * `secureConnect`, initial connect and every reconnect. Emits both a frozen
    * `'securityWarning'` event and `process.emitWarning`. No-op for plaintext
    * connections or when verification is on.
@@ -722,7 +722,7 @@ export class MllpClient extends EventEmitter {
     if (tlsOpt === undefined || tlsOpt === true) return;
     if (tlsOpt.allowUnverified !== true) return;
     const message =
-      "MLLP TLS certificate verification is DISABLED (allowUnverified: true) — " +
+      "MLLP TLS certificate verification is DISABLED (allowUnverified: true), " +
       "this connection does not authenticate the peer.";
     const warning: SecurityWarning = Object.freeze({
       code: MLLP_TLS_VERIFY_DISABLED,
@@ -732,7 +732,7 @@ export class MllpClient extends EventEmitter {
       timestamp: new Date(),
     });
     // Contained: this is reached from the socket's 'secureConnect' listener. A throwing
-    // subscriber (a security-audit hook — exactly the kind of thing that subscribes here) would
+    // subscriber (a security-audit hook, exactly the kind of thing that subscribes here) would
     // both kill the process AND skip the resolve() that follows in onSocketConnect, hanging
     // connect() forever.
     this._emitContained("securityWarning", warning);
@@ -742,7 +742,7 @@ export class MllpClient extends EventEmitter {
   /**
    * Wire a Connection's events through to this MllpClient. Every re-emitted
    * payload is `Object.freeze`'d before emission (D-25), even though the
-   * Connection layer already freezes — defense-in-depth, harmless on
+   * Connection layer already freezes, defense-in-depth, harmless on
    * already-frozen objects.
    *
    * Builds the unified `Correlator` (D-03/A1) bound to this Connection and
@@ -752,7 +752,7 @@ export class MllpClient extends EventEmitter {
    * @param conn - Connection to subscribe to.
    */
   private _attachConnection(conn: Connection): void {
-    // Plan 04 — preserve correlator state across reconnect cycles. In
+    // Plan 04, preserve correlator state across reconnect cycles. In
     // controlId mode, in-flight sends are re-transmitted on the new
     // connection (D-08 / CLIENT-17), so the correlator must survive the
     // transition. The closures below dereference `this._connection`
@@ -762,10 +762,10 @@ export class MllpClient extends EventEmitter {
       this._correlator = new Correlator({
         mode: this._correlateByControlId ? "controlId" : "fifo",
         ackTimeoutMs: this._ackTimeoutMs,
-        // Plan 05 — pipeline:false collapses the in-flight set to ≤1 (D-06).
+        // Plan 05, pipeline:false collapses the in-flight set to ≤1 (D-06).
         maxInFlight: this._pipeline ? Number.POSITIVE_INFINITY : 1,
         onWarning: (code, ctx) => {
-          // PLAN-06 (OBS-01, D-26) — aggregate Correlator-emitted warning counts.
+          // PLAN-06 (OBS-01, D-26), aggregate Correlator-emitted warning counts.
           this._aggregatedWarningsByCode[code] = (this._aggregatedWarningsByCode[code] ?? 0) + 1;
           this._emitContained(
             "warning",
@@ -800,7 +800,7 @@ export class MllpClient extends EventEmitter {
           );
         },
         onTimeout: (entry, elapsedMs) => {
-          // PLAN-06 (OBS-01, D-26) — observability counter.
+          // PLAN-06 (OBS-01, D-26), observability counter.
           this._timedOutTotal += 1;
           entry.reject(
             new MllpTimeoutError(`ACK timeout after ${elapsedMs}ms`, {
@@ -809,7 +809,7 @@ export class MllpClient extends EventEmitter {
               sentAt: entry.sentAt ?? 0,
             }),
           );
-          // Plan 05 — a timeout removes the entry from the live store too,
+          // Plan 05, a timeout removes the entry from the live store too,
           // so emit 'drain' if the queue now sits below both caps. This is
           // critical for pipeline:false (D-06): an expired send must free
           // the in-flight slot so the next send can flush.
@@ -842,10 +842,10 @@ export class MllpClient extends EventEmitter {
         warnings: readonly MllpWarning[];
       }) => {
         // Contained: a throwing 'message' subscriber used to abort this handler BEFORE
-        // _onAckPayload ran — so the ACK never reached the correlator and send() hung forever.
+        // _onAckPayload ran, so the ACK never reached the correlator and send() hung forever.
         // An observer must never be able to break ACK correlation.
         this._emitContained("message", Object.freeze({ ...e }));
-        // Plan 05 — last-bytes-received signal resets dead-peer timer
+        // Plan 05, last-bytes-received signal resets dead-peer timer
         // (D-11 "last bytes/ACK received").
         this._armDeadPeerTimer();
         this._onAckPayload(e.payload, e.byteOffset);
@@ -866,7 +866,7 @@ export class MllpClient extends EventEmitter {
     });
     conn.on("warning", (w: MllpWarning) => {
       this._emitContained("warning", w);
-      // Plan 05 — Connection 'warning' is also a "bytes received" signal.
+      // Plan 05, Connection 'warning' is also a "bytes received" signal.
       this._armDeadPeerTimer();
     });
     conn.on("error", (e: unknown) => {
@@ -881,13 +881,13 @@ export class MllpClient extends EventEmitter {
         const inner = (wrapper as { cause?: unknown }).cause;
         this._lastError = inner instanceof Error ? inner : wrapper;
       }
-      // Guards the unlistened case (ERR_UNHANDLED_ERROR would crash the process — T-05-01-03)
+      // Guards the unlistened case (ERR_UNHANDLED_ERROR would crash the process, T-05-01-03)
       // AND contains a throwing 'error' subscriber. See src/internal/safe-emit.ts.
       safeEmitError(this, e);
     });
     this._connection = conn;
 
-    // Plan 05 — dead-peer timer self-listener on 'ack'. Connection emits
+    // Plan 05, dead-peer timer self-listener on 'ack'. Connection emits
     // 'message' (already wired above); the MllpClient itself emits 'ack'
     // after matchAck succeeds. Both are "last bytes/ACK received" signals
     // (D-11). The 'ack' reset is effectively a no-op when 'message' just
@@ -909,7 +909,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Arm (or re-arm) the dead-peer idle timer (Plan 05 — CLIENT-08, D-11).
+   * Arm (or re-arm) the dead-peer idle timer (Plan 05, CLIENT-08, D-11).
    * No-op when `deadPeerTimeoutMs` is unset.
    */
   private _armDeadPeerTimer(): void {
@@ -924,7 +924,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Clear the dead-peer idle timer (Plan 05 — D-14 timer cleanup on
+   * Clear the dead-peer idle timer (Plan 05, D-14 timer cleanup on
    * every transition out of CONNECTED).
    */
   private _clearDeadPeerTimer(): void {
@@ -935,13 +935,13 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Disconnect handler — Plan 04 reconnect FSM core.
+   * Disconnect handler, Plan 04 reconnect FSM core.
    *
    * Implements:
    * - CLIENT-17 hybrid in-flight handling (D-08): controlId mode preserves
    *   pending sends for resend; FIFO mode rejects in-flight with
    *   `connectionCause: 'in-flight-orphan'` and queued with `'fifo-unsafe'`.
-   * - CLIENT-18 classifier-first (Composition A — D-16): permanent errors
+   * - CLIENT-18 classifier-first (Composition A, D-16): permanent errors
    *   transition straight to CLOSED without invoking `retryStrategy`.
    * - W-01 backoff-reset on recent success: first disconnect after a
    *   successful ACK on the prior session resets `_attempt` to 0.
@@ -949,7 +949,7 @@ export class MllpClient extends EventEmitter {
    * - D-15 frozen RetryContext + D-17 null-return halts.
    * - D-19 default exponential strategy.
    *
-   * Invoked from the SINGLE `_onStateChange` hook — no parallel listener
+   * Invoked from the SINGLE `_onStateChange` hook, no parallel listener
    * (B-04). Idempotent across same-cycle re-entry: cycle-start flag
    * coordinates first-disconnect vs subsequent-within-cycle behavior.
    */
@@ -959,7 +959,7 @@ export class MllpClient extends EventEmitter {
     // CLIENT-17 hybrid: handle queued + in-flight sends per mode.
     if (this._correlator !== null) {
       if (this._correlateByControlId) {
-        // Hold sends for resend after reconnect — DO NOT clear or reject.
+        // Hold sends for resend after reconnect, DO NOT clear or reject.
         // The correlator's live store survives the FSM transition; the
         // entries are re-transmitted in `_beginReconnectAttempt` once the
         // new Connection enters CONNECTED.
@@ -996,12 +996,12 @@ export class MllpClient extends EventEmitter {
       }
     }
 
-    // CLIENT-18 classification first (Composition A — D-16). Permanent
+    // CLIENT-18 classification first (Composition A, D-16). Permanent
     // errors transition directly to CLOSED without invoking retryStrategy.
     // Phase 8: on a TLS-configured connection, TLS-protocol-shaped errors
-    // (ERR_SSL_*, EPROTO, OpenSSL alert-bearing — see isTlsProtocolError)
+    // (ERR_SSL_*, EPROTO, OpenSSL alert-bearing, see isTlsProtocolError)
     // are ALSO permanent: a clientAuth 'MUST' server that rejects this
-    // client's certificate will reject every retry — never reconnect-loop
+    // client's certificate will reject every retry, never reconnect-loop
     // into it. Pure TCP-level errors (ECONNREFUSED, ETIMEDOUT, plain
     // ECONNRESET) stay transient so a network blip still auto-heals.
     const tlsProtocolShaped = this._opts.tls !== undefined && isTlsProtocolError(err);
@@ -1023,7 +1023,7 @@ export class MllpClient extends EventEmitter {
     // First disconnect AFTER any successful ACK on the prior session
     // (`_reconnectCycleStartedAt === null` AND `_lastSuccessAt !== null`)
     // resets attempt to 0. Subsequent disconnects within the same cycle
-    // do NOT re-reset — the cycle-start flag persists.
+    // do NOT re-reset, the cycle-start flag persists.
     if (this._reconnectCycleStartedAt === null && this._lastSuccessAt !== null) {
       this._attempt = 0;
     }
@@ -1043,13 +1043,13 @@ export class MllpClient extends EventEmitter {
       signal: this._connectSignal ?? NEVER_ABORTING_SIGNAL,
     });
 
-    // Invoke strategy (T-05-04-05: defensive try/catch — caller-supplied hook).
+    // Invoke strategy (T-05-04-05: defensive try/catch, caller-supplied hook).
     let delay: number | null;
     try {
       const strategy = this._retryStrategy ?? this._defaultRetryStrategy;
       delay = strategy(ctx);
     } catch (hookErr) {
-      // Strategy threw — bail to CLOSED, surface error.
+      // Strategy threw, bail to CLOSED, surface error.
       this._lastError = hookErr instanceof Error ? hookErr : new Error(String(hookErr));
       {
         safeEmitError(
@@ -1075,7 +1075,7 @@ export class MllpClient extends EventEmitter {
     // Emit 'reconnecting' with populated fields (Phase 3 D-CR-01 promise).
     //
     // Contained: a throwing subscriber here used to skip the backoff scheduling immediately below,
-    // so auto-reconnect silently never fired again — the connection just stopped retrying, with no
+    // so auto-reconnect silently never fired again, the connection just stopped retrying, with no
     // error that named the cause.
     this._emitContained(
       "reconnecting",
@@ -1133,8 +1133,8 @@ export class MllpClient extends EventEmitter {
         ({ conn, arm } = this._reconnectFactory());
       } else {
         const { socket, transport } = this._createSocketAndTransport();
-        // Plan 05 — TCP keepalive on every reconnect attempt too
-        // (CLIENT-08, D-11/A3 — mirror connect() site).
+        // Plan 05, TCP keepalive on every reconnect attempt too
+        // (CLIENT-08, D-11/A3, mirror connect() site).
         if (this._opts.keepaliveIntervalMs !== undefined) {
           socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
         }
@@ -1153,7 +1153,7 @@ export class MllpClient extends EventEmitter {
         };
         const connectEventName = this._opts.tls !== undefined ? "secureConnect" : "connect";
         socket.once("error", (sErr: Error) => {
-          // Phase 8 — the raw OS/TLS error (with its original `.code`) is
+          // Phase 8, the raw OS/TLS error (with its original `.code`) is
           // what the reconnect classifier inspects in _handleDisconnect;
           // keep it unwrapped here so TLS cert-verification codes (CERT_*,
           // UNABLE_TO_VERIFY_LEAF_SIGNATURE, …) and TLS-protocol-shaped
@@ -1165,7 +1165,7 @@ export class MllpClient extends EventEmitter {
           }
         });
         socket.once(connectEventName, () => {
-          // TLS and plaintext arm identically and immediately — see the
+          // TLS and plaintext arm identically and immediately, see the
           // matching note in connect()'s onSocketConnect.
           arm();
           this._afterReconnectArmed();
@@ -1206,7 +1206,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Test seam — install a factory that produces the next reconnect Connection.
+   * Test seam, install a factory that produces the next reconnect Connection.
    *
    * @internal
    */
@@ -1215,7 +1215,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Test seam — capture or rebind the connect-signal mid-flight (W-07).
+   * Test seam, capture or rebind the connect-signal mid-flight (W-07).
    *
    * @internal
    */
@@ -1246,7 +1246,7 @@ export class MllpClient extends EventEmitter {
    *   anchor and passes it to `matchAck` for keyed lookup.
    *
    * Called from the SINGLE `'message'` listener registered in `_attachConnection`.
-   * No parallel listener is registered — downstream plans extend at the named
+   * No parallel listener is registered, downstream plans extend at the named
    * anchor (B-04).
    */
   private _onAckPayload(ackPayload: Buffer, byteOffset: number): void {
@@ -1282,24 +1282,24 @@ export class MllpClient extends EventEmitter {
       }),
     );
     // HOOK_EXTENSION_POINT: ack-matched
-    // Plan 04 — backoff-reset signal (W-01): record the most recent successful
+    // Plan 04, backoff-reset signal (W-01): record the most recent successful
     // ACK so the next disconnect resets attempt counter to 0 if it's the
     // first disconnect AFTER a successful exchange on the prior session.
     this._lastSuccessAt = Date.now();
-    // PLAN-06 (OBS-01, D-26) — observability counters.
+    // PLAN-06 (OBS-01, D-26), observability counters.
     this._ackedTotal += 1;
     this._lastAckAt = Date.now();
     matched.resolve(ackPayload);
-    // Plan 05 — emit 'drain' when queue depth crosses below high-water mark
+    // Plan 05, emit 'drain' when queue depth crosses below high-water mark
     // (D-24). Fires once per ACK that brings the queue under both caps.
     this._maybeEmitDrain();
   }
 
   /**
    * Emit a frozen `'drain'` event when the queue depth and bytes fall below
-   * both configured caps (Plan 05 — D-24). Called from `_onAckMatched`
+   * both configured caps (Plan 05, D-24). Called from `_onAckMatched`
    * (every successful ACK) and from the Correlator's `onTimeout` callback
-   * (every expired send) — both code paths free a live-store slot.
+   * (every expired send), both code paths free a live-store slot.
    */
   private _maybeEmitDrain(): void {
     const corr = this._correlator;
@@ -1335,17 +1335,17 @@ export class MllpClient extends EventEmitter {
     // auto-reconnect.
     this._emitContained("stateChange", Object.freeze({ ...e }));
     // HOOK_EXTENSION_POINT: state-change
-    // Plan 05 — dead-peer timer arm/clear (D-14). Cleared on every
+    // Plan 05, dead-peer timer arm/clear (D-14). Cleared on every
     // transition OUT of CONNECTED; re-armed on entry TO CONNECTED.
     if (e.to === "CONNECTED") {
       this._armDeadPeerTimer();
-      // PLAN-06 (OBS-01, D-26) — record CONNECTED epoch for getStats.
+      // PLAN-06 (OBS-01, D-26), record CONNECTED epoch for getStats.
       this._lastConnectedAt = Date.now();
     }
     if (e.from === "CONNECTED" && e.to !== "CONNECTED") {
       this._clearDeadPeerTimer();
     }
-    // Plan 04 — disconnect detection (CLIENT-05/06/17). Trigger
+    // Plan 04, disconnect detection (CLIENT-05/06/17). Trigger
     // `_handleDisconnect` on transitions out of CONNECTED into a
     // disconnect-leaning state, OR on a CONNECTING/RECONNECTING attempt
     // failing into CLOSED while we are inside a reconnect cycle (so the
@@ -1362,7 +1362,7 @@ export class MllpClient extends EventEmitter {
       const cause = this._lastError ?? new Error(e.reason ?? "disconnect");
       if (this._userClosed) return;
       if (!this._autoReconnect) {
-        // Reject pending sends — same teardown path as close() but with a
+        // Reject pending sends, same teardown path as close() but with a
         // disconnect-flavored MllpConnectionError so callers see the cause.
         this._teardownCorrelator(
           new MllpConnectionError("disconnected; autoReconnect disabled", {
@@ -1396,7 +1396,7 @@ export class MllpClient extends EventEmitter {
    * ```
    *
    * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.
-   * @param opts.signal AbortSignal — aborting cancels the ACK wait (CLIENT-11).
+   * @param opts.signal AbortSignal, aborting cancels the ACK wait (CLIENT-11).
    */
   send(payload: Buffer, opts?: { signal?: AbortSignal; ackTimeoutMs?: number }): Promise<Buffer> {
     const signal = opts?.signal;
@@ -1422,11 +1422,11 @@ export class MllpClient extends EventEmitter {
       : null;
     const correlator = this._correlator;
     const conn = this._connection;
-    // Frame once at enqueue time — same bytes go to the wire AND get held
+    // Frame once at enqueue time, same bytes go to the wire AND get held
     // for Plan 04 reconnect-resend (D-08 / CLIENT-17 controlId branch).
     const frame = encodeFrame(payload);
 
-    // Plan 05 — backpressure gate (CLIENT-07, D-23). Runs BEFORE enqueue
+    // Plan 05, backpressure gate (CLIENT-07, D-23). Runs BEFORE enqueue
     // so a rejected send never touches the live store. The gate measures
     // the current `correlator.size` + `queueBytes` against the configured
     // high-water mark and applies the configured policy.
@@ -1475,9 +1475,9 @@ export class MllpClient extends EventEmitter {
       };
       const key = correlator.enqueue(frame, controlId, wrappedResolve, wrappedReject);
       if (key === null) {
-        // pipeline:false (Plan 05 — D-06). Correlator's maxInFlight=1 is
+        // pipeline:false (Plan 05, D-06). Correlator's maxInFlight=1 is
         // saturated. Wait for the next 'drain' event (the prior ACK
-        // releases the slot) and then re-enter `send()` — the high-water
+        // releases the slot) and then re-enter `send()`, the high-water
         // mark gate above has already approved this send.
         const onDrain = (): void => {
           this.off("drain", onDrain);
@@ -1505,7 +1505,7 @@ export class MllpClient extends EventEmitter {
       // high-water mark is what the gate above enforces.
       conn.send(frame);
       correlator.markFlushed(key, Date.now());
-      // PLAN-06 (OBS-01, D-26) — count flushed sends. Synchronous post-send
+      // PLAN-06 (OBS-01, D-26), count flushed sends. Synchronous post-send
       // increment per T-05-06-05 (counter race is bounded; observability is
       // "good enough" per D-26).
       this._sentTotal += 1;
@@ -1513,7 +1513,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * 'wait'-mode backpressure handler (Plan 05 — CLIENT-07/CLIENT-11).
+   * 'wait'-mode backpressure handler (Plan 05, CLIENT-07/CLIENT-11).
    *
    * Awaits one of three terminating signals, in order:
    * - `'drain'` event → re-enter `send()` (the gate will now pass).
@@ -1584,13 +1584,13 @@ export class MllpClient extends EventEmitter {
       // _connection / _correlator null check.
       this._correlator = null;
     }
-    // Plan 05 — dead-peer timer cleanup. Belt-and-suspenders for the
+    // Plan 05, dead-peer timer cleanup. Belt-and-suspenders for the
     // destroy() path that may bypass an explicit FSM transition.
     this._clearDeadPeerTimer();
   }
 
   /**
-   * **Test seam** — attach an externally-built {@link Connection} directly,
+   * **Test seam**, attach an externally-built {@link Connection} directly,
    * bypassing the `net.createConnection` + `NetTransport` path. Used by
    * lifecycle tests driving `InMemoryTransport.pair()` for determinism.
    *
@@ -1639,7 +1639,7 @@ export class MllpClient extends EventEmitter {
     const conn = this._connection;
     if (conn === null) {
       // No connection attached; still tear down any stray correlator state
-      // (defensive — this branch is unreachable in normal flow).
+      // (defensive, this branch is unreachable in normal flow).
       this._teardownCorrelator(
         new MllpConnectionError("client closed", {
           cause: new Error("closed"),
@@ -1665,7 +1665,7 @@ export class MllpClient extends EventEmitter {
       return;
     }
 
-    // Wire AbortSignal — abort during drain force-destroys the Connection
+    // Wire AbortSignal, abort during drain force-destroys the Connection
     let abortHandler: (() => void) | undefined;
     const abortPromise = new Promise<never>((_resolve, reject) => {
       abortHandler = (): void => {
@@ -1687,7 +1687,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Abruptly destroy the client — force-transitions the underlying Connection
+   * Abruptly destroy the client, force-transitions the underlying Connection
    * to `CLOSED` immediately. No-op if no Connection is attached. Idempotent.
    *
    * @example
@@ -1717,7 +1717,7 @@ export class MllpClient extends EventEmitter {
   /**
    * Returns a JSON-serializable observability snapshot (OBS-01, D-26).
    *
-   * All fields are plain values — no Buffers, no class instances, no Maps,
+   * All fields are plain values, no Buffers, no class instances, no Maps,
    * no circular refs. Safe to `JSON.stringify` directly.
    *
    * `inFlight` is the count of correlator entries with `sentAt !== null`
@@ -1763,7 +1763,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Async disposal — delegates to {@link MllpClient.close} for `await using` support.
+   * Async disposal, delegates to {@link MllpClient.close} for `await using` support.
    *
    * @example
    * ```typescript
@@ -1856,20 +1856,20 @@ export interface StarterClientOptions {
 
 /**
  * Three-line MLLP client with batteries-included defaults (PLAN-06,
- * CLIENT-10, D-22). The returned client is already CONNECTED — `connect()`
+ * CLIENT-10, D-22). The returned client is already CONNECTED, `connect()`
  * has been awaited.
  *
  * D-22 defaults:
  * - `autoReconnect: true`
  * - `ackTimeoutMs: 30_000`
- * - `correlateByControlId: false` (FIFO mode — simplest mental model)
+ * - `correlateByControlId: false` (FIFO mode, simplest mental model)
  * - `pipeline: true`
  * - `highWaterMark: 64`
  * - `onBackpressure: 'reject'`
  * - `handleSignals: false` (opt-in)
  *
  * The factory is **async**, so the literal three-line north-star snippet
- * has an explicit `await` BEFORE `createStarterClient(...)` — without it,
+ * has an explicit `await` BEFORE `createStarterClient(...)`, without it,
  * the `using` declaration would receive a `Promise`, not an `MllpClient`,
  * and `Symbol.asyncDispose` would not run at scope exit.
  *

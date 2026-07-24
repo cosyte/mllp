@@ -1,9 +1,9 @@
 /**
- * Transport-robustness FUZZ layer — the key invariant for an MLLP transport.
+ * Transport-robustness FUZZ layer, the key invariant for an MLLP transport.
  *
  * A production MLLP listener faces hostile, corrupt, and adversarial byte streams.
- * The hard guarantee: feeding ARBITRARY random bytes into the decoder — whole or
- * split across arbitrary chunk boundaries — must never throw an *unexpected* error
+ * The hard guarantee: feeding ARBITRARY random bytes into the decoder, whole or
+ * split across arbitrary chunk boundaries, must never throw an *unexpected* error
  * and must never hang. The only sanctioned throw is the bounded-accumulator fatal
  * `MLLP_FRAME_TOO_LARGE` (FRAME-11), which random sub-cap noise cannot reach.
  *
@@ -12,7 +12,7 @@
  * written from the peer end, delivered synchronously to the `Connection`'s
  * `FrameReader` via `onData`. Because `InMemoryTransport.write()` invokes the data
  * handler synchronously, any throw from the decoder surfaces synchronously out of
- * `write()` — so the property can catch and classify it directly, and "no hang"
+ * `write()`, so the property can catch and classify it directly, and "no hang"
  * is structurally guaranteed (no timers, no async, all work completes in-call).
  */
 
@@ -30,7 +30,7 @@ import { randomBytes, randomChunks, hostileBytesOrChunks } from "./_arbitraries.
 /** Stable run budget so failures reproduce deterministically. */
 const NUM_RUNS = 1000;
 
-/** All decoder tolerances on — the liberal-receiver posture a hardened listener uses. */
+/** All decoder tolerances on, the liberal-receiver posture a hardened listener uses. */
 const ALL_TOLERANCES = {
   allowFsOnly: true,
   allowLfAfterFs: true,
@@ -73,7 +73,7 @@ function makeFuzzConnection(): {
     onWarning: (w) => warnings.push(w),
     onMessage: (payload) => frames.push(payload),
   });
-  // Connection swallows transport 'error' into an emitted error event — capture it
+  // Connection swallows transport 'error' into an emitted error event, capture it
   // so an unexpected internal error can't pass silently.
   conn.on("error", (e: { error?: Error }) => {
     if (e.error !== undefined) errors.push(e.error);
@@ -138,7 +138,7 @@ describe("fuzz: arbitrary random bytes over the in-memory transport never crash 
 
 describe("fuzz: standalone FrameReader robustness (raw push path)", () => {
   it("any byte stream (whole or chunked) yields only known warnings and no unexpected throw", () => {
-    // Direct FrameReader path — no transport — so a regression in the FSM itself
+    // Direct FrameReader path, no transport, so a regression in the FSM itself
     // is caught even if the Connection wiring masked it. Every emitted warning must
     // still carry a registered code; the only legal throw is the sanctioned fatal.
     const known: ReadonlySet<string> = new Set<WarningCode>([
@@ -179,7 +179,7 @@ describe("fuzz: standalone FrameReader robustness (raw push path)", () => {
   });
 
   it("reset() after fuzz leaves the reader reusable (byte offset back to 0)", () => {
-    // A fuzzed reader that is reset must cleanly decode a fresh canonical frame —
+    // A fuzzed reader that is reset must cleanly decode a fresh canonical frame,
     // proving fuzz input cannot wedge the FSM into a permanently-broken state.
     fc.assert(
       fc.property(randomBytes(), (noise) => {

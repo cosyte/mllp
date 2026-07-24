@@ -1,6 +1,6 @@
 /**
- * `detectMode` / `MllpAck.mode` — the MSH-15/16 original-vs-enhanced
- * selection table. Fixtures are synthetic-only — never PHI.
+ * `detectMode` / `MllpAck.mode`, the MSH-15/16 original-vs-enhanced
+ * selection table. Fixtures are synthetic-only, never PHI.
  */
 
 import { describe, expect, it } from "vitest";
@@ -21,23 +21,23 @@ const TABLE: ReadonlyArray<readonly [string, string, "original" | "enhanced"]> =
   ["SU", "AL", "enhanced"],
 ];
 
-describe("detectMode — MSH-15/16 selection table", () => {
+describe("detectMode, MSH-15/16 selection table", () => {
   it.each(TABLE)("MSH-15=%s MSH-16=%s -> %s", (msh15, msh16, expected) => {
     expect(detectMode(inboundWith(msh15, msh16))).toBe(expected);
   });
 });
 
-describe("buildMllpAck(...).mode — same selection table", () => {
+describe("buildMllpAck(...).mode, same selection table", () => {
   it.each(TABLE)("MSH-15=%s MSH-16=%s -> %s", (msh15, msh16, expected) => {
     const ack = buildAckAA(inboundWith(msh15, msh16));
     expect(ack.mode).toBe(expected);
   });
 });
 
-describe("detectMode — unparseable inbound", () => {
+describe("detectMode, unparseable inbound", () => {
   it("rethrows the Hl7ParseError as-is", () => {
     // Checked via the SAME loaded copy of @cosyte/hl7 this adapter uses
-    // internally (loadHl7Peer()), not a separate ESM `import` of the class —
+    // internally (loadHl7Peer()), not a separate ESM `import` of the class,
     // see the dual-package-hazard note on `Hl7Peer.Hl7Message` in peer.ts.
     // Node can resolve `createRequire` (CJS) and `import` (ESM) to distinct
     // module instances, so a real caller mixing the two forms should compare

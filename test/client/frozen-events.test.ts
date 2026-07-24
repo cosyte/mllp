@@ -54,7 +54,7 @@ function buildClientOverPair(opts?: Partial<ClientOptions>): Harness {
 
 /**
  * Assert a payload is frozen AND that mutation throws TypeError.
- * ESM modules run in strict mode — assignment to frozen properties throws.
+ * ESM modules run in strict mode, assignment to frozen properties throws.
  */
 function assertFrozenAndImmutable(payload: unknown, attemptKey: string): void {
   expect(Object.isFrozen(payload)).toBe(true);
@@ -143,7 +143,7 @@ describe("MllpClient frozen event payloads (PLAN-06 Task 3, CLIENT-13, D-25)", (
       const captured: unknown[] = [];
       client.on("close", (e) => captured.push(e));
       await client.close();
-      // Drive the Connection FSM all the way to CLOSED — close() emits at
+      // Drive the Connection FSM all the way to CLOSED, close() emits at
       // DISCONNECTED, but Connection emits 'close' on the CLOSED transition.
       conn.destroy(new Error("done"));
       // 'close' may be re-emitted via the Connection transition.

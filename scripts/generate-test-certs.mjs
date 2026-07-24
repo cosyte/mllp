@@ -23,7 +23,7 @@ const extensions = [{ name: "subjectAltName", altNames: [{ type: 2, value: "loca
 
 const pems = generate(attrs, {
   keySize: 2048,
-  days: 1, // Short-lived — expires in 1 day; never commit these
+  days: 1, // Short-lived, expires in 1 day; never commit these
   algorithm: "sha256",
   extensions,
 });
@@ -35,6 +35,6 @@ writeFileSync(join(certsDir, "server-cert.pem"), pems.cert);
 writeFileSync(join(certsDir, "ca-cert.pem"), pems.cert); // Self-signed: cert is its own CA
 
 console.log(`TLS test certs written to ${certsDir}`);
-console.log("  server-key.pem  — private key (NEVER commit)");
-console.log("  server-cert.pem — server certificate (1-day validity)");
-console.log("  ca-cert.pem     — CA certificate (same self-signed cert)");
+console.log("  server-key.pem , private key (NEVER commit)");
+console.log("  server-cert.pem, server certificate (1-day validity)");
+console.log("  ca-cert.pem    , CA certificate (same self-signed cert)");

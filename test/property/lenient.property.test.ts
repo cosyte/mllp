@@ -1,24 +1,24 @@
 /**
  * Property tests for the Postel's-Law DECODE side: the `FrameReader` is liberal in
  * what it accepts. With its tolerance opt-ins enabled, feeding malformed-but-
- * recoverable frames must NEVER throw — every deviation is recovered into a
- * warning — except for the one sanctioned fatal `MLLP_FRAME_TOO_LARGE` (FRAME-11
+ * recoverable frames must NEVER throw, every deviation is recovered into a
+ * warning, except for the one sanctioned fatal `MLLP_FRAME_TOO_LARGE` (FRAME-11
  * DoS guard), which throws even under full tolerance.
  *
  * This is the generative analogue of `test/framing/decoder.test.ts` and
  * `test/framing/strict-mode.test.ts`. Invariants on the warnings themselves:
  *   - every `warning.code` is a member of the 11-code public registry (no ad-hoc
- *     codes leak — `MLLP_WARNING_CODES`);
+ *     codes leak, `MLLP_WARNING_CODES`);
  *   - every warning carries byte-offset context (`byteOffset` is a finite number).
  *
  * Wiring to the `@cosyte/test-utils` `lenientNeverThrowsProperty` runner:
- *   - `parse`        — drive a tolerant `FrameReader` over the bytes; collect
+ *   - `parse`       , drive a tolerant `FrameReader` over the bytes; collect
  *                      emitted warnings; return `{ warnings }`.
- *   - `isFatal`      — `err instanceof MllpFramingError && err.code === 'MLLP_FRAME_TOO_LARGE'`
+ *   - `isFatal`     , `err instanceof MllpFramingError && err.code === 'MLLP_FRAME_TOO_LARGE'`
  *                      (the only code the decoder may throw under full tolerance).
- *   - `getWarnings`  — the collected `MllpWarning[]` (mapped to `{ code, position }`).
- *   - `isKnownCode`  — membership in the 11-code registry.
- *   - `hasPositionalContext` — `byteOffset` is a finite number.
+ *   - `getWarnings` , the collected `MllpWarning[]` (mapped to `{ code, position }`).
+ *   - `isKnownCode` , membership in the 11-code registry.
+ *   - `hasPositionalContext`, `byteOffset` is a finite number.
  */
 
 import { describe, it, expect } from "vitest";
@@ -59,7 +59,7 @@ export const MLLP_WARNING_CODES = [
 /** The set of known codes, for O(1) membership checks. */
 const KNOWN_CODES: ReadonlySet<string> = new Set(MLLP_WARNING_CODES);
 
-/** All decoder tolerance opt-ins on — the "maximally liberal receiver" posture. */
+/** All decoder tolerance opt-ins on, the "maximally liberal receiver" posture. */
 const ALL_TOLERANCES = {
   allowFsOnly: true,
   allowLfAfterFs: true,
@@ -72,7 +72,7 @@ const SANCTIONED_FATAL: WarningCode = "MLLP_FRAME_TOO_LARGE";
 
 /**
  * Drive a maximally-tolerant `FrameReader` over `bytes` and return every warning
- * it emitted. Frames themselves are discarded — the lenient invariant only cares
+ * it emitted. Frames themselves are discarded, the lenient invariant only cares
  * that nothing throws (bar the sanctioned fatal) and that warnings are well-formed.
  */
 function parseTolerant(bytes: Buffer, maxFrameSizeBytes?: number): { warnings: MllpWarning[] } {
@@ -100,7 +100,7 @@ function toLenientWarnings(parsed: unknown): readonly LenientWarning[] {
   return warnings.map((w) => ({ code: w.code, position: { byteOffset: w.byteOffset } }));
 }
 
-/** `byteOffset` is the decoder's positional context — assert it is a finite number. */
+/** `byteOffset` is the decoder's positional context, assert it is a finite number. */
 function hasByteOffset(w: LenientWarning): boolean {
   const pos = w.position as { byteOffset?: unknown } | undefined;
   return pos !== undefined && typeof pos.byteOffset === "number" && Number.isFinite(pos.byteOffset);

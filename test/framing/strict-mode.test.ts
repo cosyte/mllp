@@ -6,7 +6,7 @@ function frame(payload: number[]): Buffer {
   return Buffer.from([0x0b, ...payload, 0x1c, 0x0d]);
 }
 
-describe("FrameReader — strict mode (WARN-08)", () => {
+describe("FrameReader, strict mode (WARN-08)", () => {
   describe("MLLP_FS_WITHOUT_CR escalated to error", () => {
     it("throws even with allowFsOnly: true when strict: true", () => {
       const r = new FrameReader({ onFrame: () => {}, allowFsOnly: true, strict: true });
@@ -21,7 +21,7 @@ describe("FrameReader — strict mode (WARN-08)", () => {
 
     it("throws for non-VT stray byte after FS with allowFsOnly: true and strict: true", () => {
       const r = new FrameReader({ onFrame: () => {}, allowFsOnly: true, strict: true });
-      // [VT, A, FS, X] — X is not CR/LF/VT, triggers allowFsOnly path
+      // [VT, A, FS, X], X is not CR/LF/VT, triggers allowFsOnly path
       expect(() => r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x41]))).toThrow(MllpFramingError);
       try {
         const r2 = new FrameReader({ onFrame: () => {}, allowFsOnly: true, strict: true });
@@ -98,7 +98,7 @@ describe("FrameReader — strict mode (WARN-08)", () => {
         onWarning: (w) => warnings.push(w.code),
         strict: true,
       });
-      // Feed: [VT, A, VT, B, FS, CR] — second VT triggers MLLP_TRAILING_BYTES for 'A'
+      // Feed: [VT, A, VT, B, FS, CR], second VT triggers MLLP_TRAILING_BYTES for 'A'
       expect(() => r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]))).not.toThrow();
       expect(warnings).toContain("MLLP_TRAILING_BYTES");
     });

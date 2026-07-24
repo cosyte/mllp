@@ -1,7 +1,7 @@
 /**
  * MllpClient.send() FIFO mode tests (PLAN-02, CLIENT-02 + CLIENT-03 FIFO branch).
  *
- * Drives the send/ACK request-response over `InMemoryTransport.pair()` —
+ * Drives the send/ACK request-response over `InMemoryTransport.pair()`,
  * deterministic, no real sockets. The peer transport plays the role of a
  * server-side ACK echo.
  */
@@ -56,7 +56,7 @@ describe("MllpClient.send (FIFO mode, PLAN-02)", () => {
     const p1 = client.send(Buffer.from("M1"));
     const p2 = client.send(Buffer.from("M2"));
     const p3 = client.send(Buffer.from("M3"));
-    // Peer responds in order — the FIFO contract says they map by insertion order.
+    // Peer responds in order, the FIFO contract says they map by insertion order.
     ackFromPeer(Buffer.from("A1"));
     ackFromPeer(Buffer.from("A2"));
     ackFromPeer(Buffer.from("A3"));
@@ -75,14 +75,14 @@ describe("MllpClient.send (FIFO mode, PLAN-02)", () => {
     ac.abort();
     await expect(p).rejects.toMatchObject({ name: "AbortError" });
     // Verify pending entry was removed from the correlator (size === 0)
-    // We check via _correlator (test seam — the field is private but readable
+    // We check via _correlator (test seam, the field is private but readable
     // from this same package via cast).
     const correlator = (client as unknown as { _correlator: { size: number } | null })._correlator;
     expect(correlator?.size ?? 0).toBe(0);
     await client.close();
   });
 
-  it("Test 4: ACK timeout — rejects with MllpTimeoutError; clock starts at write-flush", async () => {
+  it("Test 4: ACK timeout, rejects with MllpTimeoutError; clock starts at write-flush", async () => {
     // Use very short timeout for fast test execution.
     const { client } = buildClientOverPair({ ackTimeoutMs: 50 });
     const beforeSend = Date.now();
@@ -106,7 +106,7 @@ describe("MllpClient.send (FIFO mode, PLAN-02)", () => {
     await client.close();
   });
 
-  it("Test 5: late ACK after timeout — does not double-resolve and is observable", async () => {
+  it("Test 5: late ACK after timeout, does not double-resolve and is observable", async () => {
     const { client, ackFromPeer } = buildClientOverPair({ ackTimeoutMs: 50 });
     const p = client.send(Buffer.from("PAYLOAD"));
     let timeoutErr: unknown;

@@ -60,12 +60,12 @@ function buildAckEchoing(controlId: string): Buffer {
 }
 
 describe("MllpClient.send (controlId mode, PLAN-03)", () => {
-  it("Test 1: createClient({ correlateByControlId: true }) — Correlator runs in controlId mode", () => {
+  it("Test 1: createClient({ correlateByControlId: true }), Correlator runs in controlId mode", () => {
     const { client } = buildClientOverPair({ correlateByControlId: true });
     const correlator = (client as unknown as { _correlator: { getStats: () => unknown } })
       ._correlator;
     expect(correlator).not.toBeNull();
-    // Verify mode is controlId — keyed lookup is the only externally
+    // Verify mode is controlId, keyed lookup is the only externally
     // observable difference; we verify by enqueueing a string controlId
     // entry and checking it surfaces as such.
     const flag = (client as unknown as { _correlateByControlId: boolean })._correlateByControlId;
@@ -91,11 +91,11 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     await client.close();
   });
 
-  it("Test 3: outbound payload missing MSH-10 — best-effort __seq fallback, no crash", async () => {
+  it("Test 3: outbound payload missing MSH-10, best-effort __seq fallback, no crash", async () => {
     const { client } = buildClientOverPair({ correlateByControlId: true });
-    // Truncated MSH — extractMshControlId returns null; correlator falls back
+    // Truncated MSH, extractMshControlId returns null; correlator falls back
     // to a synthetic key. The peer can't ACK this by control ID, so the send
-    // will time out — but the client must not crash.
+    // will time out, but the client must not crash.
     const truncatedMsh = Buffer.from("MSH|^~\\&|S|F", "ascii");
     let caught: unknown;
     try {
@@ -126,7 +126,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     expect(caught).toBeDefined();
   });
 
-  it('Test 4: unmatched ACK — emits frozen MllpFramingError to "error" event; pending send untouched', async () => {
+  it('Test 4: unmatched ACK, emits frozen MllpFramingError to "error" event; pending send untouched', async () => {
     const { client, sendAck } = buildClientOverPair({
       correlateByControlId: true,
       ackTimeoutMs: 100,
@@ -162,7 +162,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     await client.close();
   });
 
-  it("Test 5: late ACK matching graveyard — emits MLLP_ACK_AFTER_TIMEOUT warning; send already rejected", async () => {
+  it("Test 5: late ACK matching graveyard, emits MLLP_ACK_AFTER_TIMEOUT warning; send already rejected", async () => {
     const { client, sendAck } = buildClientOverPair({
       correlateByControlId: true,
       ackTimeoutMs: 50,
@@ -185,7 +185,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(MllpTimeoutError);
-    // Now send the late ACK — should surface as MLLP_ACK_AFTER_TIMEOUT warning,
+    // Now send the late ACK, should surface as MLLP_ACK_AFTER_TIMEOUT warning,
     // NOT a double-resolve / second rejection.
     sendAck(buildAckEchoing("LATE"));
     // Allow the message handler to run.
@@ -196,7 +196,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     await client.close();
   });
 
-  it("Test 6: graveyard TTL — after 2*ackTimeoutMs late ACK fires UNMATCHED not LATE", async () => {
+  it("Test 6: graveyard TTL, after 2*ackTimeoutMs late ACK fires UNMATCHED not LATE", async () => {
     const ackTimeoutMs = 50;
     const { client, sendAck } = buildClientOverPair({
       correlateByControlId: true,
@@ -234,7 +234,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     await client.close();
   });
 
-  it('Test 7: frozen "error" event payload — mutation throws in strict mode', async () => {
+  it('Test 7: frozen "error" event payload, mutation throws in strict mode', async () => {
     const { client, sendAck } = buildClientOverPair({
       correlateByControlId: true,
     });
@@ -242,7 +242,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     client.on("error", (e: unknown) => {
       captured.push(e);
     });
-    // No outstanding send — every ACK is unmatched.
+    // No outstanding send, every ACK is unmatched.
     sendAck(buildAckEchoing("GHOST"));
     await new Promise((r) => setTimeout(r, 20));
     expect(captured.length).toBe(1);
@@ -254,7 +254,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     await client.close();
   });
 
-  it("Test 8: FIFO regression — without correlateByControlId, FIFO behavior intact", async () => {
+  it("Test 8: FIFO regression, without correlateByControlId, FIFO behavior intact", async () => {
     // Same builder without correlateByControlId; must still resolve in FIFO order.
     const { client, sendAck } = buildClientOverPair();
     const p1 = client.send(Buffer.from("M1"));
@@ -267,7 +267,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     await client.close();
   });
 
-  it('Test 9 (B-04): no parallel "message" listener registered — single delegating listener only', () => {
+  it('Test 9 (B-04): no parallel "message" listener registered, single delegating listener only', () => {
     const { client, conn } = buildClientOverPair({
       correlateByControlId: true,
     });
@@ -277,7 +277,7 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     void client;
   });
 
-  it("Test 10: unmatched ACK without an error listener — no ERR_UNHANDLED_ERROR", async () => {
+  it("Test 10: unmatched ACK without an error listener, no ERR_UNHANDLED_ERROR", async () => {
     // listenerCount-guarded re-emission: with no 'error' listener attached,
     // an unmatched ACK must not crash the process.
     const { client, sendAck } = buildClientOverPair({

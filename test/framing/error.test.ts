@@ -33,7 +33,7 @@ describe("MllpFramingError", () => {
     expect(Buffer.isBuffer(err.snippet)).toBe(true);
   });
 
-  it("snippet is a COPY — mutating source does not change snippet", () => {
+  it("snippet is a COPY, mutating source does not change snippet", () => {
     const source = Buffer.from([0x0b, 0x41, 0x1c, 0x0d]);
     const err = new MllpFramingError("MLLP_PAYLOAD_CONTAINS_VT", 1, source);
     source[0] = 0xff;

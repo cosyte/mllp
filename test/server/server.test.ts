@@ -252,7 +252,7 @@ describe("createServer / MllpServer skeleton", () => {
   });
 });
 
-describe("Gap closure — byteOffset/warnings threading, closedTotal accuracy, onMessage void type", () => {
+describe("Gap closure, byteOffset/warnings threading, closedTotal accuracy, onMessage void type", () => {
   const { track, closeAll } = makeServerTracker();
 
   afterEach(closeAll);
@@ -288,7 +288,7 @@ describe("Gap closure — byteOffset/warnings threading, closedTotal accuracy, o
     it("meta.byteOffset is > 0 when frame does not start at byte 0", async () => {
       // Server must allow leading whitespace so the 5-byte preamble is tolerated.
       // Note: SERVER_DEFAULT_FRAMING already includes allowLeadingWhitespace: true,
-      // so no extra framing opt is needed here — but we set it explicitly for clarity.
+      // so no extra framing opt is needed here, but we set it explicitly for clarity.
       const received: Array<{ byteOffset: number }> = [];
       const server = makeServer({
         framing: { allowLeadingWhitespace: true },
@@ -388,7 +388,7 @@ describe("Gap closure — byteOffset/warnings threading, closedTotal accuracy, o
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(server.getStats().activeConnections).toBe(1);
 
-      // Destroy the client socket — server sees peer close, transitions CONNECTED → DISCONNECTED,
+      // Destroy the client socket, server sees peer close, transitions CONNECTED → DISCONNECTED,
       // then DISCONNECTED → CLOSED when destroyed during _drainAll straggler path.
       sock.destroy();
 
@@ -408,7 +408,7 @@ describe("Gap closure — byteOffset/warnings threading, closedTotal accuracy, o
       const server = makeServer({
         onMessage: (payload: Buffer) => {
           received.push(payload);
-          // No return value — void
+          // No return value, void
         },
       });
       expect(server).toBeDefined();

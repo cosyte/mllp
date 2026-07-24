@@ -12,16 +12,16 @@
  * @packageDocumentation
  */
 
-/** Vertical Tab (0x0B) — marks the start of an MLLP frame. */
+/** Vertical Tab (0x0B), marks the start of an MLLP frame. */
 export const VT = 0x0b;
 
-/** File Separator (0x1C) — marks the end of MLLP payload bytes. */
+/** File Separator (0x1C), marks the end of MLLP payload bytes. */
 export const FS = 0x1c;
 
-/** Carriage Return (0x0D) — terminates the FS byte; together FS+CR ends the frame. */
+/** Carriage Return (0x0D), terminates the FS byte; together FS+CR ends the frame. */
 export const CR = 0x0d;
 
-/** Line Feed (0x0A) — used by the MLLP_LF_AFTER_FS tolerance (FRAME-08). */
+/** Line Feed (0x0A), used by the MLLP_LF_AFTER_FS tolerance (FRAME-08). */
 export const LF = 0x0a;
 
 /**

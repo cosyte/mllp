@@ -1,11 +1,11 @@
 /**
- * MLLP-ACK-UTF8 — the `ack-from-hl7` subpath must echo MSH-10 into MSA-2
+ * MLLP-ACK-UTF8, the `ack-from-hl7` subpath must echo MSH-10 into MSA-2
  * **byte-verbatim** (HL7 v2.5.1 §2.9.2.2).
  *
  * The bug this locks out: `buildMllpAck` decoded the inbound through the peer
  * parser's charset machinery and re-encoded the ACK through a hardcoded `utf8`.
  * The two are not inverses. A control-ID byte `0x8B` (legal under an MSH-18 of
- * `8859/1`) came back out of MSA-2 as the TWO bytes `0xC2 0x8B` — a different
+ * `8859/1`) came back out of MSA-2 as the TWO bytes `0xC2 0x8B`, a different
  * control ID. A `@cosyte/mllp` client, which keys its in-flight store on the raw
  * `latin1` bytes it sent, could not match that ACK: ACK timeout → resend →
  * **duplicate clinical message**.
@@ -14,7 +14,7 @@
  * in controlId mode talking to a server that ACKs with `buildAckAA`, over the
  * in-memory transport. That is the exact cosyte↔cosyte channel the bug broke.
  *
- * Fixtures are synthetic-only (DOE/SYNTH/TEST names, invented MRNs) — never PHI.
+ * Fixtures are synthetic-only (DOE/SYNTH/TEST names, invented MRNs), never PHI.
  */
 
 import { describe, expect, it } from "vitest";
@@ -35,7 +35,7 @@ import { FrameReader } from "../../src/framing/index.js";
 import { buildRawAck } from "../../src/server/ack.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 
-/** MSH-10 = `A<0x8B>C` — a high-bit control ID, legal under MSH-18 = `8859/1`. */
+/** MSH-10 = `A<0x8B>C`, a high-bit control ID, legal under MSH-18 = `8859/1`. */
 const HIGH_BIT_ID = Buffer.from([0x41, 0x8b, 0x43]);
 
 /** An inbound ADT whose MSH-10 is the given raw bytes and whose MSH-18 declares 8859/1. */
@@ -54,7 +54,7 @@ function inboundWithControlId(id: Buffer, fieldSep = "|", encChars = "^~\\&"): B
 const hex = (s: string | null | undefined): string =>
   s === null || s === undefined ? "<none>" : Buffer.from(s, "latin1").toString("hex");
 
-describe("ack-from-hl7 — MSA-2 echoes MSH-10 verbatim (HL7 v2.5.1 §2.9.2.2)", () => {
+describe("ack-from-hl7, MSA-2 echoes MSH-10 verbatim (HL7 v2.5.1 §2.9.2.2)", () => {
   it("a high-bit control ID survives into MSA-2 byte-for-byte", () => {
     const inbound = inboundWithControlId(HIGH_BIT_ID);
     const ack = buildAckAA(inbound);
@@ -96,7 +96,7 @@ describe("ack-from-hl7 — MSA-2 echoes MSH-10 verbatim (HL7 v2.5.1 §2.9.2.2)",
 
   it("every byte value 0x21..0xFF works as a control-ID byte", () => {
     for (let b = 0x21; b <= 0xff; b++) {
-      // Skip the delimiters the message itself uses — those are structure, not content.
+      // Skip the delimiters the message itself uses, those are structure, not content.
       if ("|^~\\&\r\n".includes(String.fromCharCode(b))) continue;
       const id = Buffer.from([0x49, b, 0x44]); // "I<b>D"
       const inbound = inboundWithControlId(id);
@@ -130,7 +130,7 @@ describe("ack-from-hl7 — MSA-2 echoes MSH-10 verbatim (HL7 v2.5.1 §2.9.2.2)",
   });
 });
 
-describe("ack-from-hl7 — a non-verbatim echo is LOUD, never silent", () => {
+describe("ack-from-hl7, a non-verbatim echo is LOUD, never silent", () => {
   it("an `encoding` override that cannot round-trip the bytes warns", () => {
     const inbound = inboundWithControlId(HIGH_BIT_ID);
     // `ascii` masks the high bit: 0x8B -> 0x0B. The caller asked for it; we must say so.
@@ -143,7 +143,7 @@ describe("ack-from-hl7 — a non-verbatim echo is LOUD, never silent", () => {
     expect(warning?.message).toContain("3 bytes");
   });
 
-  it("the warning carries NO inbound field content — not raw, not hex (PHI)", () => {
+  it("the warning carries NO inbound field content, not raw, not hex (PHI)", () => {
     // A warning goes to a log, and MSH-10 is inbound payload content. An earlier version of
     // this check hex-encoded the control ids into the message; paired with a scanner that ran
     // past the segment terminator, that rendered the patient's MRN into a log line. Both are
@@ -157,12 +157,12 @@ describe("ack-from-hl7 — a non-verbatim echo is LOUD, never silent", () => {
 
     const msg = warning?.message ?? "";
     expect(msg).not.toContain("MRN00042"); // raw
-    expect(msg).not.toContain(id.toString("hex")); // hex — the exact old leak
+    expect(msg).not.toContain(id.toString("hex")); // hex, the exact old leak
     expect(msg).not.toContain(id.toString("base64")); // and no other rendering
     expect(msg).toContain("9 bytes"); // shape only
   });
 
-  it("`utf8` on a high-bit inbound warns — this is the exact pre-fix default", () => {
+  it("`utf8` on a high-bit inbound warns, this is the exact pre-fix default", () => {
     const inbound = inboundWithControlId(HIGH_BIT_ID);
     const ack = buildMllpAck(inbound, { code: "AA", encoding: "utf8" });
     expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
@@ -179,7 +179,7 @@ describe("ack-from-hl7 — a non-verbatim echo is LOUD, never silent", () => {
   });
 
   it("an unparseable inbound warns UNPARSEABLE, not NOT_VERBATIM", () => {
-    // MSA-2 is deliberately empty here — we refuse to fabricate a correlation id.
+    // MSA-2 is deliberately empty here, we refuse to fabricate a correlation id.
     // Reporting that deliberate choice as a §2.9.2.2 violation would be noise.
     const ack = buildAckAA(Buffer.from("this is not hl7 at all", "latin1"));
     const codes = ack.warnings.map((w) => w.code);
@@ -196,7 +196,7 @@ describe("ack-from-hl7 — a non-verbatim echo is LOUD, never silent", () => {
   it("a TRUNCATED MSH followed by another segment does not warn NOT_VERBATIM", () => {
     // The case the empty-MSH-10 fixture above could never reach: the MSH stops *before*
     // MSH-10 and a real segment follows it. This is where the old scanner ran past the CR
-    // and produced PID-3 as the "control id" — so the check compared against a field that
+    // and produced PID-3 as the "control id", so the check compared against a field that
     // does not exist and warned that the ACK had failed to echo it. Its own contract says
     // it never warns on a comparison it could not perform.
     const inbound = Buffer.from(
@@ -208,20 +208,20 @@ describe("ack-from-hl7 — a non-verbatim echo is LOUD, never silent", () => {
   });
 });
 
-describe("ack-from-hl7 — text inbound keeps its utf8 default (back-compat)", () => {
+describe("ack-from-hl7, text inbound keeps its utf8 default (back-compat)", () => {
   it("a string inbound is encoded utf8, as before", () => {
     const inbound = "MSH|^~\\&|S|F|R|F2|20260714120000||ADT^A01|ID-é|P|2.5.1\r";
     const ack = buildAckAA(inbound);
-    // The caller handed us text, so their code units are re-encoded utf8 — UNCHANGED.
+    // The caller handed us text, so their code units are re-encoded utf8, UNCHANGED.
     expect(hex(extractMsaControlId(ack.payload))).toBe(Buffer.from("ID-é", "utf8").toString("hex"));
     // The encoding did not change; the *honesty* did. A non-ASCII control ID from a string
-    // cannot be byte-verified (the wire bytes are gone), so it is flagged UNVERIFIABLE — NOT
+    // cannot be byte-verified (the wire bytes are gone), so it is flagged UNVERIFIABLE, NOT
     // the proof-of-mismatch NOT_VERBATIM, which the text path structurally cannot produce.
     expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
     expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
   });
 
-  it("a pure-ASCII string inbound stays quiet — ASCII round-trips under every codec", () => {
+  it("a pure-ASCII string inbound stays quiet, ASCII round-trips under every codec", () => {
     const inbound = "MSH|^~\\&|S|F|R|F2|20260714120000||ADT^A01|MSG00001|P|2.5.1\r";
     const ack = buildAckAA(inbound);
     expect(ack.correlationId).toBe("MSG00001");
@@ -248,7 +248,7 @@ describe("ack-from-hl7 — text inbound keeps its utf8 default (back-compat)", (
     expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
   });
 
-  it("the UNVERIFIABLE warning carries NO field content — byte length only (PHI)", () => {
+  it("the UNVERIFIABLE warning carries NO field content, byte length only (PHI)", () => {
     // Same PHI discipline as NOT_VERBATIM: an id-shaped prefix + a high bit that trips the flag.
     const wire = inboundWithControlId(
       Buffer.concat([Buffer.from("MRN00042", "latin1"), Buffer.from([0x8b])]),
@@ -263,7 +263,7 @@ describe("ack-from-hl7 — text inbound keeps its utf8 default (back-compat)", (
   });
 });
 
-describe("ack-from-hl7 — end-to-end cosyte client ↔ cosyte ack-from-hl7 server", () => {
+describe("ack-from-hl7, end-to-end cosyte client ↔ cosyte ack-from-hl7 server", () => {
   it("a client in controlId mode correlates an ACK for a HIGH-BIT control ID", async () => {
     // This is the failure the item describes, reproduced as a real channel: the client
     // keys on the MSH-10 bytes it wrote; the server ACKs with `buildAckAA`. Before the
@@ -288,12 +288,12 @@ describe("ack-from-hl7 — end-to-end cosyte client ↔ cosyte ack-from-hl7 serv
 
     const inbound = inboundWithControlId(HIGH_BIT_ID);
     // Resolves iff the ACK correlated. A regression hangs here rather than failing fast,
-    // so bound it — an un-settled send is precisely the bug.
+    // so bound it, an un-settled send is precisely the bug.
     const ack = await Promise.race([
       client.send(inbound),
       new Promise<never>((_, reject) =>
         setTimeout(() => {
-          reject(new Error("send() never settled — the ACK did not correlate"));
+          reject(new Error("send() never settled, the ACK did not correlate"));
         }, 2_000),
       ),
     ]);
@@ -303,10 +303,10 @@ describe("ack-from-hl7 — end-to-end cosyte client ↔ cosyte ack-from-hl7 serv
   });
 });
 
-describe("ack-from-hl7 — the parser RE-SERIALIZES MSH-10; every case it cannot copy warns", () => {
+describe("ack-from-hl7, the parser RE-SERIALIZES MSH-10; every case it cannot copy warns", () => {
   // buildMllpAck builds through @cosyte/hl7, which re-emits MSH-10 in canonical form rather
   // than copying its bytes. Four things that form does not preserve. Each is a DIFFERENT
-  // control id on the wire, so each is an ACK the sender cannot match — and each must warn.
+  // control id on the wire, so each is an ACK the sender cannot match, and each must warn.
   // buildRawAck (parser-free, a byte copy) holds all four; the last assertion proves it.
   const cases: ReadonlyArray<readonly [string, string, string]> = [
     ["an escape sequence", "ID\\X", "ID\\E\\X"],
@@ -316,7 +316,7 @@ describe("ack-from-hl7 — the parser RE-SERIALIZES MSH-10; every case it cannot
     ["a trailing empty subcomponent", "ID&", "ID"],
   ];
 
-  it.each(cases)("%s in MSH-10 is re-serialized — and warns", (_name, id, reserialized) => {
+  it.each(cases)("%s in MSH-10 is re-serialized, and warns", (_name, id, reserialized) => {
     const inbound = inboundWithControlId(Buffer.from(id, "latin1"));
     const ack = buildAckAA(inbound);
 
@@ -331,7 +331,7 @@ describe("ack-from-hl7 — the parser RE-SERIALIZES MSH-10; every case it cannot
   });
 });
 
-describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee, and the string path says so", () => {
+describe("ack-from-hl7, the verbatim guarantee is a BUFFER guarantee, and the string path says so", () => {
   /**
    * The byte-verbatim *proof* is a `Buffer` guarantee: only a `Buffer` inbound carries the
    * wire bytes to compare against, so only there can `verifyVerbatimEcho` fire the falsifiable
@@ -341,8 +341,8 @@ describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee, and the
    *
    * What USED to be a silent hole here (`buildAckAA(payload.toString("latin1"))` double-encoding
    * a high-bit control ID and warning about nothing) is now handled by the API, not the guard:
-   * the text path emits `MLLP_ACK_CONTROL_ID_UNVERIFIABLE` — an explicit "cannot verify, pass a
-   * Buffer" — whenever the echoed id is non-ASCII. The encoding still happens the same way (we do
+   * the text path emits `MLLP_ACK_CONTROL_ID_UNVERIFIABLE`, an explicit "cannot verify, pass a
+   * Buffer", whenever the echoed id is non-ASCII. The encoding still happens the same way (we do
    * not silently re-interpret the caller's text); we simply refuse to imply it was verified.
    */
   it("a Buffer inbound echoes a high-bit control ID verbatim, with no warning", () => {
@@ -351,17 +351,17 @@ describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee, and the
     expect(ack.warnings).toHaveLength(0);
   });
 
-  it("the SAME message as a string double-encodes it — and now warns UNVERIFIABLE", () => {
+  it("the SAME message as a string double-encodes it, and now warns UNVERIFIABLE", () => {
     const wire = inboundWithControlId(HIGH_BIT_ID);
     const ack = buildAckAA(wire.toString("latin1")); // the natural call if you hold decoded text
 
-    // The encoding is unchanged: 0x8B still goes out as the two utf8 bytes 0xC2 0x8B — a
+    // The encoding is unchanged: 0x8B still goes out as the two utf8 bytes 0xC2 0x8B, a
     // DIFFERENT control ID. This item does not (and cannot) make the string path byte-safe.
     expect(hex(extractMsaControlId(ack.payload))).toBe("41c28b43");
     expect(hex(extractMsaControlId(ack.payload))).not.toBe(HIGH_BIT_ID.toString("hex"));
 
     // What it DOES fix: the silence. The verbatim proof still cannot run (so NOT_VERBATIM stays
-    // absent — claiming a proof we did not perform would be dishonest), but the text path is no
+    // absent, claiming a proof we did not perform would be dishonest), but the text path is no
     // longer silent about being unverifiable.
     expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
     expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
@@ -379,23 +379,23 @@ describe("ack-from-hl7 — the verbatim guarantee is a BUFFER guarantee, and the
   });
 });
 
-describe("ack-from-hl7 — a lossy `ascii` override on a text inbound cannot corrupt silently (MLLP-ACK-ASCII-OVERRIDE-BLEED)", () => {
+describe("ack-from-hl7, a lossy `ascii` override on a text inbound cannot corrupt silently (MLLP-ACK-ASCII-OVERRIDE-BLEED)", () => {
   /**
    * The residual path the STRING-DOUBLE-ENCODE fix (PR #19) did not close: a `string`/`Hl7Message`
    * inbound with an explicit `{ encoding: "ascii" }` override and a **non-ASCII control ID**.
    *
    * The prior fix flagged the text path by inspecting the EMITTED MSA-2 bytes for a non-ASCII
-   * value — a proxy with a blind spot on a lossy override. Node's `ascii` codec truncates a code
-   * unit to its low 8 bits (`str -> byte & 0xFF`), so a control-ID code unit **above `0xFF`** — e.g.
-   * `U+0153` (`œ`, what a windows-1252 decode yields for a `0x9C` wire byte) — is truncated *into*
+   * value, a proxy with a blind spot on a lossy override. Node's `ascii` codec truncates a code
+   * unit to its low 8 bits (`str -> byte & 0xFF`), so a control-ID code unit **above `0xFF`**, e.g.
+   * `U+0153` (`œ`, what a windows-1252 decode yields for a `0x9C` wire byte), is truncated *into*
    * the ASCII byte range (`0x0153 & 0xFF = 0x53`, `'S'`). The emitted MSA-2 is then all-ASCII, so
-   * the emitted-byte proxy stays silent — while the control ID on the wire (`MSGS`) is NOT the one
+   * the emitted-byte proxy stays silent, while the control ID on the wire (`MSGS`) is NOT the one
    * the sender keyed on (`MSGœ`): ACK timeout -> resend -> duplicate clinical message.
    *
    * The fix inspects the MSA-2's **pre-encode code units** instead of the emitted bytes, so a
    * non-ASCII code unit is seen whatever the codec did to the byte. Fixtures are synthetic-only
    * (see file header). (A high-bit *byte* like `0x8B` in a latin1-decoded string is a code unit
-   * `<= 0xFF`, which `ascii` preserves verbatim — non-ASCII, and already flagged; the residual gap
+   * `<= 0xFF`, which `ascii` preserves verbatim, non-ASCII, and already flagged; the residual gap
    * is specifically the truncated `> 0xFF` code unit, exercised below.)
    */
   // A control ID whose text holds a > 0xFF code unit that `ascii` truncates into the ASCII range.
@@ -403,21 +403,21 @@ describe("ack-from-hl7 — a lossy `ascii` override on a text inbound cannot cor
   const inboundStringWithId = (id: string): string =>
     `MSH|^~\\&|SEND|FAC|RECV|RFAC|20260714120000||ADT^A01|${id}|P|2.5.1\r`;
 
-  it("the emitted MSA-2 is corrupted INTO the ASCII range — the byte-level proof of the bleed", () => {
+  it("the emitted MSA-2 is corrupted INTO the ASCII range, the byte-level proof of the bleed", () => {
     const ack = buildAckAA(inboundStringWithId(TRUNCATING_ID), { encoding: "ascii" });
 
     // `ascii` truncated U+0153 -> 0x53: the wire control ID is `MSGS`, a DIFFERENT id.
     expect(extractMsaControlId(ack.payload)).toBe("MSGS");
-    // Every emitted MSA-2 byte is now <= 0x7F — which is precisely why the prior emitted-byte,
+    // Every emitted MSA-2 byte is now <= 0x7F, which is precisely why the prior emitted-byte,
     // non-ASCII proxy could not see the corruption. This is the bleed, reproduced at byte level.
     const emitted = Buffer.from(extractMsaControlId(ack.payload) ?? "", "latin1");
     expect(emitted.every((b) => b <= 0x7f)).toBe(true);
   });
 
-  it("it is no longer silent — the positive AA carries MLLP_ACK_CONTROL_ID_UNVERIFIABLE", () => {
+  it("it is no longer silent, the positive AA carries MLLP_ACK_CONTROL_ID_UNVERIFIABLE", () => {
     const ack = buildAckAA(inboundStringWithId(TRUNCATING_ID), { encoding: "ascii" });
 
-    // The AA is emitted (fail-safe), but the corrupted, unmatchable control ID is surfaced —
+    // The AA is emitted (fail-safe), but the corrupted, unmatchable control ID is surfaced,
     // NOT passed off as a clean, verified positive ACK.
     expect(ack.code).toBe("AA");
     expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
@@ -433,7 +433,7 @@ describe("ack-from-hl7 — a lossy `ascii` override on a text inbound cannot cor
 
   it("a high-bit (<= 0xFF) code unit under ascii is still flagged (ascii preserves it verbatim)", () => {
     // 0x8B is a code unit <= 0xFF; `ascii` emits it as the non-ASCII byte 0x8B. Already caught
-    // before this fix — asserted here so the fix does not regress the <= 0xFF range.
+    // before this fix, asserted here so the fix does not regress the <= 0xFF range.
     const ack = buildAckAA(inboundWithControlId(HIGH_BIT_ID).toString("latin1"), {
       encoding: "ascii",
     });
@@ -441,7 +441,7 @@ describe("ack-from-hl7 — a lossy `ascii` override on a text inbound cannot cor
     expect(ack.warnings.map((w) => w.code)).toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
   });
 
-  it("a pure-ASCII control ID with an ascii override stays quiet — no false positive", () => {
+  it("a pure-ASCII control ID with an ascii override stays quiet, no false positive", () => {
     const ack = buildAckAA(inboundStringWithId("MSG00001"), { encoding: "ascii" });
     expect(ack.correlationId).toBe("MSG00001");
     expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_UNVERIFIABLE);
@@ -467,7 +467,7 @@ describe("ack-from-hl7 — a lossy `ascii` override on a text inbound cannot cor
   });
 });
 
-describe("ack-from-hl7 — a non-text codec is rejected at the boundary on every input shape (MLLP-ACK-NONTEXT-CODEC-FRAME / -BUFFER)", () => {
+describe("ack-from-hl7, a non-text codec is rejected at the boundary on every input shape (MLLP-ACK-NONTEXT-CODEC-FRAME / -BUFFER)", () => {
   /**
    * The resolved codec serializes the built ACK back to bytes (`Buffer.from(ack.toString(),
    * codec)`). A **non-text** codec does not serialize characters at all: `base64`/`base64url`/`hex`
@@ -482,14 +482,14 @@ describe("ack-from-hl7 — a non-text codec is rejected at the boundary on every
    * by the byte-level `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check. That holds for a lossy *charset*
    * codec (`ascii` masking a high bit) but NOT for a genuinely non-text one: a non-text codec
    * garbles the *inbound* decode so it never parses as `MSH`, routing to the unparseable fallback
-   * whose MSA-2 is empty — the NOT_VERBATIM check short-circuits and never runs — and then serializes
+   * whose MSA-2 is empty, the NOT_VERBATIM check short-circuits and never runs, and then serializes
    * that fallback ACK to garbage bytes that ~3–4 % of the time (identically on Node 22 and 24)
    * contain a `VT`/`FS` byte and make the strict frame encoder throw a nondeterministic
    * `MllpFramingError`. So it was never the "loud AE" it was documented to be; it was an unreadable
    * frame that sometimes crashed. The legitimate byte-level escape hatch (a *charset* codec on a
    * `Buffer`) is preserved and asserted below.
    *
-   * Fixtures are synthetic-only (SEND/FAC/RECV, invented control IDs) — never PHI.
+   * Fixtures are synthetic-only (SEND/FAC/RECV, invented control IDs), never PHI.
    */
   const inboundStr = "MSH|^~\\&|SEND|FAC|RECV|RFAC|20260714120000||ADT^A01|MSG00001|P|2.5.1\r";
   const NON_TEXT: readonly BufferEncoding[] = ["base64", "base64url", "hex", "utf16le", "ucs2"];
@@ -515,7 +515,7 @@ describe("ack-from-hl7 — a non-text codec is rejected at the boundary on every
   });
 
   it("the error names the remedy (a text codec or the Buffer overload) and carries no field content", () => {
-    // MSG00001 is an ASCII control ID; assert the static message never echoes it (PHI discipline —
+    // MSG00001 is an ASCII control ID; assert the static message never echoes it (PHI discipline,
     // the guard throws before parsing, so no field can leak, but hold the line explicitly).
     const idBearing = "MSH|^~\\&|SEND|FAC|RECV|RFAC|20260714120000||ADT^A01|MRN00042|P|2.5.1\r";
     let caught: unknown;
@@ -547,18 +547,18 @@ describe("ack-from-hl7 — a non-text codec is rejected at the boundary on every
   for (const enc of NON_TEXT) {
     it(`a Buffer inbound with { encoding: "${enc}" } is rejected too (MLLP-ACK-NONTEXT-CODEC-BUFFER)`, () => {
       // A non-text codec on a Buffer garbles the inbound decode (it never parses as MSH, so it
-      // always routes to the unparseable fallback with an empty MSA-2 — the NOT_VERBATIM check
+      // always routes to the unparseable fallback with an empty MSA-2, the NOT_VERBATIM check
       // never runs) and serializes the fallback ACK to garbage bytes that intermittently trip the
       // strict frame encoder (`MllpFramingError`, ~3-4% of calls, identically on Node 22 and 24).
       // It was never the "loud AE" escape hatch it was documented to be, so it is rejected at the
-      // boundary deterministically — never handed back as an unreadable frame or a coin-flip throw.
+      // boundary deterministically, never handed back as an unreadable frame or a coin-flip throw.
       const wire = Buffer.from(inboundStr, "latin1");
       expect(() => buildAckAA(wire, { encoding: enc })).toThrow(TypeError);
       expect(() => buildAckAA(wire, { encoding: enc })).toThrow(/not a serializable ACK codec/);
     });
   }
 
-  it("the legitimate Buffer escape hatch — a *charset* codec — still builds a correlated frame", () => {
+  it("the legitimate Buffer escape hatch, a *charset* codec, still builds a correlated frame", () => {
     // The byte-level escape hatch the docs promise ("a receiving system that demands a specific
     // byte-level codec") is a CHARSET codec, all of which remain accepted on a Buffer. latin1 is
     // byte-verbatim (the default); ascii/utf8 round-trip an all-ASCII control ID cleanly. None of

@@ -1,5 +1,5 @@
 /**
- * Byte-level MSH-10 / MSA-2 control-ID scanners — the **single** implementation
+ * Byte-level MSH-10 / MSA-2 control-ID scanners, the **single** implementation
  * of "read the control ID off the wire", shared by everything in this package
  * that has to agree on what a control ID *is*.
  *
@@ -13,11 +13,11 @@
  *   * `src/ack-from-hl7/build.ts` verifies, against these same scanners, that
  *     the ACK it hands back really does echo MSH-10 verbatim.
  *
- * They live here — not in `client/` — because none of that is client policy.
+ * They live here, not in `client/`, because none of that is client policy.
  * It is the package's byte-level reading of HL7 v2.5.1 §2.5.4 (MSH-1 *defines*
  * the field separator) and §2.9.2.2 (MSA-2 echoes MSH-10 verbatim).
  *
- * **INTERNAL** — not part of the public API.
+ * **INTERNAL**, not part of the public API.
  *
  * @packageDocumentation
  */
@@ -49,23 +49,23 @@ const SEGMENT_SEPARATOR_LF = 0x0a;
  *   2. **Corrupted observability.** The extracted ID is what we hand to
  *      `MLLP_ACK_UNMATCHED_CONTROL_ID` / `MLLP_ACK_AFTER_TIMEOUT` warnings and to
  *      `MllpTimeoutError.messageControlId`. A masked ID is a control ID that never
- *      existed on the wire — it misdirects exactly the operator who is trying to
+ *      existed on the wire, it misdirects exactly the operator who is trying to
  *      trace a lost message.
  *
  * Reachable whenever MSH-18 declares a non-ASCII charset (e.g. `8859/1`), where
  * high-bit bytes in a control ID are legal.
  *
  * **`latin1` is the only byte-faithful decode available.** It is not merely the
- * best of several — it is the one that exists. Node's `Buffer` `latin1` codec is
+ * best of several, it is the one that exists. Node's `Buffer` `latin1` codec is
  * true ISO-8859-1: a 1:1 map between the 256 byte values and U+0000–U+00FF, so
  * `Buffer.from(buf.toString("latin1"), "latin1")` is the identity for *every*
  * byte string. Every alternative loses bytes in exactly the range that matters:
  *
  *   * `ascii` masks the high bit (above).
  *   * `utf8` folds every invalid sequence onto `U+FFFD`, so all high-bit bytes in
- *     a non-UTF-8 payload collapse onto one key — the same collision as `ascii`.
- *   * `TextDecoder("iso-8859-1")` — which is what a charset-driven decode such as
- *     `@cosyte/hl7`'s `parseHL7(buffer, { charset })` uses — is **not** ISO-8859-1
+ *     a non-UTF-8 payload collapse onto one key, the same collision as `ascii`.
+ *   * `TextDecoder("iso-8859-1")`, which is what a charset-driven decode such as
+ *     `@cosyte/hl7`'s `parseHL7(buffer, { charset })` uses, is **not** ISO-8859-1
  *     at all. The WHATWG Encoding Standard aliases the label `iso-8859-1` to
  *     **windows-1252**, which maps 0x80–0x9F to typography (`0x8B` → `U+2039`,
  *     `0x9C` → `U+0153`) rather than to `U+008B`/`U+009C`. Re-encoding that back
@@ -74,7 +74,7 @@ const SEGMENT_SEPARATOR_LF = 0x0a;
  *     itself rather than delegating to a charset-aware parser.
  *
  * The key is byte-faithful, not text: under a multi-byte charset (`UNICODE UTF-8`)
- * a control ID reads back as its `latin1` bytes. Correlation stays correct — the
+ * a control ID reads back as its `latin1` bytes. Correlation stays correct, the
  * map is injective for any charset, which is the property the key needs, and the
  * one a charset-driven decode would lose.
  *
@@ -94,7 +94,7 @@ export const CONTROL_ID_ENCODING = "latin1" as const;
  * a **public export**, so a caller can hand any `Buffer` straight to it, decoder or no
  * decoder; these scanners also run on **outbound** payloads the caller supplies. But it can
  * come off the wire too: a `VT` mid-payload makes `FrameReader` discard what it accumulated
- * and start over (`MLLP_TRAILING_BYTES`), so a *delivered* payload never contains a `VT` — but
+ * and start over (`MLLP_TRAILING_BYTES`), so a *delivered* payload never contains a `VT`, but
  * a delivered payload CAN contain an `FS`. Under the `allowMissingLeadingVt` tolerance a non-VT,
  * non-whitespace first byte is taken as payload byte 0, and `FS` (0x1C) is neither, so
  * `FS "MSH…" FS CR` delivers a payload whose byte 0 is `0x1C`. Either way the guard is
@@ -104,8 +104,8 @@ export const CONTROL_ID_ENCODING = "latin1" as const;
 const UNSAFE_FIELD_SEPARATORS: ReadonlySet<number> = new Set([
   SEGMENT_SEPARATOR_CR,
   SEGMENT_SEPARATOR_LF,
-  0x0b, // VT — MLLP start block
-  0x1c, // FS — MLLP end block
+  0x0b, // VT, MLLP start block
+  0x1c, // FS, MLLP end block
 ]);
 
 /** True iff the `CR`/`LF`-delimited segment starting at `i` is an `MSH`. @internal */
@@ -140,7 +140,7 @@ function segmentEnd(buf: Buffer, i: number): number {
  * ## Why we search rather than demand `MSH` at byte 0
  *
  * §2.5.1 does make `MSH` the first segment of a *message*, and it is tempting to read
- * that as "byte 0 or it is not HL7" — that is what an earlier version of this module
+ * that as "byte 0 or it is not HL7", that is what an earlier version of this module
  * did, to force its three consumers into agreement. It was a **tolerance regression**,
  * and it caused the exact harm this module exists to prevent. Two shapes reach us with
  * a perfectly good MSH-10 that is not at byte 0:
@@ -150,13 +150,13 @@ function segmentEnd(buf: Buffer, i: number): number {
  *   * **A batch header.** `FHS`/`BHS` precede the `MSH` (§2.10.3).
  *
  * Under the byte-0 rule both read as "no MSH", so `buildRawAck` emitted a **positive
- * `AA` with an empty MSA-2 and no warning**: the sender — which keyed on the MSH-10 it
- * sent — cannot correlate it, times out, resends, and the receiver commits a
+ * `AA` with an empty MSA-2 and no warning**: the sender, which keyed on the MSH-10 it
+ * sent, cannot correlate it, times out, resends, and the receiver commits a
  * **duplicate clinical message**. Silently discarding a field that is *present* is the
  * worst thing a lenient reader can do, and this package's decoder is emphatically
  * lenient (Postel's Law; see CLAUDE.md).
  *
- * The consumers still agree — they simply agree at the **tolerant** fixed point rather
+ * The consumers still agree, they simply agree at the **tolerant** fixed point rather
  * than the lossy one. Agreement was never the hard part; agreeing on the *right* answer
  * is.
  * @internal
@@ -174,7 +174,7 @@ function findMshSegment(buf: Buffer): { start: number; end: number } | null {
     ) {
       next++;
     }
-    if (next === segStart) return null; // no progress — malformed
+    if (next === segStart) return null; // no progress, malformed
     segStart = next;
   }
   return null;
@@ -182,7 +182,7 @@ function findMshSegment(buf: Buffer): { start: number; end: number } | null {
 
 /**
  * True iff the `CR`/`LF`-delimited segment starting at `i` is an HL7 **batch/file
- * envelope** header — `FHS`, `BHS`, `BTS`, or `FTS` (§2.10.3). Matched on the
+ * envelope** header, `FHS`, `BHS`, `BTS`, or `FTS` (§2.10.3). Matched on the
  * three uppercase ASCII segment-ID bytes only; the 4th byte (the separator) is not
  * inspected, because the mere *presence* of a batch segment is what disqualifies a
  * single-message ACK, regardless of that segment's own delimiter. @internal
@@ -204,7 +204,7 @@ function isBatchEnvelopeSegmentAt(buf: Buffer, i: number): boolean {
 }
 
 /**
- * True iff the payload is **not a single bare HL7 message** — it carries a batch/file
+ * True iff the payload is **not a single bare HL7 message**, it carries a batch/file
  * envelope (`FHS`/`BHS`/`BTS`/`FTS`, §2.10.3) or a **second `MSH` segment** (two or more
  * messages concatenated in one frame, a documented real-world quirk).
  *
@@ -212,14 +212,14 @@ function isBatchEnvelopeSegmentAt(buf: Buffer, i: number): boolean {
  *
  * A single MSA-2 can echo exactly **one** MSH-10. A batch is a *sequence* of messages with
  * a `BTS-1` count; a concatenated frame is N messages back to back. Either way, a positive
- * `AA` that names the first control ID silently leaves messages 2..N unacknowledged — the
+ * `AA` that names the first control ID silently leaves messages 2..N unacknowledged, the
  * sender reads "batch accepted", so they are lost outright or time out and resend as
  * **duplicate clinical messages**. This predicate lets the ACK builders **downgrade to a
  * loud non-positive answer** for such a payload rather than fabricate a positive
  * disposition for messages nobody looked at.
  *
  * It does **not** parse the batch, re-base on the first `MSH`, or otherwise widen any
- * reader — it only *detects* the multi-message shape so callers can refuse it. Batch ACK
+ * reader, it only *detects* the multi-message shape so callers can refuse it. Batch ACK
  * is its own feature (`MLLP-BATCH`); this is the refusal that keeps the door shut until it
  * is designed. A normal single message (`MSH` followed by `PID`/`PV1`/`OBR`/…) contains no
  * batch segment and exactly one `MSH`, so this returns `false` for it.
@@ -247,7 +247,7 @@ export function containsBatchOrExtraMessage(buf: Buffer): boolean {
     ) {
       next++;
     }
-    if (next === segStart) return false; // no progress — malformed
+    if (next === segStart) return false; // no progress, malformed
     segStart = next;
   }
   return false;
@@ -255,7 +255,7 @@ export function containsBatchOrExtraMessage(buf: Buffer): boolean {
 
 /** The MSH segment, decoded and split into its fields. @internal */
 export interface MshSegment {
-  /** MSH-1 — the field separator this message declares (§2.5.4). One `latin1` char. */
+  /** MSH-1, the field separator this message declares (§2.5.4). One `latin1` char. */
   readonly fieldSep: string;
   /**
    * The MSH segment split on {@link fieldSep}. `[0]` is the literal `"MSH"`, `[1]` is
@@ -266,14 +266,14 @@ export interface MshSegment {
 }
 
 /**
- * Read the MSH segment of an HL7 v2 payload — **the** scan, which every consumer in
+ * Read the MSH segment of an HL7 v2 payload, **the** scan, which every consumer in
  * this package goes through.
  *
  * Pure byte-level, never throws, returns `null` for anything it cannot read (Postel's
  * Law decoder side; CLAUDE.md guardrail). It:
  *
- *   * **locates** the MSH — the first `CR`/`LF`-delimited segment that starts with
- *     `MSH` — rather than demanding it at byte 0, so a leading `CR` or an `FHS`/`BHS`
+ *   * **locates** the MSH, the first `CR`/`LF`-delimited segment that starts with
+ *     `MSH`, rather than demanding it at byte 0, so a leading `CR` or an `FHS`/`BHS`
  *     batch header cannot hide a control ID that is plainly there ({@link findMshSegment});
  *   * takes the field separator from MSH-1 rather than assuming `|` (§2.5.4);
  *   * **bounds the field scan at that segment's terminator**;
@@ -283,19 +283,19 @@ export interface MshSegment {
  * ## The segment terminator is load-bearing, not a detail
  *
  * An earlier version of this scan counted field separators without ever stopping at
- * the segment terminator. On a **truncated MSH** — `MSH|^~\&|EPIC|HOSP|MIRTH|LAB\r`,
- * which has only 6 fields — the count therefore ran *past the `CR`* and kept counting
+ * the segment terminator. On a **truncated MSH**, `MSH|^~\&|EPIC|HOSP|MIRTH|LAB\r`,
+ * which has only 6 fields, the count therefore ran *past the `CR`* and kept counting
  * separators inside the next segment. The "MSH-10" it returned was `PID-3`: the
  * patient's **MRN**. That value became the client's correlation key, and was carried
  * into `MllpTimeoutError.messageControlId` and the `MLLP_ACK_UNMATCHED_CONTROL_ID` /
- * `MLLP_ACK_AFTER_TIMEOUT` warnings — a patient identifier in a log line, and a
+ * `MLLP_ACK_AFTER_TIMEOUT` warnings, a patient identifier in a log line, and a
  * mis-read one at that. A field that does not exist must read as absent, never as the
  * next segment's contents.
  *
  * The two rules are independent, and both are needed. Bounding the scan is what kills
  * the PID-3 read. **Locating** the MSH (rather than demanding it at byte 0) is what
  * stops the bound from turning into a tolerance regression that silently drops a
- * control ID which is present — see {@link findMshSegment}.
+ * control ID which is present, see {@link findMshSegment}.
  *
  * @example
  * ```typescript
@@ -309,7 +309,7 @@ export function readMshSegment(buf: Buffer): MshSegment | null {
   const at = findMshSegment(buf);
   if (at === null) return null;
 
-  // The separator is MSH-1 — the 4th byte OF THE MSH SEGMENT, wherever that segment
+  // The separator is MSH-1, the 4th byte OF THE MSH SEGMENT, wherever that segment
   // begins. `findMshSegment` has already rejected an unusable one.
   const fieldSep = String.fromCharCode(buf[at.start + 3] as number);
   // `at.end` is the segment's terminator: the field split cannot reach past it.
@@ -318,12 +318,12 @@ export function readMshSegment(buf: Buffer): MshSegment | null {
 }
 
 /**
- * Strip **leading segment terminators only** — `CR`/`LF` bytes before the first segment.
+ * Strip **leading segment terminators only**, `CR`/`LF` bytes before the first segment.
  *
  * This is the whole of what the parser-backed ACK builder needs re-based, and it is
  * deliberately the *minimum*. `@cosyte/hl7`'s `parseHL7` requires `MSH` to be the first
- * segment and throws `NO_MSH_SEGMENT` otherwise, so a leading `CR` — which the MLLP
- * decoder passes straight through into the payload — would otherwise send `buildMllpAck`
+ * segment and throws `NO_MSH_SEGMENT` otherwise, so a leading `CR`, which the MLLP
+ * decoder passes straight through into the payload, would otherwise send `buildMllpAck`
  * down its unparseable fallback for a message whose MSH-10 is plainly readable. A leading
  * `CR`/`LF` is pure segment-terminator noise: it carries **no data**, so dropping it
  * cannot hide anything.
@@ -332,17 +332,17 @@ export function readMshSegment(buf: Buffer): MshSegment | null {
  *
  * An earlier version of this function re-based on the *located `MSH`*, which also skipped
  * a batch envelope. That was a serious mistake. A batch (§2.10.3) is
- * `[FHS] { [BHS] { MSH … } [BTS] } [FTS]` — a **sequence of messages**. Re-basing on the
+ * `[FHS] { [BHS] { MSH … } [BTS] } [FTS]`, a **sequence of messages**. Re-basing on the
  * first `MSH` handed `parseHL7` message 1 and silently discarded every later `MSH`, the
  * `BTS` count, and the `FTS`. `buildMllpAck` then returned a confident positive **`AA`
  * correlated to message 1, with zero warnings**, for a batch whose messages 2..N it had
- * never looked at. The sender reads that as "the batch is accepted" — so those messages
+ * never looked at. The sender reads that as "the batch is accepted", so those messages
  * are lost outright, or time out and resend as **duplicate clinical messages**.
  *
  * Batch ACK is a real feature and is tracked separately. It is not something to arrive at
  * by accident, via a byte-offset helper, on the way to fixing something else. Until it is
  * built deliberately, an `FHS`/`BHS` envelope must fall through to `parseHL7`'s
- * `NO_MSH_SEGMENT` and out into the **warned, non-positive `AE` fallback** — a loud
+ * `NO_MSH_SEGMENT` and out into the **warned, non-positive `AE` fallback**, a loud
  * refusal to ACK what we did not read. That is the fail-safe answer and it is what the
  * package did before this item touched it.
  *
@@ -357,7 +357,7 @@ export function stripLeadingSegmentTerminators(buf: Buffer): Buffer {
 }
 
 /**
- * Extract MSH-10 (Message Control ID) from an HL7 v2 payload — the correlation key.
+ * Extract MSH-10 (Message Control ID) from an HL7 v2 payload, the correlation key.
  *
  * A thin read off {@link readMshSegment}: `null` when the payload has no readable MSH,
  * when the MSH segment is too short to reach MSH-10, or when MSH-10 is present but
@@ -381,14 +381,14 @@ export function extractMshControlId(buf: Buffer): string | null {
 /**
  * Extract MSA-2 (acknowledged Message Control ID) from an HL7 v2 ACK payload.
  *
- * Pure byte-level scan — never throws, returns `null` for malformed input. The field
- * separator comes from the ACK's own MSH-1, read through {@link readMshSegment} — the
+ * Pure byte-level scan, never throws, returns `null` for malformed input. The field
+ * separator comes from the ACK's own MSH-1, read through {@link readMshSegment}, the
  * same tolerant locate every other read in this module uses, so an ACK whose `MSH` is
  * not at byte 0 is still read rather than silently discarded. The `MSA` segment is
  * then located by scanning segment boundaries (`\r` / `\n`).
  *
  * Decoded as `latin1` (see {@link CONTROL_ID_ENCODING}), matching both
- * {@link extractMshControlId} and `buildRawAck`'s verbatim MSH-10 → MSA-2 echo —
+ * {@link extractMshControlId} and `buildRawAck`'s verbatim MSH-10 → MSA-2 echo,
  * so an ACK for a high-bit control ID looks up the key the send actually
  * enqueued.
  *
@@ -450,7 +450,7 @@ export function extractMsaControlId(buf: Buffer): string | null {
     ) {
       segEnd++;
     }
-    if (segEnd === segStart) return null; // no progress — malformed
+    if (segEnd === segStart) return null; // no progress, malformed
     segStart = segEnd;
   }
   return null;

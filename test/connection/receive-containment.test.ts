@@ -2,8 +2,8 @@
  * Receive-path containment (MLLP-10).
  *
  * `FrameReader.push()` is called synchronously from the transport's data callback, which on a real
- * socket IS the `'data'` listener. So ANYTHING that throws on the receive path — the decoder, a
- * `'message'` subscriber, a `'warning'` subscriber, even an `'error'` subscriber — unwinds out of
+ * socket IS the `'data'` listener. So ANYTHING that throws on the receive path, the decoder, a
+ * `'message'` subscriber, a `'warning'` subscriber, even an `'error'` subscriber, unwinds out of
  * that listener as an **uncaught exception and kills the process**, taking every other connection
  * and every in-flight durable commit with it.
  *
@@ -13,7 +13,7 @@
  *   2. `emit('error')` with no listener → Node's `ERR_UNHANDLED_ERROR`, raised from inside the very
  *      catch block that was supposed to be the fix for (1),
  *   3. a throwing `'message'`/`'warning'` subscriber unwinding through `push`,
- *   4. `destroy()` → `_transition()` → the five lifecycle emits — called from INSIDE the catch
+ *   4. `destroy()` → `_transition()` → the five lifecycle emits, called from INSIDE the catch
  *      block, and a throw raised inside a catch is not caught by it.
  *
  * Enumerating routes one at a time is how you get a fourth one, so the invariant is now structural:
@@ -21,7 +21,7 @@
  * the one that actually holds the line; the rest document the individual regressions.
  *
  * These tests drive the transport's data callback directly, so an escape fails the test rather than
- * being masked — which is exactly why the existing suites never caught any of it (the in-memory
+ * being masked, which is exactly why the existing suites never caught any of it (the in-memory
  * transport's try/finally re-routes the throw to the writer).
  */
 
@@ -77,14 +77,14 @@ const frame = (body: string): Buffer =>
   Buffer.concat([Buffer.from([VT]), Buffer.from(body, "ascii"), Buffer.from([FS, CR])]);
 
 /**
- * An empty frame (`VT FS CR`). Delivers a zero-length payload AND emits `MLLP_EMPTY_PAYLOAD` —
+ * An empty frame (`VT FS CR`). Delivers a zero-length payload AND emits `MLLP_EMPTY_PAYLOAD`,
  * which is always a warning, never a throw, on every tolerance setting. Exactly what is needed to
  * drive a warning subscriber without also tripping a fatal.
  */
 const emptyFrame = (): Buffer => Buffer.from([VT, FS, CR]);
 
 describe("receive-path containment", () => {
-  it("a fatal framing error is reported and closes the connection — it does not escape push()", () => {
+  it("a fatal framing error is reported and closes the connection, it does not escape push()", () => {
     const mock = makeMockTransport();
     const conn = new Connection({ transport: mock.transport });
     conn.notifyConnect(null, null);
@@ -103,7 +103,7 @@ describe("receive-path containment", () => {
     // Classified permanent, so a client will not auto-reconnect into a peer that is not
     // speaking MLLP.
     expect(errors[0]?.error.connectionCause).toBe("framing-fatal");
-    // The original framing error survives as `cause` — the stable code and byte offset are
+    // The original framing error survives as `cause`, the stable code and byte offset are
     // what a log pipeline keys on.
     expect(errors[0]?.error.cause).toBeInstanceOf(MllpFramingError);
     expect((errors[0]?.error.cause as MllpFramingError).code).toBe("MLLP_MISSING_LEADING_VT");
@@ -114,7 +114,7 @@ describe("receive-path containment", () => {
     const conn = new Connection({ transport: mock.transport });
     conn.notifyConnect(null, null);
     // Deliberately NO conn.on('error', …). Node throws ERR_UNHANDLED_ERROR on an unlistened
-    // 'error' emit — which would put the process kill right back, one frame up the stack.
+    // 'error' emit, which would put the process kill right back, one frame up the stack.
 
     expect(() => mock.data(Buffer.from([0x58]))).not.toThrow();
     expect(conn.state).toBe("CLOSED");
@@ -154,7 +154,7 @@ describe("receive-path containment", () => {
 
     expect(() => mock.data(frame("MSH|^~\\&|A|B|C|D"))).not.toThrow();
 
-    // Connection survives a consumer bug — it is our fault, not the peer's.
+    // Connection survives a consumer bug, it is our fault, not the peer's.
     expect(conn.state).toBe("CONNECTED");
     expect(delivered).toHaveLength(1);
     expect(errors).toHaveLength(1);
@@ -176,7 +176,7 @@ describe("receive-path containment", () => {
 
     expect(() => mock.data(emptyFrame())).not.toThrow();
 
-    // Frame processing was not disrupted — the WARN-06 contract.
+    // Frame processing was not disrupted, the WARN-06 contract.
     expect(conn.state).toBe("CONNECTED");
     expect(delivered).toHaveLength(1);
   });
@@ -238,13 +238,13 @@ describe("receive-path containment", () => {
     expect(conn.state).toBe("CLOSED");
   });
 
-  it("a throwing 'error' subscriber cannot escape — reporting is what just failed", () => {
+  it("a throwing 'error' subscriber cannot escape, reporting is what just failed", () => {
     const mock = makeMockTransport();
     const conn = new Connection({ transport: mock.transport });
     conn.notifyConnect(null, null);
 
     // Reporting the failure is itself what fails here. There is nowhere left to report to, so
-    // the throw is swallowed — but it must NOT unwind into the socket's data callback.
+    // the throw is swallowed, but it must NOT unwind into the socket's data callback.
     conn.on("error", () => {
       throw new Error("consumer bug in the error handler itself");
     });
@@ -256,7 +256,7 @@ describe("receive-path containment", () => {
   // The fourth route. `destroy()` → `_transition()` → emit('stateChange'/'close'/'disconnect') runs
   // INSIDE the catch block on the receive path, and a throw raised inside a catch is not caught by
   // it. So a throwing lifecycle subscriber unwound out of the socket 'data' listener exactly like
-  // the decoder throw did — four frames up. Every lifecycle emit is now contained too.
+  // the decoder throw did, four frames up. Every lifecycle emit is now contained too.
   for (const event of ["stateChange", "close", "disconnect", "connect"] as const) {
     it(`a throwing '${event}' subscriber cannot escape the receive path`, () => {
       const mock = makeMockTransport();
@@ -276,7 +276,7 @@ describe("receive-path containment", () => {
   it("reports a fatal framing error exactly ONCE, not twice", () => {
     // destroy(err) forwards the reason to transport.destroy(err), which makes a real socket
     // re-surface the same error through _onTransportError. Emitting before the terminal-state
-    // guard reported it twice — once with connectionCause 'framing-fatal', then again bare —
+    // guard reported it twice, once with connectionCause 'framing-fatal', then again bare,
     // double-counting on an alerting dashboard.
     const mock = makeMockTransport();
     const conn = new Connection({ transport: mock.transport });
@@ -297,7 +297,7 @@ describe("receive-path containment", () => {
 
   it("a NON-framing throw out of the reader is contained and reported honestly, not as a peer framing fault", () => {
     // Defense in depth. Every consumer-code dispatch inside push() is contained at its own site,
-    // so this backstop should be unreachable through the public API — but "unreachable" and
+    // so this backstop should be unreachable through the public API, but "unreachable" and
     // "cannot kill the process from inside a socket data handler" are different claims, and only
     // the second is safe to bet a clinical interface on. Fault-inject to prove the backstop holds.
     const mock = makeMockTransport();
@@ -321,7 +321,7 @@ describe("receive-path containment", () => {
     expect(conn.state).toBe("CLOSED");
     expect(errors).toHaveLength(1);
     expect(errors[0]?.error.phase).toBe("receive");
-    // NOT dressed up as a framing fault — this one is our bug, not the peer's bytes.
+    // NOT dressed up as a framing fault, this one is our bug, not the peer's bytes.
     expect(errors[0]?.error.connectionCause).toBeUndefined();
   });
 });

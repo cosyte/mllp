@@ -7,7 +7,7 @@ import { cosyteVitest } from "@cosyte/vitest-config";
  * enforced by `pnpm test:coverage`. The coverage gate was re-enabled during the Phase E standards
  * migration; `framing`, `connection`, `transport`, `testing`, and `ack-from-hl7` clear the 90 bar today.
  *
- * Transient floors below 90 (all to be lifted to 90 by adding the missing tests — these directories
+ * Transient floors below 90 (all to be lifted to 90 by adding the missing tests, these directories
  * have genuinely untested branches/paths, not a measurement artifact):
  *
  *  - Global `branches` floor is 85 (not 90): the per-directory entries enforce the real bar; the

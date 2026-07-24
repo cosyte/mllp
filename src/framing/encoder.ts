@@ -1,8 +1,8 @@
 /**
- * MLLP frame encoder — canonical `VT + payload + FS + CR` wrapping.
+ * MLLP frame encoder, canonical `VT + payload + FS + CR` wrapping.
  *
  * The encoder is a **strict emitter** (Postel's Law: conservative on write).
- * There is no option to loosen the output format — it always emits canonical framing.
+ * There is no option to loosen the output format, it always emits canonical framing.
  * Tolerance for delimiter bytes in the payload is available via `allowDelimiterBytesInPayload`,
  * which passes bytes through verbatim and emits an `MllpWarning` for each offending byte.
  *
@@ -38,13 +38,13 @@ export interface EncoderOptions {
    * verbatim in the output frame instead of throwing `MllpFramingError`.
    * An `MllpWarning` is emitted per offending byte if `onWarning` is provided.
    *
-   * Default: `false` (strict — throws on delimiter bytes).
+   * Default: `false` (strict, throws on delimiter bytes).
    */
   allowDelimiterBytesInPayload?: boolean;
 
   /**
    * Called for each offending delimiter byte when `allowDelimiterBytesInPayload` is `true`.
-   * Invocation is wrapped in try/catch — a throwing handler does not interrupt encoding (WARN-06).
+   * Invocation is wrapped in try/catch, a throwing handler does not interrupt encoding (WARN-06).
    *
    * @example
    * ```typescript
@@ -76,11 +76,11 @@ export interface EncoderOptions {
  * ```typescript
  * import { encodeFrame } from '@cosyte/mllp';
  *
- * // Strict (default) — throws on delimiter bytes in payload
+ * // Strict (default), throws on delimiter bytes in payload
  * const frame = encodeFrame(Buffer.from('MSH|^~\\&|SEND|FAC|RECV|FAC|...'));
  * socket.write(frame);
  *
- * // Tolerant — passes delimiter bytes through with a warning
+ * // Tolerant, passes delimiter bytes through with a warning
  * const frame2 = encodeFrame(dirtyPayload, {
  *   allowDelimiterBytesInPayload: true,
  *   onWarning: (w) => logger.warn(w),
@@ -91,7 +91,7 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
   const allow = opts?.allowDelimiterBytesInPayload === true;
   const onWarning = opts?.onWarning;
 
-  // Scan for delimiter bytes — O(n) but required to ensure correct framing (FRAME-03).
+  // Scan for delimiter bytes, O(n) but required to ensure correct framing (FRAME-03).
   for (let i = 0; i < payload.length; i++) {
     const byte = payload[i];
     if (byte === undefined) break; // noUncheckedIndexedAccess guard
@@ -100,7 +100,7 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
       const code = byte === VT ? "MLLP_PAYLOAD_CONTAINS_VT" : "MLLP_PAYLOAD_CONTAINS_FS";
 
       if (!allow) {
-        // PHI: the snippet must NOT carry the surrounding payload bytes — that is a
+        // PHI: the snippet must NOT carry the surrounding payload bytes, that is a
         // field-body slice of clinical content on a public error field (MLLP-9 PHI
         // audit, mirroring the decoder's MLLP_FRAME_TOO_LARGE fix). The offending byte
         // is itself a framing delimiter (VT/FS, a control byte, never PHI); the `code`
@@ -109,7 +109,7 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
         throw new MllpFramingError(code, i, Buffer.from([byte]));
       }
 
-      // Tolerant path: emit warning and continue — bytes pass through verbatim.
+      // Tolerant path: emit warning and continue, bytes pass through verbatim.
       if (onWarning !== undefined) {
         const byteHex = byte === VT ? "0x0B" : "0x1C";
         const warning = createWarning(
@@ -126,7 +126,7 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
     }
   }
 
-  // Allocate output: VT + payload + FS + CR — canonical, immutable shape (FRAME-03).
+  // Allocate output: VT + payload + FS + CR, canonical, immutable shape (FRAME-03).
   // allocUnsafe is safe here because all bytes are set before the buffer is returned.
   const frame = Buffer.allocUnsafe(payload.length + 3);
   frame[0] = VT;

@@ -1,5 +1,5 @@
 /**
- * MLLP Server module — MllpServer, createServer(), and createStarterServer() factories.
+ * MLLP Server module, MllpServer, createServer(), and createStarterServer() factories.
  *
  * @packageDocumentation
  */

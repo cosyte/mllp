@@ -2,7 +2,7 @@
  * client.getStats() tests (PLAN-06, OBS-01, D-26).
  *
  * Validates:
- * - JSON-serializable shape (OBS-04 — no Buffers, no class instances).
+ * - JSON-serializable shape (OBS-04, no Buffers, no class instances).
  * - epoch-ms timestamps (NOT Date) per D-26.
  * - Counter accuracy across send/ACK/timeout/reconnect cycles.
  * - inFlight vs queueDepth divergence (B-01).
@@ -101,7 +101,7 @@ describe("client.getStats (PLAN-06, OBS-01, D-26)", () => {
 
   it("Test 2: AFTER connect() resolves, state=CONNECTED, connectionId is non-null string, lastConnectedAt is number", async () => {
     const { client, conn } = buildClientOverPair();
-    // The harness already connected — getStats should reflect it.
+    // The harness already connected, getStats should reflect it.
     const stats = client.getStats();
     expect(stats.state).toBe("CONNECTED");
     expect(typeof stats.connectionId).toBe("string");
@@ -181,7 +181,7 @@ describe("client.getStats (PLAN-06, OBS-01, D-26)", () => {
   it("Test 7: warningsByCode is a flat object whose keys are WarningCode union members", async () => {
     const { client } = buildClientOverPair();
     const stats = client.getStats();
-    // Empty initially — type-only assertion that it is a plain object.
+    // Empty initially, type-only assertion that it is a plain object.
     expect(typeof stats.warningsByCode).toBe("object");
     expect(Array.isArray(stats.warningsByCode)).toBe(false);
     // No 'WarningCode' string key (it would only contain real code strings)
@@ -218,7 +218,7 @@ describe("client.getStats (PLAN-06, OBS-01, D-26)", () => {
     expect(() => client.getStats()).not.toThrow();
   });
 
-  it("Test 11 (B-01): inFlight is distinct from queueDepth — divergence in pipeline:false", async () => {
+  it("Test 11 (B-01): inFlight is distinct from queueDepth, divergence in pipeline:false", async () => {
     // pipeline:false → maxInFlight=1. Send A, then send B (which enters _waitThenSend
     // path because A occupies the slot). Before A's ACK arrives, B has not yet been
     // enqueued in the correlator (it's in the wait-for-drain queue). After A ACKs,
@@ -274,14 +274,14 @@ describe("client.getStats (PLAN-06, OBS-01, D-26)", () => {
   });
 
   it("Test 8: After a transient reconnect cycle, reconnectAttempts >= 1", async () => {
-    // Use the existing reconnect path — drive a transient disconnect via the test seam.
+    // Use the existing reconnect path, drive a transient disconnect via the test seam.
     const [a, _b] = InMemoryTransport.pair();
     const conn = new Connection({ transport: a });
     const client = createClient({
       host: "127.0.0.1",
       port: 0,
       autoReconnect: true,
-      initialDelayMs: 1, // tiny — keeps the test fast even though we never run the timer
+      initialDelayMs: 1, // tiny, keeps the test fast even though we never run the timer
     });
     client._attachExistingConnection(conn);
     conn.notifyConnect("127.0.0.1", 2575);
@@ -302,7 +302,7 @@ describe("client.getStats (PLAN-06, OBS-01, D-26)", () => {
       };
     });
 
-    // Trigger a transient disconnect — ECONNRESET is classified transient.
+    // Trigger a transient disconnect, ECONNRESET is classified transient.
     const transient: NodeJS.ErrnoException = Object.assign(new Error("ECONNRESET"), {
       code: "ECONNRESET",
     });

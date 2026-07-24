@@ -5,7 +5,7 @@ import { TlsTransport } from "../../src/transport/tls-transport.js";
 import type { Transport } from "../../src/transport/index.js";
 
 /**
- * Minimal `tls.TLSSocket` test double — mirrors `net-transport.test.ts`'s
+ * Minimal `tls.TLSSocket` test double, mirrors `net-transport.test.ts`'s
  * `MockSocket` pattern. Only the surface `TlsTransport` touches is stubbed.
  */
 interface MockTlsSocket extends EventEmitter {

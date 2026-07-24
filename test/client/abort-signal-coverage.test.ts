@@ -8,16 +8,16 @@
  * cleanup invariants, and the 'wait'-mode mid-abort cleanup path (B-06).
  *
  * Cases:
- * - Test 1: connect({ signal }) — abort BEFORE socket connects (PLAN-01 re-verify)
- * - Test 2: send({ signal }) — abort BEFORE ACK arrives (PLAN-02 re-verify)
- * - Test 3: close({ signal }) — abort during DRAINING (PLAN-01 re-verify)
+ * - Test 1: connect({ signal }), abort BEFORE socket connects (PLAN-01 re-verify)
+ * - Test 2: send({ signal }), abort BEFORE ACK arrives (PLAN-02 re-verify)
+ * - Test 3: close({ signal }), abort during DRAINING (PLAN-01 re-verify)
  * - Test 4: pre-aborted signal on each method → immediate AbortError, no work
  * - Test 5: AbortError matches `DOMException` shape (`name === 'AbortError'`)
- * - Test 6: listener-leak audit — `removeEventListener` is called for every
+ * - Test 6: listener-leak audit, `removeEventListener` is called for every
  *   `addEventListener` registration after a series of aborts
  * - Test 7: AbortSignal during reconnect mid-backoff cancels reconnect (PLAN-04
  *   re-verify)
- * - Test 8: 'wait' mode + mid-wait abort cleanup (B-06 — PLAN-05 re-verify):
+ * - Test 8: 'wait' mode + mid-wait abort cleanup (B-06, PLAN-05 re-verify):
  *   AbortError + zero leftover `'drain'` listeners on the client
  */
 
@@ -57,7 +57,7 @@ function buildClientOverPair(opts?: Partial<ClientOptions>): InMemoryHarness {
 }
 
 describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
-  describe("connect/send/close — abort BEFORE awaitable resolves", () => {
+  describe("connect/send/close, abort BEFORE awaitable resolves", () => {
     it("Test 1: connect({ signal }) rejects with AbortError when signal aborts before connect resolves", async () => {
       // Pre-aborted signal short-circuits the connect() pre-check (PLAN-01 path).
       const ac = new AbortController();
@@ -111,7 +111,7 @@ describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
       const errConnect = await c1.connect({ signal: acConnect.signal }).catch((e: unknown) => e);
       expect(errConnect).toBeInstanceOf(DOMException);
       expect((errConnect as DOMException).name).toBe("AbortError");
-      // The pre-check returned immediately — no socket attempt was started.
+      // The pre-check returned immediately, no socket attempt was started.
       expect(c1.state).toBe("DISCONNECTED");
 
       // send()
@@ -123,7 +123,7 @@ describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
         .catch((e: unknown) => e);
       expect(errSend).toBeInstanceOf(DOMException);
       expect((errSend as DOMException).name).toBe("AbortError");
-      // Correlator stays empty — pre-aborted send never enqueued.
+      // Correlator stays empty, pre-aborted send never enqueued.
       expect(c2.getStats().queueDepth).toBe(0);
       expect(c2.getStats().sentTotal).toBe(0);
 
@@ -176,13 +176,13 @@ describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
       // We instrument an AbortSignal with spies that count how many times
       // addEventListener and removeEventListener are called for the 'abort'
       // event. After aborting and triggering each method's cleanup path, the
-      // counts MUST match (every registration paired with a removal — or the
+      // counts MUST match (every registration paired with a removal, or the
       // listener is consumed by the abort firing once with `{ once: true }`,
       // which the platform handles automatically).
       //
       // Since `{ once: true }` listeners are auto-removed by the platform on
       // fire, we instead validate that the client never LEAKS listeners
-      // between calls — i.e. after a non-aborted resolution, removeEventListener
+      // between calls, i.e. after a non-aborted resolution, removeEventListener
       // is invoked an equal number of times as addEventListener. We exercise
       // the success path of send() to verify cleanup on resolve.
 
@@ -211,7 +211,7 @@ describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
         return (origRemove as (...args: unknown[]) => void)(type, ...rest);
       };
 
-      // Run a successful send() with the signal — it should add ONE listener
+      // Run a successful send() with the signal, it should add ONE listener
       // and remove it on success (not aborted).
       const sendP = client.send(Buffer.from("M1"), { signal: ac.signal });
       ackFromPeer(Buffer.from("AA1"));
@@ -235,7 +235,7 @@ describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
     });
 
     it("Test 7: AbortSignal during reconnect (mid-backoff) cancels reconnect, transitions to CLOSED", async () => {
-      // Mirror PLAN-04 Test 10 — assert the client transitions to CLOSED when
+      // Mirror PLAN-04 Test 10, assert the client transitions to CLOSED when
       // the connect signal aborts during the backoff window.
       let currentPair: [InMemoryTransport, InMemoryTransport] = InMemoryTransport.pair();
       let currentConn = new Connection({ transport: currentPair[0] });
@@ -276,7 +276,7 @@ describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
       currentPair[0].destroy(Object.assign(new Error("peer reset"), { code: "ECONNRESET" }));
       await vi.advanceTimersByTimeAsync(1);
       expect(observedSignal).toBe(ac.signal);
-      // Abort mid-backoff — the cycle MUST tear down to CLOSED.
+      // Abort mid-backoff, the cycle MUST tear down to CLOSED.
       ac.abort();
       await vi.advanceTimersByTimeAsync(2000);
       expect(client.state).toBe("CLOSED");
@@ -285,7 +285,7 @@ describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
 
   describe("'wait' mode + mid-wait abort cleanup (B-06)", () => {
     it("Test 8: 'wait' mode mid-wait abort yields AbortError + zero leftover 'drain' listeners", async () => {
-      // PLAN-05 B-06 audit — re-verify the listener-leak invariant with a
+      // PLAN-05 B-06 audit, re-verify the listener-leak invariant with a
       // DOMException-shape assertion. The drain listener registered by
       // `_waitThenSend` MUST be removed on abort.
       const { client } = buildClientOverPair({
@@ -305,7 +305,7 @@ describe("MllpClient AbortSignal audit (PLAN-06 Task 3, CLIENT-11)", () => {
       // Drain listener should be registered for the wait.
       expect(client.listenerCount("drain")).toBeGreaterThan(baselineDrainListeners);
 
-      // Abort mid-wait — must reject with AbortError.
+      // Abort mid-wait, must reject with AbortError.
       ac.abort();
       const err = await p2.catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DOMException);

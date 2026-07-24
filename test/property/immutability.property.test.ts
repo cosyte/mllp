@@ -1,17 +1,17 @@
 /**
  * Property tests for the frozen-event-payload contract (a hard mllp guardrail:
- * "Every event object emitted publicly is `Object.freeze`'d — subscribers cannot
+ * "Every event object emitted publicly is `Object.freeze`'d, subscribers cannot
  * mutate shared state").
  *
  * Two surfaces carry this contract:
- *   1. `MllpWarning` objects (frozen by `createWarning`) — emitted by the decoder
+ *   1. `MllpWarning` objects (frozen by `createWarning`), emitted by the decoder
  *      via `onWarning` and on `Connection`'s `warning` event.
- *   2. `Connection` lifecycle event payloads (`stateChange`, `message`) — frozen
+ *   2. `Connection` lifecycle event payloads (`stateChange`, `message`), frozen
  *      at the emit site in `connection.ts`.
  *
  * The kit's `immutabilityProperty` runner expresses the contract directly: snapshot
  * the object's observable state, attempt a mutation (a frozen object responds by
- * throwing in strict mode, or silently no-op'ing — both sanctioned), then assert the
+ * throwing in strict mode, or silently no-op'ing, both sanctioned), then assert the
  * snapshot is unchanged. We use it for the emitted-warning surface, and add direct
  * fast-check properties for the connection event payloads (which need a live
  * transport to produce, so they don't fit the runner's `parse(string)` shape).
@@ -57,7 +57,7 @@ function firstWarning(bytes: Buffer): MllpWarning | undefined {
   try {
     reader.push(bytes);
   } catch {
-    // Oversized frames throw MLLP_FRAME_TOO_LARGE before warning — fine, the
+    // Oversized frames throw MLLP_FRAME_TOO_LARGE before warning, fine, the
     // immutability surface is the warnings that DID emit; return what we have.
   }
   return warnings[0];
@@ -79,7 +79,7 @@ describe("property: emitted MllpWarning objects are frozen (no shared-state muta
         if (w === undefined) throw new Error("expected at least one warning");
         return w;
       },
-      // Attempt to overwrite the frozen `code` — frozen object throws in strict mode.
+      // Attempt to overwrite the frozen `code`, frozen object throws in strict mode.
       mutate: (w) => {
         (w as unknown as Record<string, unknown>)["code"] = "MLLP_EMPTY_PAYLOAD";
       },
@@ -122,7 +122,7 @@ describe("property: Connection lifecycle event payloads are frozen", () => {
         for (const e of events) {
           expect(Object.isFrozen(e)).toBe(true);
           const before = { from: e.from, to: e.to, reason: e.reason };
-          // Mutation attempt on the frozen payload is a no-op (or throws) — swallow.
+          // Mutation attempt on the frozen payload is a no-op (or throws), swallow.
           try {
             (e as unknown as Record<string, unknown>)["to"] = "CLOSED";
           } catch {

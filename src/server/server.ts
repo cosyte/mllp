@@ -1,5 +1,5 @@
 /**
- * MLLP Server — createServer(), createStarterServer(), and MllpServer class.
+ * MLLP Server, createServer(), createStarterServer(), and MllpServer class.
  *
  * Provides the server-side MLLP transport: listen for inbound TCP connections,
  * decode MLLP-framed messages, surface them as Buffer payloads, and support
@@ -37,24 +37,24 @@ import type { AckCode, NegativeAckCode } from "./ack.js";
 import { safeEmit, safeEmitError } from "../internal/safe-emit.js";
 
 /**
- * Wildcard (unspecified-address) bind detection for Phase 8 bind safety —
+ * Wildcard (unspecified-address) bind detection for Phase 8 bind safety,
  * hosts that bind ALL interfaces and therefore require
  * `ServerOptions.allowWildcardBind: true`.
  *
  * NORMALIZES rather than string-matching:
- * - `''` (empty string — Node binds all interfaces)
+ * - `''` (empty string, Node binds all interfaces)
  * - IPv4: every dotted-quad whose octets are all numerically zero (`'0.0.0.0'`)
  * - IPv6: any spelling that canonicalizes (via `net.SocketAddress`) to `'::'`
  *   (`'::0'`, `'0:0:0:0:0:0:0:0'`, …) or to the IPv4-mapped unspecified
  *   address `'::ffff:0.0.0.0'` (also `'::ffff:0:0'`)
  *
- * Non-IP strings return `false` here — but that is NOT the enforcement
+ * Non-IP strings return `false` here, but that is NOT the enforcement
  * boundary. getaddrinfo/inet_aton resolves shorthands this predicate cannot
  * see as strings (`'0'`, `'0.0'`, `'0.0.0'`, `'00.0.0.0'`, `'0x0.0.0.0'`,
  * wildcard-resolving hostnames), so `listen()` applies this predicate
  * **twice**: pre-bind on the requested host string (fast path), and
  * post-bind on the **OS-normalized bound address** from `server.address()`
- * (always canonical `'0.0.0.0'`/`'::'`) — the authoritative check. The
+ * (always canonical `'0.0.0.0'`/`'::'`), the authoritative check. The
  * guarantee is enforced against the address actually bound, not the
  * spelling requested.
  */
@@ -69,7 +69,7 @@ function isWildcardHost(host: string): boolean {
     try {
       canonical = new SocketAddress({ address: host, family: "ipv6" }).address;
     } catch {
-      // isIP said valid IPv6 but SocketAddress refused — treat as non-wildcard
+      // isIP said valid IPv6 but SocketAddress refused, treat as non-wildcard
       // (the bind itself will fail downstream with the OS error).
       return false;
     }
@@ -81,7 +81,7 @@ function isWildcardHost(host: string): boolean {
 /**
  * Minimal, content-free peer-certificate summary surfaced on the `'connection'`
  * event when `ServerOptions.tls.clientAuth` is `'WANT'` or `'MUST'` (Phase 8,
- * ATNA ITI-19 mutual authentication). Never the full certificate object —
+ * ATNA ITI-19 mutual authentication). Never the full certificate object,
  * CN strings, the expiry date, and the verification outcome only.
  *
  * @example
@@ -105,7 +105,7 @@ export interface PeerCertificateSummary {
    * {@link ServerTlsOptions.ca} (`socket.authorized === true`).
    *
    * ⚠️ Under `clientAuth: 'WANT'` a peer certificate may be present yet
-   * **unverified** — the connection is accepted regardless. Never make
+   * **unverified**, the connection is accepted regardless. Never make
    * authorization decisions on `subjectCN` (or any other field of this
    * summary) unless `authorized` is `true`. Under `clientAuth: 'MUST'` an
    * unverified certificate never reaches this point (the handshake is
@@ -117,7 +117,7 @@ export interface PeerCertificateSummary {
 /**
  * Metadata attached to each decoded MLLP message (SERVER-03).
  *
- * All fields are `readonly` — the object is `Object.freeze()`'d before emission.
+ * All fields are `readonly`, the object is `Object.freeze()`'d before emission.
  *
  * @example
  * ```typescript
@@ -137,16 +137,16 @@ export interface MessageMeta {
 
 /**
  * Why the server sent a **negative** acknowledgement instead of `AA` on the auto-ACK path.
- * A stable, **PHI-free** enum (no payload bytes, no control ID) — safe to log and to key
+ * A stable, **PHI-free** enum (no payload bytes, no control ID), safe to log and to key
  * metrics on.
  *
- * - `'handler-rejected'` — a commit-gated `onMessage` handler threw/rejected (the commit
+ * - `'handler-rejected'`, a commit-gated `onMessage` handler threw/rejected (the commit
  *   contract: a positive ACK cannot precede a successful commit).
- * - `'uncorrelatable-inbound'` — the inbound could not carry a correlatable positive ACK
+ * - `'uncorrelatable-inbound'`, the inbound could not carry a correlatable positive ACK
  *   (no readable `MSH`, an empty MSH-10, or a batch/concatenated-message shape). A positive
  *   `AA` here names a control ID the sender cannot match → timeout → resend → **duplicate
  *   clinical message**. See {@link rawAckUncorrelatable}.
- * - `'discarded-bytes'` — the decoder flagged `MLLP_TRAILING_BYTES` for this frame: a
+ * - `'discarded-bytes'`, the decoder flagged `MLLP_TRAILING_BYTES` for this frame: a
  *   mid-payload `VT` made it **discard accumulated bytes** and deliver only the fragment
  *   after it. The clinical message was destroyed in transit; a positive `AA` would tell the
  *   sender a message we never received was delivered.
@@ -154,14 +154,14 @@ export interface MessageMeta {
 export type NackReason = "handler-rejected" | "uncorrelatable-inbound" | "discarded-bytes";
 
 /**
- * Payload of the server `'nack'` event — emitted whenever the server responds with a
+ * Payload of the server `'nack'` event, emitted whenever the server responds with a
  * **negative** acknowledgement instead of `AA` on the auto-ACK path (the fail-safe commit
  * contract). This fires both when a commit-gated `autoAck: 'AA'` handler throws/rejects and
  * when the server **downgrades** a positive auto-ACK because the inbound could not be
  * correlated ({@link NackReason}).
  *
  * **PHI-safe by construction:** carries only the connection ID, the resolved
- * acknowledgement code, and a static `reason` — never the payload, the inbound control ID,
+ * acknowledgement code, and a static `reason`, never the payload, the inbound control ID,
  * or the thrown error's message (which may carry PHI). The object is `Object.freeze()`'d
  * before emission.
  *
@@ -242,11 +242,11 @@ export interface ServerOptions {
   /**
    * Called for each decoded MLLP message.
    *
-   * Its role depends on `autoAck` — this is the **commit contract** (HL7 v2.5.1 §2.9.2):
+   * Its role depends on `autoAck`, this is the **commit contract** (HL7 v2.5.1 §2.9.2):
    *
    * - **`autoAck: 'AA'` + this handler ⇒ commit-gated (the safe default).** The handler
    *   is the durable-commit step. The server **awaits** it and only then sends the ACK:
-   *   resolve ⇒ `AA`; **throw/reject ⇒ `AE`** (or `AR` via {@link MllpAckError}) — a
+   *   resolve ⇒ `AA`; **throw/reject ⇒ `AE`** (or `AR` via {@link MllpAckError}), a
    *   positive ACK can never precede a successful commit. Do **not** call `conn.send()`
    *   here in this mode.
    * - **`autoAck` unset ⇒ manual mode.** The handler owns the response; build and send the
@@ -260,7 +260,7 @@ export interface ServerOptions {
 
   /**
    * FrameReader tolerance options applied to every accepted connection (SERVER-12).
-   * Merged with SERVER_DEFAULT_FRAMING — caller-supplied values override defaults.
+   * Merged with SERVER_DEFAULT_FRAMING, caller-supplied values override defaults.
    * `onFrame` and `onWarning` are managed internally and must not be supplied here.
    */
   framing?: Omit<FrameReaderOptions, "onFrame" | "onWarning">;
@@ -273,21 +273,21 @@ export interface ServerOptions {
   /**
    * Auto-ACK mode. When set, the server builds and sends the ACK for each message.
    *
-   * - **`'AA'`** — auto-acknowledge with the fail-safe **commit contract**:
+   * - **`'AA'`**, auto-acknowledge with the fail-safe **commit contract**:
    *   - **With an `onMessage` handler ⇒ commit-gated (recommended).** The server awaits
    *     `onMessage` (the durable-commit step), then sends `AA` on success or a **negative**
    *     ACK on failure (`AE` by default; `AR` via {@link MllpAckError}). The positive ACK
-   *     **cannot precede a successful commit** — a handler throw can never yield `AA`.
+   *     **cannot precede a successful commit**, a handler throw can never yield `AA`.
    *   - **Without an `onMessage` handler ⇒ transport-accept.** `AA` is sent on frame
-   *     receipt. This `AA` means only **"bytes received and framed"** — *not*
+   *     receipt. This `AA` means only **"bytes received and framed"**, *not*
    *     "application-processed". ⚠️ For clinical messages this is unsafe on its own:
    *     pair `'AA'` with an `onMessage` handler that durably commits, so the ACK reflects
    *     real processing.
-   * - **`fn`** — `fn(payload, meta, conn)` builds the ACK bytes the server sends; the
+   * - **`fn`**, `fn(payload, meta, conn)` builds the ACK bytes the server sends; the
    *   caller fully owns MSA-1 (e.g. to emit enhanced-mode `CA`/`CE`/`CR`).
    *
    * The `'message'` event always fires BEFORE the ACK is sent (D-03). Do NOT call
-   * `conn.send()` in `onMessage` when `autoAck` is set — this results in two ACKs.
+   * `conn.send()` in `onMessage` when `autoAck` is set, this results in two ACKs.
    */
   autoAck?:
     | "AA"
@@ -328,14 +328,14 @@ export interface ServerOptions {
   tls?: ServerTlsOptions;
 
   /**
-   * Opt-in required to bind a wildcard host — a bind-safety guardrail
+   * Opt-in required to bind a wildcard host, a bind-safety guardrail
    * (Phase 8). Without this flag, `listen()` rejects a wildcard host in
    * two tiers: **literal spellings** (`'0.0.0.0'`, `'::'`, `''`, `'::0'`,
    * `'0:0:0:0:0:0:0:0'`, `'::ffff:0.0.0.0'`, …) reject **pre-bind** (fast
    * path, nothing is ever bound); **resolver-only shorthands** (`'0'`,
    * `'0.0'`, `'0x0.0.0.0'`, hostnames resolving to the unspecified
    * address, …) are caught **post-bind** against the OS-normalized bound
-   * address — the just-bound server closes before any connection can be
+   * address, the just-bound server closes before any connection can be
    * accepted and `listen()` rejects, with no listening state and no
    * `'listening'` event either way. When `true`, binding a wildcard host
    * emits a one-time `'securityWarning'` (`MLLP_BIND_ALL_INTERFACES`) at
@@ -347,7 +347,7 @@ export interface ServerOptions {
 }
 
 /**
- * Options for `createStarterServer()` — the "three lines of code" factory (SERVER-08).
+ * Options for `createStarterServer()`, the "three lines of code" factory (SERVER-08).
  *
  * Extends `ServerOptions` with `port`, `host`, and `handleSignals`. Defaults:
  * `autoAck: 'AA'`, `drainTimeoutMs: 30_000`, `Symbol.asyncDispose` wired.
@@ -368,7 +368,7 @@ export interface StarterServerOptions extends ServerOptions {
   /** Port to listen on. */
   port: number;
   /**
-   * Host to bind to. Default `'127.0.0.1'` (Phase 8 bind-safety hardening —
+   * Host to bind to. Default `'127.0.0.1'` (Phase 8 bind-safety hardening,
    * was `'0.0.0.0'`; binding all interfaces now requires
    * `ServerOptions.allowWildcardBind: true`).
    */
@@ -378,7 +378,7 @@ export interface StarterServerOptions extends ServerOptions {
    * call `server.close()` then `process.exit(0)` (D-09). Default: `false`.
    *
    * Handlers are automatically removed when `server.close()` is called, so
-   * `process.listenerCount('SIGTERM') === 0` after close() completes — preventing
+   * `process.listenerCount('SIGTERM') === 0` after close() completes, preventing
    * handler accumulation across test instances or multiple server restarts.
    */
   handleSignals?: boolean;
@@ -388,10 +388,10 @@ export interface StarterServerOptions extends ServerOptions {
  * Default framing options applied to every server-side FrameReader (D-12).
  *
  * Reflects real-world MLLP device behavior:
- * - `allowFsOnly: true` — accept FS without trailing CR
- * - `allowLfAfterFs: true` — accept FS+LF (common vendor deviation)
- * - `allowLeadingWhitespace: true` — accept leading whitespace before VT
- * - `allowMissingLeadingVt: false` — require VT framing (stricter than FS-only tolerance)
+ * - `allowFsOnly: true`, accept FS without trailing CR
+ * - `allowLfAfterFs: true`, accept FS+LF (common vendor deviation)
+ * - `allowLeadingWhitespace: true`, accept leading whitespace before VT
+ * - `allowMissingLeadingVt: false`, require VT framing (stricter than FS-only tolerance)
  */
 const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> = {
   allowFsOnly: true,
@@ -401,7 +401,7 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
 };
 
 /**
- * MLLP TCP server — wraps `net.Server` without extending it (D-02).
+ * MLLP TCP server, wraps `net.Server` without extending it (D-02).
  *
  * Each accepted socket is wrapped in a `NetTransport`, connected to a `Connection`
  * with server-level framing options, and added to `_connections`. Messages are
@@ -409,7 +409,7 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  *
  * Public events: `'listening'`, `'connection'`, `'message'`, `'nack'`, `'error'`, `'close'`.
  * The `'nack'` event ({@link NackEvent}) fires whenever the server returns a negative ACK
- * instead of `AA` on the auto-ACK path — a commit-gated `autoAck: 'AA'` handler failing, or
+ * instead of `AA` on the auto-ACK path, a commit-gated `autoAck: 'AA'` handler failing, or
  * a positive auto-ACK **downgraded** because the inbound could not be correlated (an
  * unreadable/uncorrelatable message, or one whose bytes the decoder discarded). The
  * {@link NackReason} distinguishes the causes.
@@ -417,16 +417,16 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * **`'error'` contract:** underlying `net.Server`/`tls.Server` errors are forwarded to the
  * `'error'` event whenever a listener is attached. With **no** listener, the outcome depends on
  * server state: during a `listen()` (the bind window) the error **rejects the `listen()` promise**
- * — the primary error surface — and the process never crashes on a bind error; with no `listen()`
+ * the primary error surface, and the process never crashes on a bind error; with no `listen()`
  * in flight and the server not serving (e.g. a stale async error after `close()`) the error is
  * dropped; but **while serving**, an unlistened runtime error (e.g. accept-loop `EMFILE`) keeps
- * Node's fail-loud crash-on-unlistened-`'error'` convention — a silent accept outage is
+ * Node's fail-loud crash-on-unlistened-`'error'` convention, a silent accept outage is
  * impossible. Caveat for `'error'` listeners: the forwarder runs **before** the internal
  * `listen()` rejection handler, so an `'error'` listener that synchronously calls `close()`
  * during the bind window changes the `listen()` rejection from the bind error to the typed
- * close-during-listen `MllpConnectionError` — match on the `'error'` event payload, not the
+ * close-during-listen `MllpConnectionError`, match on the `'error'` event payload, not the
  * rejection, if you do that.
- * Phase 8 (TLS/MLLPS) adds two more: `'tlsClientError'` (a failed TLS handshake — the
+ * Phase 8 (TLS/MLLPS) adds two more: `'tlsClientError'` (a failed TLS handshake, the
  * server logs it and keeps serving other connections) and `'securityWarning'` (loud,
  * one-time notice when a wildcard host is bound via `allowWildcardBind: true`).
  * All event payloads are `Object.freeze()`'d before emission (SERVER-10).
@@ -448,14 +448,14 @@ export class MllpServer extends EventEmitter {
   private readonly _netServer: NetServer;
   private readonly _connections: Set<Connection> = new Set();
   private readonly _opts: ServerOptions;
-  /** `true` when `ServerOptions.tls` is set — `_netServer` is actually a `tls.Server`. */
+  /** `true` when `ServerOptions.tls` is set, `_netServer` is actually a `tls.Server`. */
   private readonly _isTls: boolean;
 
   private _listening = false;
-  /** Phase 8 — single-flight guard: `true` while a `listen()` call is settling. */
+  /** Phase 8, single-flight guard: `true` while a `listen()` call is settling. */
   private _listenInFlight = false;
   /**
-   * Phase 8 — settle hook for an in-flight `listen()`. Non-null only while a
+   * Phase 8, settle hook for an in-flight `listen()`. Non-null only while a
    * `listen()` is in flight; invoked by `close()` so a close racing startup
    * rejects the pending `listen()` (typed) instead of leaving it hung with
    * the single-flight guard stuck. Cleared on every settle path.
@@ -465,7 +465,7 @@ export class MllpServer extends EventEmitter {
   private _host: string | null = null;
   private _acceptedTotal = 0;
   private _closedTotal = 0;
-  /** Phase 8 — count of `'tlsClientError'` events since listen(). */
+  /** Phase 8, count of `'tlsClientError'` events since listen(). */
   private _tlsClientErrorsTotal = 0;
 
   /**
@@ -499,7 +499,7 @@ export class MllpServer extends EventEmitter {
       });
       // 'tlsClientError' fires for failed handshakes (incl. rejected client
       // certs under mTLS 'MUST'). The server MUST NOT crash and MUST keep
-      // accepting other connections — only the error's message/code and the
+      // accepting other connections, only the error's message/code and the
       // remote address are surfaced; never payload bytes or a cert dump.
       tlsServer.on("tlsClientError", (err: Error, socket: TLSSocket) => {
         this._tlsClientErrorsTotal += 1;
@@ -518,7 +518,7 @@ export class MllpServer extends EventEmitter {
           timestamp: new Date(),
         });
         // Contained: this runs inside tls.Server's own 'tlsClientError' listener, so a throwing
-        // subscriber would kill the process on a failed handshake — flatly contradicting this
+        // subscriber would kill the process on a failed handshake, flatly contradicting this
         // handler's whole purpose ("MUST NOT crash and MUST keep accepting other connections").
         this._emitContained("tlsClientError", event);
       });
@@ -530,7 +530,7 @@ export class MllpServer extends EventEmitter {
     }
 
     // Forward net.Server errors to the public 'error' event, guarded by
-    // server state — an unlistened EventEmitter 'error' emission THROWS,
+    // server state, an unlistened EventEmitter 'error' emission THROWS,
     // and this constructor-time listener runs BEFORE listen()'s own
     // once('error') rejection handler (registration order), so an unguarded
     // re-emit crashed the process on a plain bind error (EADDRINUSE,
@@ -542,7 +542,7 @@ export class MllpServer extends EventEmitter {
     //   • no listener + not listening (e.g. stale async error after
     //     close()) ⇒ dropped; there is no consumer to surface it to.
     //   • no listener + SERVING (this._listening) ⇒ re-emit unguarded,
-    //     which throws — Node's fail-loud convention is deliberately kept
+    //     which throws, Node's fail-loud convention is deliberately kept
     //     for runtime accept-loop errors (EMFILE/ENFILE): a silent accept
     //     outage on a healthcare listener must be impossible.
     // MLLP-10 refinement: the deliberate fail-loud branch below is PRESERVED exactly (unlistened +
@@ -551,7 +551,7 @@ export class MllpServer extends EventEmitter {
     // emit is contained.
     this._netServer.on("error", (err: Error) => {
       if (this.listenerCount("error") > 0) {
-        safeEmitError(this, err); // contained — a throwing 'error' subscriber is not fail-loud
+        safeEmitError(this, err); // contained, a throwing 'error' subscriber is not fail-loud
       } else if (this._listening) {
         this.emit("error", err); // DELIBERATE: unlistened + serving ⇒ Node's fail-loud convention
       }
@@ -565,23 +565,23 @@ export class MllpServer extends EventEmitter {
    * `Object.freeze({ port: actualPort, host: actualHost })`.
    *
    * **Single-flight:** one `listen()` per server lifecycle at a time. A call
-   * while the server is already listening — or while another `listen()` is
-   * still in flight — rejects with a typed `MllpConnectionError` (concurrent
+   * while the server is already listening, or while another `listen()` is
+   * still in flight, rejects with a typed `MllpConnectionError` (concurrent
    * binds raced each other's post-bind safety checks). Call `close()` before
    * re-listening; sequential `listen()` → `close()` → `listen()` is fine.
    *
    * **`close()` during an in-flight `listen()`** rejects that `listen()` with
    * a typed `MllpConnectionError` (never a hang) and clears the single-flight
-   * guard — a subsequent `listen()` on the same server works. This makes
+   * guard, a subsequent `listen()` on the same server works. This makes
    * `Symbol.asyncDispose` (which delegates to `close()`) safe even before a
    * `listen()` has settled. (Exception: `close({ signal })` with an
-   * already-aborted signal is a no-op AbortError rejection — the in-flight
+   * already-aborted signal is a no-op AbortError rejection, the in-flight
    * `listen()` is left to settle on its own bind outcome; see `close()`.)
    *
    * @param port - TCP port to bind. Use `0` to let the OS assign an ephemeral port.
    * @param hostOrOpts - Host string or object with `host` and optional `signal`.
    *   Default host: `'127.0.0.1'` (Phase 8 bind-safety hardening). Wildcard hosts
-   *   are rejected unless `ServerOptions.allowWildcardBind: true` — literal
+   *   are rejected unless `ServerOptions.allowWildcardBind: true`, literal
    *   spellings pre-bind, resolver-only shorthands post-bind via the
    *   OS-normalized bound address.
    *
@@ -605,17 +605,17 @@ export class MllpServer extends EventEmitter {
       return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
-    // Phase 8 bind safety — SINGLE-FLIGHT guard. Two concurrent listen()
+    // Phase 8 bind safety, SINGLE-FLIGHT guard. Two concurrent listen()
     // calls on one server race each other's post-bind checks: the losing
     // call's 'listening' handler can observe the winner's (or a just-closed)
-    // socket and record listening state for a bind that no longer exists —
+    // socket and record listening state for a bind that no longer exists,
     // a green health check with nothing bound. One listen per lifecycle;
     // close() before re-listening.
     if (this._listening || this._listenInFlight) {
       return Promise.reject(
         new MllpConnectionError(
           this._listening
-            ? "listen() rejected: server is already listening — call close() before re-listening"
+            ? "listen() rejected: server is already listening, call close() before re-listening"
             : "listen() rejected: another listen() is already in flight on this server",
           {
             cause: new Error("listen already listening or in flight"),
@@ -634,7 +634,7 @@ export class MllpServer extends EventEmitter {
     if (isWildcardHost(host) && this._opts.allowWildcardBind !== true) {
       return Promise.reject(
         new MllpConnectionError(
-          `refusing to bind wildcard host '${host}' — set ServerOptions.allowWildcardBind: true to bind all interfaces`,
+          `refusing to bind wildcard host '${host}', set ServerOptions.allowWildcardBind: true to bind all interfaces`,
           {
             cause: new Error("wildcard bind requires allowWildcardBind"),
             phase: "connect",
@@ -649,8 +649,8 @@ export class MllpServer extends EventEmitter {
       // ONE idempotent settle point for every outcome of this listen()
       // (success, abort, close-during-listen, bind error, addr-null reject,
       // post-bind wildcard reject). First caller wins; every path gets the
-      // same cleanup — abort listener, netServer listeners, the close()
-      // settle hook, and the single-flight guard — so no path can leak a
+      // same cleanup, abort listener, netServer listeners, the close()
+      // settle hook, and the single-flight guard, so no path can leak a
       // listener, strand the guard, or re-settle a settled promise.
       let settled = false;
       const settle = (
@@ -670,7 +670,7 @@ export class MllpServer extends EventEmitter {
         if (outcome.ok) {
           resolve();
         } else {
-          // Pass the rejection reason through untouched — AbortError
+          // Pass the rejection reason through untouched, AbortError
           // (DOMException), MllpConnectionError, and raw bind errors keep
           // their identity for callers matching on name/instanceof.
           reject(outcome.error);
@@ -692,7 +692,7 @@ export class MllpServer extends EventEmitter {
 
       // close() (or Symbol.asyncDispose) racing an in-flight listen():
       // net.Server.close() nulls the handle, and the pending 'listening'
-      // emission is guarded on the handle — so NEITHER 'listening' NOR
+      // emission is guarded on the handle, so NEITHER 'listening' NOR
       // 'error' ever fires for the in-flight bind. Without a settle path the
       // promise hangs forever and every later listen() rejects "in flight".
       // close() settles the pending listen PROACTIVELY through this hook.
@@ -700,8 +700,8 @@ export class MllpServer extends EventEmitter {
       // event from a PREVIOUS lifecycle's close() is delivered
       // asynchronously and can land after a NEW listen() has registered its
       // listeners, spuriously rejecting the fresh attempt. The netServer is
-      // private, so our own close() — and the settle paths below, which
-      // settle themselves — are the only close initiators. close() itself
+      // private, so our own close(), and the settle paths below, which
+      // settle themselves, are the only close initiators. close() itself
       // closes the netServer right after invoking this hook, so the hook
       // does not.)
       this._pendingListenSettle = () => {
@@ -720,13 +720,13 @@ export class MllpServer extends EventEmitter {
       const onListening = () => {
         if (settled) return;
         // The bind outcome is now known and this handler settles the promise
-        // synchronously below — drop the close()-settle hook AND the abort
+        // synchronously below, drop the close()-settle hook AND the abort
         // listener FIRST. The hook: a close() called from inside the
         // 'listening' event handler must not reject a bind that succeeded.
         // The abort listener: the success path below emits 'listening' /
         // 'securityWarning' BEFORE settling, and an abort fired from inside
         // one of those handlers would otherwise close the just-bound server
-        // AFTER listening state is recorded — stranding `listening: true`
+        // AFTER listening state is recorded, stranding `listening: true`
         // with nothing bound (the exact hazard the post-bind checks exist to
         // prevent). Once the bind has succeeded, an abort of the listen
         // signal is too late and is deliberately ignored; use close().
@@ -735,9 +735,9 @@ export class MllpServer extends EventEmitter {
 
         const addr = this._netServer.address();
         // address() is always an AddressInfo object for a bound TCP server;
-        // null (or a string — pipe/IPC servers, which this class never
+        // null (or a string, pipe/IPC servers, which this class never
         // creates) means the server was closed out from under this bind.
-        // NEVER fall back to the requested port/host strings — that records
+        // NEVER fall back to the requested port/host strings, that records
         // listening state for a bind that does not exist. The single-flight
         // guard above should make this branch unreachable; it stays as
         // defense-in-depth.
@@ -760,15 +760,15 @@ export class MllpServer extends EventEmitter {
         const actualPort = addr.port;
         const actualHost = addr.address;
 
-        // Phase 8 bind safety — POST-BIND enforcement against the
+        // Phase 8 bind safety, POST-BIND enforcement against the
         // OS-NORMALIZED bound address. getaddrinfo/inet_aton resolves
         // shorthands the pre-bind string check cannot see ('0', '0.0',
         // '0.0.0', '00.0.0.0', '0x0.0.0.0', hostnames that resolve to the
         // unspecified address, …); the kernel-reported address is canonical
         // ('0.0.0.0' / '::'), so this check is authoritative. On violation:
-        // close the just-bound server immediately and reject — no listening
+        // close the just-bound server immediately and reject, no listening
         // state is recorded and no 'listening' event is emitted.
-        // The sub-tick bind window is ACCEPT-SAFE — this handler runs
+        // The sub-tick bind window is ACCEPT-SAFE, this handler runs
         // synchronously on 'listening', before the event loop can deliver
         // any 'connection'/'secureConnection' for the just-bound socket, so
         // no connection is ever accepted on a rejected wildcard bind. Do
@@ -778,7 +778,7 @@ export class MllpServer extends EventEmitter {
             {
               ok: false,
               error: new MllpConnectionError(
-                `refusing to bind wildcard host '${host}' (bound address '${actualHost}') — ` +
+                `refusing to bind wildcard host '${host}' (bound address '${actualHost}'), ` +
                   "set ServerOptions.allowWildcardBind: true to bind all interfaces",
                 {
                   cause: new Error("wildcard bind requires allowWildcardBind"),
@@ -795,13 +795,13 @@ export class MllpServer extends EventEmitter {
         this._port = actualPort;
         this._host = actualHost;
 
-        // The bind has succeeded — nothing a 'listening'/'securityWarning'
+        // The bind has succeeded, nothing a 'listening'/'securityWarning'
         // subscriber does may undo that. A THROWING subscriber must not
         // strand the settle (the promise would hang and the single-flight
         // guard would wedge every later listen()) and must not suppress a
         // LATER emission: each emit is contained SEPARATELY (a throw in
         // 'listening' cannot swallow the securityWarning), surfaced via the
-        // guarded 'error' tap (D-04 — a handler error never crashes the
+        // guarded 'error' tap (D-04, a handler error never crashes the
         // server) with the tap itself contained too (a throwing 'error'
         // listener on top of a throwing subscriber drops rather than
         // strands), so listen() always resolves.
@@ -821,15 +821,15 @@ export class MllpServer extends EventEmitter {
           }
         };
 
-        // Phase 8 — loud, one-time notice when a wildcard host is actually
+        // Phase 8, loud, one-time notice when a wildcard host is actually
         // bound (keyed off the OS-normalized actualHost so shorthand
         // spellings warn too; single emission site). The operator channel
-        // (process.emitWarning) fires FIRST — it has no subscribers, so no
+        // (process.emitWarning) fires FIRST, it has no subscribers, so no
         // throwing event listener can ever suppress the mandated
         // MLLP_BIND_ALL_INTERFACES notice on a live wildcard bind.
         const wildcardBound = isWildcardHost(actualHost);
         const wildcardMessage =
-          `MLLP server is bound to ALL network interfaces (host='${actualHost}') — ` +
+          `MLLP server is bound to ALL network interfaces (host='${actualHost}'), ` +
           "set a specific bind address unless this is intentional.";
         if (wildcardBound) {
           process.emitWarning(wildcardMessage, { code: MLLP_BIND_ALL_INTERFACES });
@@ -865,18 +865,18 @@ export class MllpServer extends EventEmitter {
    * Stop accepting new connections and gracefully close all active connections.
    *
    * Sequence (D-06):
-   * 1. `net.Server.close()` — stops accepting new connections immediately
+   * 1. `net.Server.close()`, stops accepting new connections immediately
    * 2. If `_connections` is empty: resolves immediately (no drain needed)
-   * 3. Calls `_drainAll(drainTimeoutMs)` — Promise.all + side-effect setTimeout
+   * 3. Calls `_drainAll(drainTimeoutMs)`, Promise.all + side-effect setTimeout
    *    that force-destroys stragglers after the drain window
    *
    * Calling `close()` while a `listen()` is still in flight proactively
    * settles that `listen()` with a typed `MllpConnectionError` rejection
-   * and clears the single-flight guard — the server is immediately
+   * and clears the single-flight guard, the server is immediately
    * re-listenable. `Symbol.asyncDispose` (which delegates here) is
    * therefore safe before `listen()` settles. **Qualification:** a
    * `close({ signal })` whose signal is **already aborted** rejects
-   * immediately with `AbortError` and performs no work — it does NOT close
+   * immediately with `AbortError` and performs no work, it does NOT close
    * the server and does NOT settle the in-flight `listen()`, which simply
    * continues and settles on its own bind outcome.
    *
@@ -897,12 +897,12 @@ export class MllpServer extends EventEmitter {
       return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
-    // Phase 8 — settle an in-flight listen() FIRST (typed rejection). A
+    // Phase 8, settle an in-flight listen() FIRST (typed rejection). A
     // close racing startup (SIGTERM handler, test teardown, an `await using`
     // scope exiting before listen() was awaited) would otherwise leave the
     // listen() promise hung forever: net.Server.close() nulls the handle and
     // the pending 'listening' emission is handle-guarded, so neither
-    // 'listening' nor 'error' ever fires for the in-flight bind — and the
+    // 'listening' nor 'error' ever fires for the in-flight bind, and the
     // stuck single-flight guard would reject every later listen().
     this._pendingListenSettle?.();
 
@@ -910,15 +910,15 @@ export class MllpServer extends EventEmitter {
     this._netServer.close();
     this._listening = false;
 
-    // If no active connections, we're done — emit 'close' and resolve
-    // No abort handler registered on this path — nothing to remove.
+    // If no active connections, we're done, emit 'close' and resolve
+    // No abort handler registered on this path, nothing to remove.
     if (this._connections.size === 0) {
       // Contained: a throwing 'close' subscriber must not reject close() nor skip its cleanup.
       this._emitContained("close", Object.freeze({}));
       return Promise.resolve();
     }
 
-    // Wire AbortSignal — abort during drain force-destroys all connections
+    // Wire AbortSignal, abort during drain force-destroys all connections
     let abortHandler: (() => void) | undefined;
     const abortPromise =
       signal !== undefined
@@ -953,7 +953,7 @@ export class MllpServer extends EventEmitter {
   /**
    * Drain all active connections with a shared timeout.
    *
-   * Uses Promise.all (not Promise.race) for coordination — the timeout is a
+   * Uses Promise.all (not Promise.race) for coordination, the timeout is a
    * side effect that calls `conn.destroy()` on stragglers after `drainTimeoutMs`.
    * Promise.all resolves when all `conn.close()` promises settle (which happens
    * because `conn.destroy()` transitions connections to CLOSED).
@@ -983,7 +983,7 @@ export class MllpServer extends EventEmitter {
   }
 
   /**
-   * Async disposal — delegates to `close()` for `await using` support.
+   * Async disposal, delegates to `close()` for `await using` support.
    *
    * @example
    * ```typescript
@@ -1033,7 +1033,7 @@ export class MllpServer extends EventEmitter {
   }
 
   /**
-   * Emit on `'error'` only when a listener is attached — an unlistened
+   * Emit on `'error'` only when a listener is attached, an unlistened
    * `EventEmitter` `'error'` emission throws (see the class JSDoc error
    * contract). The single guard shared by the optional-tap forwarding sites
    * in this class; the constructor's net.Server forwarder deliberately does
@@ -1043,7 +1043,7 @@ export class MllpServer extends EventEmitter {
   /**
    * Emit a server event, containing a throwing subscriber.
    *
-   * Every event this server emits is reachable from a callback we do not own — the `net.Server`
+   * Every event this server emits is reachable from a callback we do not own, the `net.Server`
    * `'connection'` listener, the `tls.Server` `'tlsClientError'` listener, a socket's `'data'`
    * listener (via `Connection`), or the `catch` block of a `void`-ed async ACK task. A throwing
    * subscriber would therefore unwind into that callback and kill the process (or reject a void-ed
@@ -1058,7 +1058,7 @@ export class MllpServer extends EventEmitter {
   }
 
   private _emitErrorIfListened(errEvent: unknown): void {
-    // Guards the unlistened case AND contains a throwing 'error' subscriber — see safe-emit.ts.
+    // Guards the unlistened case AND contains a throwing 'error' subscriber, see safe-emit.ts.
     safeEmitError(this, errEvent);
   }
 
@@ -1067,7 +1067,7 @@ export class MllpServer extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   private _onSocketAccepted(socket: Socket | TLSSocket): void {
-    // TCP keepalive — must be set on the raw socket BEFORE passing to NetTransport (D-10)
+    // TCP keepalive, must be set on the raw socket BEFORE passing to NetTransport (D-10)
     if (this._opts.keepaliveIntervalMs !== undefined) {
       socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
     }
@@ -1089,7 +1089,7 @@ export class MllpServer extends EventEmitter {
     // Set beforeClose no-op hook (Plan 04 will wire autoAck drain here if needed)
     conn.beforeClose = () => Promise.resolve();
 
-    // Default 'error' handler on connection — prevents ERR_UNHANDLED_ERROR when
+    // Default 'error' handler on connection, prevents ERR_UNHANDLED_ERROR when
     // auto-ACK or transport errors are emitted on a connection with no user-attached
     // error listener. Forwards to server's 'error' event only when listeners exist;
     // otherwise silently swallows (D-04: server never crashes on connection errors).
@@ -1115,7 +1115,7 @@ export class MllpServer extends EventEmitter {
     conn.once("close", _onConnEnded);
     conn.once("disconnect", _onConnEnded);
 
-    // Wire dead-peer idle timeout (D-11) — reset on every message
+    // Wire dead-peer idle timeout (D-11), reset on every message
     if (this._opts.deadPeerTimeoutMs !== undefined) {
       const timeoutMs = this._opts.deadPeerTimeoutMs;
       let deadPeerTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
@@ -1136,11 +1136,11 @@ export class MllpServer extends EventEmitter {
       });
     }
 
-    // Notify the connection that the socket is connected (server-side — already connected)
+    // Notify the connection that the socket is connected (server-side, already connected)
     conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
 
     // Wire message handler: always emit 'message' (received+framed) first, then route the
-    // ACK by mode (the commit contract — see ServerOptions.autoAck). D-04: a handler error
+    // ACK by mode (the commit contract, see ServerOptions.autoAck). D-04: a handler error
     // never crashes the server. Async dispatch is wrapped in void; rejections are handled
     // inside the dispatch methods.
     conn.on(
@@ -1161,7 +1161,7 @@ export class MllpServer extends EventEmitter {
         // D-03: emit 'message' BEFORE any ACK dispatch.
         //
         // Contained: a `'message'` subscriber is an OBSERVER (a metrics tap, a logger). The ACK
-        // decision belongs to the commit contract below — `ServerOptions.onMessage` is the
+        // decision belongs to the commit contract below, `ServerOptions.onMessage` is the
         // durable-commit step, not this event. An observer that throws must therefore not be able
         // to suppress the ACK: before containment, one broken logger silently turned every message
         // into a no-ACK, so every sender resent forever with nothing to diagnose it by. The throw
@@ -1180,7 +1180,7 @@ export class MllpServer extends EventEmitter {
         const autoAck = this._opts.autoAck;
         if (autoAck === "AA") {
           // Commit-gated: onMessage is the durable-commit step; AA only on success,
-          // AE/AR on failure — a positive ACK can never precede commit.
+          // AE/AR on failure, a positive ACK can never precede commit.
           void this._sendCommitAck(payload, meta, conn);
         } else if (autoAck !== undefined) {
           // Custom-ACK mode: onMessage is observation only; the fn owns the ACK bytes.
@@ -1193,7 +1193,7 @@ export class MllpServer extends EventEmitter {
       },
     );
 
-    // Phase 8 — surface a minimal, content-free peer-certificate summary
+    // Phase 8, surface a minimal, content-free peer-certificate summary
     // (WANT/MUST only) on the 'connection' event. Never the full cert object.
     const peerCertificate: PeerCertificateSummary | null =
       this._isTls && (this._opts.tls?.clientAuth ?? "NONE") !== "NONE"
@@ -1218,7 +1218,7 @@ export class MllpServer extends EventEmitter {
 
   /**
    * Extract a minimal, content-free peer-certificate summary (Phase 8, ATNA
-   * ITI-19 mutual authentication) — CN strings, expiry, and the verification
+   * ITI-19 mutual authentication), CN strings, expiry, and the verification
    * outcome (`authorized`) only; never the full certificate object. Returns
    * `null` when no peer certificate was presented (e.g. `clientAuth: 'WANT'`
    * with no client cert).
@@ -1236,7 +1236,7 @@ export class MllpServer extends EventEmitter {
       subjectCN: asCn(cert.subject?.CN),
       issuerCN: asCn(cert.issuer?.CN),
       validTo: cert.valid_to ?? null,
-      // Verification outcome — under 'WANT' a certificate can be present yet
+      // Verification outcome, under 'WANT' a certificate can be present yet
       // UNVERIFIED (see PeerCertificateSummary.authorized JSDoc).
       authorized: socket.authorized === true,
     });
@@ -1249,12 +1249,12 @@ export class MllpServer extends EventEmitter {
    * then dispatches: resolve ⇒ `AA`; throw/reject ⇒ a negative ACK (`AE` by default,
    * `AR` via {@link MllpAckError}). A positive ACK can never precede a successful commit.
    *
-   * Without an `onMessage` handler, `'AA'` degrades to a **transport-accept** — `AA`
+   * Without an `onMessage` handler, `'AA'` degrades to a **transport-accept**, `AA`
    * meaning "bytes received and framed", not "application-processed".
    *
    * A handler failure is **expected flow**, not a server error: it produces a negative
    * ACK and a `'nack'` event. The thrown error's message is never placed on the wire or
-   * in the event (it may carry PHI) — only the static `ackCode` and the inbound control
+   * in the event (it may carry PHI), only the static `ackCode` and the inbound control
    * metadata reach the peer.
    */
   private async _sendCommitAck(
@@ -1264,7 +1264,7 @@ export class MllpServer extends EventEmitter {
   ): Promise<void> {
     const handler = this._opts.onMessage;
 
-    // No commit handler: 'AA' is a transport-accept (received+framed only) — but still
+    // No commit handler: 'AA' is a transport-accept (received+framed only), but still
     // fail-safe-downgraded if the message cannot carry a correlatable positive ACK.
     if (handler === undefined) {
       this._dispatchAck(
@@ -1277,7 +1277,7 @@ export class MllpServer extends EventEmitter {
     let code: AckCode;
     try {
       await handler(payload, meta, conn); // durable-commit step
-      // Commit succeeded — but only answer `AA` if the message is one we could correlate.
+      // Commit succeeded, but only answer `AA` if the message is one we could correlate.
       code = this._resolveAutoAckPositive(payload, meta, conn);
     } catch (err: unknown) {
       const nack: NegativeAckCode = resolveNackCode(err);
@@ -1285,7 +1285,7 @@ export class MllpServer extends EventEmitter {
       // PHI-safe observability: control ID + outcome only, never the payload or error text.
       //
       // CONTAINED, and this one is load-bearing. This emit sits inside a `catch` block of an
-      // `async` method that the caller `void`s — so a throwing `'nack'` subscriber (a metrics tap,
+      // `async` method that the caller `void`s, so a throwing `'nack'` subscriber (a metrics tap,
       // an alerting hook) would (a) reject the void-ed promise → unhandled rejection → process
       // death, and (b) skip the `_dispatchAck` below, so **the negative ACK would never be sent**.
       // The sender would be left waiting on an acknowledgement for a message the server had already
@@ -1306,18 +1306,18 @@ export class MllpServer extends EventEmitter {
 
   /**
    * Resolve the auto-ACK code for a message the server would otherwise acknowledge
-   * **positively** (`AA`) — the no-handler transport-accept and the post-commit success
+   * **positively** (`AA`), the no-handler transport-accept and the post-commit success
    * paths. Fail-safe: downgrade to `AE` and emit a PHI-safe `'nack'` whenever the message
    * cannot carry a correlatable positive ACK, so `AA` never names a control ID the sender
    * cannot match (→ timeout → resend → **duplicate clinical message**).
    *
    * Two independent disqualifiers, one from the bytes and one from the frame:
    *
-   *   - **`rawAckUncorrelatable(payload)`** — no readable `MSH`, an empty MSH-10, or a
+   *   - **`rawAckUncorrelatable(payload)`**, no readable `MSH`, an empty MSH-10, or a
    *     batch/concatenated-message shape. This is the SAME predicate `buildRawAck` enforces
    *     on the wire; it is re-checked here so the downgrade is **observable** (a `'nack'`
    *     event) rather than a silent code change inside the builder.
-   *   - **`MLLP_TRAILING_BYTES`** in the frame's warnings — a mid-payload `VT` made the
+   *   - **`MLLP_TRAILING_BYTES`** in the frame's warnings, a mid-payload `VT` made the
    *     decoder discard accumulated bytes and deliver only the fragment after it. The
    *     clinical message was destroyed in transit, so even a fragment that happens to carry
    *     a readable MSH must not be positively acknowledged. This condition is invisible to
@@ -1326,7 +1326,7 @@ export class MllpServer extends EventEmitter {
    *     accumulating the delivered frame, so it is frame-scoped: it names *this* payload's own
    *     discard, never a neighbouring frame's trailing junk.
    *
-   * `'discarded-bytes'` takes precedence in the reason when both hold — it is the root cause.
+   * `'discarded-bytes'` takes precedence in the reason when both hold, it is the root cause.
    */
   private _resolveAutoAckPositive(payload: Buffer, meta: MessageMeta, conn: Connection): AckCode {
     const discarded = meta.warnings.some((w) => w.code === "MLLP_TRAILING_BYTES");
@@ -1334,7 +1334,7 @@ export class MllpServer extends EventEmitter {
     if (!discarded && !uncorrelatable) return "AA";
 
     const reason: NackReason = discarded ? "discarded-bytes" : "uncorrelatable-inbound";
-    // CONTAINED — this runs inside `_sendCommitAck`, a `void`-ed async task. A throwing `'nack'`
+    // CONTAINED, this runs inside `_sendCommitAck`, a `void`-ed async task. A throwing `'nack'`
     // subscriber must not unwind into it (unhandled rejection → process death) nor skip the `AE`
     // that the caller dispatches next. PHI-safe: `reason` and `ackCode` are static, no payload.
     this._emitContained(
@@ -1372,7 +1372,7 @@ export class MllpServer extends EventEmitter {
   /**
    * The custom-builder path for `autoAck: fn`. Awaits the builder and dispatches its
    * Buffer as the ACK; the caller owns MSA-1. A builder error is re-emitted as `'error'`
-   * on the connection — the server never crashes (D-04).
+   * on the connection, the server never crashes (D-04).
    */
   private async _sendCustomAck(
     fn: (payload: Buffer, meta: MessageMeta, conn: Connection) => Buffer | Promise<Buffer>,
@@ -1385,7 +1385,7 @@ export class MllpServer extends EventEmitter {
       this._dispatchAck(conn, ackPayload);
     } catch (err: unknown) {
       const connErr = err instanceof Error ? err : new Error(String(err));
-      // See above — never a raw conn.emit from inside a callback/async catch.
+      // See above, never a raw conn.emit from inside a callback/async catch.
       safeEmitError(conn, Object.freeze({ connectionId: conn.connectionId, error: connErr }));
     }
   }
@@ -1393,28 +1393,28 @@ export class MllpServer extends EventEmitter {
   /**
    * Frame an ACK payload and write it to the connection. `Connection.send()` returns
    * `false` under backpressure (socket write buffer full); that drops the ACK and emits
-   * a `MllpConnectionError({ phase: 'send' })` on the connection (D-04) — the peer will
+   * a `MllpConnectionError({ phase: 'send' })` on the connection (D-04), the peer will
    * time out waiting and may retry. The server never crashes.
    */
   private _dispatchAck(conn: Connection, ackPayload: Buffer): void {
     // TOTAL by contract: this is reached from `void`-ed async tasks (`_sendCommitAck`, the
     // transport-accept branch), so a throw here becomes an **unhandled rejection that kills the
-    // process** — and it would do so on peer-controlled input. `encodeFrame` is strict and throws
+    // process**, and it would do so on peer-controlled input. `encodeFrame` is strict and throws
     // `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` if the ACK payload contains a framing byte.
     //
     // On the auto-ACK path this is **hard to provoke, but not impossible, and the containment is
     // what makes that safe.** `buildRawAck` decodes and encodes as `latin1`, a 1:1 byte↔code-unit
     // map, so it cannot *synthesize* a framing byte the way `ascii` masking once did
-    // (`0x8B & 0x7F` = VT — the Phase 10 bug): it only ever echoes bytes that were already in the
+    // (`0x8B & 0x7F` = VT, the Phase 10 bug): it only ever echoes bytes that were already in the
     // inbound. A delivered payload never contains a VT (`FrameReader` discards its accumulator on a
-    // mid-payload VT — `MLLP_TRAILING_BYTES`), so an echoed VT is not a concern here. It CAN,
+    // mid-payload VT, `MLLP_TRAILING_BYTES`), so an echoed VT is not a concern here. It CAN,
     // however, contain an FS: under the `allowMissingLeadingVt` tolerance a non-VT, non-whitespace
-    // first byte becomes payload byte 0, and FS (0x1C) qualifies — so an FS echoed out of MSH-10
+    // first byte becomes payload byte 0, and FS (0x1C) qualifies, so an FS echoed out of MSH-10
     // into MSA-2 reaches this `encodeFrame`, which throws `MLLP_PAYLOAD_CONTAINS_FS`. (Those codes
     // are thrown by `encodeFrame`, on the way out; the decoder never emits them.) And a caller's
     // `autoAck: fn` can of course return arbitrary bytes.
     //
-    // Whichever route, defending the process must not depend on the caller's — or the peer's —
+    // Whichever route, defending the process must not depend on the caller's, or the peer's,
     // discipline. A build/frame failure is surfaced as a connection `'error'` and the message goes
     // un-ACKed (fail-safe: better an un-ACKed message the sender will resend than a dead server),
     // never as a process kill.
@@ -1450,7 +1450,7 @@ export class MllpServer extends EventEmitter {
 }
 
 /**
- * Factory function — creates a new `MllpServer` with the supplied options.
+ * Factory function, creates a new `MllpServer` with the supplied options.
  *
  * Prefer `createServer()` over `new MllpServer()` for forward-compatible construction.
  *
@@ -1471,12 +1471,12 @@ export function createServer(opts: ServerOptions = {}): MllpServer {
 }
 
 /**
- * Starter factory — creates, configures, and starts an `MllpServer` in one call.
+ * Starter factory, creates, configures, and starts an `MllpServer` in one call.
  *
  * Provides the "three lines of code" north-star experience with sensible defaults:
  * `autoAck: 'AA'`, `drainTimeoutMs: 30_000`, `Symbol.asyncDispose` wired.
  *
- * NOTE: Stub at Plan 01 scope — Plan 04 fills in the full implementation.
+ * NOTE: Stub at Plan 01 scope, Plan 04 fills in the full implementation.
  *
  * @example
  * ```typescript

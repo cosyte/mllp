@@ -1,9 +1,9 @@
 /**
- * Phase 6 — fail-safe ACK semantics & the commit contract (HL7 v2.5.1 §2.9.2).
+ * Phase 6, fail-safe ACK semantics & the commit contract (HL7 v2.5.1 §2.9.2).
  *
  * The central safety property: a positive acknowledgement (`AA`) can **never** precede a
  * successful durable commit. With `autoAck: 'AA'` and an `onMessage` handler, the handler
- * IS the commit step — the server awaits it, then ACKs:
+ * IS the commit step, the server awaits it, then ACKs:
  *   - resolve            ⇒ MSA-1 = AA
  *   - throw / reject     ⇒ MSA-1 = AE (default)
  *   - throw MllpAckError ⇒ MSA-1 = AR (when asked)
@@ -67,7 +67,7 @@ async function exchange(port: number, payload: string): Promise<string> {
   }
 }
 
-describe("commit contract — positive ACK never precedes a successful commit", () => {
+describe("commit contract, positive ACK never precedes a successful commit", () => {
   it("handler resolves ⇒ MSA|AA, echoing the inbound MSH-10", async () => {
     const committed: Buffer[] = [];
     const server = createServer({

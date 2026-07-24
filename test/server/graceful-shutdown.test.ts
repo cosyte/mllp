@@ -108,7 +108,7 @@ describe("SERVER-06: graceful shutdown", () => {
 
   it("close({ drainTimeoutMs }) with stuck connection: after timeout, destroy() called and close() resolves", async () => {
     // Create a server; after connection is accepted, override its beforeClose
-    // hook so the connection never resolves on its own — simulating a straggler.
+    // hook so the connection never resolves on its own, simulating a straggler.
     const server = makeServer({});
 
     // Intercept 'connection' event to override the beforeClose hook
@@ -119,7 +119,7 @@ describe("SERVER-06: graceful shutdown", () => {
           _connections: Set<{ beforeClose: () => Promise<void> }>;
         };
         for (const conn of privateServer._connections) {
-          // Override beforeClose to never resolve — simulates a stuck drain
+          // Override beforeClose to never resolve, simulates a stuck drain
           conn.beforeClose = () =>
             new Promise<void>(() => {
               /* never resolves */
@@ -199,7 +199,7 @@ describe("SERVER-09: AbortSignal on listen()", () => {
     const ac = new AbortController();
 
     const listenPromise = server.listen(0, { signal: ac.signal });
-    // Abort after a microtask tick — before listen resolves in most cases
+    // Abort after a microtask tick, before listen resolves in most cases
     // (this test is inherently racy; use setImmediate to ensure listen() has time to start)
     setImmediate(() => ac.abort());
 
@@ -209,8 +209,8 @@ describe("SERVER-09: AbortSignal on listen()", () => {
     if (result instanceof Error || result instanceof DOMException) {
       expect((result as DOMException).name).toBe("AbortError");
     }
-    // If it resolved, the server is now listening — clean it up
-    // (this is acceptable — abort after resolution is a no-op per spec)
+    // If it resolved, the server is now listening, clean it up
+    // (this is acceptable, abort after resolution is a no-op per spec)
   });
 
   it("listen(0, { signal }) with already-aborted signal does not leave server listening", async () => {
@@ -281,7 +281,7 @@ describe("SERVER-09: AbortSignal on close()", () => {
     const ac = new AbortController();
     const closePromise = server.close({ signal: ac.signal, drainTimeoutMs: 5000 });
 
-    // Abort immediately — should cancel the drain
+    // Abort immediately, should cancel the drain
     setImmediate(() => ac.abort());
 
     const result = await closePromise.catch((e: unknown) => e);

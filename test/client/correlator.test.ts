@@ -2,7 +2,7 @@
  * Correlator pure-data-structure tests (PLAN-02, D-03/A1).
  *
  * Drives the unified Map<correlationKey, PendingAck> + graveyard via an
- * injected fake clock — no real timers, no I/O, no FSM.
+ * injected fake clock, no real timers, no I/O, no FSM.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -129,14 +129,14 @@ describe("Correlator (PLAN-02 FIFO mode)", () => {
     setNow(1_000);
     correlator.markFlushed(key as number);
 
-    // Just before expiry — nothing fires
+    // Just before expiry, nothing fires
     setNow(1_999);
     correlator.expireDue();
     expect(onTimeout).not.toHaveBeenCalled();
     expect(correlator.size).toBe(1);
     expect(correlator.graveyardSize).toBe(0);
 
-    // At threshold (sentAt + ackTimeoutMs <= now) — expires
+    // At threshold (sentAt + ackTimeoutMs <= now), expires
     setNow(2_000);
     correlator.expireDue();
     expect(onTimeout).toHaveBeenCalledTimes(1);
@@ -147,7 +147,7 @@ describe("Correlator (PLAN-02 FIFO mode)", () => {
     expect(correlator.graveyardSize).toBe(1);
   });
 
-  it("Test 5: matchAck() after expiry — late ACK in FIFO returns null cleanly", () => {
+  it("Test 5: matchAck() after expiry, late ACK in FIFO returns null cleanly", () => {
     // FIFO graveyard semantics: matchAck pulls from the head of the live store.
     // After all sends have expired, no live entries exist, so matchAck returns null.
     // (The MLLP_ACK_AFTER_TIMEOUT code is emitted by the controlId-mode graveyard
@@ -182,7 +182,7 @@ describe("Correlator (PLAN-02 FIFO mode)", () => {
     correlator.matchAck(Buffer.from("ACK"));
     expect(correlator.graveyardSize).toBe(1);
 
-    // At threshold — graveyard entry evicted.
+    // At threshold, graveyard entry evicted.
     setNow(4_000);
     correlator.matchAck(Buffer.from("ACK"));
     expect(correlator.graveyardSize).toBe(0);
@@ -296,12 +296,12 @@ describe("Correlator (PLAN-02 FIFO mode)", () => {
     correlator.enqueue(Buffer.from("a"), null, noop, noopReject);
     correlator.matchAck(Buffer.from("ACK"));
     expect(onWarning).not.toHaveBeenCalled();
-    // Reference the type so an unused MllpWarning import would be flagged — used here as a no-op type assertion.
+    // Reference the type so an unused MllpWarning import would be flagged, used here as a no-op type assertion.
     const _w: MllpWarning | undefined = undefined;
     expect(_w).toBeUndefined();
   });
 
-  // PLAN-06 — inFlight counter maintenance (D-26 + B-01)
+  // PLAN-06, inFlight counter maintenance (D-26 + B-01)
   it("Test 13 (PLAN-06): _inFlight counter is maintained across markFlushed/remove/expireDue/matchAck/clear", () => {
     const { correlator, setNow } = harness();
     const k1 = correlator.enqueue(Buffer.from("A"), null, noop, noopReject) as number;
@@ -353,7 +353,7 @@ describe("Correlator (PLAN-02 FIFO mode)", () => {
     expect(correlator.getStats().inFlight).toBe(0);
     expect(correlator.getStats().size).toBe(0);
 
-    // Pre-flush match (entry is at head but not flushed) — also should not over-decrement
+    // Pre-flush match (entry is at head but not flushed), also should not over-decrement
     const k2 = correlator.enqueue(Buffer.from("B"), null, noop, noopReject) as number;
     void k2;
     setNow(3_000);

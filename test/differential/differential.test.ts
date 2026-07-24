@@ -3,28 +3,28 @@
  *
  * The interop bar for mllp is byte-parity with the two dominant open-source R1 MLLP
  * implementations named in the roadmap:
- *   - the **Google Cloud Healthcare MLLP adapter** (Go, Apache-2.0) —
+ *   - the **Google Cloud Healthcare MLLP adapter** (Go, Apache-2.0),
  *     https://github.com/GoogleCloudPlatform/mllp
- *   - **Mirth / NextGen Connect** (Java, MPL) —
+ *   - **Mirth / NextGen Connect** (Java, MPL),
  *     https://github.com/nextgenhealthcare/connect
  *
  * Both frame HL7 v2 the same, spec-mandated way: `VT (0x0B) + payload + FS (0x1C) +
  * CR (0x0D)` (MLLP Release 1). This suite has two tiers, mirroring `@cosyte/hl7`'s
  * Phase-J differential harness:
  *
- *   **Tier 1 — golden frames (always on).** `fixtures/*.frame.bin` are canonical R1
- *   frames — the exact wire bytes both adapters emit for the synthetic messages, per
+ *   **Tier 1, golden frames (always on).** `fixtures/*.frame.bin` are canonical R1
+ *   frames, the exact wire bytes both adapters emit for the synthetic messages, per
  *   their documented framing. We assert (a) the golden has R1 structure, (b) mllp's
  *   `FrameReader` decodes it to the exact payload, and (c) mllp's `encodeFrame`
  *   reproduces it byte-for-byte. A framing regression shows up as a byte diff here.
  *   See `fixtures/README.md` for provenance and how to regenerate / replace with live
  *   captures.
  *
- *   **Tier 2 — live adapter (opt-in, skips when absent).** If `MLLP_DIFF_ADAPTER` is
+ *   **Tier 2, live adapter (opt-in, skips when absent).** If `MLLP_DIFF_ADAPTER` is
  *   set to `host:port` of a running R1 adapter (e.g. a locally-run Google adapter or
  *   Mirth listener), the suite sends a frame and asserts the ACK correlates
- *   (MSA-2 echoes MSH-10). With the env var unset — CI and most dev machines, where no
- *   Java/Go adapter or Docker is available — every Tier-2 test `skip`s, so `verify.sh`
+ *   (MSA-2 echoes MSH-10). With the env var unset, CI and most dev machines, where no
+ *   Java/Go adapter or Docker is available, every Tier-2 test `skip`s, so `verify.sh`
  *   stays green. This matches hl7's oracle-gated pattern (no oracle ⇒ skip, never fail).
  *
  * All fixtures are synthetic (no real PHI).
@@ -63,7 +63,7 @@ function stripR1(framed: Buffer): Buffer {
 
 const GOLDENS = ["r1-adt-a01.frame.bin", "r1-oru-r01.frame.bin", "r1-ack-aa.frame.bin"] as const;
 
-// Tier 1 pins mllp against the *canonical R1 wire shape* (VT … FS CR) — the framing both the
+// Tier 1 pins mllp against the *canonical R1 wire shape* (VT … FS CR), the framing both the
 // Google Cloud MLLP adapter and Mirth/NextGen emit, since R1 framing is byte-identical across
 // conformant implementations. The goldens are spec-derived (see fixtures/README), NOT live
 // captures, so this tier is a self-consistency + regression guard on the canonical shape; true
@@ -111,7 +111,7 @@ function liveAdapter(): { host: string; port: number } | undefined {
   const raw = process.env["MLLP_DIFF_ADAPTER"]?.trim();
   if (raw === undefined || raw === "") return undefined;
   // Split on the LAST colon so an IPv6 host parses too (e.g. '::1:2575', '[::1]:2575'), not just
-  // IPv4/hostname — a naive split(':') would mangle the host and NaN the port, silently skipping
+  // IPv4/hostname, a naive split(':') would mangle the host and NaN the port, silently skipping
   // the live tier when the developer believes it ran.
   const lastColon = raw.lastIndexOf(":");
   if (lastColon <= 0) return undefined;
@@ -129,7 +129,7 @@ describe("differential Tier 2: live R1 adapter (opt-in via MLLP_DIFF_ADAPTER)", 
     if (adapter === undefined) {
       // eslint-disable-next-line no-console
       console.log(
-        "[differential] MLLP_DIFF_ADAPTER not set — skipping live-adapter tier (verify stays green)",
+        "[differential] MLLP_DIFF_ADAPTER not set, skipping live-adapter tier (verify stays green)",
       );
     }
   });

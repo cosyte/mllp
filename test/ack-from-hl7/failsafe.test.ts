@@ -1,7 +1,7 @@
 /**
  * Fail-safe ACK semantics: no fabricated positive disposition, whether the
  * inbound parses but lacks a correlation id, or fails to parse at all.
- * Fixtures are synthetic-only — never PHI.
+ * Fixtures are synthetic-only, never PHI.
  */
 
 import { describe, expect, it } from "vitest";
@@ -18,12 +18,12 @@ const INBOUND_WITH_NAME =
   "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260101120000||ADT^A01|MSG00001|P|2.5\r" +
   `PID|1||SYNTH^^^^MR||${DISTINCTIVE_NAME}\r`;
 
-/** Inbound with no MSH-10 control id — the parseable-but-uncorrelated case. */
+/** Inbound with no MSH-10 control id, the parseable-but-uncorrelated case. */
 const INBOUND_NO_CONTROL_ID =
   "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260101120000||ADT^A01||P|2.5\r" +
   `PID|1||SYNTH^^^^MR||${DISTINCTIVE_NAME}\r`;
 
-describe("buildMllpAck — fail-safe: parseable inbound, no MSH-10", () => {
+describe("buildMllpAck, fail-safe: parseable inbound, no MSH-10", () => {
   it("downgrades AA -> AE, requestedCode stays AA, correlationId undefined, MSA-2 empty", () => {
     const ack = buildAckAA(INBOUND_NO_CONTROL_ID);
     expect(ack.code).toBe("AE");
@@ -50,7 +50,7 @@ describe("buildMllpAck — fail-safe: parseable inbound, no MSH-10", () => {
   });
 });
 
-describe("buildMllpAck — fail-safe: inbound fatally unparseable", () => {
+describe("buildMllpAck, fail-safe: inbound fatally unparseable", () => {
   it("garbage text (NO_MSH_SEGMENT): AA -> AE, MSA-2 empty, mode undefined, warning code set", () => {
     const ack = buildAckAA("not hl7 at all");
     expect(ack.code).toBe("AE");
@@ -89,7 +89,7 @@ describe("buildMllpAck — fail-safe: inbound fatally unparseable", () => {
   });
 });
 
-describe("buildMllpAck — PHI / content-free warnings", () => {
+describe("buildMllpAck, PHI / content-free warnings", () => {
   it("no warning message contains the distinctive synthetic name, across all paths", () => {
     const paths = [
       buildAckAA(INBOUND_WITH_NAME), // happy path, no warnings expected
@@ -104,7 +104,7 @@ describe("buildMllpAck — PHI / content-free warnings", () => {
   });
 });
 
-describe("buildMllpAck — non-parse errors propagate unchanged", () => {
+describe("buildMllpAck, non-parse errors propagate unchanged", () => {
   it("rethrows an error from a hostile inbound object's toString() as-is (no fallback ACK)", () => {
     const boom = new Error("boom from toString");
     // Simulates a JS caller passing a non-Hl7Message object: it fails the

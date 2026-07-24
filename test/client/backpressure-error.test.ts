@@ -3,7 +3,7 @@
  *
  * Verifies the error class shape: readonly fields, name discrimination,
  * Error.captureStackTrace discipline, instanceof correctness, and that the
- * PLAN-01 sentinel for PLAN-05 fills has been removed (sentinel hygiene —
+ * PLAN-01 sentinel for PLAN-05 fills has been removed (sentinel hygiene,
  * matches the PLAN-02 / PLAN-04 fill precedents).
  */
 
