@@ -21,7 +21,7 @@ MLLP plus an HL7 ACK is **at-least-once at best**, and the gap is unavoidable: i
 commits your message and the ACK is lost on the way back, the sender cannot tell that apart from the
 receiver never having got it. Both look like a timeout.
 
-**The application owns idempotency and de-duplication** — key on `MSH-10` (message control ID) plus
+**The application owns idempotency and de-duplication**: key on `MSH-10` (message control ID) plus
 `MSH-7` (timestamp). `@cosyte/mllp` surfaces unacked messages to you; it does **not** store them,
 queue them, or replay them. There is no write-ahead log in this package. If you need one, it lives in
 your application, not here.
@@ -30,8 +30,8 @@ your application, not here.
 
 `close()` **rejects** every in-flight send (`MllpConnectionError({ phase: 'close' })`) rather than
 waiting for their ACKs. The `DRAINING` state exists in the connection machine, but no drain hook is
-wired to it today, so `drainTimeoutMs` does not currently bound an in-flight ACK wait on the client —
-there is no such wait.
+wired to it today, so `drainTimeoutMs` does not currently bound an in-flight ACK wait on the client.
+There is no such wait.
 
 A message in flight at shutdown is therefore an **unknown**, not a failure: it may have been
 committed by the receiver with the ACK arriving after you stopped listening. Await your sends before
@@ -40,16 +40,16 @@ closing if that matters, and rely on receiver-side idempotency (`MSH-10` + `MSH-
 
 ## A fatal framing error drops the connection, and is not retried
 
-If the decoder throws — an oversized frame, or a structural violation whose tolerance opt-in is off —
+If the decoder throws (an oversized frame, or a structural violation whose tolerance opt-in is off),
 that **connection** is destroyed. It is not resynchronized: after a throw the reader's position in
 the byte stream is untrustworthy, and guessing where the next message starts is how one gets silently
 mis-split. Bytes already accumulated in that connection's partial frame are **lost**.
 
-The failure is contained to the one connection — a server keeps serving every other peer — and it is
+The failure is contained to the one connection (a server keeps serving every other peer) and it is
 classified `framing-fatal`, i.e. **permanent**, so a client does not reconnect into it. That is
 deliberate (a peer speaking the wrong protocol would otherwise be retried forever), but it means a
 client facing a peer that emits *occasional* junk will **stop**, not heal. If a peer's quirk is
-expected, use the tolerance opt-ins so the bytes are a warning rather than a fatal — see
+expected, use the tolerance opt-ins so the bytes are a warning rather than a fatal. See
 [Framing & tolerance](./framing.md).
 
 ## It does not decide clinical acceptance
@@ -60,7 +60,7 @@ call, from your own processing outcome. See [the commit contract](./acks.md).
 
 ## It does not speak MLLP Release 2
 
-Only **Release 1** (framing, with reliability delegated to the HL7 v2 ACK) is implemented — the
+Only **Release 1** (framing, with reliability delegated to the HL7 v2 ACK) is implemented: the
 universal default for HL7 v2. The R2 commit-acknowledgement blocks (`<SB><ACK 0x06><EB><CR>` /
 `<SB><NAK 0x15><EB><CR>`) and R2's synchronous "no new content until ack" discipline are **not
 supported**. R2 is used mainly with HL7 v3 and is rarely needed for v2; if it ships, it will be
@@ -68,7 +68,7 @@ opt-in and off by default, and R1 framing will never silently downgrade to it.
 
 ## It is not differentially verified against Epic or Cerner
 
-Interop is proven against **freely available** engines only — the Google Cloud Healthcare MLLP
+Interop is proven against **freely available** engines only: the Google Cloud Healthcare MLLP
 adapter and Mirth/NextGen Connect (byte-parity on canonical R1 frames, plus a live-adapter tier).
 Neither Epic nor Cerner is part of that harness. Their behavior is inferred from the spec, not
 observed. Validate against your actual peer before you trust a production interface.
@@ -80,7 +80,7 @@ nothing, and has no opinion about your certificate lifecycle. See [MLLPS / TLS](
 
 ## It cannot carry charsets that collide with the framing bytes
 
-MLLP is **not byte-transparent** — `0x0B` and `0x1C` are structural. A payload encoded in UTF-16 or
+MLLP is **not byte-transparent**. `0x0B` and `0x1C` are structural. A payload encoded in UTF-16 or
 UTF-32 will contain those bytes inside ordinary characters, and any MLLP implementation (not just
 this one) will mis-frame it. Use a single-byte encoding, UTF-8, or Shift_JIS. Which charset is in
 play is the HL7 message's `MSH-18` concern, not the transport's.
@@ -89,8 +89,8 @@ play is the HL7 message's `MSH-18` concern, not the transport's.
 
 MSA-2 must carry the inbound MSH-10 **verbatim** (HL7 v2.5.1 §2.9.2.2), because that is the key the
 sender correlates its ACK on. `buildMllpAck` (the `/ack-from-hl7` subpath) holds that guarantee
-byte-for-byte for a plain control ID under the HL7 default delimiters — including a high-bit one
-under an `MSH-18` of `8859/1` — but it builds through `@cosyte/hl7`, which **re-emits** MSH-10 in its
+byte-for-byte for a plain control ID under the HL7 default delimiters (including a high-bit one
+under an `MSH-18` of `8859/1`) but it builds through `@cosyte/hl7`, which **re-emits** MSH-10 in its
 canonical form rather than copying the bytes. Five things that canonical form does not preserve:
 
 - **Non-default delimiters.** `@cosyte/hl7` always emits `|^~\&`, so `ID#X` under a `#` component
@@ -101,27 +101,27 @@ canonical form rather than copying the bytes. Five things that canonical form do
 - **A lossy `encoding` override.** Any codec that cannot round-trip the inbound bytes.
 
 Each yields a *different* MSH-10, and so an ACK the sender cannot match. On a **`Buffer`** inbound none
-of them is silent — the result carries `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. And all five have the same
+of them is silent. The result carries `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. And all five have the same
 answer: **`buildRawAck`**
-(the root export, and what the server's `autoAck` path uses) is parser-free — it copies the MSH-10
-bytes — so it holds the verbatim guarantee across escapes, padding, empty components, and **any**
+(the root export, and what the server's `autoAck` path uses) is parser-free (it copies the MSH-10
+bytes) so it holds the verbatim guarantee across escapes, padding, empty components, and **any**
 delimiter set. It always emits the ACK under the inbound's own field separator (never a substituted
 one), and MSH-10 provably cannot contain that separator, so the echo round-trips byte-for-byte
 whatever the control ID contains. See [ACKs](./acks.md).
 
 And the *verbatim proof* is a **`Buffer`** guarantee. On a `string` / `Hl7Message` inbound the wire
 bytes were decoded before `buildMllpAck` ever saw them, so it re-encodes your text with the same codec
-it decoded it with: the codec cancels on both sides, and `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` — a
-byte-for-byte comparison — cannot fire. `buildAckAA(payload.toString("latin1"))` on a high-bit control
+it decoded it with: the codec cancels on both sides, and `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` (a
+byte-for-byte comparison) cannot fire. `buildAckAA(payload.toString("latin1"))` on a high-bit control
 ID (`0x8B`) emits the two `utf8` bytes `0xC2 0x8B`, a *different* control ID the sender cannot
 correlate. The encoding cannot be fixed from here (decoded text does not remember its bytes), and the
-verbatim check cannot catch it (the bytes are gone) — but the API no longer stays **silent** about it.
+verbatim check cannot catch it (the bytes are gone), but the API no longer stays **silent** about it.
 Whenever the emitted MSA-2 holds a non-ASCII byte on a text inbound, `buildMllpAck` emits
-**`MLLP_ACK_CONTROL_ID_UNVERIFIABLE`** — a distinct "cannot verify this echo; pass a `Buffer`" signal,
+**`MLLP_ACK_CONTROL_ID_UNVERIFIABLE`**: a distinct "cannot verify this echo; pass a `Buffer`" signal,
 separate from the `Buffer`-path proof-of-mismatch. An all-ASCII control ID round-trips under every
 codec and stays quiet. Pass a `Buffer`. That is what the `Buffer`-first API rule is for.
 
-A **non-text** `encoding` override is a step past even that — and it is **rejected**, not warned, on
+A **non-text** `encoding` override is a step past even that. It is **rejected**, not warned, on
 **every** input shape. `"base64"`/`"base64url"`/`"hex"` reinterpret the ACK *string* as encoded data,
 and `"utf16le"`/`"ucs2"` NUL-pad every byte, so the emitted frame is wholesale garbage a receiver
 cannot parse. Because a garbage frame is a caller mistake rather than a runtime condition,
@@ -129,7 +129,7 @@ cannot parse. Because a garbage frame is a caller mistake rather than a runtime 
 / -BUFFER); only text codecs (`"utf8"`/`"ascii"`/`"latin1"`/`"binary"`) are accepted. This includes a
 `Buffer` inbound: a non-text codec there garbles the *inbound* decode into the unparseable fallback
 (empty MSA-2, so the `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof never runs) and then serializes the
-fallback ACK to garbage bytes that ~3–4 % of the time — identically on Node 22 and 24 — contain a
+fallback ACK to garbage bytes that ~3–4 % of the time (identically on Node 22 and 24) contain a
 `VT`/`FS` byte and trip the strict frame encoder with a nondeterministic `MllpFramingError`. It was
 never the "loud AE" escape hatch it was documented to be. The legitimate byte-level escape hatch is
 untouched: a **charset** codec on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that
@@ -137,7 +137,7 @@ still surfaces as the loud `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof) is what ser
 demands a specific byte-level codec.
 
 Neither builder **ACKs an HL7 batch** (§2.10.3) or a frame of concatenated messages. An `FHS`/`BHS`
-envelope, or a second `MSH` in the same frame, yields the warned, non-positive `AE` — never a
+envelope, or a second `MSH` in the same frame, yields the warned, non-positive `AE`, never a
 positive `AA` correlated to the first message, which would tell the sender the whole batch was
 accepted while messages 2..N went unread. `buildMllpAck` refuses via its unparseable fallback;
 `buildRawAck` and the server's auto-ACK path refuse by downgrading a requested positive code. A raw
@@ -150,8 +150,8 @@ own unbuilt feature (`MLLP-BATCH`).
 
 `@cosyte/mllp` is on the `0.0.x` ladder and **pre-alpha**. There is no API-stability promise and no
 deprecation cycle: any release may change the public surface. The stable **warning codes** and
-**security-warning codes** are treated as public API within that caveat — renaming one is a breaking
-change — but the ladder itself makes no 1.0-style guarantees. Pin an exact version.
+**security-warning codes** are treated as public API within that caveat (renaming one is a breaking
+change) but the ladder itself makes no 1.0-style guarantees. Pin an exact version.
 
 ---
 

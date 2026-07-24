@@ -14,7 +14,7 @@ whether a library works with it.
 ## How these names are used
 
 This package has no vendor profile system. The names identify freely available software used for
-interoperability testing, or appear in documentation recording the limits of that testing —
+interoperability testing, or appear in documentation recording the limits of that testing,
 including an explicit statement that Epic and Cerner are **not** part of the harness.
 
 ## Names referenced
