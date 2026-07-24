@@ -1,5 +1,5 @@
 /**
- * `@cosyte/mllp` — Production-grade MLLP client and server for Node.js.
+ * `@cosyte/mllp`, Production-grade MLLP client and server for Node.js.
  *
  * Transport-only sibling to `@cosyte/hl7`. Handles framing, ACKs, reconnects,
  * backpressure, and TLS without requiring knowledge of the MLLP spec.
@@ -17,7 +17,7 @@
  * Package version marker exported from the `@cosyte/mllp` root.
  *
  * Kept in lockstep with `package.json` by `scripts/sync-version.mjs`, which the `version` script
- * runs immediately after `changeset version`. The `: string` annotation is deliberate — without it
+ * runs immediately after `changeset version`. The `: string` annotation is deliberate, without it
  * TypeScript infers the *literal* type (`declare const VERSION = "0.0.0"`), which leaks the current
  * release into consumers' types and makes an equality check against any other version a compile
  * error.

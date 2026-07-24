@@ -3,7 +3,7 @@ import { encodeFrame } from "../../src/framing/encoder.js";
 import { MllpFramingError } from "../../src/framing/error.js";
 import type { MllpWarning } from "../../src/framing/registry.js";
 
-describe("encodeFrame — strict path (default)", () => {
+describe("encodeFrame, strict path (default)", () => {
   it("wraps payload: VT at [0], FS at [len-2], CR at [len-1]", () => {
     const payload = Buffer.from("MSH|^~\\&|SEND|FAC|||");
     const frame = encodeFrame(payload);
@@ -71,7 +71,7 @@ describe("encodeFrame — strict path (default)", () => {
     }
   });
 
-  it("output buffer is independent — mutating payload after encode does not affect output", () => {
+  it("output buffer is independent, mutating payload after encode does not affect output", () => {
     const payload = Buffer.from([0x41, 0x42, 0x43]);
     const frame = encodeFrame(payload);
     const before = frame.subarray(1, 4).toString("hex");
@@ -97,7 +97,7 @@ describe("encodeFrame — strict path (default)", () => {
   });
 });
 
-describe("encodeFrame — tolerant path (allowDelimiterBytesInPayload)", () => {
+describe("encodeFrame, tolerant path (allowDelimiterBytesInPayload)", () => {
   it("does not throw on VT byte when allowDelimiterBytesInPayload: true", () => {
     const payload = Buffer.from([0x41, 0x0b, 0x42]);
     expect(() => encodeFrame(payload, { allowDelimiterBytesInPayload: true })).not.toThrow();

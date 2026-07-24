@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * `@cosyte/mllp` PHI scanner — the CI / pre-commit half of the PHI commit-gate.
+ * `@cosyte/mllp` PHI scanner, the CI / pre-commit half of the PHI commit-gate.
  *
  * Pure Node. Zero runtime deps. Walks the synthetic HL7/MLLP data fixtures under
  * `test/` (and a conservative text pass over `src/`) and REFUSES anything that
@@ -21,19 +21,19 @@
  *
  * A framed binary fixture is byte-strict at the front (the VT start-block, then
  * the `MSH` / batch `FHS` / `BHS` segment), so an inline `# synthetic: true`
- * header is impossible — it would break every framing test. This is the same
+ * header is impossible, it would break every framing test. This is the same
  * constraint DICOM hits with binary `.dcm` files and X12 with `.edi`, and we
  * solve it the same proven way: a **synthetic allow-list**
  * (`scripts/phi-allow-list.txt`) is the positive declaration that a fixture's
  * identifiers are fake. Any realistic-PHI-shaped token not covered by the
  * allow-list is a hit. Adding a new synthetic fixture therefore means either
- * reusing known-synthetic tokens or consciously extending the allow-list — a
+ * reusing known-synthetic tokens or consciously extending the allow-list, a
  * reviewed act, never silent.
  *
  * Detection is HL7-shape-aware, NOT a blind text regex: the scanner parses each
  * message's delimiters (from `MSH-1` / `MSH-2`), splits segments → fields →
  * repetitions → components, and inspects only the fields that actually carry
- * each PHI category. That is deliberate — a naive `Family^Given` text scan trips
+ * each PHI category. That is deliberate, a naive `Family^Given` text scan trips
  * on coded values like `CBC^Complete Blood Count^LN` or `Boston^MA`, giving
  * false confidence. See `phi-scan-overrides.md` for the category → field map and
  * the documented limitations.
@@ -41,7 +41,7 @@
  * A non-HL7 binary fixture (a byte/buffer fixture that is not a framed HL7
  * message) is handled safely: it never matches the fixture-like + segment-line
  * gate, so it falls through to the conservative shape pass (dashed-SSN + email)
- * — no crash (exit 2), no false positive from binary noise.
+ * no crash (exit 2), no false positive from binary noise.
  *
  * SECURITY: every subprocess is `git`, invoked via `execFileSync` with array
  * args only. Never shell-form spawn.
@@ -71,21 +71,21 @@ const OVERRIDE_LOG_PATH = join(REPO_ROOT, "phi-scan-overrides.md");
 // Roots walked in "all" mode. From `test/` we take EVERY data file except `.ts`
 // sources (see `isScannableTestFile`); each is then dispatched by `looksLikeHl7`
 // to the structured HL7 scan or the conservative pass. `src/` gets a conservative
-// dashed-SSN + email text pass — it is hand-written code, and its JSDoc
+// dashed-SSN + email text pass, it is hand-written code, and its JSDoc
 // `@example` HL7 snippets carry synthetic names/MRNs that must not trip the
 // segment-aware detectors. A committed real SSN/email in code is caught there.
 const TEST_ROOT = join(REPO_ROOT, "test");
 const SRC_ROOT = join(REPO_ROOT, "src");
 
 // Which `test/` files get swept: EVERY data file under `test/` EXCEPT `.ts`
-// sources (and `.md` docs). `.ts` sources are excluded because — like this
-// scanner's own `test/scripts/phi-scan.test.ts` — they carry intentional
+// sources (and `.md` docs). `.ts` sources are excluded because, like this
+// scanner's own `test/scripts/phi-scan.test.ts`, they carry intentional
 // violator literals for the positive tests, so sweeping them is self-defeating.
 // Everything else (a framed `.frame.bin`, a bare `.hl7`, a `.txt` / `.json` /
 // extensionless live-adapter capture, a byte/buffer fixture) is KEPT and then
 // dispatched by `looksLikeHl7`: an HL7 payload (framed or not) gets the full
 // structured scan, a non-HL7 blob gets the conservative dashed-SSN + email pass.
-// The filter must EXCLUDE .ts, never RESTRICT to a fixed extension allow-list —
+// The filter must EXCLUDE .ts, never RESTRICT to a fixed extension allow-list,
 // restricting silently dropped `.txt` / extensionless captures from any scan at
 // all (the directory `test/differential/fixtures/README.md` tells developers to
 // drop real captures into), which is precisely the false negative this gate
@@ -96,7 +96,7 @@ function isScannableTestFile(relPath: string): boolean {
 
 // Person-name fields keyed by segment id. XPN fields carry family in component 1
 // (`Doe^John`); XCN fields carry an id in component 1 and the family/given in
-// components 2/3 (`ATTEND^Smith^Jane`). The distinction is load-bearing — read
+// components 2/3 (`ATTEND^Smith^Jane`). The distinction is load-bearing, read
 // the wrong components and every provider name slips through.
 const XPN_NAME_FIELDS: Readonly<Record<string, readonly number[]>> = {
   PID: [5, 6, 9], // patient name / mother's maiden name / alias
@@ -139,13 +139,13 @@ const PHONE_FIELDS: Readonly<Record<string, readonly number[]>> = {
 const CX_ID_FIELDS: Readonly<Record<string, readonly number[]>> = {
   PID: [3, 18], // patient identifier list / account number
 };
-// Plain SSN fields (HL7 type ST — a bare number, not a CX list).
+// Plain SSN fields (HL7 type ST, a bare number, not a CX list).
 const SSN_ST_FIELDS: Readonly<Record<string, readonly number[]>> = {
   PID: [19], // SSN number - patient
 };
 
 // Name tokens that are HL7 name-type / degree / suffix / prefix codes, never a
-// person's identifying name — extracted alongside real name tokens and skipped.
+// person's identifying name, extracted alongside real name tokens and skipped.
 const NAME_NOISE_TOKENS = new Set<string>([
   "MD",
   "DO",
@@ -354,7 +354,7 @@ function parseArgs(argv: string[]): Args {
   }
 
   // An `--allow-fixture` path is a *subtractive* acknowledgement on a broader
-  // scan, never a scan target on its own — so it also seeds the positional path
+  // scan, never a scan target on its own, so it also seeds the positional path
   // set. That makes `--allow-fixture X` mean "scan X, but allow it" (proving the
   // override gate actually subtracts a scanned target) instead of a silent no-op.
   const scanPaths = paths.length > 0 ? paths : [...allowFixtures];
@@ -425,7 +425,7 @@ function loadOverrideLog(): Set<string> {
   if (!existsSync(OVERRIDE_LOG_PATH)) return new Set();
   const raw = readFileSync(OVERRIDE_LOG_PATH, "utf8");
   const out = new Set<string>();
-  // Skip fenced code blocks — the doc's own "Format" example shows a literal
+  // Skip fenced code blocks, the doc's own "Format" example shows a literal
   // `### <path>` template that is NOT a real entry. Only `###` headings in prose
   // are override entries.
   let inFence = false;
@@ -482,7 +482,7 @@ function gitIgnored(paths: string[]): Set<string> {
   const ignored = new Set<string>();
   if (paths.length === 0) return ignored;
   try {
-    // SECURITY: array-form execFileSync, no shell. Default (Buffer) encoding —
+    // SECURITY: array-form execFileSync, no shell. Default (Buffer) encoding,
     // `encoding: "buffer"` with `input` is rejected by Node.
     const out = execFileSync("git", ["check-ignore", "--stdin", "-z"], {
       input: paths.map(normalizePath).join("\0"),
@@ -492,7 +492,7 @@ function gitIgnored(paths: string[]): Set<string> {
       if (p.length > 0) ignored.add(p);
     }
   } catch {
-    // `git check-ignore` exits 1 when nothing matches — treat as none ignored.
+    // `git check-ignore` exits 1 when nothing matches, treat as none ignored.
   }
   return ignored;
 }
@@ -566,7 +566,7 @@ function buildTargetsForStaged(): Target[] {
  * scanner strips a BOM, then ALL leading `VT` start-block bytes (double-framing
  * probe: two leading `VT`s), then a trailing `FS` end-block (optionally followed
  * by `CR` and/or `LF`). A frame with a MISSING end-block (`VT + payload`, no
- * `FS CR`) still has its `VT` removed and its payload scanned — the unwrap only
+ * `FS CR`) still has its `VT` removed and its payload scanned, the unwrap only
  * ever REMOVES framing bytes, never gates the scan on their presence, so no
  * malformed frame can bypass detection. Any residual mid-payload `FS`/`VT` byte
  * is harmless: `splitSegments` splits on `CR`/`LF`, so it can only cling to one
@@ -581,7 +581,7 @@ function unwrapMllpFrame(text: string): string {
 }
 
 // A line is a segment when it starts with a 3-char id (letters+digits, HL7
-// allows a leading letter) followed by a delimiter — not a letter/digit/space.
+// allows a leading letter) followed by a delimiter, not a letter/digit/space.
 // Case-insensitive: the parser is lenient about segment case (lowercase `pid`),
 // so the scanner must be too, or a mixed-case feed silently bypasses detection.
 const SEGMENT_LINE_RE = /^([A-Za-z][A-Za-z0-9]{2})([^A-Za-z0-9\s])/;
@@ -603,14 +603,14 @@ function findHeaderLine(text: string): string | undefined {
  * A file gets the full structured HL7 scan only when it is fixture-like AND
  * contains at least one recognizable segment line after MLLP unwrap. Fixture-like
  * means: a `.hl7` file, a `.bin` frame, OR ANY data file under `test/` (which is
- * exactly the set `isScannableTestFile` admits, minus `.ts` sources — a live
+ * exactly the set `isScannableTestFile` admits, minus `.ts` sources, a live
  * capture the differential README says to drop here may arrive as `.txt` /
  * `.json` / extensionless, and must still earn the structured scan, not just the
  * conservative shape pass). The gate is load-bearing in BOTH directions:
  *   - it lets a header-less message still get the full structured scan rather
  *     than the text-only pass (a fixture whose first segment is not MSH); and
  *   - it keeps hand-written `src/` code (and any `.ts` file passed explicitly) on
- *     the conservative pass even when it embeds an `MSH|…` example string —
+ *     the conservative pass even when it embeds an `MSH|…` example string,
  *     parsing a `.ts` file as HL7 segments produces only noise.
  * A fixture-like file with NO recognizable segment line (a genuinely non-HL7
  * binary blob) falls through to the conservative dashed-SSN + email pass; so does
@@ -667,7 +667,7 @@ function fieldAt(elems: string[], n: number): string {
 
 /** Escape-aware, unicode-aware name tokenizer. */
 function nameTokens(value: string, d: Delimiters): string[] {
-  // Drop HL7 escape sequences (\F\ \S\ \T\ \R\ \E\ \Xhh\ \Zxx\ …) — they are
+  // Drop HL7 escape sequences (\F\ \S\ \T\ \R\ \E\ \Xhh\ \Zxx\ …), they are
   // delimiter placeholders, not name characters.
   const esc = d.escape.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const noEsc = value.replace(new RegExp(`${esc}[^${esc}]*${esc}`, "g"), " ");
@@ -675,7 +675,7 @@ function nameTokens(value: string, d: Delimiters): string[] {
   for (const raw of noEsc.split(/[^\p{L}]+/u)) {
     if (raw.length === 0) continue;
     if (!/\p{L}/u.test(raw)) continue;
-    // A single Latin letter is a middle initial — not identifying. A single CJK
+    // A single Latin letter is a middle initial, not identifying. A single CJK
     // ideograph / kana / hangul IS a name (Chinese/Korean surnames are 1 char),
     // so keep those.
     const isCjk = /[぀-ヿ㐀-鿿가-힯]/u.test(raw);
@@ -879,7 +879,7 @@ function checkSsnStField(
  * Unknown / `Z…` site-defined segments have no known field schema, so a name
  * could hide in any field. Backstop: within each field, flag an adjacent pair of
  * single-token name-shaped components (`Johnson^Maya`) whose tokens are not
- * allow-listed. Only runs on unknown segments — known code-bearing segments
+ * allow-listed. Only runs on unknown segments, known code-bearing segments
  * (`OBX`, `OBR`, …) carry `CODE^Description^System` triples that this would
  * misread as names.
  */
@@ -946,7 +946,7 @@ function scanCommonShapes(path: string, content: string, allow: AllowList, hits:
 function scanHl7(target: Target, text: string, allow: AllowList, hits: Hit[]): void {
   const d = detectDelimiters(text);
   for (const elems of splitSegments(text, d)) {
-    // Segment ids are matched case-insensitively — the lenient parser accepts a
+    // Segment ids are matched case-insensitively, the lenient parser accepts a
     // lowercase `pid`, so the scanner must normalize before every lookup or a
     // mixed-case feed silently escapes the per-field detectors.
     const segId = (elems[0] ?? "").toUpperCase();
@@ -1006,7 +1006,7 @@ function scanTarget(target: Target, allow: AllowList, hits: Hit[]): void {
     scanHl7(target, text, allow, hits);
   } else {
     // Non-HL7 target (hand-written src / test, plain-text notes, non-HL7 binary
-    // byte/buffer fixture): conservative shape pass only — no segment model to
+    // byte/buffer fixture): conservative shape pass only, no segment model to
     // lean on. Binary noise decoded as utf8 cannot crash this; at worst it emits
     // no hits.
     scanCommonShapes(target.path, text, allow, hits);
@@ -1019,7 +1019,7 @@ function scanTarget(target: Target, allow: AllowList, hits: Hit[]): void {
 
 function report(hits: Hit[]): void {
   if (hits.length === 0) {
-    process.stdout.write("[phi-scan] OK — no hits\n");
+    process.stdout.write("[phi-scan] OK, no hits\n");
     return;
   }
   const byPath = new Map<string, Hit[]>();

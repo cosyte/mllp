@@ -1,5 +1,5 @@
 /**
- * NetTransport — `Transport` implementation wrapping a `net.Socket`.
+ * NetTransport, `Transport` implementation wrapping a `net.Socket`.
  *
  * This is the **only** place in the codebase that consumes `net.Socket`'s
  * EventEmitter surface. All higher layers (Connection, Server, Client) work

@@ -1,9 +1,9 @@
 /**
- * MLLP-ACK-UTF8, refuter round 1 — the two properties the conformance gate refuted.
+ * MLLP-ACK-UTF8, refuter round 1, the two properties the conformance gate refuted.
  *
  * **1. The scan stops at the segment terminator.** `extractMshControlId` counted field
- * separators without ever stopping at `CR`/`LF`. On a **truncated MSH** — one with fewer
- * than 10 fields, which is malformed but is exactly what a peer sends when it is broken —
+ * separators without ever stopping at `CR`/`LF`. On a **truncated MSH**, one with fewer
+ * than 10 fields, which is malformed but is exactly what a peer sends when it is broken,
  * the count ran *past* the segment terminator and kept counting inside the next segment.
  * The "MSH-10" it returned was `PID-3`: the patient's **MRN**. That value became the
  * client's correlation key, went into `MllpTimeoutError.messageControlId` and the
@@ -17,7 +17,7 @@
  * duplicate clinical message. They each used to re-derive the read; two inputs below made
  * all three disagree. They now share `readMshSegment`, and these tests are what says so.
  *
- * Fixtures are synthetic-only (DOE/SYNTH/TEST names, invented MRNs) — never PHI.
+ * Fixtures are synthetic-only (DOE/SYNTH/TEST names, invented MRNs), never PHI.
  */
 
 import { describe, expect, it } from "vitest";
@@ -28,15 +28,15 @@ import { extractMsaControlId, extractMshControlId } from "../../src/client/corre
 import { readMshSegment } from "../../src/internal/control-id.js";
 import { buildRawAck } from "../../src/server/ack.js";
 
-/** A truncated MSH (6 fields — no MSH-10), followed by a PID carrying real identifiers. */
+/** A truncated MSH (6 fields, no MSH-10), followed by a PID carrying real identifiers. */
 const TRUNCATED_MSH_THEN_PID = Buffer.from(
   "MSH|^~\\&|EPIC|HOSP|MIRTH|LAB\rPID|1||MRN00042||DOE^SYNTH^Q||19850312|F\r",
   "latin1",
 );
 
 describe("the control-ID scan STOPS at the segment terminator (no PHI can leak into it)", () => {
-  it("a truncated MSH yields NO control id — never a field of the next segment", () => {
-    // The regression: this returned "MRN00042" — PID-3, the patient's medical record number.
+  it("a truncated MSH yields NO control id, never a field of the next segment", () => {
+    // The regression: this returned "MRN00042", PID-3, the patient's medical record number.
     expect(extractMshControlId(TRUNCATED_MSH_THEN_PID)).toBeNull();
   });
 
@@ -79,7 +79,7 @@ describe("the control-ID scan STOPS at the segment terminator (no PHI can leak i
 });
 
 describe("the truncated MSH does not produce a bogus NOT_VERBATIM warning", () => {
-  it("warns UNPARSEABLE or nothing — never 'failed to echo' an MSH-10 that never existed", () => {
+  it("warns UNPARSEABLE or nothing, never 'failed to echo' an MSH-10 that never existed", () => {
     // The verbatim check promises it never warns on a comparison it could not perform.
     // With no MSH-10 in the inbound, there is nothing to compare.
     const ack = buildAckAA(TRUNCATED_MSH_THEN_PID);
@@ -100,7 +100,7 @@ describe("the truncated MSH does not produce a bogus NOT_VERBATIM warning", () =
 });
 
 describe("the three call sites agree on what a control ID is", () => {
-  /** The client's key, `buildRawAck`'s echo, and `buildMllpAck`'s echo — for one input. */
+  /** The client's key, `buildRawAck`'s echo, and `buildMllpAck`'s echo, for one input. */
   function threeReadings(payload: Buffer): {
     correlator: string | null;
     rawAck: string | null;
@@ -110,7 +110,7 @@ describe("the three call sites agree on what a control ID is", () => {
     try {
       fromHl7 = extractMsaControlId(buildAckAA(payload).payload);
     } catch {
-      fromHl7 = null; // an inbound it refuses to parse echoes nothing — that IS "no id"
+      fromHl7 = null; // an inbound it refuses to parse echoes nothing, that IS "no id"
     }
     return {
       correlator: extractMshControlId(payload),
@@ -142,7 +142,7 @@ describe("the three call sites agree on what a control ID is", () => {
 
   it.each(cases)("agrees on: %s", (_name, payload) => {
     const { correlator, rawAck, fromHl7 } = threeReadings(payload);
-    // The correlator is the reference — it is what the sender keys on. Whatever it says,
+    // The correlator is the reference, it is what the sender keys on. Whatever it says,
     // both builders must echo. `null` on the correlator means "no key", and then neither
     // builder may claim to have echoed one.
     expect(rawAck).toBe(correlator);
@@ -151,7 +151,7 @@ describe("the three call sites agree on what a control ID is", () => {
 
   it("agrees under a custom field separator, INCLUDING buildMllpAck", () => {
     // A delimiter-free control id survives `@cosyte/hl7`'s re-delimiting intact, so all
-    // three agree here — `buildMllpAck` included. (It is only when the id itself contains
+    // three agree here, `buildMllpAck` included. (It is only when the id itself contains
     // one of the inbound's own delimiters, e.g. `ID#X` under a `#` component separator,
     // that upstream's fixed `|^~\&` output cannot represent it. That case must WARN, and
     // control-id-verbatim.test.ts asserts it does.)
@@ -180,7 +180,7 @@ describe("the MSH is LOCATED, not demanded at byte 0 (tolerance is not negotiabl
   }
 
   // Both shapes carry MSH-10 = MSG00042. Both are peer-reachable. Requiring `MSH` at byte 0
-  // made buildRawAck emit a positive AA with an EMPTY MSA-2 and no warning — the sender,
+  // made buildRawAck emit a positive AA with an EMPTY MSA-2 and no warning, the sender,
   // keying on the MSH-10 it sent, cannot correlate it → timeout → resend → duplicate
   // clinical message. Silently dropping a field that is present is the one thing a lenient
   // reader must never do.
@@ -201,7 +201,7 @@ describe("the MSH is LOCATED, not demanded at byte 0 (tolerance is not negotiabl
   });
 
   it("the byte scanners still locate an MSH behind an FHS/BHS header (as main did)", () => {
-    // The byte-level scanners and `buildRawAck` find the MSH wherever the segment is —
+    // The byte-level scanners and `buildRawAck` find the MSH wherever the segment is,
     // `buildRawAck` always did (it hunted for a segment starting with `MSH`), so this is
     // main's behaviour preserved, not new tolerance. It is NOT a batch feature: see the
     // batch suite below for what the parser-backed builder does, and why.
@@ -229,24 +229,24 @@ describe("the MSH is LOCATED, not demanded at byte 0 (tolerance is not negotiabl
   });
 });
 
-describe("a BATCH is refused loudly — never a positive AA for messages nobody read", () => {
+describe("a BATCH is refused loudly, never a positive AA for messages nobody read", () => {
   /**
-   * An HL7 batch (§2.10.3) is `[FHS] { [BHS] { MSH … } [BTS] } [FTS]` — a **sequence** of
+   * An HL7 batch (§2.10.3) is `[FHS] { [BHS] { MSH … } [BTS] } [FTS]`, a **sequence** of
    * messages, with BTS-1 carrying the count. `@cosyte/mllp` does not implement batch ACK.
    * The only safe answer is therefore the one `parseHL7` already gives: `NO_MSH_SEGMENT`
-   * out into the warned, non-positive `AE` fallback — a loud refusal to acknowledge what
+   * out into the warned, non-positive `AE` fallback, a loud refusal to acknowledge what
    * we did not read.
    *
    * The trap this locks shut: an interim version of MLLP-ACK-UTF8 re-based the payload on
    * the *located* MSH before parsing, which skipped the batch envelope. `buildMllpAck` then
    * parsed message 1, silently discarded every later MSH and the BTS/FTS, and returned a
    * confident **`AA` correlated to message 1 with ZERO warnings**. The sender reads that as
-   * "batch accepted" — so messages 2..N are lost outright, or time out and resend as
+   * "batch accepted", so messages 2..N are lost outright, or time out and resend as
    * duplicate clinical messages. A positive ACK for a message nobody looked at is the exact
    * failure the commit contract exists to make structurally impossible.
    *
    * Do not "fix" this into a positive AA. Batch ACK is its own feature, to be built
-   * deliberately (parse every MSH, verify the BTS count, emit a batch ACK) — never arrived
+   * deliberately (parse every MSH, verify the BTS count, emit a batch ACK), never arrived
    * at by accident via a byte-offset helper.
    */
   const msg = (id: string): string =>
@@ -261,7 +261,7 @@ describe("a BATCH is refused loudly — never a positive AA for messages nobody 
   it("a TWO-message batch never yields a positive AA", () => {
     const ack = buildAckAA(batch("MSG00001", "MSG00002"));
 
-    expect(ack.code).toBe("AE"); // downgraded — never AA
+    expect(ack.code).toBe("AE"); // downgraded, never AA
     expect(ack.correlationId).toBeUndefined(); // no fabricated correlation
     expect(ack.warnings.map((w) => w.code)).toContain("MLLP_ACK_INBOUND_UNPARSEABLE");
     // Above all: it must NOT claim to have accepted message 1 while ignoring message 2.
@@ -269,14 +269,14 @@ describe("a BATCH is refused loudly — never a positive AA for messages nobody 
     expect(ack.payload.toString("latin1")).not.toContain("MSG00002");
   });
 
-  it("a ONE-message batch is refused too — the envelope is what we cannot read", () => {
+  it("a ONE-message batch is refused too, the envelope is what we cannot read", () => {
     const ack = buildAckAA(batch("MSG00001"));
     expect(ack.code).toBe("AE");
     expect(ack.correlationId).toBeUndefined();
     expect(ack.warnings.map((w) => w.code)).toContain("MLLP_ACK_INBOUND_UNPARSEABLE");
   });
 
-  it("but a LEADING CR/LF is still stripped — terminator noise carries no data", () => {
+  it("but a LEADING CR/LF is still stripped, terminator noise carries no data", () => {
     // The line between the two: a leading CR is pure segment-terminator noise, so dropping
     // it hides nothing. An FHS/BHS envelope is DATA, and dropping it hides messages.
     for (const prefix of ["\r", "\n", "\r\n", "\r\r\n"]) {

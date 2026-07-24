@@ -5,7 +5,7 @@ export default [
     ignores: ["examples/**"],
   }),
 
-  // no-buffer-slice — Buffer.prototype.slice() copies the underlying ArrayBuffer in modern Node;
+  // no-buffer-slice, Buffer.prototype.slice() copies the underlying ArrayBuffer in modern Node;
   // use .subarray() for zero-copy. Scoped to the byte-handling paths (repo guardrail, stays an error).
   {
     files: ["src/framing/**/*.ts", "src/server/**/*.ts", "src/client/**/*.ts"],
@@ -17,7 +17,7 @@ export default [
             "CallExpression[callee.property.name='slice'][callee.object.type!='ArrayExpression']",
           message:
             "Use Buffer.prototype.subarray() instead of .slice() in src/framing|server|client. " +
-            ".slice() copies the underlying ArrayBuffer in modern Node.js — .subarray() is zero-copy.",
+            ".slice() copies the underlying ArrayBuffer in modern Node.js, .subarray() is zero-copy.",
         },
       ],
     },

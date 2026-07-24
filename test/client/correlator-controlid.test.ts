@@ -4,10 +4,10 @@
  * Three test suites:
  *   1. MSH-10 / MSA-2 byte-level extractors (Task 1)
  *   2. Correlator.matchAck() controlId branch incl. graveyard hit + unmatched (Task 2)
- *   3. High-bit control IDs — the `latin1` (not `ascii`) decode (Task 3,
+ *   3. High-bit control IDs, the `latin1` (not `ascii`) decode (Task 3,
  *      MLLP-CORRELATOR-ASCII)
  *
- * Pure data-structure tests over an injected fake clock — no real timers.
+ * Pure data-structure tests over an injected fake clock, no real timers.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -35,7 +35,7 @@ function buildMsh(fieldSep: string, encChars: string, fields: string[]): string 
   return ["MSH", encChars, ...fields].join(fieldSep === "MSH" ? "|" : fieldSep);
 }
 
-describe("Correlator (controlId mode) — Task 1: MSH-10 / MSA-2 extractors", () => {
+describe("Correlator (controlId mode), Task 1: MSH-10 / MSA-2 extractors", () => {
   it("Test 1: extractMshControlId on a canonical ADT^A01 payload returns MSH-10", () => {
     // MSH|^~\&|SENDER|FAC|RECV|FAC2|20260501101010||ADT^A01|MSG00001|P|2.5
     // Fields: enc=^~\&  MSH-3=SENDER MSH-4=FAC MSH-5=RECV MSH-6=FAC2
@@ -62,13 +62,13 @@ describe("Correlator (controlId mode) — Task 1: MSH-10 / MSA-2 extractors", ()
   });
 
   it("Test 4: returns null if MSH-10 is empty", () => {
-    // MSH|^~\&|S|F|R|F2|TS||TYPE^TRG||REST  — MSH-10 is empty (between || at end)
+    // MSH|^~\&|S|F|R|F2|TS||TYPE^TRG||REST , MSH-10 is empty (between || at end)
     const buf = Buffer.from("MSH|^~\\&|S|F|R|F2|20260501101010||ADT^A01||P|2.5", "ascii");
     expect(extractMshControlId(buf)).toBeNull();
   });
 
   it("Test 5: returns null if MSH has fewer than 10 fields", () => {
-    // Only 7 fields after MSH — truncated header
+    // Only 7 fields after MSH, truncated header
     const buf = Buffer.from("MSH|^~\\&|S|F|R|F2", "ascii");
     expect(extractMshControlId(buf)).toBeNull();
   });
@@ -82,8 +82,8 @@ describe("Correlator (controlId mode) — Task 1: MSH-10 / MSA-2 extractors", ()
     expect(extractMsaControlId(buf)).toBe("MSG00001");
   });
 
-  it("Test 7: handles segment separators — MSA after MSH and other segments", () => {
-    // MSH...\rEVN|...\rMSA|AA|MSG_BETA  — MSA is the third segment
+  it("Test 7: handles segment separators, MSA after MSH and other segments", () => {
+    // MSH...\rEVN|...\rMSA|AA|MSG_BETA , MSA is the third segment
     const buf = Buffer.from(
       "MSH|^~\\&|R|F|S|F2|20260501101010||ACK|A1|P|2.5\rEVN|A01|20260501\rMSA|AA|MSG_BETA",
       "ascii",
@@ -137,7 +137,7 @@ describe("Correlator (controlId mode) — Task 1: MSH-10 / MSA-2 extractors", ()
 });
 
 // ---------------------------------------------------------------------------
-// Task 2 — Correlator.matchAck() controlId branch
+// Task 2, Correlator.matchAck() controlId branch
 // ---------------------------------------------------------------------------
 
 interface ControlIdHarness {
@@ -186,7 +186,7 @@ function controlIdHarness(overrides?: Partial<CorrelatorOptions>): ControlIdHarn
   return { correlator, setNow, getNow, onTimeout, onWarning, onUnmatchedAck };
 }
 
-describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", () => {
+describe("Correlator (controlId mode), Task 2: matchAck branch + graveyard", () => {
   it("Test 12: enqueue keys by MSH-10 string in controlId mode", () => {
     const { correlator } = controlIdHarness();
     const key = correlator.enqueue(Buffer.from("frame-A"), "MSG001", noop, noopReject);
@@ -201,7 +201,7 @@ describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", 
     expect(correlator.size).toBe(1);
   });
 
-  it("Test 14: matchAck out-of-order — returns the entry by controlId regardless of insertion", () => {
+  it("Test 14: matchAck out-of-order, returns the entry by controlId regardless of insertion", () => {
     const { correlator } = controlIdHarness();
     const rA = vi.fn();
     const rB = vi.fn();
@@ -224,7 +224,7 @@ describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", 
     expect(correlator.size).toBe(0);
   });
 
-  it("Test 15: matchAck unmatched controlId — fires onUnmatchedAck, returns null, no live entry touched", () => {
+  it("Test 15: matchAck unmatched controlId, fires onUnmatchedAck, returns null, no live entry touched", () => {
     const { correlator, onUnmatchedAck, onWarning } = controlIdHarness();
     const r = vi.fn();
     correlator.enqueue(Buffer.from("A"), "A", r, noopReject);
@@ -239,13 +239,13 @@ describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", 
     expect(r).not.toHaveBeenCalled();
   });
 
-  it("Test 16: matchAck graveyard hit — fires MLLP_ACK_AFTER_TIMEOUT with byteOffset forwarded", () => {
+  it("Test 16: matchAck graveyard hit, fires MLLP_ACK_AFTER_TIMEOUT with byteOffset forwarded", () => {
     const { correlator, setNow, onWarning, onTimeout } = controlIdHarness();
     const r = vi.fn();
     correlator.enqueue(Buffer.from("A"), "A", r, noopReject);
     setNow(1_000);
     correlator.markFlushed("A");
-    // Trigger timeout — entry moves to graveyard
+    // Trigger timeout, entry moves to graveyard
     setNow(1_100);
     correlator.expireDue();
     expect(onTimeout).toHaveBeenCalledTimes(1);
@@ -278,7 +278,7 @@ describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", 
     expect(labels).toEqual(["1", "2", "3"]);
   });
 
-  it("Test 18: graveyard TTL — after 2 * ackTimeoutMs late ACK gets unmatched (not late)", () => {
+  it("Test 18: graveyard TTL, after 2 * ackTimeoutMs late ACK gets unmatched (not late)", () => {
     const { correlator, setNow, onWarning, onUnmatchedAck } = controlIdHarness();
     correlator.enqueue(Buffer.from("A"), "A", noop, noopReject);
     setNow(1_000);
@@ -299,7 +299,7 @@ describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", 
     expect(correlator.graveyardSize).toBe(0);
   });
 
-  it("Test 19: matchAck with controlIdFromAck=null in controlId mode — defensive unmatched path", () => {
+  it("Test 19: matchAck with controlIdFromAck=null in controlId mode, defensive unmatched path", () => {
     const { correlator, onUnmatchedAck } = controlIdHarness();
     correlator.enqueue(Buffer.from("A"), "A", noop, noopReject);
     // Caller failed to extract MSA-2; correlator should treat as unmatched.
@@ -312,7 +312,7 @@ describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", 
 });
 
 // ---------------------------------------------------------------------------
-// Task 3 — high-bit control IDs (MLLP-CORRELATOR-ASCII)
+// Task 3, high-bit control IDs (MLLP-CORRELATOR-ASCII)
 //
 // The extractors decode MSH-10 / MSA-2 as `latin1`, not `ascii`. Node's `ascii`
 // codec masks the high bit (`byte & 0x7f`), which silently rewrites a control ID.
@@ -323,17 +323,17 @@ describe("Correlator (controlId mode) — Task 2: matchAck branch + graveyard", 
 // fixtures), where high-bit bytes are legal inside an ST-typed control ID.
 //
 // Two distinct hazards, one fixture each:
-//   * 0xC9 (LATIN CAPITAL LETTER E WITH ACUTE) masks to 0x49 ('I') — an ordinary
+//   * 0xC9 (LATIN CAPITAL LETTER E WITH ACUTE) masks to 0x49 ('I'), an ordinary
 //     printable letter. So `MSG\u00c91` and `MSGI1` are two legal, DIFFERENT wire
 //     control IDs that `ascii` collapses onto ONE correlation key. That is the
 //     collision the backlog item names.
-//   * 0x8B masks to 0x0B — a VT, the MLLP start-block byte. `ascii` manufactures
+//   * 0x8B masks to 0x0B, a VT, the MLLP start-block byte. `ascii` manufactures
 //     a framing delimiter out of an ordinary payload byte.
 // ---------------------------------------------------------------------------
 
-/** MSH-10 `MSG\u00c91` — high-bit byte, legal under an 8859/1 charset. */
+/** MSH-10 `MSG\u00c91`, high-bit byte, legal under an 8859/1 charset. */
 const HIGH_BIT_ID = "MSG\u00c91";
-/** What `ascii` decoded HIGH_BIT_ID to (0xC9 & 0x7F === 0x49, 'I') — itself a real control ID. */
+/** What `ascii` decoded HIGH_BIT_ID to (0xC9 & 0x7F === 0x49, 'I'), itself a real control ID. */
 const MASKED_TWIN = "MSGI1";
 /** MSH-10 whose high-bit byte 0x8B masks to 0x0B (VT) under `ascii`. */
 const VT_MASKING_ID = "MSG\u008b1";
@@ -354,7 +354,7 @@ function ackWithControlId(controlId: string): Buffer {
   );
 }
 
-describe("Correlator (controlId mode) — Task 3: high-bit control IDs", () => {
+describe("Correlator (controlId mode), Task 3: high-bit control IDs", () => {
   it("Test 20: extractMshControlId preserves a high-bit MSH-10 byte verbatim", () => {
     const extracted = extractMshControlId(payloadWithControlId(HIGH_BIT_ID));
     expect(extracted).toBe(HIGH_BIT_ID);
@@ -384,7 +384,7 @@ describe("Correlator (controlId mode) — Task 3: high-bit control IDs", () => {
     expect(high).not.toBe(masked);
   });
 
-  it("Test 23: no framing byte is synthesized — 0x8B does not decode into a VT (0x0B)", () => {
+  it("Test 23: no framing byte is synthesized, 0x8B does not decode into a VT (0x0B)", () => {
     const extracted = extractMshControlId(payloadWithControlId(VT_MASKING_ID));
     expect(extracted).toBe(VT_MASKING_ID);
     // Under `ascii` the correlation key itself would have contained the MLLP
@@ -395,7 +395,7 @@ describe("Correlator (controlId mode) — Task 3: high-bit control IDs", () => {
     expect(extractMsaControlId(ackWithControlId(VT_MASKING_ID))).toBe(VT_MASKING_ID);
   });
 
-  it("Test 24: high-bit twins do not collide in the live store — each ACK settles its own send", () => {
+  it("Test 24: high-bit twins do not collide in the live store, each ACK settles its own send", () => {
     const { correlator } = controlIdHarness();
     // Keys come from the real extractor over real payload bytes, so the test
     // exercises the decode rather than hand-written string keys.
@@ -413,7 +413,7 @@ describe("Correlator (controlId mode) — Task 3: high-bit control IDs", () => {
     );
     expect(k1).not.toBe(k2);
     // Under `ascii` the second enqueue OVERWROTE the first in the Map (same key)
-    // and size would be 1 — the first send could then never be settled by its ACK.
+    // and size would be 1, the first send could then never be settled by its ACK.
     expect(correlator.size).toBe(2);
 
     // The peer ACKs the plain-ASCII twin first; it must settle that entry only.
@@ -428,7 +428,7 @@ describe("Correlator (controlId mode) — Task 3: high-bit control IDs", () => {
     expect(correlator.size).toBe(0);
   });
 
-  it("Test 25: agrees with buildRawAck — a server-echoed MSH-10 round-trips into the same key", () => {
+  it("Test 25: agrees with buildRawAck, a server-echoed MSH-10 round-trips into the same key", () => {
     // The consistency claim of this fix, across both control-ID code paths:
     // buildRawAck (server: MSH-10 -> MSA-2, latin1) and the client extractors.
     for (const id of [HIGH_BIT_ID, VT_MASKING_ID, MASKED_TWIN]) {

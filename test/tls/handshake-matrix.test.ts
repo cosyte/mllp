@@ -1,7 +1,7 @@
 /**
- * TLS / MLLPS handshake matrix (Phase 8) — real sockets, real TLS, over a
+ * TLS / MLLPS handshake matrix (Phase 8), real sockets, real TLS, over a
  * live MllpServer + MllpClient pair on `127.0.0.1` port `0`. Certificates are
- * generated in-memory per test via `test/helpers/tls-fixtures.ts` — never
+ * generated in-memory per test via `test/helpers/tls-fixtures.ts`, never
  * written to disk.
  *
  * TLS handshakes need REAL timers; this suite never enables fake timers.
@@ -61,7 +61,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   }
 
   // Case 1 --------------------------------------------------------------
-  it("Case 1: TLS server + trusted CA client — connect resolves, ACK round-trips, negotiated TLSv1.2/1.3", async () => {
+  it("Case 1: TLS server + trusted CA client, connect resolves, ACK round-trips, negotiated TLSv1.2/1.3", async () => {
     const { cert, key } = buildServerCertFixture();
     const server = trackServer(
       createServer({
@@ -86,7 +86,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
     expect(ack.length).toBeGreaterThan(0);
 
     // Reach the negotiated protocol via a raw parallel TLS connection to the
-    // same server — same cert/CA config, so the negotiated version is
+    // same server, same cert/CA config, so the negotiated version is
     // representative of what the client above negotiated.
     const negotiatedProtocol = await new Promise<string | null>((resolve, reject) => {
       const raw = tlsConnect({ host: "127.0.0.1", port, ca: cert }, () => {
@@ -102,7 +102,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   });
 
   // Case 2 --------------------------------------------------------------
-  it("Case 2: default verification ON — client without ca against self-signed server rejects with tls-verify", async () => {
+  it("Case 2: default verification ON, client without ca against self-signed server rejects with tls-verify", async () => {
     const { cert, key } = buildServerCertFixture();
     const server = trackServer(createServer({ tls: { cert, key } }));
     await server.listen(0, "127.0.0.1");
@@ -117,14 +117,14 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   });
 
   // Case 3 --------------------------------------------------------------
-  it("Case 3: SAN mismatch — client trusts the CA but hostname doesn't match", async () => {
+  it("Case 3: SAN mismatch, client trusts the CA but hostname doesn't match", async () => {
     const { cert, key } = buildSanMismatchCertFixture();
     const server = trackServer(createServer({ tls: { cert, key } }));
     await server.listen(0, "127.0.0.1");
     const port = must(server.getStats().port);
 
     // Client trusts this exact cert as CA, but connects to 127.0.0.1 while
-    // the cert's only SAN is wrong.example.com — hostname/identity mismatch.
+    // the cert's only SAN is wrong.example.com, hostname/identity mismatch.
     const client = trackClient(
       createClient({ host: "127.0.0.1", port, tls: { ca: cert, servername: "127.0.0.1" } }),
     );
@@ -161,7 +161,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
     }).toThrow(TypeError);
     await client.close();
 
-    // Second connection (manual reconnect) — must emit again.
+    // Second connection (manual reconnect), must emit again.
     await client.connect();
     expect(warnings.length).toBeGreaterThanOrEqual(2);
     await client.close();
@@ -177,7 +177,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   });
 
   // Case 5 --------------------------------------------------------------
-  it("Case 5: mutual TLS MUST — client with cert succeeds + peerCertificate surfaced; client without cert fails, server emits tlsClientError and keeps serving", async () => {
+  it("Case 5: mutual TLS MUST, client with cert succeeds + peerCertificate surfaced; client without cert fails, server emits tlsClientError and keeps serving", async () => {
     const { cert, key, clientCert, clientKey } = buildMutualTlsFixture();
     const server = trackServer(
       createServer({
@@ -199,11 +199,11 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
     await server.listen(0, "127.0.0.1");
     const port = must(server.getStats().port);
 
-    // Client WITHOUT a cert — MUST requires one. Under TLS 1.3
+    // Client WITHOUT a cert, MUST requires one. Under TLS 1.3
     // (RFC 8446 §4.4.2) the client's own secureConnect can complete BEFORE
     // the server's rejection alert arrives, so the contract is: EITHER
     // connect() rejects with a typed 'tls-handshake' error (alert beat
-    // secureConnect — the TLS <=1.2 shape), OR connect() resolves and the
+    // secureConnect, the TLS <=1.2 shape), OR connect() resolves and the
     // rejection surfaces moments later as a typed post-connect error and
     // the connection leaves CONNECTED. Never a silent success-and-hang.
     const badClient = trackClient(createClient({ host: "127.0.0.1", port, tls: { ca: cert } }));
@@ -221,7 +221,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
       expect((rejection as MllpConnectionError).connectionCause).toBe("tls-handshake");
     } else {
       // TLS 1.3 post-connect rejection path: a typed error event follows and
-      // the connection leaves CONNECTED — no silent hang.
+      // the connection leaves CONNECTED, no silent hang.
       await waitFor(() => badClientErrors.length > 0 && badClient.state !== "CONNECTED");
       const evt = badClientErrors[0]?.error;
       expect(evt).toBeInstanceOf(MllpConnectionError);
@@ -239,7 +239,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
       (tlsClientErrors[0] as unknown as Record<string, unknown>)["message"] = "mutated";
     }).toThrow(TypeError);
 
-    // Server must still be serving — a good client with a valid cert works.
+    // Server must still be serving, a good client with a valid cert works.
     const goodClient = trackClient(
       createClient({
         host: "127.0.0.1",
@@ -260,7 +260,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   });
 
   // Case 6 --------------------------------------------------------------
-  it("Case 6: WANT — client without cert connects fine (peerCertificate null); with cert, it's surfaced", async () => {
+  it("Case 6: WANT, client without cert connects fine (peerCertificate null); with cert, it's surfaced", async () => {
     const { cert, key, clientCert, clientKey } = buildMutualTlsFixture();
     const peerCerts: Array<{ subjectCN: string | null } | null> = [];
     const server = trackServer(
@@ -278,7 +278,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
     const noCertClient = trackClient(createClient({ host: "127.0.0.1", port, tls: { ca: cert } }));
     await noCertClient.connect();
     // Server-side 'secureConnection' can land a beat after the client's own
-    // secureConnect — wait for it before closing.
+    // secureConnect, wait for it before closing.
     await waitFor(() => peerCerts.length >= 1);
     await noCertClient.close();
 
@@ -300,7 +300,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   });
 
   // Case 7 --------------------------------------------------------------
-  it("Case 7: TLS floor — server rejects a client forcing TLSv1.1 (or the client itself refuses to attempt it); happy path negotiates >= TLSv1.2", async () => {
+  it("Case 7: TLS floor, server rejects a client forcing TLSv1.1 (or the client itself refuses to attempt it); happy path negotiates >= TLSv1.2", async () => {
     const { cert, key } = buildServerCertFixture();
     const server = trackServer(createServer({ tls: { cert, key } }));
     await server.listen(0, "127.0.0.1");
@@ -322,7 +322,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
       expect(proto).not.toBe("TLSv1.1");
     } catch {
       // Node/OpenSSL refused to even attempt TLSv1.1 (security level), or the
-      // server rejected the handshake — either way the floor holds. No
+      // server rejected the handshake, either way the floor holds. No
       // assertion needed in this branch: reaching it (rather than an
       // unhandled rejection failing the test) IS the passing condition.
     }
@@ -340,7 +340,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   });
 
   // Case 8 --------------------------------------------------------------
-  it("Case 8: tls-verify failure is PERMANENT for the reconnect classifier — no reconnect scheduled, state -> CLOSED", async () => {
+  it("Case 8: tls-verify failure is PERMANENT for the reconnect classifier, no reconnect scheduled, state -> CLOSED", async () => {
     const { cert, key } = buildServerCertFixture();
     const server = trackServer(createServer({ tls: { cert, key } }));
     await server.listen(0, "127.0.0.1");
@@ -351,7 +351,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
     );
     await expect(client.connect()).rejects.toMatchObject({ connectionCause: "tls-verify" });
 
-    // No reconnect cycle should have been scheduled — state is the client
+    // No reconnect cycle should have been scheduled, state is the client
     // baseline (never entered CONNECTED, so no disconnect/reconnect fires).
     await new Promise((r) => setTimeout(r, 100));
     expect(client.getStats().reconnectAttempts).toBe(0);
@@ -359,7 +359,7 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   });
 
   // Case 9 --------------------------------------------------------------
-  it("Case 9: reconnect over TLS — autoReconnect client survives a server-side socket kill and can send again", async () => {
+  it("Case 9: reconnect over TLS, autoReconnect client survives a server-side socket kill and can send again", async () => {
     const { cert, key } = buildServerCertFixture();
     const server = trackServer(createServer({ tls: { cert, key }, autoAck: "AA" }));
     const rawSockets: Array<{ destroy: () => void }> = [];
@@ -404,9 +404,9 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
   });
 
   // Extra: untrusted-CA fixture is exercised implicitly by Case 2's `tls: true`
-  // (no ca at all against a self-signed server) — buildUntrustedCertFixture
+  // (no ca at all against a self-signed server), buildUntrustedCertFixture
   // covers the "client trusts the WRONG CA" variant explicitly:
-  it("Extra: client trusts an unrelated CA — still tls-verify", async () => {
+  it("Extra: client trusts an unrelated CA, still tls-verify", async () => {
     const { cert, key } = buildServerCertFixture();
     const wrongCa = buildUntrustedCertFixture();
     const server = trackServer(createServer({ tls: { cert, key } }));

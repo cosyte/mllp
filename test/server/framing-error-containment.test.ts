@@ -4,19 +4,19 @@
  * The bug this pins: `Connection` fed `FrameReader.push(chunk)` straight from the transport's
  * data callback with no try/catch. On a real socket that callback IS the `'data'` listener, so a
  * `MllpFramingError` thrown by the decoder escaped as an **uncaught exception and killed the whole
- * process** — every other connection and every in-flight durable commit with it.
+ * process**, every other connection and every in-flight durable commit with it.
  *
  * It was reachable on a DEFAULT server, from one byte: `SERVER_DEFAULT_FRAMING` leaves
  * `allowMissingLeadingVt` off, so any non-whitespace byte where a VT was expected throws
  * `MLLP_MISSING_LEADING_VT`. A single stray keepalive character from a real interface engine was
  * enough to take the server down.
  *
- * The contract now: a fatal framing error drops **that connection only** — surfaced as a frozen
- * `'error'` event (`phase: 'receive'`, the `MllpFramingError` preserved as `cause`) — and the
+ * The contract now: a fatal framing error drops **that connection only**, surfaced as a frozen
+ * `'error'` event (`phase: 'receive'`, the `MllpFramingError` preserved as `cause`), and the
  * server keeps serving everyone else.
  *
  * These run over real loopback sockets on purpose. The in-memory transport wraps its delivery in
- * try/**finally**, which re-routes the throw to the *writer* instead of leaving it uncaught — which
+ * try/**finally**, which re-routes the throw to the *writer* instead of leaving it uncaught, which
  * is exactly why the existing suites never caught this. Only a real socket reproduces it.
  */
 
@@ -92,7 +92,7 @@ describe("fatal framing errors are contained to one connection", () => {
       const closed = new Promise<void>((resolve) => bad.once("close", () => resolve()));
       bad.write(Buffer.from([0x58])); // 'X'
 
-      // That connection is dropped — the stream is desynchronized and cannot be trusted.
+      // That connection is dropped, the stream is desynchronized and cannot be trusted.
       await closed;
 
       // THE contract: the server survived and still serves other peers.
@@ -126,7 +126,7 @@ describe("fatal framing errors are contained to one connection", () => {
     }
   });
 
-  it("contains MLLP_FRAME_TOO_LARGE — the oversized-frame fatal — the same way", async () => {
+  it("contains MLLP_FRAME_TOO_LARGE, the oversized-frame fatal, the same way", async () => {
     const server = createServer({ autoAck: "AA", framing: { maxFrameSizeBytes: 1024 } });
     const port = await listen(server);
     try {
@@ -146,7 +146,7 @@ describe("fatal framing errors are contained to one connection", () => {
 
   it("a BARE Connection with no 'error' listener still does not crash the process", async () => {
     // The first cut of this fix only relocated the crash: `emit('error')` on an EventEmitter with
-    // no listener throws ERR_UNHANDLED_ERROR, and that throw happened inside the new catch block —
+    // no listener throws ERR_UNHANDLED_ERROR, and that throw happened inside the new catch block,
     // escaping the socket 'data' callback exactly as the MllpFramingError used to. MllpServer and
     // MllpClient both attach an 'error' listener, which masked it; `Connection` is a public export
     // and need not. Deliberately attach NO 'error' listener here.
@@ -164,7 +164,7 @@ describe("fatal framing errors are contained to one connection", () => {
       const conn = new Connection({ transport: new NetTransport(sock) });
       const states: string[] = [];
       conn.on("stateChange", (e: { to: string }) => states.push(e.to));
-      // NO conn.on('error', …) — that is the whole point of this test.
+      // NO conn.on('error', …), that is the whole point of this test.
 
       await new Promise<void>((resolve) => setTimeout(resolve, 150));
 
@@ -178,7 +178,7 @@ describe("fatal framing errors are contained to one connection", () => {
 
   it("does NOT auto-reconnect-loop against a peer that is not speaking MLLP", async () => {
     // A fatal framing error is a COMPATIBILITY failure, not a network blip. Classifying it
-    // transient made `createStarterClient` (autoReconnect defaults true) retry forever — an
+    // transient made `createStarterClient` (autoReconnect defaults true) retry forever, an
     // unbounded reconnect storm against a misconfigured peer. It must be permanent.
     const net = await import("node:net");
     const { createClient } = await import("../../src/client/client.js");
@@ -230,7 +230,7 @@ describe("fatal framing errors are contained to one connection", () => {
     }
   });
 
-  it("a peer whose quirk is expected can be tolerated instead — the opt-ins turn the throw into a warning", async () => {
+  it("a peer whose quirk is expected can be tolerated instead, the opt-ins turn the throw into a warning", async () => {
     // The supported answer for a peer that really does omit the leading VT.
     const warnings: string[] = [];
     const server = createServer({
@@ -246,7 +246,7 @@ describe("fatal framing errors are contained to one connection", () => {
         const ack = await new Promise<string>((resolve, reject) => {
           sock.once("data", (buf: Buffer) => resolve(buf.subarray(1, buf.length - 2).toString()));
           sock.once("error", reject);
-          // No leading VT — tolerated, warned, and the payload still recovered.
+          // No leading VT, tolerated, warned, and the payload still recovered.
           const body = Buffer.from(PAYLOAD, "ascii");
           sock.write(Buffer.concat([body, Buffer.from([FS, CR])]));
         });
@@ -262,13 +262,13 @@ describe("fatal framing errors are contained to one connection", () => {
 });
 
 /**
- * STRUCTURAL — the rule the previous rounds kept getting wrong.
+ * STRUCTURAL, the rule the previous rounds kept getting wrong.
  *
  * The hazard belongs to the **call stack**, not to a class. `Connection`, `MllpServer` and
  * `MllpClient` all emit from callbacks we do not own (a socket's `'data'`/`'secureConnect'`
  * listener, `net.Server`'s `'connection'` listener, `tls.Server`'s `'tlsClientError'` listener,
  * the `catch` of a `void`-ed async ACK task). Scoping containment to `Connection` alone left four
- * live process-kills in the other two classes — including a throwing `'nack'` subscriber that ALSO
+ * live process-kills in the other two classes, including a throwing `'nack'` subscriber that ALSO
  * suppressed the fail-safe negative ACK.
  *
  * So: attach a throwing subscriber to EVERY event of the server and the client at once, and drive

@@ -3,8 +3,8 @@
  *
  * `@cosyte/mllp` ships **zero runtime dependencies**; `@cosyte/hl7` is an
  * optional peer dep referenced only from this `/ack-from-hl7` subpath. To keep
- * the rest of the package fully dependency-free, the peer is required lazily —
- * on first call into `ack-from-hl7` — via `createRequire`, not at module load
+ * the rest of the package fully dependency-free, the peer is required lazily,
+ * on first call into `ack-from-hl7`, via `createRequire`, not at module load
  * time. The public API of this subpath stays synchronous throughout.
  *
  * @example
@@ -30,7 +30,7 @@ import type {
 /**
  * The subset of the `@cosyte/hl7` runtime surface the `ack-from-hl7` adapter
  * consumes. Kept narrow and typed via `import type` (erased at compile time)
- * so the runtime dependency stays fully lazy — only the shape is known
+ * so the runtime dependency stays fully lazy, only the shape is known
  * statically, the values are resolved via `require()` at first call.
  *
  * @example
@@ -48,7 +48,7 @@ export interface Hl7Peer {
   readonly buildMessage: (init: { readonly type: string }) => Hl7MessageType;
   /**
    * The peer's own `Hl7Message` class. Exposed (not just used as a type) so
-   * callers can detect a cross-realm instance — see the dual-package-hazard
+   * callers can detect a cross-realm instance, see the dual-package-hazard
    * note on `resolveInbound` in `build.ts`. Typed as `abstract new` (rather
    * than a concrete constructor signature) purely so TypeScript accepts it as
    * an `instanceof` right-hand side without also implying callers can `new`
@@ -60,7 +60,7 @@ export interface Hl7Peer {
   readonly ACK_CODES: typeof ACK_CODES;
   /**
    * The peer's fail-safe downgrade primitive (`AA`→`AE`, `CA`→`CE`, everything
-   * else unchanged) — the single upstream source of truth for the pair; this
+   * else unchanged), the single upstream source of truth for the pair; this
    * adapter never carries its own copy of the mapping.
    */
   readonly downgradePositiveAck: (code: AckCode) => AckCode;
@@ -79,8 +79,8 @@ const MODULE_NOT_FOUND_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Thrown when `@cosyte/hl7` — the optional peer dependency required by
- * `@cosyte/mllp/ack-from-hl7` — cannot be resolved at runtime.
+ * Thrown when `@cosyte/hl7`, the optional peer dependency required by
+ * `@cosyte/mllp/ack-from-hl7`, cannot be resolved at runtime.
  *
  * `@cosyte/hl7` is declared as an optional peer dependency, so a consumer of
  * the root `@cosyte/mllp` entry point is never forced to install it. Only
@@ -113,7 +113,7 @@ export class MllpPeerMissingError extends Error {
   constructor(cause: unknown) {
     super(
       `${PEER_PACKAGE_NAME} is required by ${SUBPATH_NAME} but is not installed. ` +
-        `${PEER_PACKAGE_NAME} is an optional peer dependency of @cosyte/mllp — install it ` +
+        `${PEER_PACKAGE_NAME} is an optional peer dependency of @cosyte/mllp, install it ` +
         `alongside @cosyte/mllp to use ${SUBPATH_NAME}: \`npm install ${PEER_PACKAGE_NAME}\` ` +
         `(or the equivalent for your package manager).`,
       { cause },
@@ -129,11 +129,11 @@ let cachedPeer: Hl7Peer | undefined;
 
 /**
  * Matches the *quoted unresolvable module id* in Node's resolution-failure
- * messages — `Cannot find module '@cosyte/hl7'` (CJS) / `Cannot find package
+ * messages, `Cannot find module '@cosyte/hl7'` (CJS) / `Cannot find package
  * '@cosyte/hl7'` (ESM). Anchoring on the quoted id (rather than a bare
  * substring test) keeps a module-not-found thrown from *inside* `@cosyte/hl7`
- * — whose message names a different module but whose require-stack still
- * contains the peer's path — propagating unchanged: that is a real bug in the
+ * whose message names a different module but whose require-stack still
+ * contains the peer's path, propagating unchanged: that is a real bug in the
  * installed peer, not a missing peer.
  * @internal
  */
@@ -154,7 +154,7 @@ function isPeerModuleNotFound(err: unknown): boolean {
 
 /**
  * Load the `@cosyte/hl7` peer module, caching the result for subsequent
- * calls. The public adapter functions in `build.ts` call this internally —
+ * calls. The public adapter functions in `build.ts` call this internally,
  * most consumers never call it directly.
  *
  * @param requireFn - Injectable `require`-like function, used by tests to

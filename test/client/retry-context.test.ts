@@ -2,7 +2,7 @@
  * RetryContext + RetryStrategy + ClientOptions reconnect-fields surface tests
  * (PLAN-04, Task 2).
  *
- * Most of these are compile-time assertions — if the file typechecks, the
+ * Most of these are compile-time assertions, if the file typechecks, the
  * structural contract holds. The runtime checks confirm W-07 NEVER_ABORTING_SIGNAL
  * is defined at module level and that the public types are reachable through
  * both barrels.
@@ -18,7 +18,7 @@ import type * as TopBarrel from "../../src/index.js";
 
 describe("PLAN-04 Task 2: RetryContext + RetryStrategy + reconnect ClientOptions surface", () => {
   it("Test 1: RetryContext interface has the 7 readonly fields per D-15", () => {
-    // Compile-time shape — referencing each field forces TS to validate the type.
+    // Compile-time shape, referencing each field forces TS to validate the type.
     const sample: RetryContext = Object.freeze({
       attempt: 0,
       lastError: new Error("x"),
@@ -69,11 +69,11 @@ describe("PLAN-04 Task 2: RetryContext + RetryStrategy + reconnect ClientOptions
     expect(typeof opts.retryStrategy).toBe("function");
   });
 
-  it("Test 4: W-07 — NEVER_ABORTING_SIGNAL declared at module top of client.ts", () => {
+  it("Test 4: W-07, NEVER_ABORTING_SIGNAL declared at module top of client.ts", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(pathResolve(here, "../../src/client/client.ts"), "utf8");
     expect(src).toMatch(/const NEVER_ABORTING_SIGNAL: AbortSignal/);
-    // Ensure it's at module scope (not inside a function/class) — appears
+    // Ensure it's at module scope (not inside a function/class), appears
     // before the export class declaration.
     const idxSentinel = src.indexOf("NEVER_ABORTING_SIGNAL");
     const idxClass = src.indexOf("export class MllpClient");
@@ -81,7 +81,7 @@ describe("PLAN-04 Task 2: RetryContext + RetryStrategy + reconnect ClientOptions
     expect(idxSentinel).toBeLessThan(idxClass);
   });
 
-  it("Test 5: W-05 — Correlator does not hard-code byteOffset: 0", () => {
+  it("Test 5: W-05, Correlator does not hard-code byteOffset: 0", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(pathResolve(here, "../../src/client/correlator.ts"), "utf8");
     expect(src).not.toMatch(/byteOffset:\s*0/);
@@ -104,7 +104,7 @@ describe("PLAN-04 Task 2: RetryContext + RetryStrategy + reconnect ClientOptions
   });
 
   it("Test 8: barrel module loads without runtime error", () => {
-    // Smoke test — the type re-exports should not throw at import time.
+    // Smoke test, the type re-exports should not throw at import time.
     // Cast through `unknown` (not an object-literal assertion) so the namespace
     // types are referenced without tripping consistent-type-assertions.
     const emptyClient: unknown = {};

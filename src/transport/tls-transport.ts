@@ -1,11 +1,11 @@
 /**
- * TlsTransport — `Transport` implementation wrapping a `tls.TLSSocket` (Phase 8).
+ * TlsTransport, `Transport` implementation wrapping a `tls.TLSSocket` (Phase 8).
  *
  * Identical wiring to `NetTransport` with one deliberate difference: `onConnect`
  * maps to the socket's `'secureConnect'` event (fires once the TLS handshake
  * completes) rather than `'connect'` (fires once the raw TCP handshake
  * completes). Consumers of `Transport` (Connection, Client, Server) never see
- * the difference — they only ever observe "the transport is ready."
+ * the difference, they only ever observe "the transport is ready."
  *
  * @example
  * ```typescript
@@ -31,7 +31,7 @@ import type { Transport } from "./index.js";
  * `'connect'` event that `NetTransport` uses.
  *
  * Each `onXxx(fn)` call replaces the prior handler and re-registers on the
- * socket (`socket.removeAllListeners(event)` + `socket.on(event, fn)`) —
+ * socket (`socket.removeAllListeners(event)` + `socket.on(event, fn)`),
  * the same set-once semantics as `NetTransport`.
  *
  * @example
@@ -75,8 +75,8 @@ export class TlsTransport implements Transport {
   }
 
   /**
-   * See {@link Transport.onConnect}. Armed on `'secureConnect'` — the TLS
-   * handshake-complete event — not the raw TCP `'connect'` event.
+   * See {@link Transport.onConnect}. Armed on `'secureConnect'`, the TLS
+   * handshake-complete event, not the raw TCP `'connect'` event.
    */
   onConnect(fn: () => void): void {
     this._socket.removeAllListeners("secureConnect");

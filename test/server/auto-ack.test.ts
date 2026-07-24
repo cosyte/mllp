@@ -1,5 +1,5 @@
 /**
- * Tests for Plan 02 — auto-ACK synthesis and backpressure handling (SERVER-04, SERVER-05).
+ * Tests for Plan 02, auto-ACK synthesis and backpressure handling (SERVER-04, SERVER-05).
  *
  * These tests cover:
  * - `_buildAutoAck` (private method, tested via observable behavior)
@@ -60,7 +60,7 @@ const ADT_A01_PAYLOAD =
 // Describe blocks
 // ---------------------------------------------------------------------------
 
-describe("SERVER-04: auto-ACK — AA mode via MllpServer over InMemoryTransport", () => {
+describe("SERVER-04: auto-ACK, AA mode via MllpServer over InMemoryTransport", () => {
   /**
    * For server tests we use MllpServer.listen() with a real TCP socket.
    * For auto-ACK unit tests we use InMemoryTransport directly with Connection.
@@ -68,7 +68,7 @@ describe("SERVER-04: auto-ACK — AA mode via MllpServer over InMemoryTransport"
    * These tests verify the observable behavior through the real server API.
    */
 
-  it("autoAck: AA — server sends ACK containing MSA|AA to client", async () => {
+  it("autoAck: AA, server sends ACK containing MSA|AA to client", async () => {
     const received: Buffer[] = [];
     const server = createServer({ autoAck: "AA" });
     await server.listen(0);
@@ -115,7 +115,7 @@ describe("SERVER-04: auto-ACK — AA mode via MllpServer over InMemoryTransport"
     await server.close();
   });
 
-  it("autoAck: AA — ACK MSH swaps sendingApp/receivingApp", async () => {
+  it("autoAck: AA, ACK MSH swaps sendingApp/receivingApp", async () => {
     const server = createServer({ autoAck: "AA" });
     await server.listen(0);
 
@@ -159,7 +159,7 @@ describe("SERVER-04: auto-ACK — AA mode via MllpServer over InMemoryTransport"
     await server.close();
   });
 
-  it("autoAck: AA — malformed payload (empty) fail-safe downgrades to AE without throwing", async () => {
+  it("autoAck: AA, malformed payload (empty) fail-safe downgrades to AE without throwing", async () => {
     const server = createServer({ autoAck: "AA" });
     await server.listen(0);
 
@@ -193,7 +193,7 @@ describe("SERVER-04: auto-ACK — AA mode via MllpServer over InMemoryTransport"
     ]);
 
     // FAIL-SAFE (MLLP-ACK-FAILSAFE): an empty payload has no readable MSH, so a positive `AA`
-    // the sender cannot correlate is downgraded to a non-positive `AE` — never `MSA|AA`.
+    // the sender cannot correlate is downgraded to a non-positive `AE`, never `MSA|AA`.
     const ackText = ackPayload.toString("ascii");
     expect(ackText).toContain("MSA|AE");
     expect(ackText).not.toContain("MSA|AA");
@@ -203,8 +203,8 @@ describe("SERVER-04: auto-ACK — AA mode via MllpServer over InMemoryTransport"
   });
 });
 
-describe("SERVER-04: auto-ACK — function mode", () => {
-  it("autoAck: fn — fn receives (payload, meta, conn) and its return is sent as ACK", async () => {
+describe("SERVER-04: auto-ACK, function mode", () => {
+  it("autoAck: fn, fn receives (payload, meta, conn) and its return is sent as ACK", async () => {
     const fnCalls: Array<{ payloadLen: number; metaConnId: string }> = [];
     const customAck = Buffer.from("MSH|^~\\&|ACK|CUSTOM\rMSA|AA|CUSTOM001\r", "ascii");
 
@@ -255,7 +255,7 @@ describe("SERVER-04: auto-ACK — function mode", () => {
     await server.close();
   });
 
-  it("autoAck: fn with async builder — resolved Buffer is sent as ACK", async () => {
+  it("autoAck: fn with async builder, resolved Buffer is sent as ACK", async () => {
     const asyncAck = Buffer.from("MSH|^~\\&|ACK|ASYNC\rMSA|AA|ASYNC001\r", "ascii");
 
     const server = createServer({
@@ -301,15 +301,15 @@ describe("SERVER-04: auto-ACK — function mode", () => {
   });
 });
 
-describe("SERVER-04: auto-ACK — undefined (manual mode)", () => {
-  it("autoAck: undefined — no ACK is sent automatically (developer controls conn.send())", async () => {
+describe("SERVER-04: auto-ACK, undefined (manual mode)", () => {
+  it("autoAck: undefined, no ACK is sent automatically (developer controls conn.send())", async () => {
     const acksFromServer: Buffer[] = [];
-    // Omitting `autoAck` (leaving it undefined) selects manual-ACK mode — the
+    // Omitting `autoAck` (leaving it undefined) selects manual-ACK mode, the
     // developer controls conn.send(). exactOptionalPropertyTypes forbids passing
     // an explicit `autoAck: undefined`, so we omit the key entirely.
     const server = createServer({
       onMessage: (_payload, _meta, _conn) => {
-        // Do nothing — manual mode means developer must call conn.send()
+        // Do nothing, manual mode means developer must call conn.send()
       },
     });
     await server.listen(0);
@@ -333,7 +333,7 @@ describe("SERVER-04: auto-ACK — undefined (manual mode)", () => {
 
     sock.write(framePayload(ADT_A01_PAYLOAD));
 
-    // Wait sufficient time — no ACK should arrive
+    // Wait sufficient time, no ACK should arrive
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
 
     expect(acksFromServer).toHaveLength(0);
@@ -438,7 +438,7 @@ describe("D-03: message event fires BEFORE auto-ACK is sent", () => {
 });
 
 describe("D-04: auto-ACK errors re-emitted as connection error, server continues", () => {
-  it("autoAck fn throws — error event fires on connection, server continues accepting", async () => {
+  it("autoAck fn throws, error event fires on connection, server continues accepting", async () => {
     const throwOnFirst = { count: 0 };
 
     const server = createServer({
@@ -453,7 +453,7 @@ describe("D-04: auto-ACK errors re-emitted as connection error, server continues
 
     // Listen for connection-level error events
     server.on("connection", (evt: { connectionId: string }) => {
-      // We need to access the connection object — use getStats or workaround
+      // We need to access the connection object, use getStats or workaround
       void evt; // connection event has connectionId but not the conn object
     });
 
@@ -469,7 +469,7 @@ describe("D-04: auto-ACK errors re-emitted as connection error, server continues
       s.once("error", reject);
     });
 
-    // Send first message — builder throws, error should be emitted on conn (not crash)
+    // Send first message, builder throws, error should be emitted on conn (not crash)
     sock.write(framePayload(ADT_A01_PAYLOAD));
 
     // Wait a bit, then send second message to confirm server is still alive
@@ -551,7 +551,7 @@ describe("D-04 + backpressure: conn.send() returns false → MllpConnectionError
   });
 });
 
-describe("buildRawAck — byte-level ACK construction (Phase 6)", () => {
+describe("buildRawAck, byte-level ACK construction (Phase 6)", () => {
   it("well-formed MSH, AA: echoes inbound MSH-10 into MSA-2", () => {
     const ack = buildRawAck(Buffer.from(ADT_A01_PAYLOAD, "ascii"), "AA");
     expect(ack).toBeInstanceOf(Buffer);
@@ -592,7 +592,7 @@ describe("buildRawAck — byte-level ACK construction (Phase 6)", () => {
   });
 });
 
-describe("resolveNackCode — handler-failure → negative code mapping", () => {
+describe("resolveNackCode, handler-failure → negative code mapping", () => {
   it("a plain Error maps to AE (application error, resend may succeed)", () => {
     expect(resolveNackCode(new Error("downstream timeout"))).toBe("AE");
     expect(resolveNackCode("string failure")).toBe("AE");
@@ -609,7 +609,7 @@ describe("resolveNackCode — handler-failure → negative code mapping", () => 
 });
 
 // ---------------------------------------------------------------------------
-// MLLP-ACK-FAILSAFE — never answer AA for a message you could not correlate.
+// MLLP-ACK-FAILSAFE, never answer AA for a message you could not correlate.
 // ---------------------------------------------------------------------------
 
 /** A well-formed single message with control ID FRAG01 (used as the post-VT fragment). */
@@ -630,7 +630,7 @@ const BATCH_ENVELOPE =
   "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|MSG001|P|2.5\rPID|||111\r" +
   "BTS|1\rFTS|1\r";
 
-describe("MLLP-ACK-FAILSAFE — buildRawAck refuses a positive ACK it cannot correlate", () => {
+describe("MLLP-ACK-FAILSAFE, buildRawAck refuses a positive ACK it cannot correlate", () => {
   const positiveStays = (payload: string, id: string): void => {
     const ack = buildRawAck(Buffer.from(payload, "latin1"), "AA").toString("latin1");
     expect(ack).toContain(`MSA|AA|${id}`);
@@ -658,9 +658,9 @@ describe("MLLP-ACK-FAILSAFE — buildRawAck refuses a positive ACK it cannot cor
 
   it("(2) two concatenated MSH messages downgrade AA -> AE (do NOT ACK only the first)", () => {
     const ack = buildRawAck(Buffer.from(CONCATENATED_TWO_MSH, "latin1"), "AA").toString("latin1");
-    // The positive disposition is the harm — it must never be AA. (A downgraded AE may still
+    // The positive disposition is the harm, it must never be AA. (A downgraded AE may still
     // echo the first frame's MSH-10, which correctly settles a one-message-per-frame sender's
-    // single in-flight entry and triggers a full-frame resend — that is not a false positive.)
+    // single in-flight entry and triggers a full-frame resend, that is not a false positive.)
     expect(ack).toContain("MSA|AE");
     expect(ack).not.toContain("MSA|AA");
     expect(rawAckUncorrelatable(Buffer.from(CONCATENATED_TWO_MSH, "latin1"))).toBe(true);
@@ -679,14 +679,14 @@ describe("MLLP-ACK-FAILSAFE — buildRawAck refuses a positive ACK it cannot cor
     expect(rawAckUncorrelatable(Buffer.from(BATCH_ENVELOPE, "latin1"))).toBe(true);
   });
 
-  it("a requested NEGATIVE code is never touched — it still echoes what it can", () => {
+  it("a requested NEGATIVE code is never touched, it still echoes what it can", () => {
     // Concatenated messages with an AE request stay AE and may echo the first id (already negative).
     const ae = buildRawAck(Buffer.from(CONCATENATED_TWO_MSH, "latin1"), "AE").toString("latin1");
     expect(ae).toContain("MSA|AE|MSG001");
   });
 });
 
-describe("MLLP-ACK-FAILSAFE — server auto-ACK downgrades + emits a PHI-safe 'nack'", () => {
+describe("MLLP-ACK-FAILSAFE, server auto-ACK downgrades + emits a PHI-safe 'nack'", () => {
   const VTb = 0x0b;
   const FSb = 0x1c;
   const CRb = 0x0d;
@@ -724,7 +724,7 @@ describe("MLLP-ACK-FAILSAFE — server auto-ACK downgrades + emits a PHI-safe 'n
 
     // VT + <clinical bytes that get discarded> + VT + <valid fragment MSH> + FS + CR.
     // The decoder abandons the accumulator on the mid-payload VT (MLLP_TRAILING_BYTES) and
-    // delivers only FRAG01 — which parses cleanly, so this isolates the discarded-bytes rule
+    // delivers only FRAG01, which parses cleanly, so this isolates the discarded-bytes rule
     // from the uncorrelatable-inbound rule.
     const discarded = Buffer.from(
       "MSH|^~\\&|SENDER|SFAC|RECV|RFAC|20260424120000||ADT^A01|REALMSG|P|2.5\rPID|||12345^^^FAC||DOE^JOHN\r",
@@ -782,12 +782,12 @@ describe("MLLP-ACK-FAILSAFE — server auto-ACK downgrades + emits a PHI-safe 'n
   it("a valid message pipelined after an FS-without-CR stray-byte frame still gets AA (no bleed)", async () => {
     // Regression for the conformance-refuter finding: MLLP_TRAILING_BYTES must be reserved for a
     // mid-payload VT discard. The default `allowFsOnly` path used to also emit it for an
-    // inter-frame stray byte AND mis-attribute it to the NEXT frame — so a perfectly good message
+    // inter-frame stray byte AND mis-attribute it to the NEXT frame, so a perfectly good message
     // pipelined after `... FS <stray> VT ...` was wrongly downgraded to AE (a duplicate-message bug
     // introduced by the fix). Both frames here are complete and correlatable → both must be AA.
     const msg1 = "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|ID1|P|2.5\rPID|||111\r";
     const msg2 = "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|ID2|P|2.5\rPID|||222\r";
-    // VT msg1 FS <stray 0x58 'X'> VT msg2 FS CR  — frame1 is FS-without-CR + a stray byte.
+    // VT msg1 FS <stray 0x58 'X'> VT msg2 FS CR , frame1 is FS-without-CR + a stray byte.
     const frame = Buffer.concat([
       Buffer.from([VTb]),
       Buffer.from(msg1, "latin1"),

@@ -58,7 +58,7 @@ describe("MllpClient pipeline:false (PLAN-05, CLIENT-19, D-06)", () => {
     vi.useRealTimers();
   });
 
-  it("Test 10: pipeline:false serializes sends — only one in-flight at a time", async () => {
+  it("Test 10: pipeline:false serializes sends, only one in-flight at a time", async () => {
     const { client, peerSink, ackFromPeer } = buildClientOverPair({
       pipeline: false,
       ackTimeoutMs: 60_000,
@@ -95,7 +95,7 @@ describe("MllpClient pipeline:false (PLAN-05, CLIENT-19, D-06)", () => {
     // Only M1 on the wire initially.
     await vi.advanceTimersByTimeAsync(1);
     expect(peerSink().length).toBe(1);
-    // Advance past M1's timeout — M1 expires; slot frees → M2 flushes.
+    // Advance past M1's timeout, M1 expires; slot frees → M2 flushes.
     // Stop short of M2's own timeout (M2 is sent at ~100ms; its timeout
     // would fire at ~200ms, so 150ms is the safe assertion window).
     await vi.advanceTimersByTimeAsync(150);

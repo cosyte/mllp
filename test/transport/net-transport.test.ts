@@ -5,7 +5,7 @@ import { NetTransport } from "../../src/transport/net-transport.js";
 import type { Transport } from "../../src/transport/index.js";
 
 /**
- * Minimal `net.Socket` test double — an EventEmitter with mocked
+ * Minimal `net.Socket` test double, an EventEmitter with mocked
  * `write`/`end`/`destroy`. Only the surface `NetTransport` touches is stubbed;
  * the value is cast through `unknown` to the precise `Socket` type so the
  * constructor sees a properly-typed socket (no `any`).

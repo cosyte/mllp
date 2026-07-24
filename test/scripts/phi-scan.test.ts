@@ -1,5 +1,5 @@
 /**
- * Unit tests for scripts/phi-scan.ts — the MLLP/HL7 v2 PHI commit-gate.
+ * Unit tests for scripts/phi-scan.ts, the MLLP/HL7 v2 PHI commit-gate.
  *
  * mllp is a transport library: it wraps HL7 v2 in MLLP frames
  * (`VT + payload + FS CR`). The scanner is a port of `@cosyte/hl7`'s
@@ -7,7 +7,7 @@
  * halves:
  *   - the HL7-aware detectors CATCH real-looking PHI (a weak scanner is worse
  *     than none) and PASS genuinely synthetic, allow-listed content; and
- *   - the MLLP unwrap works — a framed message's HL7 payload is scanned exactly
+ *   - the MLLP unwrap works, a framed message's HL7 payload is scanned exactly
  *     as an un-framed one, and malformed frames (missing end-block, double
  *     framing) do NOT bypass detection.
  *
@@ -92,7 +92,7 @@ afterAll(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Negative tests — genuinely synthetic, allow-listed content PASSES
+// Negative tests, genuinely synthetic, allow-listed content PASSES
 // ---------------------------------------------------------------------------
 
 describe("phi-scan: synthetic / allow-listed content passes (exit 0)", () => {
@@ -120,12 +120,12 @@ describe("phi-scan: synthetic / allow-listed content passes (exit 0)", () => {
   it("the committed corpus (all-mode) is clean", () => {
     const r = runScanner([]);
     expect(r.code, `stderr: ${r.stderr}`).toBe(0);
-    expect(r.stdout).toMatch(/OK — no hits/);
+    expect(r.stdout).toMatch(/OK, no hits/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// MLLP-frame unwrap — the transport-layer addition
+// MLLP-frame unwrap, the transport-layer addition
 // ---------------------------------------------------------------------------
 
 describe("phi-scan: MLLP frame unwrap catches PHI inside the frame", () => {
@@ -197,7 +197,7 @@ describe("phi-scan: non-HL7 binary fixtures", () => {
     ]);
     const r = scanBin("binary.frame.bin", junk);
     expect(r.code, `stderr: ${r.stderr}`).toBe(0);
-    expect(r.stdout).toMatch(/OK — no hits/);
+    expect(r.stdout).toMatch(/OK, no hits/);
   });
 
   it("still catches a dashed-SSN shape in an otherwise non-HL7 binary blob", () => {
@@ -215,7 +215,7 @@ describe("phi-scan: non-HL7 binary fixtures", () => {
 
 // ---------------------------------------------------------------------------
 // Scope: any test/ capture (any extension, .ts excepted) earns the structured
-// scan (conformance-refuter regression — a .txt/.json/extensionless live capture
+// scan (conformance-refuter regression, a .txt/.json/extensionless live capture
 // dropped in test/differential/fixtures/ must NOT bypass the scanner)
 // ---------------------------------------------------------------------------
 
@@ -224,7 +224,7 @@ describe("phi-scan: extension-agnostic test/ capture scanning (refuter regressio
     // A real capture dropped under test/ as .txt (not .bin/.hl7) must earn the
     // structured name/DOB/MRN scan, not just the conservative shape pass. Written
     // inside the repo test/ tree (so its repo-relative path starts with "test/")
-    // in a self-cleaning temp dir, and scanned individually — never during the
+    // in a self-cleaning temp dir, and scanned individually, never during the
     // all-mode "corpus is clean" run above.
     const tmpDir = mkdtempSync(join(REPO_ROOT, "test", "phi-scan-cap-"));
     try {
@@ -256,7 +256,7 @@ describe("phi-scan: extension-agnostic test/ capture scanning (refuter regressio
 });
 
 // ---------------------------------------------------------------------------
-// Positive tests — real-looking PHI is CAUGHT (un-framed HL7)
+// Positive tests, real-looking PHI is CAUGHT (un-framed HL7)
 // ---------------------------------------------------------------------------
 
 describe("phi-scan: names", () => {
@@ -416,7 +416,7 @@ describe("phi-scan: delimiter handling", () => {
 });
 
 describe("phi-scan: structured scan is not silently bypassed (refuter regressions)", () => {
-  it("scans a header-less message (no MSH — starts with EVN)", () => {
+  it("scans a header-less message (no MSH, starts with EVN)", () => {
     const r = scan(
       "no-msh.hl7",
       msg("EVN|A01|20260419100000", "PID|1||48291043^^^HOSP^MR||Anderson^Michael||19770707|M"),

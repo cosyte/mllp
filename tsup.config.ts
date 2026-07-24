@@ -1,12 +1,12 @@
 import { cosyteTsup } from "@cosyte/tsup-config";
 
 /**
- * tsup build for @cosyte/mllp — dual ESM + CJS + `.d.ts` from the shared @cosyte/tsup-config standard
+ * tsup build for @cosyte/mllp, dual ESM + CJS + `.d.ts` from the shared @cosyte/tsup-config standard
  * (ES2023, Node platform, `.mjs`/`.cjs` out-extensions). Matches the `exports` map in package.json.
  *
  * Three entries (the package's three public subpaths): the root, the `/testing` in-memory transport,
  * and the `/ack-from-hl7` helpers. `@cosyte/hl7` is the optional peer dep behind `/ack-from-hl7` and
- * is never bundled. `shims: true` polyfills `import.meta.url` in the CJS build — `ack-from-hl7`'s
+ * is never bundled. `shims: true` polyfills `import.meta.url` in the CJS build, `ack-from-hl7`'s
  * lazy peer loader (`src/ack-from-hl7/peer.ts`) needs it for `createRequire(import.meta.url)`.
  */
 export default cosyteTsup({

@@ -1,5 +1,5 @@
 /**
- * Connection — 6-state FSM over a Transport with lifecycle events, warning streams,
+ * Connection, 6-state FSM over a Transport with lifecycle events, warning streams,
  * and getStats() observability.
  *
  * @example
@@ -76,7 +76,7 @@ export interface ReconnectingEvent {
 }
 
 /**
- * Return type of `connection.getStats()` — JSON-serializable per OBS-04.
+ * Return type of `connection.getStats()`, JSON-serializable per OBS-04.
  *
  * All timestamps are `Date | null` (not epoch milliseconds). `JSON.stringify()`
  * serialises them to ISO 8601 strings by default with no information loss.
@@ -138,7 +138,7 @@ const MAX_WARNINGS = 100;
  * DRAINING   → DISCONNECTED | CLOSED
  * RECONNECTING → CONNECTING | CLOSED
  * DISCONNECTED → CLOSED
- * CLOSED     → (terminal — no outgoing transitions)
+ * CLOSED     → (terminal, no outgoing transitions)
  */
 const LEGAL_TRANSITIONS: ReadonlyMap<ConnectionState, ReadonlySet<ConnectionState>> = new Map([
   ["CONNECTING", new Set<ConnectionState>(["CONNECTED", "RECONNECTING", "CLOSED"])],
@@ -190,7 +190,7 @@ export class Connection extends EventEmitter {
 
   /** Ring buffer: last MAX_WARNINGS entries (OBS-05). */
   private _warningBuffer: MllpWarning[] = [];
-  /** Accurate total counts per code — unaffected by ring buffer truncation (OBS-05). */
+  /** Accurate total counts per code, unaffected by ring buffer truncation (OBS-05). */
   private readonly _warningsByCode: Map<string, number> = new Map();
   /** Set to true once the ring buffer overflows (OBS-05). */
   private _warningsTruncated = false;
@@ -199,7 +199,7 @@ export class Connection extends EventEmitter {
   private _drainPromise: Promise<void> | null = null;
 
   /**
-   * beforeClose hook — no-op default that resolves immediately.
+   * beforeClose hook, no-op default that resolves immediately.
    *
    * Phase 4 (Server) and Phase 5 (Client) override this instance property to
    * register ACK-drain and send-queue drain logic respectively (D-07/D-08).
@@ -242,7 +242,7 @@ export class Connection extends EventEmitter {
       } catch (err) {
         // Nothing may escape the transport's data callback. On a real socket this callback IS
         // the `'data'` listener, so a throw here becomes an uncaught exception that kills the
-        // entire process — taking every OTHER connection and every in-flight durable commit
+        // entire process, taking every OTHER connection and every in-flight durable commit
         // with it. One junk byte from one misbehaving peer must not be able to do that.
         //
         // Reachable on a DEFAULT server: `SERVER_DEFAULT_FRAMING` leaves `allowMissingLeadingVt`
@@ -312,7 +312,7 @@ export class Connection extends EventEmitter {
     this._remotePort = remotePort;
     this._connectedAt = new Date();
     this._transition("CONNECTED");
-    // Contained like every other emit in this class — `notifyConnect` is called from the
+    // Contained like every other emit in this class, `notifyConnect` is called from the
     // transport's connect callback, so a throwing subscriber would unwind into it.
     this._dispatchContained(() => {
       this.emit("connect", Object.freeze({ connectionId: this.connectionId }));
@@ -362,17 +362,17 @@ export class Connection extends EventEmitter {
   async close(opts?: { drainTimeoutMs?: number }): Promise<void> {
     const timeout = opts?.drainTimeoutMs ?? this._opts.drainTimeoutMs ?? 30_000;
 
-    // Terminal states — nothing to do
+    // Terminal states, nothing to do
     if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
 
-    // CONNECTING or RECONNECTING — cancel the pending attempt (LIFE-05)
+    // CONNECTING or RECONNECTING, cancel the pending attempt (LIFE-05)
     if (this._state === "CONNECTING" || this._state === "RECONNECTING") {
       this._transition("CLOSED", "close() during " + this._state);
       this._transport.destroy();
       return;
     }
 
-    // DRAINING already — join the in-progress drain rather than starting a second beforeClose call
+    // DRAINING already, join the in-progress drain rather than starting a second beforeClose call
     if (this._state === "DRAINING") {
       return this._drainPromise ?? Promise.resolve();
     }
@@ -404,13 +404,13 @@ export class Connection extends EventEmitter {
     const result = await Promise.race([drainPromise.then(() => "done" as const), timeoutPromise]);
 
     if (result === "timeout") {
-      // Drain timed out — force to CLOSED (DRAINING → CLOSED per LIFE-02)
+      // Drain timed out, force to CLOSED (DRAINING → CLOSED per LIFE-02)
       if (this._state === "DRAINING") {
         this._transition("CLOSED", "drain timeout");
         this._transport.destroy();
       }
     } else {
-      // Drain completed — DRAINING → DISCONNECTED (LIFE-02)
+      // Drain completed, DRAINING → DISCONNECTED (LIFE-02)
       if (this._state === "DRAINING") {
         this._transition("DISCONNECTED");
         this._transport.close();
@@ -422,7 +422,7 @@ export class Connection extends EventEmitter {
    * Abruptly destroy the connection, discarding any pending writes.
    *
    * Transitions from any non-terminal state directly to `CLOSED` and calls
-   * `transport.destroy(reason)`. Emits `'close'` event. Idempotent — safe to
+   * `transport.destroy(reason)`. Emits `'close'` event. Idempotent, safe to
    * call multiple times.
    *
    * @param reason - Optional error to propagate to the transport.
@@ -481,7 +481,7 @@ export class Connection extends EventEmitter {
     const from = this._state;
     const legal = LEGAL_TRANSITIONS.get(from);
     if (legal === undefined || !legal.has(to)) {
-      // Illegal transition — silently ignore to preserve FSM integrity (T-03-03-04)
+      // Illegal transition, silently ignore to preserve FSM integrity (T-03-03-04)
       return;
     }
     // The state is committed BEFORE any subscriber runs, so a throwing subscriber can never leave
@@ -492,7 +492,7 @@ export class Connection extends EventEmitter {
     );
 
     // Every lifecycle emit is contained. `_transition` is reached from `destroy()`, which is
-    // called from inside the `catch` block on the receive path — and a throw raised inside a catch
+    // called from inside the `catch` block on the receive path, and a throw raised inside a catch
     // block is NOT caught by that block. A throwing 'stateChange'/'close' subscriber would
     // therefore unwind straight out of the socket's 'data' listener and kill the process, which is
     // the same defect as the decoder throw, just four frames up. Contain at the source: no emit in
@@ -521,7 +521,7 @@ export class Connection extends EventEmitter {
 
   private _onTransportClose(): void {
     if (this._state === "DRAINING") {
-      // Transport closed naturally during graceful drain — complete the close
+      // Transport closed naturally during graceful drain, complete the close
       this._transition("DISCONNECTED");
       return;
     }
@@ -542,12 +542,12 @@ export class Connection extends EventEmitter {
    * Node throws `ERR_UNHANDLED_ERROR` when `'error'` is emitted on an `EventEmitter` with no
    * listener. Every `'error'` emission in this class is reached from inside a transport callback
    * (the socket's `'data'`/`'error'` listener), so an unguarded emit would become an **uncaught
-   * exception that kills the process** — the exact failure the containment above exists to
+   * exception that kills the process**, the exact failure the containment above exists to
    * prevent, merely relocated one frame up the stack.
    *
    * `Connection` is a public export and can legitimately be driven with no `'error'` listener
    * (`MllpServer` and `MllpClient` each attach one; a bare `Connection` need not). The connection
-   * is still torn down and `'stateChange'`/`'close'` still fire, so a caller is never blind —
+   * is still torn down and `'stateChange'`/`'close'` still fire, so a caller is never blind,
    * they simply do not get the typed error object they never asked for. Mirrors
    * `MllpServer._emitErrorIfListened`.
    */
@@ -558,7 +558,7 @@ export class Connection extends EventEmitter {
     } catch {
       // A throwing `'error'` subscriber must not escape either. This method is called from inside
       // socket callbacks AND from inside catch blocks, so a throw here would unwind straight out of
-      // the socket handler — the same process kill, reached by a third route. This is the one place
+      // the socket handler, the same process kill, reached by a third route. This is the one place
       // a throw is deliberately swallowed: reporting is what just failed, so there is nowhere left
       // to report it to.
     }
@@ -572,7 +572,7 @@ export class Connection extends EventEmitter {
    * consumers keep the stable `code` and `byteOffset`), then **destroy this connection only**.
    *
    * Why destroy rather than resynchronize: once `push` has thrown, the reader's position within
-   * the byte stream is no longer trustworthy — the next bytes could be the middle of a message.
+   * the byte stream is no longer trustworthy, the next bytes could be the middle of a message.
    * Guessing where the next frame starts is how a clinical message gets silently mis-split, so
    * the connection is dropped instead. A server drops that one peer and keeps serving everyone
    * else.
@@ -584,7 +584,7 @@ export class Connection extends EventEmitter {
    * engine that is already unwell. A compatibility failure is not a network blip.
    *
    * If a peer's quirk is *expected* (trailing junk, keepalive bytes, a missing leading VT), the
-   * decoder's tolerance opt-ins are the supported answer — they turn the throw into a warning.
+   * decoder's tolerance opt-ins are the supported answer, they turn the throw into a warning.
    */
   private _onFatalFramingError(err: MllpFramingError): void {
     if (this._state === "CLOSED") return;
@@ -599,13 +599,13 @@ export class Connection extends EventEmitter {
   }
 
   /**
-   * Backstop for a NON-framing throw escaping `FrameReader.push` — i.e. our own bug, or a
+   * Backstop for a NON-framing throw escaping `FrameReader.push`, i.e. our own bug, or a
    * subscriber's, rather than the peer's bytes.
    *
    * `_onFrameDecoded` already contains subscriber throws at the dispatch site, so this should be
    * unreachable. It exists because "unreachable" and "cannot kill the process from inside a
    * socket `'data'` handler" are different claims, and only the second one is safe to bet a
-   * clinical interface on. Reported honestly as an internal receive error — never dressed up as
+   * clinical interface on. Reported honestly as an internal receive error, never dressed up as
    * a peer framing fault.
    */
   private _onInternalReceiveError(err: Error): void {
@@ -627,7 +627,7 @@ export class Connection extends EventEmitter {
             : "receive";
 
     // Terminal states first. `destroy(err)` forwards the reason to `transport.destroy(err)`, which
-    // makes the socket re-surface the same error here — so emitting before this guard reported a
+    // makes the socket re-surface the same error here, so emitting before this guard reported a
     // single fatal framing error TWICE: once with `connectionCause: 'framing-fatal'`, then again
     // bare. That double-counts on an alerting dashboard and the echo carries no cause.
     if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
@@ -637,7 +637,7 @@ export class Connection extends EventEmitter {
     // bare Connection (no 'error' listener) previously died on an ordinary ECONNRESET.
     this._emitErrorIfListened(new MllpConnectionError(err.message, { cause: err, phase }));
 
-    // CONNECTING and RECONNECTING have no path to DISCONNECTED — use CLOSED
+    // CONNECTING and RECONNECTING have no path to DISCONNECTED, use CLOSED
     const target: ConnectionState =
       this._state === "CONNECTING" || this._state === "RECONNECTING" ? "CLOSED" : "DISCONNECTED";
     this._transition(target, `error: ${err.message}`);
@@ -653,8 +653,8 @@ export class Connection extends EventEmitter {
     const event = Object.freeze({ payload, connectionId: this.connectionId, byteOffset, warnings });
 
     // `onFrame` is dispatched SYNCHRONOUSLY from inside `FrameReader.push()`, which is itself
-    // called from the transport's data callback. A throwing subscriber — a metrics tap, a logger,
-    // an ordinary consumer bug — would therefore unwind through `push()` and out of the socket's
+    // called from the transport's data callback. A throwing subscriber, a metrics tap, a logger,
+    // an ordinary consumer bug, would therefore unwind through `push()` and out of the socket's
     // `'data'` listener, killing the process, and on the way it would suppress the ACK for a
     // message the application may already have handled.
     //
@@ -688,7 +688,7 @@ export class Connection extends EventEmitter {
     // Enrich with connectionId (D-09) and re-freeze
     const enriched = Object.freeze<MllpWarning>({ ...w, connectionId: this.connectionId });
 
-    // Always update the count map — accurate regardless of ring buffer truncation (OBS-05)
+    // Always update the count map, accurate regardless of ring buffer truncation (OBS-05)
     this._warningsByCode.set(enriched.code, (this._warningsByCode.get(enriched.code) ?? 0) + 1);
 
     // Ring buffer: keep last MAX_WARNINGS entries (OBS-05)
@@ -698,7 +698,7 @@ export class Connection extends EventEmitter {
     }
     this._warningBuffer.push(enriched);
 
-    // Per-connection subscriber — swallow exceptions (WARN-06)
+    // Per-connection subscriber, swallow exceptions (WARN-06)
     if (this._onWarningFn !== null) {
       try {
         this._onWarningFn(enriched);
@@ -712,7 +712,7 @@ export class Connection extends EventEmitter {
     // Contained for the same reason as the per-connection subscriber above: this runs synchronously
     // inside `FrameReader.push()`, itself inside the socket's 'data' callback, so a throwing
     // 'warning' listener would unwind out of the data handler and kill the process. WARN-06 already
-    // promises a throwing warning handler "must not disrupt frame processing" — it was only half
+    // promises a throwing warning handler "must not disrupt frame processing", it was only half
     // honored (the `onWarning` option was guarded; the event broadcast was not).
     this._dispatchContained(() => {
       this.emit("warning", enriched);

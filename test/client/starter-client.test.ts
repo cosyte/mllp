@@ -192,7 +192,7 @@ describe("createStarterClient (PLAN-06, CLIENT-10, D-22)", () => {
     expect(src).toMatch(/const ack = await c\.send\(/);
   });
 
-  it("Test 7: state is CONNECTED on return (not CONNECTING) — connect() awaited", async () => {
+  it("Test 7: state is CONNECTED on return (not CONNECTING), connect() awaited", async () => {
     const peer = await startEchoAckPeer();
     peers.push(peer);
     const client = await createStarterClient({ host: "127.0.0.1", port: peer.port });
@@ -214,7 +214,7 @@ describe("createStarterClient (PLAN-06, CLIENT-10, D-22)", () => {
     };
     const client = await createStarterClient(opts);
     clients.push(client);
-    // Send a payload — peer echoes a synthetic AA frame, which fires the
+    // Send a payload, peer echoes a synthetic AA frame, which fires the
     // 'message' event on the client (in addition to ACK matching).
     await client.send(Buffer.from("PAY"));
     expect(messages.length).toBeGreaterThanOrEqual(1);

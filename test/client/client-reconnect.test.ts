@@ -2,7 +2,7 @@
  * MllpClient reconnect FSM tests (PLAN-04, CLIENT-05/06/12/17/18).
  *
  * Drives the reconnect cycle deterministically over `InMemoryTransport.pair()`
- * — no real sockets. The client's reconnect path is exercised through a
+ * no real sockets. The client's reconnect path is exercised through a
  * `_setReconnectFactory` test seam that returns a fresh transport-driven
  * Connection on each attempt.
  *
@@ -195,7 +195,7 @@ describe("MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)", () => {
     await h.client.close();
   });
 
-  it("Test 3: default backoff math — initial 100ms ±20% jitter, capped at 30s", async () => {
+  it("Test 3: default backoff math, initial 100ms ±20% jitter, capped at 30s", async () => {
     const observedDelays: number[] = [];
     const h = buildHarness({
       autoReconnect: true,
@@ -218,7 +218,7 @@ describe("MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)", () => {
     await h.client.close();
   });
 
-  it("Test 4: W-01 backoff-reset — first disconnect after success resets attempt; subsequent within same cycle do NOT re-reset", async () => {
+  it("Test 4: W-01 backoff-reset, first disconnect after success resets attempt; subsequent within same cycle do NOT re-reset", async () => {
     const attempts: number[] = [];
     const h = buildHarness({
       autoReconnect: true,
@@ -230,12 +230,12 @@ describe("MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)", () => {
     });
     // Simulate prior reconnect cycle bumping _attempt to 3 (no success between).
     (h.client as unknown as { _attempt: number })._attempt = 3;
-    // Mark a successful ACK to set _lastSuccessAt — first disconnect after this
+    // Mark a successful ACK to set _lastSuccessAt, first disconnect after this
     // should reset attempt to 0 (W-01).
     (h.client as unknown as { _lastSuccessAt: number })._lastSuccessAt = Date.now();
 
     h.dropTransient();
-    // Strategy is invoked synchronously during _handleDisconnect — no timer
+    // Strategy is invoked synchronously during _handleDisconnect, no timer
     // advance needed to capture attempts[0].
     expect(attempts[0]).toBe(0);
 
@@ -251,7 +251,7 @@ describe("MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)", () => {
     (h.client as unknown as { _handleDisconnect: (e: Error) => void })._handleDisconnect(
       Object.assign(new Error("again"), { code: "ECONNRESET" }),
     );
-    // Same cycle — the reset path SHOULD NOT fire (cycle-start flag is set).
+    // Same cycle, the reset path SHOULD NOT fire (cycle-start flag is set).
     // The strategy is invoked with the current `_attempt` value (5), proving
     // the W-01 reset didn't repeat.
     expect(attempts.length).toBe(2);
@@ -388,7 +388,7 @@ describe("MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)", () => {
     );
     expect(observed[1]).toBe(acB.signal);
 
-    // Test no-signal path: detach by clearing _connectSignal — next ctx
+    // Test no-signal path: detach by clearing _connectSignal, next ctx
     // should carry NEVER_ABORTING_SIGNAL sentinel.
     (h.client as unknown as { _connectSignal: AbortSignal | undefined })._connectSignal = undefined;
     (h.client as unknown as { _handleDisconnect: (e: Error) => void })._handleDisconnect(
@@ -435,7 +435,7 @@ describe("MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)", () => {
     // Force any pending flushes
     await vi.advanceTimersByTimeAsync(1);
     // The resend went through *before* the new peer's onData was attached
-    // via this test seam; instead, verify via correlator state — the entry
+    // via this test seam; instead, verify via correlator state, the entry
     // is still pending (live-store) and was markFlushed again post-resend.
     const internal = h.client as unknown as {
       _correlator: { size: number; liveEntries: () => Iterable<{ controlId: string | null }> };
@@ -461,7 +461,7 @@ describe("MllpClient (reconnect, PLAN-04 / CLIENT-05/06/12/17/18)", () => {
     const p1 = h.client.send(Buffer.from("PAYLOAD_1"));
     // Force the markFlushed by waiting one microtask
     await Promise.resolve();
-    // Manually ensure send was flushed — simulate write-flush by advancing
+    // Manually ensure send was flushed, simulate write-flush by advancing
     // any microtasks; PLAN-02's send() calls markFlushed synchronously.
     // Then drop before ACK
     const errors: Array<{

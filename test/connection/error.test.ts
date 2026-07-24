@@ -78,7 +78,7 @@ describe("MllpConnectionError", () => {
     });
 
     it("ConnectionErrorCause type accepts only the two stable members", () => {
-      // Compile-time check via assignment — runtime equivalence to keep
+      // Compile-time check via assignment, runtime equivalence to keep
       // the test executable; the type annotation enforces the contract.
       const fifoUnsafe: ConnectionErrorCause = "fifo-unsafe";
       const orphan: ConnectionErrorCause = "in-flight-orphan";

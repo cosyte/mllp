@@ -1,7 +1,7 @@
 /**
  * In-memory TLS certificate fixtures for the Phase 8 TLS test suites.
  *
- * Generated fresh per call via `selfsigned` (devDependency) — NEVER written to
+ * Generated fresh per call via `selfsigned` (devDependency), NEVER written to
  * disk. Each fixture is its own self-signed CA (the server/CA cert is the same
  * PEM), matching the pattern used by `scripts/generate-test-certs.mjs`.
  */
@@ -27,7 +27,7 @@ export interface MutualTlsFixture extends ServerCertFixture {
 
 /**
  * Build a self-signed server certificate for CN/SAN `localhost` + `127.0.0.1`
- * — trusted when a client configures `ca: fixture.cert`.
+ * trusted when a client configures `ca: fixture.cert`.
  */
 export function buildServerCertFixture(): ServerCertFixture {
   const attrs = [{ name: "commonName", value: "localhost" }];
@@ -49,7 +49,7 @@ export function buildServerCertFixture(): ServerCertFixture {
 }
 
 /**
- * Build a second, wholly UNRELATED self-signed certificate — for the
+ * Build a second, wholly UNRELATED self-signed certificate, for the
  * "client trusts the wrong CA" / untrusted-chain test case.
  */
 export function buildUntrustedCertFixture(): ServerCertFixture {
@@ -64,7 +64,7 @@ export function buildUntrustedCertFixture(): ServerCertFixture {
 
 /**
  * Build a self-signed server certificate whose CN/SAN is `wrong.example.com`
- * — for the hostname-mismatch test case (client's `ca` trusts it, but
+ * for the hostname-mismatch test case (client's `ca` trusts it, but
  * `servername`/`host` won't match).
  */
 export function buildSanMismatchCertFixture(): ServerCertFixture {
@@ -80,13 +80,13 @@ export function buildSanMismatchCertFixture(): ServerCertFixture {
 
 /**
  * Build a server cert fixture PLUS a client certificate signed by the same
- * CA — for mutual-TLS (`clientAuth: 'WANT' | 'MUST'`) test cases.
+ * CA, for mutual-TLS (`clientAuth: 'WANT' | 'MUST'`) test cases.
  *
  * Built directly on `node-forge` (a transitive dependency of `selfsigned`,
  * added here as an explicit test-only devDependency) rather than
  * `selfsigned`'s own `clientCertificate: true` option: that option hardcodes
  * a 1024-bit client key and signs the client cert with forge's default
- * digest (SHA-1) with no override — both rejected by modern OpenSSL's
+ * digest (SHA-1) with no override, both rejected by modern OpenSSL's
  * default security level ("ee key too small" / "ca md too weak"). Signing
  * directly with `forge.md.sha256` and a 2048-bit key avoids both.
  */

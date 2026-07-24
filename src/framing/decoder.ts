@@ -1,11 +1,11 @@
 /**
- * MLLP frame decoder — stateful 3-state FSM for chunked byte-stream parsing.
+ * MLLP frame decoder, stateful 3-state FSM for chunked byte-stream parsing.
  *
  * Feed raw TCP chunks via `push(chunk)`. Complete MLLP frames fire synchronously
  * via the `onFrame` callback during each `push()` call.
  *
  * The decoder is **strict by default**: any framing deviation throws `MllpFramingError`
- * unless the matching tolerance option is explicitly enabled (Postel's Law — liberal receiver
+ * unless the matching tolerance option is explicitly enabled (Postel's Law, liberal receiver
  * means explicit tolerance, not silent acceptance).
  *
  * @example
@@ -45,7 +45,7 @@ const EMPTY_SNIPPET = Buffer.alloc(0);
 /**
  * Options for `FrameReader`.
  *
- * All tolerance opts default to `false` — every framing deviation throws unless
+ * All tolerance opts default to `false`, every framing deviation throws unless
  * explicitly enabled. Server-level defaults (allowFsOnly, allowLfAfterFs, allowLeadingWhitespace)
  * are applied by Phase 4 when constructing readers per SERVER-12.
  *
@@ -102,7 +102,7 @@ export interface FrameReaderOptions {
    *
    * @example
    * ```typescript
-   * // Hardened enforcement — no tolerance, all violations throw
+   * // Hardened enforcement, no tolerance, all violations throw
    * const reader = new FrameReader({ onFrame: fn, strict: true });
    * ```
    */
@@ -114,9 +114,9 @@ export interface FrameReaderOptions {
  * Complete frames fire synchronously via `onFrame` callback during `push()`.
  *
  * The decoder operates as a 3-state FSM:
- * - `SCANNING_FOR_VT` — waiting for the 0x0B frame-start byte
- * - `READING_PAYLOAD` — accumulating payload bytes until FS (0x1C)
- * - `EXPECTING_CR` — received FS, waiting for CR (0x0D) to complete the frame
+ * - `SCANNING_FOR_VT`, waiting for the 0x0B frame-start byte
+ * - `READING_PAYLOAD`, accumulating payload bytes until FS (0x1C)
+ * - `EXPECTING_CR`, received FS, waiting for CR (0x0D) to complete the frame
  *
  * @example
  * ```typescript
@@ -132,7 +132,7 @@ export class FrameReader {
   private readonly _maxFrameSize: number;
 
   private _state: ReaderState = "SCANNING_FOR_VT";
-  /** Reusable accumulator buffer — grown by doubling as needed. */
+  /** Reusable accumulator buffer, grown by doubling as needed. */
   private _accumulator: Buffer = Buffer.allocUnsafe(INITIAL_ACCUMULATOR_SIZE);
   /** Number of payload bytes written to accumulator in current frame. */
   private _writePos = 0;
@@ -144,7 +144,7 @@ export class FrameReader {
   private _wsCount = 0;
   /** Byte offset of the VT byte that started the current frame. */
   private _frameStartOffset = 0;
-  /** Per-frame warning accumulator — cleared after each _deliverFrame(). */
+  /** Per-frame warning accumulator, cleared after each _deliverFrame(). */
   private _frameWarnings: MllpWarning[] = [];
 
   /**
@@ -287,7 +287,7 @@ export class FrameReader {
       this._emitWarning(
         "MLLP_MISSING_LEADING_VT",
         this._byteOffset,
-        `Missing leading VT (0x0B) — treating byte 0x${byte.toString(16).padStart(2, "0")} at offset ${this._byteOffset} as payload start`,
+        `Missing leading VT (0x0B), treating byte 0x${byte.toString(16).padStart(2, "0")} at offset ${this._byteOffset} as payload start`,
       );
       this._frameStartOffset = this._byteOffset;
       this._state = "READING_PAYLOAD";
@@ -323,7 +323,7 @@ export class FrameReader {
     if (byte === VT) {
       // VT mid-payload: the current partial payload is abandoned and accumulation restarts after
       // this VT, so the frame that eventually delivers is only the REMNANT after the discard.
-      // Emit MLLP_TRAILING_BYTES (always a warning, never a throw) — this is the code's **reserved**
+      // Emit MLLP_TRAILING_BYTES (always a warning, never a throw), this is the code's **reserved**
       // meaning: "bytes were discarded; the delivered payload is a fragment." It is emitted while
       // accumulating the remnant frame, so it attaches to that frame (never bled onto another), and
       // `MllpServer`'s auto-ACK path keys on it to refuse a positive `AA` for a destroyed message.
@@ -333,14 +333,14 @@ export class FrameReader {
         `Unexpected VT (0x0B) mid-payload at offset ${this._byteOffset}; discarding ${this._writePos} accumulated bytes`,
       );
       this._writePos = 0;
-      // Remain in READING_PAYLOAD — the VT starts a new frame payload accumulation
+      // Remain in READING_PAYLOAD, the VT starts a new frame payload accumulation
       this._state = "READING_PAYLOAD";
       return;
     }
 
-    // Regular payload byte — enforce size cap BEFORE appending
+    // Regular payload byte, enforce size cap BEFORE appending
     if (this._writePos >= this._maxFrameSize) {
-      // PHI: the snippet must NOT carry a run of accumulated payload bytes — that is a
+      // PHI: the snippet must NOT carry a run of accumulated payload bytes, that is a
       // field-body slice of clinical content (the too-large frame is a full HL7 message).
       // The anomaly here is the size, not any specific byte, so the snippet is empty; the
       // structural facts (cap, byte offset) live in the message. (MLLP-9 PHI audit.)
@@ -394,7 +394,7 @@ export class FrameReader {
     }
 
     if (byte === VT) {
-      // Next frame starts immediately after FS — no CR between frames
+      // Next frame starts immediately after FS, no CR between frames
       if (this._opts.allowFsOnly === true) {
         // Strict mode escalates FS without CR to an error (WARN-08)
         if (this._opts.strict === true) {
@@ -412,7 +412,7 @@ export class FrameReader {
           `FS not followed by CR at offset ${this._byteOffset}; next frame VT found immediately`,
         );
         this._deliverFrame();
-        // The VT byte is consumed here — transition directly to READING_PAYLOAD
+        // The VT byte is consumed here, transition directly to READING_PAYLOAD
         this._state = "READING_PAYLOAD";
         return;
       }
@@ -443,7 +443,7 @@ export class FrameReader {
       //
       // We deliberately do NOT also emit MLLP_TRAILING_BYTES here. That code is **reserved for a
       // VT appearing mid-payload** (see `_readPayload`), where it means "this delivered payload is
-      // only the remnant after accumulated bytes were discarded" — a signal `MllpServer`'s
+      // only the remnant after accumulated bytes were discarded", a signal `MllpServer`'s
       // auto-ACK path keys on to refuse a positive `AA` for a message whose bytes were destroyed.
       // Emitting it for an inter-frame stray byte overloaded that meaning AND mis-attributed it:
       // it was emitted *after* `_deliverFrame()`, so it landed in the NEXT frame's warning

@@ -1,5 +1,5 @@
 /**
- * MllpClient lifecycle tests — PLAN-01.
+ * MllpClient lifecycle tests, PLAN-01.
  *
  * Drives the client through CONNECTING -> CONNECTED -> DRAINING -> DISCONNECTED
  * over an `InMemoryTransport.pair()`, bypassing `net.createConnection` via the
@@ -43,7 +43,7 @@ describe("MllpClient lifecycle (PLAN-01)", () => {
       events.push(e);
     });
 
-    // Drive the FSM externally — analog of socket-connect path
+    // Drive the FSM externally, analog of socket-connect path
     conn.notifyConnect("127.0.0.1", 2575);
 
     expect(client.state).toBe("CONNECTED");
@@ -53,7 +53,7 @@ describe("MllpClient lifecycle (PLAN-01)", () => {
   });
 
   it("Test 2: connect() rejects when already connected", async () => {
-    // Use the public connect() path — server bound on ephemeral port
+    // Use the public connect() path, server bound on ephemeral port
     const server = netCreateServer();
     await new Promise<void>((resolve) => {
       server.listen(0, "127.0.0.1", () => resolve());
@@ -76,7 +76,7 @@ describe("MllpClient lifecycle (PLAN-01)", () => {
   });
 
   it("Test 3: connect({ signal }) rejects with AbortError when signal aborts before connect", async () => {
-    // Bind a server but never accept — use a port that DOES exist, then abort the signal
+    // Bind a server but never accept, use a port that DOES exist, then abort the signal
     // before the connect resolves. Aborting between createConnection() and the 'connect'
     // event is timing-sensitive; use a fresh AbortController and abort immediately.
     const ac = new AbortController();
@@ -85,7 +85,7 @@ describe("MllpClient lifecycle (PLAN-01)", () => {
     await expect(client.connect({ signal: ac.signal })).rejects.toMatchObject({
       name: "AbortError",
     });
-    // Pre-aborted signal short-circuits — no connection attempted, no socket leak.
+    // Pre-aborted signal short-circuits, no connection attempted, no socket leak.
     expect(client.state).toBe("DISCONNECTED");
   });
 
@@ -205,7 +205,7 @@ describe("MllpClient lifecycle (PLAN-01)", () => {
     // Send bytes that should trigger a tolerance warning. Default FrameReader
     // does NOT enable tolerances, so an empty payload between VT and FS is the
     // simplest deterministic warning we can fire.
-    peer.write(Buffer.from([0x0b, 0x1c, 0x0d])); // VT FS CR — empty payload
+    peer.write(Buffer.from([0x0b, 0x1c, 0x0d])); // VT FS CR, empty payload
 
     expect(warnings.length).toBeGreaterThanOrEqual(1);
     expect(warnings[0]?.code).toBe("MLLP_EMPTY_PAYLOAD");
@@ -215,7 +215,7 @@ describe("MllpClient lifecycle (PLAN-01)", () => {
     const { client, conn } = buildClientOverInMemoryPair();
     conn.notifyConnect("127.0.0.1", 2575);
 
-    // No 'error' listener attached — connection error should NOT crash the process.
+    // No 'error' listener attached, connection error should NOT crash the process.
     // Trigger it via transport destroy with a reason.
     expect(() => {
       conn.destroy(new Error("boom"));
@@ -231,14 +231,14 @@ describe("MllpClient lifecycle (PLAN-01)", () => {
     // Connection emits its own 'error' on transport error during CONNECTED.
     // We trigger it via the transport directly by destroying with a reason.
     // Use the underlying transport's onError simulation: easier path is to
-    // simulate a transport error by calling _onTransportError indirectly —
+    // simulate a transport error by calling _onTransportError indirectly,
     // easiest is to write to a destroyed transport peer. Simulate explicitly:
     const fakeError = new Error("simulated transport error");
     conn2.emit("error", Object.freeze({ connectionId: conn2.connectionId, error: fakeError }));
     expect(errors).toHaveLength(1);
   });
 
-  it("Test 10: await using delegates to close() — Symbol.asyncDispose", async () => {
+  it("Test 10: await using delegates to close(), Symbol.asyncDispose", async () => {
     let connRef: Connection | undefined;
     {
       const [a] = InMemoryTransport.pair();
@@ -305,7 +305,7 @@ describe("MllpClient additional coverage (PLAN-01)", () => {
     // Connect to an unreachable address with delayed abort. Because we cannot
     // reliably guarantee timing for "between createConnection and connect",
     // we use a bind to a routable but never-accepting address (192.0.2.1 is
-    // TEST-NET-1 — always unreachable per RFC 5737).
+    // TEST-NET-1, always unreachable per RFC 5737).
     const ac = new AbortController();
     const client = createClient({ host: "192.0.2.1", port: 12345 });
     const p = client.connect({ signal: ac.signal });
@@ -383,7 +383,7 @@ describe("MllpClient additional coverage (PLAN-01)", () => {
     });
 
     conn.notifyConnect("127.0.0.1", 2575);
-    // Manually drive the Connection's emit (bypassing the FSM) — emulate Phase 5
+    // Manually drive the Connection's emit (bypassing the FSM), emulate Phase 5
     // PLAN-04 behaviour without yet implementing it.
     conn.emit(
       "reconnecting",

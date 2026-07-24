@@ -1,5 +1,5 @@
 /**
- * Bind-safety tests (Phase 8) — default host, wildcard-bind rejection,
+ * Bind-safety tests (Phase 8), default host, wildcard-bind rejection,
  * `allowWildcardBind` opt-in, and the `MLLP_BIND_ALL_INTERFACES`
  * `'securityWarning'`.
  */
@@ -77,7 +77,7 @@ describe("Server bind safety (Phase 8)", () => {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (/EAFNOSUPPORT|EADDRNOTAVAIL/.test(message)) {
-        // IPv6 unavailable in this sandbox — nothing more to assert.
+        // IPv6 unavailable in this sandbox, nothing more to assert.
         return;
       }
       throw err;
@@ -102,7 +102,7 @@ describe("Server bind safety (Phase 8)", () => {
     });
   });
 
-  // Fix 3 regressions — alternate wildcard SPELLINGS must be caught by
+  // Fix 3 regressions, alternate wildcard SPELLINGS must be caught by
   // normalization, not string-matching. The rejection happens BEFORE any
   // bind attempt, so these never touch OS IPv6 availability.
   describe("wildcard spellings are normalized (Fix 3)", () => {
@@ -165,11 +165,11 @@ describe("Server bind safety (Phase 8)", () => {
     });
   });
 
-  // Fix A regressions — inet_aton/getaddrinfo SHORTHANDS that only the
+  // Fix A regressions, inet_aton/getaddrinfo SHORTHANDS that only the
   // resolver can see ('0' → 0.0.0.0, hex/octal forms, partial quads) bypass
   // any pre-bind string check. Enforcement is POST-BIND against the
   // OS-normalized bound address (server.address()): the just-bound server is
-  // closed and listen() rejects — no listening state, no 'listening' event.
+  // closed and listen() rejects, no listening state, no 'listening' event.
   describe("resolver-shorthand wildcards are caught post-bind (Fix A)", () => {
     const shorthands = ["0", "0.0", "0.0.0", "00.0.0.0", "0x0.0.0.0"];
 
@@ -186,7 +186,7 @@ describe("Server bind safety (Phase 8)", () => {
           phase: "connect",
         });
         // The typed rejection names the opt-in, like the pre-bind path
-        // (fresh server — the post-bind reject path closes the previous one).
+        // (fresh server, the post-bind reject path closes the previous one).
         const fresh = track(createServer({}));
         await expect(fresh.listen(0, host)).rejects.toThrow(/allowWildcardBind/);
         // No listening state or events leaked.
@@ -221,13 +221,13 @@ describe("Server bind safety (Phase 8)", () => {
     });
   });
 
-  // Round-4 regressions — listen() is SINGLE-FLIGHT. Two concurrent
+  // Round-4 regressions, listen() is SINGLE-FLIGHT. Two concurrent
   // listen() calls on one server raced each other's post-bind checks: the
   // loser could record listening state for a bind that no longer existed
-  // (getStats().listening === true with nothing bound — a green health
+  // (getStats().listening === true with nothing bound, a green health
   // check hiding silent message non-receipt).
   describe("listen() is single-flight (round 4)", () => {
-    it("refuter race, exact order: p1 loopback + p2 wildcard-shorthand same tick — p2 typed-rejects, p1 binds truthfully and accepts", async () => {
+    it("refuter race, exact order: p1 loopback + p2 wildcard-shorthand same tick, p2 typed-rejects, p1 binds truthfully and accepts", async () => {
       const server = track(createServer({}));
       const listeningEvents: unknown[] = [];
       server.on("listening", (e: unknown) => listeningEvents.push(e));
@@ -244,7 +244,7 @@ describe("Server bind safety (Phase 8)", () => {
       expect(stats.listening).toBe(true);
       expect(stats.host).toBe("127.0.0.1");
 
-      // The reported bind is REAL — a connection is actually accepted.
+      // The reported bind is REAL, a connection is actually accepted.
       const { createConnection } = await import("node:net");
       await new Promise<void>((resolve, reject) => {
         const sock = createConnection({ host: "127.0.0.1", port: must(stats.port) });
@@ -256,7 +256,7 @@ describe("Server bind safety (Phase 8)", () => {
       });
     });
 
-    it("reverse order: p1 wildcard-shorthand + p2 loopback same tick — both reject, listening stays false, zero 'listening' events", async () => {
+    it("reverse order: p1 wildcard-shorthand + p2 loopback same tick, both reject, listening stays false, zero 'listening' events", async () => {
       const server = track(createServer({}));
       const listeningEvents: unknown[] = [];
       server.on("listening", (e: unknown) => listeningEvents.push(e));
@@ -281,7 +281,7 @@ describe("Server bind safety (Phase 8)", () => {
       });
       await expect(server.listen(0, "127.0.0.1")).rejects.toThrow(/already listening/);
 
-      // Original bind unaffected — still accepting connections.
+      // Original bind unaffected, still accepting connections.
       expect(server.getStats().listening).toBe(true);
       expect(server.getStats().port).toBe(port);
       const { createConnection } = await import("node:net");
@@ -305,12 +305,12 @@ describe("Server bind safety (Phase 8)", () => {
       expect(must(server.getStats().port)).toBeGreaterThan(0);
     });
 
-    it("close() during an in-flight listen() rejects that listen (typed, bounded — no hang) and clears the guard", async () => {
+    it("close() during an in-flight listen() rejects that listen (typed, bounded, no hang) and clears the guard", async () => {
       const server = track(createServer({}));
       const listeningEvents: unknown[] = [];
       server.on("listening", (e: unknown) => listeningEvents.push(e));
 
-      // The exact trigger: shutdown racing startup — close() lands before
+      // The exact trigger: shutdown racing startup, close() lands before
       // the pending 'listening' can ever fire (net.Server.close() nulls the
       // handle; the pending 'listening' emission is handle-guarded, so
       // neither 'listening' nor 'error' fires for the in-flight bind).
@@ -327,7 +327,7 @@ describe("Server bind safety (Phase 8)", () => {
       expect(listeningEvents).toHaveLength(0);
       expect(server.getStats().listening).toBe(false);
 
-      // The single-flight guard is cleared — the SAME server re-listens and
+      // The single-flight guard is cleared, the SAME server re-listens and
       // actually accepts (the old defect bricked it: every later listen()
       // rejected "another listen() is already in flight").
       await server.listen(0, "127.0.0.1");
@@ -355,7 +355,7 @@ describe("Server bind safety (Phase 8)", () => {
         new Promise((r) => setTimeout(() => r("TIMED_OUT"), 2000)),
       ]);
       // Settled either way: resolved (undefined) if the bind won the race,
-      // typed-rejected otherwise — but NEVER a hang.
+      // typed-rejected otherwise, but NEVER a hang.
       expect(outcome).not.toBe("TIMED_OUT");
       if (outcome !== undefined) {
         expect(outcome).toMatchObject({ name: "MllpConnectionError" });
@@ -366,7 +366,7 @@ describe("Server bind safety (Phase 8)", () => {
       expect(server.getStats().listening).toBe(true);
     });
 
-    it("defense-in-depth: address() returning null hard-rejects with a typed error (fault injection — unreachable via the public API thanks to the single-flight guard)", async () => {
+    it("defense-in-depth: address() returning null hard-rejects with a typed error (fault injection, unreachable via the public API thanks to the single-flight guard)", async () => {
       const server = track(createServer({}));
       const listeningEvents: unknown[] = [];
       server.on("listening", (e: unknown) => listeningEvents.push(e));

@@ -1,5 +1,5 @@
 /**
- * `loadHl7Peer` — the lazy peer loader. Exercises the missing-peer
+ * `loadHl7Peer`, the lazy peer loader. Exercises the missing-peer
  * translation via an injected throwing `require`, without uninstalling the
  * real `@cosyte/hl7` dev dependency.
  */
@@ -145,7 +145,7 @@ describe("isPeerModuleNotFound precision (via loadHl7Peer)", () => {
   it("a MODULE_NOT_FOUND thrown from INSIDE @cosyte/hl7 (require-stack mentions the peer) is rethrown as-is", () => {
     // Node's message names the module that failed to resolve; the peer only
     // appears in the require-stack tail. This must NOT be translated into
-    // MllpPeerMissingError — the peer IS installed; it is broken.
+    // MllpPeerMissingError, the peer IS installed; it is broken.
     const err = Object.assign(
       new Error(
         "Cannot find module './missing-internal.js'\nRequire stack:\n- /x/node_modules/@cosyte/hl7/dist/index.cjs",

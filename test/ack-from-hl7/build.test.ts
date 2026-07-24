@@ -1,6 +1,6 @@
 /**
- * Core `buildMllpAck` behavior — the ack-from-hl7 adapter over `@cosyte/hl7`'s
- * `buildAck`. Fixtures are synthetic-only (DOE/SYNTH/TEST names) — never PHI.
+ * Core `buildMllpAck` behavior, the ack-from-hl7 adapter over `@cosyte/hl7`'s
+ * `buildAck`. Fixtures are synthetic-only (DOE/SYNTH/TEST names), never PHI.
  */
 
 import { describe, expect, it } from "vitest";
@@ -41,7 +41,7 @@ function normalizeAck(wire: string): string {
     .join("\r");
 }
 
-describe("buildMllpAck — AA happy path", () => {
+describe("buildMllpAck, AA happy path", () => {
   it("frame starts VT, ends FS CR", () => {
     const { frame } = buildAckAA(INBOUND);
     expect(frame[0]).toBe(0x0b);
@@ -79,7 +79,7 @@ describe("buildMllpAck — AA happy path", () => {
   });
 });
 
-describe("buildMllpAck — golden wire (normalized)", () => {
+describe("buildMllpAck, golden wire (normalized)", () => {
   it("bare AA normalizes to the expected wire", () => {
     const bare = "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260101120000||ADT^A01|MSG00001|P|2.5";
     const ack = buildAckAA(bare);
@@ -102,7 +102,7 @@ describe("buildMllpAck — golden wire (normalized)", () => {
   });
 });
 
-describe("buildMllpAck — ERR segments", () => {
+describe("buildMllpAck, ERR segments", () => {
   it("AE with error detail carries ERR-3 CWE + ERR-4 severity", () => {
     const ack = buildAckAE(INBOUND, {
       error: { conditionCode: "101", severity: "E", location: "PID^1^5" },
@@ -129,7 +129,7 @@ describe("buildMllpAck — ERR segments", () => {
   });
 });
 
-describe("buildMllpAck — inbound input shapes", () => {
+describe("buildMllpAck, inbound input shapes", () => {
   it("accepts a Buffer inbound with the same result as string (MSH-10 differs, freshly generated)", () => {
     const fromString = buildAckAA(INBOUND);
     const fromBuffer = buildAckAA(Buffer.from(INBOUND, "utf8"));
@@ -148,7 +148,7 @@ describe("buildMllpAck — inbound input shapes", () => {
   });
 });
 
-describe("buildMllpAck — requestedCode vs code", () => {
+describe("buildMllpAck, requestedCode vs code", () => {
   it("are equal on the happy path", () => {
     const ack = buildAckAA(INBOUND);
     expect(ack.requestedCode).toBe("AA");
@@ -156,7 +156,7 @@ describe("buildMllpAck — requestedCode vs code", () => {
   });
 });
 
-describe("buildMllpAck — encoding option", () => {
+describe("buildMllpAck, encoding option", () => {
   it("payload bytes match toString() serialized in the requested encoding", () => {
     const ack = buildMllpAck(INBOUND, { code: "AA", encoding: "latin1" });
     expect(ack.payload.equals(Buffer.from(ack.ack.toString(), "latin1"))).toBe(true);
@@ -168,13 +168,13 @@ describe("buildMllpAck — encoding option", () => {
   });
 });
 
-describe("buildMllpAck — runtime code validation", () => {
+describe("buildMllpAck, runtime code validation", () => {
   it("throws TypeError on an unknown code (JS caller, cast)", () => {
     expect(() => buildMllpAck(INBOUND, { code: "ZZ" as unknown as "AA" })).toThrow(TypeError);
   });
 });
 
-describe("buildMllpAck — six convenience wrappers", () => {
+describe("buildMllpAck, six convenience wrappers", () => {
   it.each([
     ["buildAckAA", buildAckAA, "AA"],
     ["buildAckAE", buildAckAE, "AE"],
@@ -188,14 +188,14 @@ describe("buildMllpAck — six convenience wrappers", () => {
   });
 });
 
-describe("buildMllpAck — verbatim MSA-2 echo (vendor-quirk control ids)", () => {
-  /** Inbound whose MSH-10 carries an unescaped component delimiter — a real vendor quirk. */
+describe("buildMllpAck, verbatim MSA-2 echo (vendor-quirk control ids)", () => {
+  /** Inbound whose MSH-10 carries an unescaped component delimiter, a real vendor quirk. */
   const INBOUND_QUIRKY =
     "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260101120000||ADT^A01|ID^X|P|2.5\r";
 
   it("echoes a delimiter-bearing MSH-10 verbatim: correlationId and the wire MSA-2 are byte-for-byte", () => {
     const ack = buildAckAA(INBOUND_QUIRKY);
-    expect(ack.code).toBe("AA"); // NOT downgraded — the id has content
+    expect(ack.code).toBe("AA"); // NOT downgraded, the id has content
     expect(ack.correlationId).toBe("ID^X");
     const msaLine = ack.payload
       .toString("utf8")
@@ -213,13 +213,13 @@ describe("buildMllpAck — verbatim MSA-2 echo (vendor-quirk control ids)", () =
   });
 });
 
-describe("buildMllpAck — framing safety for escape-bearing control ids", () => {
+describe("buildMllpAck, framing safety for escape-bearing control ids", () => {
   it("a hex-escaped CR in the inbound MSH-10 never corrupts the framed ACK", () => {
     const raw =
       "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260101120000||ADT^A01|A\\X0D\\B|P|2.5\r";
     const ack = buildAckAA(raw);
     expect(ack.code).toBe("AA");
-    // The payload contains no raw CR except the segment separators — exactly
+    // The payload contains no raw CR except the segment separators, exactly
     // MSH + MSA, and it re-parses cleanly through the peer.
     const lines = ack.payload
       .toString("utf8")

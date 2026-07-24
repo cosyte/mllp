@@ -69,7 +69,7 @@ describe("createStarterServer", () => {
 
   it("after close(), getStats().listening is false", async () => {
     const server = await createStarterServer({ port: 0 });
-    // do NOT push to servers — we close manually
+    // do NOT push to servers, we close manually
     await server.close();
     expect(server.getStats().listening).toBe(false);
   });
@@ -206,7 +206,7 @@ describe("handleSignals", () => {
     process.removeAllListeners("SIGINT");
   });
 
-  it('handleSignals: true — process.listenerCount("SIGTERM") === 1 after createStarterServer', async () => {
+  it('handleSignals: true, process.listenerCount("SIGTERM") === 1 after createStarterServer', async () => {
     const server = await createStarterServer({ port: 0, handleSignals: true });
     try {
       expect(process.listenerCount("SIGTERM")).toBe(1);
@@ -215,14 +215,14 @@ describe("handleSignals", () => {
     }
   });
 
-  it('handleSignals: true — process.listenerCount("SIGTERM") === 0 after server.close()', async () => {
+  it('handleSignals: true, process.listenerCount("SIGTERM") === 0 after server.close()', async () => {
     const server = await createStarterServer({ port: 0, handleSignals: true });
     expect(process.listenerCount("SIGTERM")).toBe(1);
     await server.close();
     expect(process.listenerCount("SIGTERM")).toBe(0);
   });
 
-  it("handleSignals: true — registers both SIGTERM and SIGINT", async () => {
+  it("handleSignals: true, registers both SIGTERM and SIGINT", async () => {
     const server = await createStarterServer({ port: 0, handleSignals: true });
     try {
       expect(process.listenerCount("SIGTERM")).toBe(1);
@@ -232,14 +232,14 @@ describe("handleSignals", () => {
     }
   });
 
-  it("handleSignals: true — after close(), both SIGTERM and SIGINT listeners removed", async () => {
+  it("handleSignals: true, after close(), both SIGTERM and SIGINT listeners removed", async () => {
     const server = await createStarterServer({ port: 0, handleSignals: true });
     await server.close();
     expect(process.listenerCount("SIGTERM")).toBe(0);
     expect(process.listenerCount("SIGINT")).toBe(0);
   });
 
-  it("handleSignals: false (default) — process.once is NOT called", async () => {
+  it("handleSignals: false (default), process.once is NOT called", async () => {
     const server = await createStarterServer({ port: 0 });
     try {
       expect(process.listenerCount("SIGTERM")).toBe(0);
@@ -249,7 +249,7 @@ describe("handleSignals", () => {
     }
   });
 
-  it("handleSignals: false (default) — no SIGTERM listener even without explicit false", async () => {
+  it("handleSignals: false (default), no SIGTERM listener even without explicit false", async () => {
     const server = await createStarterServer({ port: 0, handleSignals: false });
     try {
       expect(process.listenerCount("SIGTERM")).toBe(0);

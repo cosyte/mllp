@@ -1,18 +1,18 @@
 /**
  * ACK-serialization safety (MLLP-10).
  *
- * Two defects on the ACK build/dispatch path, both reachable WITHOUT any consumer bug — one of them
+ * Two defects on the ACK build/dispatch path, both reachable WITHOUT any consumer bug, one of them
  * from peer-controlled input alone:
  *
  * 1. **`buildRawAck` decoded the inbound with `ascii`,** which masks the high bit (`byte & 0x7f`).
  *    That is wrong twice: it violates HL7 v2.5.1 §2.9.2.2 (MSA-2 must echo MSH-10 *verbatim*), and
- *    it MANUFACTURES framing delimiters — `0x8B → 0x0B` (VT), `0x9C → 0x1C` (FS). A peer sending one
+ *    it MANUFACTURES framing delimiters, `0x8B → 0x0B` (VT), `0x9C → 0x1C` (FS). A peer sending one
  *    high-bit byte in an echoed MSH field made the ACK payload contain a real VT/FS.
  * 2. **`encodeFrame` (strict) then threw on that injected delimiter,** and the throw escaped the
  *    `void`-ed `_sendCommitAck` async task → unhandled rejection → **the whole server crashed**, and
  *    the fail-safe ACK was never sent.
  *
- * Fix: `buildRawAck` uses `latin1` (byte-exact, no synthesis), and `_dispatchAck` is total — a frame
+ * Fix: `buildRawAck` uses `latin1` (byte-exact, no synthesis), and `_dispatchAck` is total, a frame
  * failure (e.g. a caller's `autoAck: fn` returning bytes with a literal VT/FS) becomes a connection
  * `'error'`, never a process kill.
  *
@@ -73,14 +73,14 @@ describe("ACK serialization is safe against peer-controlled and caller-controlle
     try {
       const msh = Buffer.concat([
         Buffer.from("MSH|^~\\&|S|F|R|F|20260714||ADT^A01|MSG", "ascii"),
-        Buffer.from([0x8b]), // would become VT (0x0b) under ascii — a synthesized framing byte
+        Buffer.from([0x8b]), // would become VT (0x0b) under ascii, a synthesized framing byte
         Buffer.from("001|P|2.5\r", "ascii"),
       ]);
       const framed = Buffer.concat([Buffer.from([VT]), msh, Buffer.from([FS, CR])]);
 
       const ack = await exchangeRaw(port, framed);
       const msa2 = ack.toString("latin1").split("\r")[1]?.split("|")[2];
-      // §2.9.2.2 — MSA-2 echoes the inbound MSH-10 verbatim, high bit intact.
+      // §2.9.2.2, MSA-2 echoes the inbound MSH-10 verbatim, high bit intact.
       expect(msa2).toBe(`MSG${String.fromCharCode(0x8b)}001`);
 
       // Server still serving after the input that used to crash it.
@@ -113,11 +113,11 @@ describe("ACK serialization is safe against peer-controlled and caller-controlle
     }
   });
 
-  it("a custom autoAck fn returning bytes with a literal VT does not crash — surfaced as a connection error", async () => {
+  it("a custom autoAck fn returning bytes with a literal VT does not crash, surfaced as a connection error", async () => {
     // The one path where encodeFrame genuinely can still throw: the caller owns the ACK bytes.
     // It must be a contained connection 'error', never a process kill.
     const server = createServer({
-      autoAck: () => Buffer.from([0x4d, VT, 0x53]), // "M<VT>S" — a literal framing byte
+      autoAck: () => Buffer.from([0x4d, VT, 0x53]), // "M<VT>S", a literal framing byte
     });
     const errors: { error?: { message?: string } }[] = [];
     server.on("error", (e: { error?: { message?: string } }) => errors.push(e));

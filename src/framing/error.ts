@@ -24,15 +24,15 @@ const MAX_SNIPPET_BYTES = 64;
 /**
  * Thrown for unrecoverable MLLP wire-format violations.
  *
- * - `code` — stable `WarningCode` identifying the violation
- * - `byteOffset` — absolute stream position where the violation was detected
- * - `snippet` — the single framing-boundary byte that broke the structure, or empty when the
+ * - `code`, stable `WarningCode` identifying the violation
+ * - `byteOffset`, absolute stream position where the violation was detected
+ * - `snippet`, the single framing-boundary byte that broke the structure, or empty when the
  *   anomaly is not a specific byte. **Never a run of payload content** (see the `snippet` PHI
  *   contract below); the constructor caps whatever it is given to 64 bytes as a backstop.
  *
  * @example
  * ```typescript
- * // Pass only the offending framing-boundary byte — never a slice of payload content.
+ * // Pass only the offending framing-boundary byte, never a slice of payload content.
  * throw new MllpFramingError('MLLP_MISSING_LEADING_VT', byteOffset, Buffer.from([byte]));
  * ```
  */
@@ -48,13 +48,13 @@ export class MllpFramingError extends Error {
   /**
    * Up to 64 bytes copied from around the anomaly.
    *
-   * This is a **copied** Buffer — isolated from the source buffer so it remains
+   * This is a **copied** Buffer, isolated from the source buffer so it remains
    * valid after the underlying buffer is reused or overwritten.
    *
    * **PHI contract (MLLP-9):** the decoder only ever populates this with the single
    * framing-boundary byte that violated the frame structure (whose hex value the
-   * `message` already discloses) — never a run of payload content bytes. For anomalies
-   * whose fault is not a specific byte (`MLLP_FRAME_TOO_LARGE` — the accumulated size),
+   * `message` already discloses), never a run of payload content bytes. For anomalies
+   * whose fault is not a specific byte (`MLLP_FRAME_TOO_LARGE`, the accumulated size),
    * the snippet is **empty**: a payload slice on a public error field would leak a
    * field-body slice of clinical content. Callers constructing this directly are
    * responsible for the same discipline.
@@ -79,7 +79,7 @@ export class MllpFramingError extends Error {
     super(message ?? `MLLP framing error: ${code} at byte offset ${byteOffset}`);
     this.code = code;
     this.byteOffset = byteOffset;
-    // Copy and cap — error must outlive source buffer; never store a view.
+    // Copy and cap, error must outlive source buffer; never store a view.
     this.snippet = Buffer.from(snippet.subarray(0, MAX_SNIPPET_BYTES));
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, MllpFramingError);

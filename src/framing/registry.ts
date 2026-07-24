@@ -16,7 +16,7 @@
 /**
  * Union of all stable MLLP warning codes.
  *
- * These codes are a **public API** — they appear in `onWarning` handlers, log pipelines,
+ * These codes are a **public API**, they appear in `onWarning` handlers, log pipelines,
  * monitoring dashboards, and error messages. Renaming is a breaking change.
  *
  * @example
@@ -81,7 +81,7 @@ export type OnWarning = (warning: MllpWarning) => void;
  * Create a frozen `MllpWarning` object. The returned object is `Object.freeze()`'d
  * so subscribers cannot mutate shared warning state.
  *
- * `connectionId` is always `undefined` here — Phase 3 enriches via
+ * `connectionId` is always `undefined` here, Phase 3 enriches via
  * `{ ...w, connectionId: this.connectionId }` then re-freezes (D-08).
  *
  * @example

@@ -20,7 +20,7 @@ describe("InMemoryTransport", () => {
       b.onData((chunk) => received.push(chunk));
       const buf = Buffer.from([0x0b, 0x41, 0x1c, 0x0d]);
       a.write(buf);
-      // Synchronous — received is populated before the next line
+      // Synchronous, received is populated before the next line
       expect(received).toHaveLength(1);
       expect(received[0]).toEqual(buf);
     });
@@ -53,7 +53,7 @@ describe("InMemoryTransport", () => {
 
     it("write returns false when peer has no onData and is not paused (null peer handler)", () => {
       const [a] = InMemoryTransport.pair();
-      // Peer (b) has no onData registered — write still returns true (peer not paused)
+      // Peer (b) has no onData registered, write still returns true (peer not paused)
       const result = a.write(Buffer.from([0x41]));
       expect(result).toBe(true);
     });
@@ -85,7 +85,7 @@ describe("InMemoryTransport", () => {
       expect(chunks[2]).toEqual(Buffer.from([0x05]));
     });
 
-    it("split(0) disables chunking — delivers whole buffer", () => {
+    it("split(0) disables chunking, delivers whole buffer", () => {
       const [a, b] = InMemoryTransport.pair();
       const chunks: Buffer[] = [];
       b.split(1);
@@ -132,7 +132,7 @@ describe("InMemoryTransport", () => {
       expect(received[2]).toEqual(Buffer.from([3]));
     });
 
-    it("queued chunks are copies — mutation after write does not corrupt queue", () => {
+    it("queued chunks are copies, mutation after write does not corrupt queue", () => {
       const [a, b] = InMemoryTransport.pair();
       const received: Buffer[] = [];
       b.pause();
@@ -199,7 +199,7 @@ describe("InMemoryTransport", () => {
       const [a, b] = InMemoryTransport.pair();
       b.onData(() => {
         // Write back to a from inside b's onData handler.
-        // a delivers to b synchronously — causing re-entrant _deliverChunk on b.
+        // a delivers to b synchronously, causing re-entrant _deliverChunk on b.
         a.write(Buffer.from([0x42]));
       });
       expect(() => a.write(Buffer.from([0x41]))).toThrow(

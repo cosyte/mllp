@@ -1,7 +1,7 @@
 /**
  * Security-warning codes and payload shape shared by the client and server (Phase 8).
  *
- * These codes are a **public API** — they appear in `'securityWarning'` event
+ * These codes are a **public API**, they appear in `'securityWarning'` event
  * handlers, log pipelines, and monitoring dashboards. Renaming or removing a
  * code is a breaking change (mirrors the `WarningCode` guardrail in
  * `src/framing/registry.ts`).
@@ -18,8 +18,8 @@
  */
 
 /**
- * Emitted (client-side) on every successful `secureConnect` — initial connect
- * AND every reconnect — when {@link TlsOptions.allowUnverified} is `true`.
+ * Emitted (client-side) on every successful `secureConnect`, initial connect
+ * AND every reconnect, when {@link TlsOptions.allowUnverified} is `true`.
  * Certificate verification is disabled for the connection; this is the loud,
  * per-connection reminder that the channel is not authenticated per IHE ATNA
  * ITI-19 (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html).
@@ -65,7 +65,7 @@ export type SecurityWarningCode = typeof MLLP_TLS_VERIFY_DISABLED | typeof MLLP_
  * {@link MllpClient} (`MLLP_TLS_VERIFY_DISABLED`) and {@link MllpServer}
  * (`MLLP_BIND_ALL_INTERFACES`).
  *
- * Never carries payload bytes or PHI — only routing metadata (host/port) and
+ * Never carries payload bytes or PHI, only routing metadata (host/port) and
  * a fixed, static message string.
  *
  * @example

@@ -21,7 +21,7 @@ describe("Connection integration over InMemoryTransport (TRANS-03)", () => {
     clientConn.notifyConnect("127.0.0.1", 2575);
     serverConn.notifyConnect("127.0.0.1", 2575);
 
-    // simulateConnect fires the onConnect handler (no-op here — Connection doesn't register onConnect)
+    // simulateConnect fires the onConnect handler (no-op here, Connection doesn't register onConnect)
     clientTransport.simulateConnect();
     serverTransport.simulateConnect();
 
@@ -63,7 +63,7 @@ describe("Connection integration over InMemoryTransport (TRANS-03)", () => {
     const payload = Buffer.from("MSH|^~\\&|SENDER|FAC|RECV|FAC|20240101||ADT^A01|123|P|2.5");
     clientConn.send(encodeFrame(payload));
 
-    // Server received original, client received echo — both synchronous
+    // Server received original, client received echo, both synchronous
     expect(serverMessages).toHaveLength(1);
     expect(serverMessages[0]).toEqual(payload);
     expect(clientMessages).toHaveLength(1);

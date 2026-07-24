@@ -1,10 +1,10 @@
 /**
- * ACK helpers that build a framed MLLP ACK from an inbound HL7 v2 message —
+ * ACK helpers that build a framed MLLP ACK from an inbound HL7 v2 message,
  * a THIN transport adapter over `@cosyte/hl7`'s `buildAck`.
  *
  * `@cosyte/hl7` owns ACK **content** (MSH/MSA/ERR construction, control
  * vocabulary, the no-correlation fail-safe); this subpath owns **transport
- * policy** — accepting raw bytes or a parsed message, never fabricating a
+ * policy**, accepting raw bytes or a parsed message, never fabricating a
  * positive disposition when the inbound is unparseable, and framing the
  * result via `encodeFrame`.
  *

@@ -3,14 +3,14 @@
  *
  * Spec anchor: IHE ATNA, ITI-19 Authenticate Node
  * (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html), the "STX: TLS 1.2
- * Floor using BCP195" option, ITI TF-2 §3.19.6.2.3 — TLS >= 1.2 required;
+ * Floor using BCP195" option, ITI TF-2 §3.19.6.2.3, TLS >= 1.2 required;
  * mutual node authentication; certificate validation via chain-of-trust or
  * direct comparison. ITI TF-2 §3.19.6.2.3 mandates four TLS 1.2 cipher
  * suites: `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256`,
  * `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, `TLS_DHE_RSA_WITH_AES_256_GCM_SHA384`,
  * `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`. Node's default TLS 1.2 cipher list
  * already includes both mandated ECDHE suites, so this package pins to Node
- * defaults rather than bundling a cipher list — see `docs-content/tls.md`.
+ * defaults rather than bundling a cipher list, see `docs-content/tls.md`.
  *
  * @example
  * ```typescript
@@ -23,7 +23,7 @@
 
 /**
  * A PEM-encoded credential (certificate, key, or CA), matching Node's
- * `tls.connect`/`tls.createServer` input shape — a single PEM string/Buffer,
+ * `tls.connect`/`tls.createServer` input shape, a single PEM string/Buffer,
  * or an array of them (chain / multiple trust anchors).
  *
  * @example
@@ -37,7 +37,7 @@ export type PemInput = string | Buffer | Array<string | Buffer>;
 /**
  * Client-side TLS options (Phase 8, `ClientOptions.tls`).
  *
- * Passing `true` for `ClientOptions.tls` is equivalent to `{}` — TLS enabled
+ * Passing `true` for `ClientOptions.tls` is equivalent to `{}`, TLS enabled
  * with all defaults, including certificate verification **on**.
  *
  * @example
@@ -67,9 +67,9 @@ export interface TlsOptions {
   /**
    * Minimum negotiated TLS protocol version.
    *
-   * Default `'TLSv1.2'` — the IHE ATNA ITI-19 "TLS 1.2 Floor" (BCP195) floor
+   * Default `'TLSv1.2'`, the IHE ATNA ITI-19 "TLS 1.2 Floor" (BCP195) floor
    * (ITI TF-2 §3.19.6.2.3). `'TLSv1.0'`/`'TLSv1.1'` are intentionally **not**
-   * expressible by this type — the floor cannot be lowered through this API.
+   * expressible by this type, the floor cannot be lowered through this API.
    *
    * @default 'TLSv1.2'
    */
@@ -88,7 +88,7 @@ export interface TlsOptions {
   /**
    * Loud, explicit dev opt-out from certificate verification (maps to
    * `tls.connect`'s `rejectUnauthorized: false`). There is deliberately no
-   * raw `rejectUnauthorized` surface on this type — this is the only door,
+   * raw `rejectUnauthorized` surface on this type, this is the only door,
    * and it is loud: every successful connection (initial + every reconnect)
    * emits a `'securityWarning'` (`MLLP_TLS_VERIFY_DISABLED`) event and calls
    * `process.emitWarning`.
@@ -106,11 +106,11 @@ export interface TlsOptions {
  * Mirrors the IHE ATNA "Authenticate Node" mutual-auth requirement
  * (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html):
  *
- * - `'NONE'` — no client certificate requested (default).
- * - `'WANT'` — client certificate requested but NOT required; an untrusted or
+ * - `'NONE'`, no client certificate requested (default).
+ * - `'WANT'`, client certificate requested but NOT required; an untrusted or
  *   absent client certificate does not reject the connection. The peer
  *   certificate (if any) is surfaced on the `'connection'` event.
- * - `'MUST'` — client certificate required AND verified against
+ * - `'MUST'`, client certificate required AND verified against
  *   {@link ServerTlsOptions.ca}; the ATNA mutual-authentication mode. A
  *   missing or untrusted client certificate rejects the handshake.
  *
@@ -152,7 +152,7 @@ export interface ServerTlsOptions {
    */
   readonly clientAuth?: ClientAuth;
   /**
-   * Minimum negotiated TLS protocol version — the IHE ATNA ITI-19 "TLS 1.2
+   * Minimum negotiated TLS protocol version, the IHE ATNA ITI-19 "TLS 1.2
    * Floor" (BCP195) floor (ITI TF-2 §3.19.6.2.3).
    *
    * @default 'TLSv1.2'

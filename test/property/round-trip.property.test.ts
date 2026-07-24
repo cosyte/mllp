@@ -32,7 +32,7 @@ const NUM_RUNS = 500;
 
 /**
  * Decode exactly one frame's worth of bytes via `FrameReader` and return the
- * recovered payload. Throws if the bytes did not yield exactly one frame — a
+ * recovered payload. Throws if the bytes did not yield exactly one frame, a
  * round-trip of a single `encodeFrame` output must deliver one and only one frame.
  */
 function decodeOneFrame(frame: Buffer): Buffer {

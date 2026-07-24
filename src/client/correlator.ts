@@ -1,5 +1,5 @@
 /**
- * MLLP Client ACK correlator — pure data structure (CONTEXT D-03/A1).
+ * MLLP Client ACK correlator, pure data structure (CONTEXT D-03/A1).
  *
  * Unified `Map<correlationKey, PendingAck>` with ES2015 insertion-ordered
  * iteration is the single source of truth for in-flight + queued sends.
@@ -9,7 +9,7 @@
  * - `maxInFlight=1` (PLAN-05 `pipeline:false`) is enforced as a guard
  *   on the same store; not a separate class (D-06).
  *
- * **INTERNAL** — not re-exported from the package barrel. The class knows
+ * **INTERNAL**, not re-exported from the package barrel. The class knows
  * nothing about `Connection`, the event emitter, sockets, or timers. Sweep
  * cadence is driven externally by the periodic sweep tick on `MllpClient`
  * so the Correlator itself stays timer-free (D-03).
@@ -19,7 +19,7 @@
 
 import type { WarningCode } from "../framing/index.js";
 
-/** Correlation key — number for FIFO (`sendSeq`), string for controlId (MSH-10). */
+/** Correlation key, number for FIFO (`sendSeq`), string for controlId (MSH-10). */
 export type CorrelationKey = number | string;
 
 /**
@@ -29,7 +29,7 @@ export type CorrelationKey = number | string;
  * **three** call sites that must agree byte-for-byte on what a control ID is
  * (the others are `buildRawAck` in `src/server/ack.ts` and the verbatim-echo
  * check in `src/ack-from-hl7/build.ts`), and any disagreement between two of
- * them is an ACK the sender cannot match — a timeout, a resend, and a duplicate
+ * them is an ACK the sender cannot match, a timeout, a resend, and a duplicate
  * clinical message. One implementation, one `latin1` decode, one dynamic read
  * of MSH-1. Re-exported here because they were part of this module's `@internal`
  * surface before the move.
@@ -85,7 +85,7 @@ export interface CorrelatorOptions {
   readonly maxInFlight?: number;
   /**
    * Emits `MLLP_ACK_AFTER_TIMEOUT` (D-04) and `MLLP_ACK_UNMATCHED_CONTROL_ID`
-   * (D-05 — PLAN-03). `byteOffset` is forwarded from the inbound ACK frame
+   * (D-05, PLAN-03). `byteOffset` is forwarded from the inbound ACK frame
    * for observability (W-05).
    */
   readonly onWarning: (
@@ -136,7 +136,7 @@ export class Correlator {
   private _sendSeq = 0;
   private _queueBytes = 0;
   /**
-   * PLAN-06 — count of pending entries with `sentAt !== null` (D-26 / B-01).
+   * PLAN-06, count of pending entries with `sentAt !== null` (D-26 / B-01).
    * Maintained at every site that mutates `entry.sentAt` or removes a
    * flushed entry: `markFlushed`, `remove`, `matchAck`, `expireDue`, `clear`.
    */
@@ -175,7 +175,7 @@ export class Correlator {
   /**
    * Enqueue a new send awaiting its ACK. Returns the assigned
    * `correlationKey`, or `null` if `maxInFlight` is reached (caller awaits
-   * drain — PLAN-05's `pipeline:false`).
+   * drain, PLAN-05's `pipeline:false`).
    */
   enqueue(
     frame: Buffer,
@@ -185,7 +185,7 @@ export class Correlator {
   ): CorrelationKey | null {
     if (this._pending.size >= this._opts.maxInFlight) return null;
     // controlId mode keys by MSH-10 (string). When MSH-10 is absent, we fall
-    // back to a synthetic `__seq-N` key — the send is best-effort matchable
+    // back to a synthetic `__seq-N` key, the send is best-effort matchable
     // by the FIFO live-store walk, but the peer realistically cannot ACK it
     // by control ID. Acceptable corner case (D-03/A1).
     const key: CorrelationKey =
@@ -207,7 +207,7 @@ export class Correlator {
   }
 
   /**
-   * Record write-flush timestamp (CLIENT-04 — clock starts at flush, NOT
+   * Record write-flush timestamp (CLIENT-04, clock starts at flush, NOT
    * at `send()` call). No-op if key is unknown (e.g. removed by abort).
    */
   markFlushed(key: CorrelationKey, now?: number): void {
@@ -294,7 +294,7 @@ export class Correlator {
   /**
    * Sweep live entries; expire those past `sentAt + ackTimeoutMs`.
    * Fires `onTimeout(entry, elapsedMs)`; entries move to graveyard (D-04).
-   * Driven externally by `MllpClient`'s periodic sweep tick — Correlator
+   * Driven externally by `MllpClient`'s periodic sweep tick, Correlator
    * itself owns no timers (D-03).
    */
   expireDue(now?: number): void {
@@ -319,14 +319,14 @@ export class Correlator {
   /**
    * Reject every live entry with `reason` (insertion order) and clear
    * the live store. Graveyard is left intact (ages out via lazy eviction).
-   * Used by FIFO reconnect-reject (D-07 — PLAN-04 wraps in MllpConnectionError)
+   * Used by FIFO reconnect-reject (D-07, PLAN-04 wraps in MllpConnectionError)
    * and `MllpClient.close()` to cancel pending sends.
    */
   clear(reason: Error): void {
     for (const entry of this._pending.values()) entry.reject(reason);
     this._pending.clear();
     this._queueBytes = 0;
-    // PLAN-06: reset _inFlight unconditionally — clear() drops every entry,
+    // PLAN-06: reset _inFlight unconditionally, clear() drops every entry,
     // flushed or not. Avoids any over-decrement edge case.
     this._inFlight = 0;
   }

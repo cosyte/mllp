@@ -4,17 +4,17 @@
  * MLLP is a **byte transport**, not a text format, so every generator here works
  * in `Buffer`s. Three families live here:
  *
- * 1. **Payloads** ({@link payloadBuffer}, {@link delimiterFreePayload}) — arbitrary
+ * 1. **Payloads** ({@link payloadBuffer}, {@link delimiterFreePayload}), arbitrary
  *    byte buffers, including ones that embed the framing bytes `VT`/`FS`/`CR`. The
  *    round-trip invariant uses the delimiter-free variant (the encoder is strict and
- *    rejects `VT`/`FS` in a payload — see `encodeFrame`'s FRAME-02 guard), so a
+ *    rejects `VT`/`FS` in a payload, see `encodeFrame`'s FRAME-02 guard), so a
  *    round-trip failure means a real codec bug rather than a sanctioned encoder throw.
  *
- * 2. **Well-formed frames** ({@link wellFormedFrame}) — `encodeFrame(payload)` output,
+ * 2. **Well-formed frames** ({@link wellFormedFrame}), `encodeFrame(payload)` output,
  *    the canonical `VT + payload + FS + CR` shape the decoder must accept losslessly.
  *
  * 3. **Malformed-but-recoverable frames** ({@link malformedFrame}, {@link hostileBytesOrChunks})
- *    — one generator per tolerance path the decoder recovers from (missing leading VT,
+ *    one generator per tolerance path the decoder recovers from (missing leading VT,
  *    FS-without-CR, LF-after-FS, leading whitespace, trailing bytes, empty payload), plus
  *    pure random byte noise and an oversized frame that legitimately trips the one
  *    sanctioned fatal `MLLP_FRAME_TOO_LARGE`. These drive the lenient + fuzz invariants.
@@ -30,7 +30,7 @@ import { VT, FS, CR, LF } from "../../src/framing/constants.js";
 
 /**
  * An arbitrary payload `Buffer` of 0–256 bytes drawn from the full `0x00`–`0xFF`
- * range — so it may contain the framing bytes `VT` (0x0B), `FS` (0x1C), and `CR`
+ * range, so it may contain the framing bytes `VT` (0x0B), `FS` (0x1C), and `CR`
  * (0x0D). Used by the lenient/fuzz invariants where payload bytes are hostile.
  */
 export function payloadBuffer(): fc.Arbitrary<Buffer> {
@@ -39,11 +39,11 @@ export function payloadBuffer(): fc.Arbitrary<Buffer> {
 
 /**
  * An arbitrary **non-empty** payload `Buffer` whose bytes exclude `VT` (0x0B) and
- * `FS` (0x1C) — the two bytes the strict encoder rejects (FRAME-02). This is the
+ * `FS` (0x1C), the two bytes the strict encoder rejects (FRAME-02). This is the
  * payload family the round-trip invariant uses, so `encode(payload)` never throws
  * and `decode(encode(payload))` must recover the exact bytes.
  *
- * `CR` (0x0D) is intentionally retained — it is a legal payload byte and a good
+ * `CR` (0x0D) is intentionally retained, it is a legal payload byte and a good
  * round-trip stressor (the decoder must not confuse a payload `CR` with the
  * frame-terminating `FS CR`).
  */
@@ -82,7 +82,7 @@ function safePayloadBytes(): fc.Arbitrary<number[]> {
  * enabled (the lenient invariant runs with all tolerances on): the decoder must
  * emit a warning (or deliver the frame) rather than throw. The exception is
  * `frame-too-large`, which legitimately throws the one sanctioned fatal
- * `MLLP_FRAME_TOO_LARGE` even under full tolerance — the lenient runner's
+ * `MLLP_FRAME_TOO_LARGE` even under full tolerance, the lenient runner's
  * `isFatal` predicate sanctions exactly that code.
  *
  * The `maxFrameSizeBytes` field, when present, tells the test harness to construct
@@ -151,7 +151,7 @@ function trailingBytes(): fc.Arbitrary<MalformedFrame> {
   }));
 }
 
-/** Empty payload: VT + FS + CR — no bytes between VT and FS (WARN-05). */
+/** Empty payload: VT + FS + CR, no bytes between VT and FS (WARN-05). */
 function emptyPayload(): fc.Arbitrary<MalformedFrame> {
   return fc.constant<MalformedFrame>({
     kind: "empty-payload",
@@ -175,7 +175,7 @@ function frameTooLarge(): fc.Arbitrary<MalformedFrame> {
 }
 
 /**
- * The union of every malformed-frame shape — one generator per decoder tolerance
+ * The union of every malformed-frame shape, one generator per decoder tolerance
  * path plus the oversized fatal. The lenient invariant runs against this.
  */
 export function malformedFrame(): fc.Arbitrary<MalformedFrame> {
@@ -217,7 +217,7 @@ export function randomChunks(): fc.Arbitrary<Buffer[]> {
  * The key transport-robustness fuzz generator: arbitrary random byte buffers fed
  * to the decoder either as a single `push()` (one-element list) or split across
  * many random `push()` chunks. Unifying both shapes into `Buffer[]` lets one
- * fuzz property cover whole-buffer AND chunk-boundary delivery — the decoder's
+ * fuzz property cover whole-buffer AND chunk-boundary delivery, the decoder's
  * FSM must survive both identically.
  */
 export function hostileBytesOrChunks(): fc.Arbitrary<Buffer[]> {

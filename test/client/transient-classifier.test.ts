@@ -152,7 +152,7 @@ describe("isTransientConnectionError (CLIENT-18)", () => {
     });
   });
 
-  describe("isTlsProtocolError (Phase 8 — TLS-protocol-shaped boundary)", () => {
+  describe("isTlsProtocolError (Phase 8, TLS-protocol-shaped boundary)", () => {
     it("ERR_SSL_* codes are TLS-protocol-shaped", () => {
       expect(isTlsProtocolError({ code: "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED" })).toBe(true);
       expect(isTlsProtocolError({ code: "ERR_SSL_WRONG_VERSION_NUMBER" })).toBe(true);
