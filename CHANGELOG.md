@@ -12,6 +12,36 @@ this file is maintained by hand (Changesets handles the version bump and publish
 The first pre-alpha release (`0.0.1`) will ship the v1 MLLP transport surface below. The package
 begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` until first alpha).
 
+### Added
+
+- **Em-dash brand gate (`scripts/check-no-emdash.sh`, `pnpm check:no-emdash`, and
+  `.github/workflows/no-emdash.yml`).** Enforces the founder directive that bans `U+2014`
+  outright (`knowledgebase/06-brand/voice-and-tone.md`: "No em dashes. Ever."), which names
+  commit messages explicitly. It covers both halves of the rule: every tracked file, and the
+  PR title, body, and commit messages, the latter on the non-default `edited` trigger so
+  retitling a PR re-checks it. Its own CI workflow rather than a job in `ci.yml`, because
+  `edited` would otherwise re-run the whole Node 22 + 24 matrix on a typo fix.
+  **mllp was already clean, measured over all 152 tracked files byte by byte rather than over
+  markdown alone** (a markdown-only count is what wrongly cleared `dicom`, which held six live
+  em dashes in four non-markdown files), so this gate changed no content and exists purely to
+  stop a regression.
+  The script is **composed** from three sibling copies, not taken from one: `website`'s
+  NUL-exclusion shape as the base, `ncpdp`'s two route fixes (a tracked file named `-` was read
+  as standard input and never opened; `-d skip` silently passed a tracked symlink to a
+  directory), and `dicom`'s binary-match diagnostic branch. `website`'s shape is the right base
+  here because this repo tracks one binary, `vendor/cosyte-hl7-0.0.0.tgz`, and a compressed
+  stream can contain the em dash bytes by coincidence, which would red the text-only shape with
+  no remediation available. **The disclosed cost, stated rather than implied: a tracked *text*
+  file holding a NUL byte would be silently exempt, and seeding the tarball itself with a live
+  em dash leaves the gate green. That is a miss, not a pass.** mllp has no NUL-bearing text
+  file today, so the exclusion currently exempts exactly one file and that file is a genuine
+  binary. The at-risk fixture class is not hypothetical, though: git calls the three
+  `test/differential/fixtures/*.frame.bin` captures binary too (lone-CR HL7 v2 framing), they
+  hold no NUL so they stay in scope, and each was seeded with a live em dash to prove the gate
+  actually reads them. Every route by which the scan could print OK without reading its input
+  was checked red before this landed, with a seeded fixture per route; the full account is in
+  the script header.
+
 ### Security
 
 - **Repo-side PHI commit-scanner (`scripts/phi-scan.ts`), matching the `@cosyte/hl7` pilot.**
