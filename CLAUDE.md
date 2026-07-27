@@ -24,6 +24,56 @@
   (`--out` resolves relative to the `-C` directory) then `pnpm remove @cosyte/hl7 &&
   pnpm add -D @cosyte/hl7@file:vendor/cosyte-hl7-0.0.0.tgz`. Note `pnpm remove` also
   strips the `peerDependencies` entry; restore it (`"@cosyte/hl7": ">=0.0.0"`) after.
+- **Em-dash brand gate armed.** `scripts/check-no-emdash.sh` (`pnpm check:no-emdash`) plus
+  `.github/workflows/no-emdash.yml` enforce the founder directive banning `U+2014` outright
+  (`knowledgebase/06-brand/voice-and-tone.md`, "No em dashes. Ever."). It scans **both** halves the
+  rule covers: every tracked file, **and** the PR title, body, and commit messages, on the
+  non-default `edited` trigger so retitling a PR re-checks it. What lands on `main` here is a repo
+  setting, read rather than assumed: `squash_merge_commit_title: COMMIT_OR_PR_TITLE` and
+  `squash_merge_commit_message: COMMIT_MESSAGES`, with squash the only merge method enabled, so
+  the subject comes from the PR title (or from the lone commit's subject, when the branch has
+  exactly one) and the body from the branch commit messages. The PR body does **not** land; the
+  gate scans it anyway, as deliberate over-strictness on a surface that costs nothing to cover.
+  mllp was already clean when this landed, **measured over all 152 tracked files byte by byte, not
+  over markdown alone** (a markdown-only count is what wrongly cleared `dicom`, which held six live
+  em dashes in four non-markdown files including its npm `description`), so the gate changed no
+  content and exists purely to stop a regression.
+  **The script is composed from three copies, and the composition is the thing to understand
+  before editing it.** Base: `website`'s **NUL-exclusion** shape, because this repo tracks one
+  binary. Plus `ncpdp`'s two route fixes (a tracked file named exactly `-` was read as **standard
+  input** and never opened, so the gate printed OK over a live em dash; `-d skip` silently passed a
+  tracked **symlink to a directory**). Plus `dicom`'s **binary-match diagnostic branch**. This copy
+  applies the `./` prefix in the list-building loop instead of through `sed -z`, so the scan is a
+  single command with the stderr capture bound to all of it, which closes a residual the `ncpdp`
+  and `dicom` copies still carry.
+  **Why not the text-only shape the other parsers run, since `vendor/cosyte-hl7-0.0.0.tgz` has no
+  em dash in it today:** the reason is durability, not a present-day red. That tarball is a
+  compressed stream, it is re-vendored by hand (see the Phase 9 note above), and a compressed
+  stream can contain `E2 80 94` by coincidence. Measured both ways against the real file: `dicom`'s
+  copy is green on today's bytes and **red, unremediably, on a copy seeded with those three bytes**.
+  You cannot rewrite a compressed byte stream with a period, and a red with no fix is a gate
+  someone disables.
+  **The disclosed cost, said plainly: a tracked TEXT file holding a NUL byte is silently exempt,
+  and seeding the tarball itself with a live em dash leaves this gate green. That is a miss, not a
+  pass.** mllp has no NUL-bearing text file today, so the exclusion currently exempts exactly one
+  file and that file is a genuine binary. **Do not round that off to "hypothetical here": the
+  at-risk fixture class already exists.** `git ls-files --eol` calls **four** files binary, not
+  one: the tarball plus the three `test/differential/fixtures/*.frame.bin` captures, which git
+  classifies on its lone-CR branch because an HL7 v2 segment terminator is `CR` with no `LF`.
+  Those three hold **zero** NUL bytes, so they stay in scope, and that was **proved, not
+  assumed**: each was seeded with a live em dash in turn and the gate went red naming the file.
+  But `test/differential/fixtures/README.md` invites replacing any of them with a real capture
+  from a live adapter run, and a capture carrying a NUL would leave the scan silently. **The tell
+  is the excluded count on the OK line: it reads 1 today.** If a NUL-bearing text fixture ever
+  lands, revisit the partition (the `.gitattributes` declaration `pathways` prefers), never the
+  ban. One disclosed property of a red on those fixtures: the hit echoes the matching *line*, and
+  a CR-delimited frame is one line, so a whole message lands in a public CI log. Acceptable and
+  deliberately un-truncated, because the fixtures are synthetic by policy and `pnpm phi-scan`
+  gates that policy over the same files. **Do not add `grep -I`**: measured on GNU grep 3.8, a text
+  file whose bad byte sits on the same line as the em dash is skipped by `-I` in total silence, and
+  the gate prints OK. When the gate goes red the fix is never to re-encode the character: rewrite
+  with a period, colon, comma, or parentheses. Remaining known limits are in the script header and
+  are shared across every copy, so fix them there, not here.
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed
   `@cosyte/hl7-mllp` → `@cosyte/mllp`**. Not yet published, so the rename is free.
 - Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).
