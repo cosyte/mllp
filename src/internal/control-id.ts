@@ -220,7 +220,7 @@ function isBatchEnvelopeSegmentAt(buf: Buffer, i: number): boolean {
  *
  * It does **not** parse the batch, re-base on the first `MSH`, or otherwise widen any
  * reader, it only *detects* the multi-message shape so callers can refuse it. Batch ACK
- * is its own feature (`MLLP-BATCH`); this is the refusal that keeps the door shut until it
+ * is its own feature; this is the refusal that keeps the door shut until it
  * is designed. A normal single message (`MSH` followed by `PID`/`PV1`/`OBR`/…) contains no
  * batch segment and exactly one `MSH`, so this returns `false` for it.
  *

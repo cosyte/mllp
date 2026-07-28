@@ -44,7 +44,7 @@ export interface EncoderOptions {
 
   /**
    * Called for each offending delimiter byte when `allowDelimiterBytesInPayload` is `true`.
-   * Invocation is wrapped in try/catch, a throwing handler does not interrupt encoding (WARN-06).
+   * Invocation is wrapped in try/catch, a throwing handler does not interrupt encoding.
    *
    * @example
    * ```typescript

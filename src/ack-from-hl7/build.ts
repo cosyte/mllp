@@ -141,7 +141,7 @@ export const MLLP_ACK_CONTROL_ID_NOT_VERBATIM = "MLLP_ACK_CONTROL_ID_NOT_VERBATI
  * The check reads the **pre-encoding code units** of MSA-2, not the emitted bytes, so a lossy
  * `{ encoding: "ascii" }` override, which truncates a code unit to its low 8 bits (`str -> byte &
  * 0xFF`) and so masks a code unit above `0xFF` *into* the ASCII byte range on the way out (`U+0153`
- * -> `0x53`), cannot slip a corrupted control ID past it silently (MLLP-ACK-ASCII-OVERRIDE-BLEED).
+ * -> `0x53`), cannot slip a corrupted control ID past it silently.
  * The strongly-discouraged text-plus-override path is covered for the same reason the default `utf8`
  * text path is; the `Buffer` overload remains the answer.
  *
@@ -278,7 +278,7 @@ export interface BuildMllpAckOptions {
    * `"base64"`/`"base64url"`/`"hex"` (which reinterpret the ACK *string* as encoded data) or
    * `"utf16le"`/`"ucs2"` (which NUL-pad every byte), emits a wholesale-garbage frame the receiver
    * cannot parse, so `buildMllpAck` **throws a `TypeError`** for it here rather than hand back an
-   * unusable ACK. This applies to a `Buffer` inbound too (MLLP-ACK-NONTEXT-CODEC-BUFFER): a
+   * unusable ACK. This applies to a `Buffer` inbound too: a
    * non-text codec there garbles the *inbound* decode into the unparseable fallback (empty MSA-2,
    * so the {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM} check never runs) and then serializes the
    * fallback ACK to garbage bytes that intermittently trip the strict frame encoder, it is never
@@ -374,9 +374,9 @@ function resolveEncoding(
  * discover broken a round trip later. So this throws a `TypeError` here, exactly as
  * {@link assertKnownAckCode} does for a bad `code`.
  *
- * ## Why this applies to the `Buffer` path too (MLLP-ACK-NONTEXT-CODEC-BUFFER)
+ * ## Why this applies to the `Buffer` path too
  *
- * An earlier iteration (MLLP-ACK-NONTEXT-CODEC-FRAME) scoped this to the text path, reasoning
+ * An earlier iteration scoped this to the text path, reasoning
  * that a lossy override on a `Buffer` was *already* caught loudly by the byte-level
  * {@link verifyVerbatimEcho} → {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM} check. That is true for
  * a lossy **charset** codec (`ascii` masking a high bit), but **not** for a genuinely non-text
@@ -526,8 +526,8 @@ function verifyVerbatimEcho(
  * It reads the pre-encode **code units**, not the emitted **bytes**, on purpose. A lossy
  * `{ encoding: "ascii" }` override truncates a code unit to its low 8 bits (`str -> byte & 0xFF`),
  * masking a code unit above `0xFF` *into* the ASCII byte range on the way out (`U+0153` -> `0x53`),
- * so an emitted-byte proxy would fall silent on exactly the corruption that matters
- * (MLLP-ACK-ASCII-OVERRIDE-BLEED). The code units still carry the high bit whatever
+ * so an emitted-byte proxy would fall silent on exactly the corruption that matters.
+ * The code units still carry the high bit whatever
  * the codec did to the bytes, and, since encoding ASCII code units can never yield a non-ASCII
  * byte, this is a strict superset of the emitted-non-ASCII test, so the default `utf8` text path
  * is unchanged.
@@ -771,9 +771,8 @@ function resolveInbound(
  * @throws {MllpPeerMissingError} when `@cosyte/hl7` is not installed.
  * @throws {TypeError} when `options.code` is not a known HL7 Table 0008 code, or when
  *   `options.encoding` is a **non-text** codec (`base64`/`base64url`/`hex`/`utf16le`/`ucs2`)
- *   on **any** inbound, it would serialize a garbage frame the receiver cannot parse
- *   (MLLP-ACK-NONTEXT-CODEC-FRAME / MLLP-ACK-NONTEXT-CODEC-BUFFER). See
- *   {@link BuildMllpAckOptions.encoding}.
+ *   on **any** inbound, it would serialize a garbage frame the receiver cannot parse.
+ *   See {@link BuildMllpAckOptions.encoding}.
  *
  * @example
  * ```typescript

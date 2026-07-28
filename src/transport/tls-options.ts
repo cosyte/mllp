@@ -1,5 +1,5 @@
 /**
- * TLS (MLLPS) option types for the client and server (Phase 8).
+ * TLS (MLLPS) option types for the client and server.
  *
  * Spec anchor: IHE ATNA, ITI-19 Authenticate Node
  * (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html), the "STX: TLS 1.2
@@ -35,7 +35,7 @@
 export type PemInput = string | Buffer | Array<string | Buffer>;
 
 /**
- * Client-side TLS options (Phase 8, `ClientOptions.tls`).
+ * Client-side TLS options (`ClientOptions.tls`).
  *
  * Passing `true` for `ClientOptions.tls` is equivalent to `{}`, TLS enabled
  * with all defaults, including certificate verification **on**.
@@ -123,7 +123,7 @@ export interface TlsOptions {
 export type ClientAuth = "NONE" | "WANT" | "MUST";
 
 /**
- * Server-side TLS options (Phase 8, `ServerOptions.tls`).
+ * Server-side TLS options (`ServerOptions.tls`).
  *
  * @example
  * ```typescript

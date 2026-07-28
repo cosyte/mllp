@@ -2,9 +2,9 @@
  * MLLP Client typed errors and classifiers.
  *
  * Exports:
- * - `MllpTimeoutError` (PLAN-02), ACK timeout (ERR-02)
- * - `MllpBackpressureError`, high-water mark exceeded (ERR-04, plan 05)
- * - `isTransientConnectionError` (PLAN-04), transient/permanent classifier (CLIENT-18)
+ * - `MllpTimeoutError`, ACK timeout
+ * - `MllpBackpressureError`, high-water mark exceeded
+ * - `isTransientConnectionError`, transient/permanent classifier
  *
  * Re-exported from `src/client/index.ts` and `src/index.ts`.
  *
@@ -13,11 +13,10 @@
 
 /**
  * Thrown (or rejects the `send()` promise) when an ACK does not arrive within
- * the configured `ackTimeoutMs` (ERR-02).
+ * the configured `ackTimeoutMs`.
  *
  * The timeout clock starts at the underlying `write()` flush callback, NOT
- * at the `send()` call, pre-flush queue time is not charged to the peer
- * (CLIENT-04).
+ * at the `send()` call, pre-flush queue time is not charged to the peer.
  *
  * @example
  * ```typescript
@@ -71,7 +70,7 @@ export class MllpTimeoutError extends Error {
  * failure (as opposed to some other TLS handshake failure), untrusted chain,
  * expired/not-yet-valid certificate, hostname mismatch, revocation, etc.
  *
- * Used by `MllpClient` (Phase 8) to classify a TLS connect failure's
+ * Used by `MllpClient` to classify a TLS connect failure's
  * `connectionCause` as `'tls-verify'` (this set) vs `'tls-handshake'`
  * (everything else observed before `'secureConnect'`). Exported so callers
  * can apply the same classification to their own error handling.
@@ -107,7 +106,7 @@ export function isTlsVerificationErrorCode(code: string): boolean {
 
 /**
  * Detects **TLS-protocol-shaped** errors, failures of the TLS protocol
- * itself, as opposed to plain TCP-level network failures (Phase 8).
+ * itself, as opposed to plain TCP-level network failures.
  *
  * Apply this only to errors raised on a **TLS** connection; `MllpClient`
  * does exactly that (the predicate is consulted only when `ClientOptions.tls`
@@ -171,27 +170,27 @@ export function isTlsProtocolError(err: unknown): boolean {
  * Classifies a connection error as transient (eligible for auto-reconnect)
  * or permanent (halts auto-reconnect, transitions to CLOSED).
  *
- * Used internally by `MllpClient` BEFORE invoking `retryStrategy` (Composition A
- * see `RetryContext.classifiedAs`). Re-exported so callers can implement
+ * Used internally by `MllpClient` BEFORE invoking `retryStrategy`
+ * (see `RetryContext.classifiedAs`). Re-exported so callers can implement
  * their own retry policies.
  *
- * Classification table (CLIENT-18, D-16):
+ * Classification table:
  * - `ENOTFOUND`, `EACCES` → **permanent** (`false`)
  * - `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EHOSTUNREACH`,
  *   `ENETUNREACH`, `EPIPE` → **transient** (`true`)
  * - `CERT_*` and `UNABLE_TO_VERIFY_LEAF_SIGNATURE` /
  *   `DEPTH_ZERO_SELF_SIGNED_CERT` / `SELF_SIGNED_CERT_IN_CHAIN`
  *   (any {@link isTlsVerificationErrorCode} code) → **permanent** (`false`),
- *   never auto-reconnect-loop into a misconfigured or MITM'd endpoint (Phase 8).
+ *   never auto-reconnect-loop into a misconfigured or MITM'd endpoint.
  * - `ERR_SSL_*` (Node TLS alert codes) → **permanent** (`false`), a TLS
  *   protocol failure such as a `clientAuth: 'MUST'` server rejecting the
- *   client certificate recurs on every attempt (Phase 8). On TLS-configured
+ *   client certificate recurs on every attempt. On TLS-configured
  *   connections `MllpClient` additionally consults {@link isTlsProtocolError},
  *   which also catches `EPROTO`/alert-bearing OpenSSL errors that this
  *   generic classifier (which cannot know the connection was TLS) leaves
  *   transient.
  * - `MLLP_*` (any {@link MllpFramingError} code, a fatal decoder throw, surfaced with
- *   `connectionCause: 'framing-fatal'`) → **permanent** (`false`) (MLLP-10). The peer is not
+ *   `connectionCause: 'framing-fatal'`) → **permanent** (`false`). The peer is not
  *   speaking MLLP, an HTTP probe, a health check, a wrong-port misconfiguration, or is emitting
  *   frames past `maxFrameSizeBytes`. Every reconnect meets the same bytes, so retrying is an
  *   unbounded storm against a peer that is already misconfigured. If a peer's quirk is *expected*,
@@ -245,11 +244,10 @@ export function isTransientConnectionError(err: unknown): boolean {
 
 /**
  * Thrown (or rejects the `send()` promise) when the in-flight queue exceeds
- * the configured high-water mark and `onBackpressure: 'reject'` is set
- * (CLIENT-07, ERR-04).
+ * the configured high-water mark and `onBackpressure: 'reject'` is set.
  *
  * `highWaterMark` accepts a count cap, a byte cap, or both, when both are
- * present, the stricter-of-two trigger wins (D-23).
+ * present, the stricter-of-two trigger wins.
  *
  * @example
  * ```typescript
@@ -275,7 +273,7 @@ export class MllpBackpressureError extends Error {
   /** Total bytes of in-flight + queued frames at the moment of rejection. */
   readonly queueBytes: number;
 
-  /** The high-water-mark configuration that was triggered (D-23). */
+  /** The high-water-mark configuration that was triggered. */
   readonly highWaterMark: { readonly count?: number; readonly bytes?: number };
 
   /**

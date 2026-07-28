@@ -37,7 +37,7 @@ import type { AckCode, NegativeAckCode } from "./ack.js";
 import { safeEmit, safeEmitError } from "../internal/safe-emit.js";
 
 /**
- * Wildcard (unspecified-address) bind detection for Phase 8 bind safety,
+ * Wildcard (unspecified-address) bind detection for bind safety,
  * hosts that bind ALL interfaces and therefore require
  * `ServerOptions.allowWildcardBind: true`.
  *
@@ -80,8 +80,8 @@ function isWildcardHost(host: string): boolean {
 
 /**
  * Minimal, content-free peer-certificate summary surfaced on the `'connection'`
- * event when `ServerOptions.tls.clientAuth` is `'WANT'` or `'MUST'` (Phase 8,
- * ATNA ITI-19 mutual authentication). Never the full certificate object,
+ * event when `ServerOptions.tls.clientAuth` is `'WANT'` or `'MUST'`
+ * (ATNA ITI-19 mutual authentication). Never the full certificate object,
  * CN strings, the expiry date, and the verification outcome only.
  *
  * @example
@@ -115,7 +115,7 @@ export interface PeerCertificateSummary {
 }
 
 /**
- * Metadata attached to each decoded MLLP message (SERVER-03).
+ * Metadata attached to each decoded MLLP message.
  *
  * All fields are `readonly`, the object is `Object.freeze()`'d before emission.
  *
@@ -182,10 +182,10 @@ export interface NackEvent {
 }
 
 /**
- * Observability snapshot returned by `server.getStats()` (OBS-02).
+ * Observability snapshot returned by `server.getStats()`.
  *
  * All fields are JSON-serializable. `connections` and `activeConnections` both
- * reflect the current live connection count (ROADMAP SC-5 / OBS-02).
+ * reflect the current live connection count.
  *
  * @example
  * ```typescript
@@ -201,7 +201,7 @@ export interface ServerStats {
   /** Bound host, or `null` before listen(). */
   readonly host: string | null;
   /**
-   * Current live connection count (OBS-02, ROADMAP SC-5).
+   * Current live connection count.
    * Same value as `activeConnections`.
    */
   readonly connections: number;
@@ -215,9 +215,9 @@ export interface ServerStats {
   readonly acceptedTotal: number;
   /** Total connections closed since listen() (monotonically increasing). */
   readonly closedTotal: number;
-  /** Whether this server is configured for TLS (Phase 8). Mirrors `ServerOptions.tls` being set. */
+  /** Whether this server is configured for TLS. Mirrors `ServerOptions.tls` being set. */
   readonly tls: boolean;
-  /** Total `'tlsClientError'` events (failed TLS handshakes, incl. rejected client certs) since listen() (Phase 8). */
+  /** Total `'tlsClientError'` events (failed TLS handshakes, incl. rejected client certs) since listen(). */
   readonly tlsClientErrorsTotal: number;
 }
 
@@ -259,7 +259,7 @@ export interface ServerOptions {
   onMessage?: (payload: Buffer, meta: MessageMeta, conn: Connection) => void | Promise<void>;
 
   /**
-   * FrameReader tolerance options applied to every accepted connection (SERVER-12).
+   * FrameReader tolerance options applied to every accepted connection.
    * Merged with SERVER_DEFAULT_FRAMING, caller-supplied values override defaults.
    * `onFrame` and `onWarning` are managed internally and must not be supplied here.
    */
@@ -286,7 +286,7 @@ export interface ServerOptions {
    * - **`fn`**, `fn(payload, meta, conn)` builds the ACK bytes the server sends; the
    *   caller fully owns MSA-1 (e.g. to emit enhanced-mode `CA`/`CE`/`CR`).
    *
-   * The `'message'` event always fires BEFORE the ACK is sent (D-03). Do NOT call
+   * The `'message'` event always fires BEFORE the ACK is sent. Do NOT call
    * `conn.send()` in `onMessage` when `autoAck` is set, this results in two ACKs.
    */
   autoAck?:
@@ -294,7 +294,7 @@ export interface ServerOptions {
     | ((payload: Buffer, meta: MessageMeta, conn: Connection) => Buffer | Promise<Buffer>);
 
   /**
-   * TCP keepalive probe interval in ms (D-10).
+   * TCP keepalive probe interval in ms.
    * Calls `socket.setKeepAlive(true, ms)` on each accepted socket.
    * Uses OS TCP stack to detect dead peers (half-open, network partitions).
    * Distinct from `deadPeerTimeoutMs` (application-level idle close).
@@ -302,7 +302,7 @@ export interface ServerOptions {
   keepaliveIntervalMs?: number;
 
   /**
-   * Application-level idle close timeout in ms (D-11, ROADMAP SC-5).
+   * Application-level idle close timeout in ms.
    * If no HL7 messages are received on a connection for this interval, the connection
    * is destroyed via `conn.destroy(new Error('idle timeout'))`.
    * Resets on every `'message'` event. Distinct from `keepaliveIntervalMs` (OS TCP probe).
@@ -310,13 +310,13 @@ export interface ServerOptions {
   deadPeerTimeoutMs?: number;
 
   /**
-   * Graceful drain timeout passed to `conn.close()` during `server.close()` (D-06).
+   * Graceful drain timeout passed to `conn.close()` during `server.close()`.
    * Default: 30 000 ms.
    */
   drainTimeoutMs?: number;
 
   /**
-   * Enable TLS (MLLPS) for this server (Phase 8). When set, the server binds a
+   * Enable TLS (MLLPS) for this server. When set, the server binds a
    * `tls.Server` instead of a plain `net.Server`, consumes `'secureConnection'`
    * (post-handshake sockets) instead of `'connection'`, and surfaces failed
    * handshakes via the `'tlsClientError'` event rather than crashing.
@@ -328,8 +328,8 @@ export interface ServerOptions {
   tls?: ServerTlsOptions;
 
   /**
-   * Opt-in required to bind a wildcard host, a bind-safety guardrail
-   * (Phase 8). Without this flag, `listen()` rejects a wildcard host in
+   * Opt-in required to bind a wildcard host, a bind-safety guardrail.
+   * Without this flag, `listen()` rejects a wildcard host in
    * two tiers: **literal spellings** (`'0.0.0.0'`, `'::'`, `''`, `'::0'`,
    * `'0:0:0:0:0:0:0:0'`, `'::ffff:0.0.0.0'`, …) reject **pre-bind** (fast
    * path, nothing is ever bound); **resolver-only shorthands** (`'0'`,
@@ -347,7 +347,7 @@ export interface ServerOptions {
 }
 
 /**
- * Options for `createStarterServer()`, the "three lines of code" factory (SERVER-08).
+ * Options for `createStarterServer()`, the "three lines of code" factory.
  *
  * Extends `ServerOptions` with `port`, `host`, and `handleSignals`. Defaults:
  * `autoAck: 'AA'`, `drainTimeoutMs: 30_000`, `Symbol.asyncDispose` wired.
@@ -368,14 +368,14 @@ export interface StarterServerOptions extends ServerOptions {
   /** Port to listen on. */
   port: number;
   /**
-   * Host to bind to. Default `'127.0.0.1'` (Phase 8 bind-safety hardening,
+   * Host to bind to. Default `'127.0.0.1'` (bind-safety hardening,
    * was `'0.0.0.0'`; binding all interfaces now requires
    * `ServerOptions.allowWildcardBind: true`).
    */
   host?: string;
   /**
    * Register `process.once('SIGTERM')` and `process.once('SIGINT')` handlers that
-   * call `server.close()` then `process.exit(0)` (D-09). Default: `false`.
+   * call `server.close()` then `process.exit(0)`. Default: `false`.
    *
    * Handlers are automatically removed when `server.close()` is called, so
    * `process.listenerCount('SIGTERM') === 0` after close() completes, preventing
@@ -385,7 +385,7 @@ export interface StarterServerOptions extends ServerOptions {
 }
 
 /**
- * Default framing options applied to every server-side FrameReader (D-12).
+ * Default framing options applied to every server-side FrameReader.
  *
  * Reflects real-world MLLP device behavior:
  * - `allowFsOnly: true`, accept FS without trailing CR
@@ -401,7 +401,7 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
 };
 
 /**
- * MLLP TCP server, wraps `net.Server` without extending it (D-02).
+ * MLLP TCP server, wraps `net.Server` without extending it.
  *
  * Each accepted socket is wrapped in a `NetTransport`, connected to a `Connection`
  * with server-level framing options, and added to `_connections`. Messages are
@@ -426,10 +426,10 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * during the bind window changes the `listen()` rejection from the bind error to the typed
  * close-during-listen `MllpConnectionError`, match on the `'error'` event payload, not the
  * rejection, if you do that.
- * Phase 8 (TLS/MLLPS) adds two more: `'tlsClientError'` (a failed TLS handshake, the
+ * TLS (MLLPS) adds two more: `'tlsClientError'` (a failed TLS handshake, the
  * server logs it and keeps serving other connections) and `'securityWarning'` (loud,
  * one-time notice when a wildcard host is bound via `allowWildcardBind: true`).
- * All event payloads are `Object.freeze()`'d before emission (SERVER-10).
+ * All event payloads are `Object.freeze()`'d before emission.
  *
  * @example
  * ```typescript
@@ -452,10 +452,10 @@ export class MllpServer extends EventEmitter {
   private readonly _isTls: boolean;
 
   private _listening = false;
-  /** Phase 8, single-flight guard: `true` while a `listen()` call is settling. */
+  /** Single-flight guard: `true` while a `listen()` call is settling. */
   private _listenInFlight = false;
   /**
-   * Phase 8, settle hook for an in-flight `listen()`. Non-null only while a
+   * Settle hook for an in-flight `listen()`. Non-null only while a
    * `listen()` is in flight; invoked by `close()` so a close racing startup
    * rejects the pending `listen()` (typed) instead of leaving it hung with
    * the single-flight guard stuck. Cleared on every settle path.
@@ -465,7 +465,7 @@ export class MllpServer extends EventEmitter {
   private _host: string | null = null;
   private _acceptedTotal = 0;
   private _closedTotal = 0;
-  /** Phase 8, count of `'tlsClientError'` events since listen(). */
+  /** Count of `'tlsClientError'` events since listen(). */
   private _tlsClientErrorsTotal = 0;
 
   /**
@@ -580,7 +580,7 @@ export class MllpServer extends EventEmitter {
    *
    * @param port - TCP port to bind. Use `0` to let the OS assign an ephemeral port.
    * @param hostOrOpts - Host string or object with `host` and optional `signal`.
-   *   Default host: `'127.0.0.1'` (Phase 8 bind-safety hardening). Wildcard hosts
+   *   Default host: `'127.0.0.1'` (bind-safety hardening). Wildcard hosts
    *   are rejected unless `ServerOptions.allowWildcardBind: true`, literal
    *   spellings pre-bind, resolver-only shorthands post-bind via the
    *   OS-normalized bound address.
@@ -864,7 +864,7 @@ export class MllpServer extends EventEmitter {
   /**
    * Stop accepting new connections and gracefully close all active connections.
    *
-   * Sequence (D-06):
+   * Sequence:
    * 1. `net.Server.close()`, stops accepting new connections immediately
    * 2. If `_connections` is empty: resolves immediately (no drain needed)
    * 3. Calls `_drainAll(drainTimeoutMs)`, Promise.all + side-effect setTimeout
@@ -997,10 +997,9 @@ export class MllpServer extends EventEmitter {
   }
 
   /**
-   * Return a JSON-serializable observability snapshot (OBS-02).
+   * Return a JSON-serializable observability snapshot.
    *
    * `totalBytesIn` and `totalBytesOut` aggregate from live connections at call time.
-   * Plan 04 adds full aggregation; at Plan 01 scope they return 0.
    *
    * @example
    * ```typescript
@@ -1217,8 +1216,8 @@ export class MllpServer extends EventEmitter {
   }
 
   /**
-   * Extract a minimal, content-free peer-certificate summary (Phase 8, ATNA
-   * ITI-19 mutual authentication), CN strings, expiry, and the verification
+   * Extract a minimal, content-free peer-certificate summary (ATNA ITI-19
+   * mutual authentication), CN strings, expiry, and the verification
    * outcome (`authorized`) only; never the full certificate object. Returns
    * `null` when no peer certificate was presented (e.g. `clientAuth: 'WANT'`
    * with no client cert).
@@ -1352,7 +1351,7 @@ export class MllpServer extends EventEmitter {
    * Run `onMessage` for its side effects only (custom-ACK and manual modes), guarding
    * against a synchronous throw or a rejected promise. In these modes the handler does
    * **not** gate the ACK, so a failure is re-emitted as a PHI-safe `'error'` on the
-   * connection (D-04: a handler error never crashes the server) rather than escaping as
+   * connection (a handler error never crashes the server) rather than escaping as
    * an unhandled rejection. The error text is never placed on the wire.
    */
   private _observeMessage(payload: Buffer, meta: MessageMeta, conn: Connection): void {
@@ -1372,7 +1371,7 @@ export class MllpServer extends EventEmitter {
   /**
    * The custom-builder path for `autoAck: fn`. Awaits the builder and dispatches its
    * Buffer as the ACK; the caller owns MSA-1. A builder error is re-emitted as `'error'`
-   * on the connection, the server never crashes (D-04).
+   * on the connection, the server never crashes.
    */
   private async _sendCustomAck(
     fn: (payload: Buffer, meta: MessageMeta, conn: Connection) => Buffer | Promise<Buffer>,
@@ -1393,7 +1392,7 @@ export class MllpServer extends EventEmitter {
   /**
    * Frame an ACK payload and write it to the connection. `Connection.send()` returns
    * `false` under backpressure (socket write buffer full); that drops the ACK and emits
-   * a `MllpConnectionError({ phase: 'send' })` on the connection (D-04), the peer will
+   * a `MllpConnectionError({ phase: 'send' })` on the connection, the peer will
    * time out waiting and may retry. The server never crashes.
    */
   private _dispatchAck(conn: Connection, ackPayload: Buffer): void {
@@ -1475,8 +1474,6 @@ export function createServer(opts: ServerOptions = {}): MllpServer {
  *
  * Provides the "three lines of code" north-star experience with sensible defaults:
  * `autoAck: 'AA'`, `drainTimeoutMs: 30_000`, `Symbol.asyncDispose` wired.
- *
- * NOTE: Stub at Plan 01 scope, Plan 04 fills in the full implementation.
  *
  * @example
  * ```typescript

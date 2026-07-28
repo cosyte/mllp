@@ -21,13 +21,13 @@ export const FS = 0x1c;
 /** Carriage Return (0x0D), terminates the FS byte; together FS+CR ends the frame. */
 export const CR = 0x0d;
 
-/** Line Feed (0x0A), used by the MLLP_LF_AFTER_FS tolerance (FRAME-08). */
+/** Line Feed (0x0A), used by the MLLP_LF_AFTER_FS tolerance. */
 export const LF = 0x0a;
 
 /**
  * Default maximum accumulated payload size in bytes (16 MiB).
  *
  * Exceeding this limit throws `MllpFramingError('MLLP_FRAME_TOO_LARGE')`.
- * Satisfies FRAME-11 DoS prevention requirement.
+ * Satisfies the DoS-prevention requirement on accumulator growth.
  */
 export const DEFAULT_MAX_FRAME_SIZE = 16 * 1024 * 1024;

@@ -14,6 +14,38 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Added
 
+- **Public-surface gate (`scripts/check-no-internal-refs.sh`, `pnpm check:no-internal-refs`, and
+  `.github/workflows/no-internal-refs.yml`, check-run context `no-internal-refs`).** Enforces the
+  founder directive of 2026-07-27 (meta-repo `documentation/conventions.md`, "No internal project
+  bookkeeping on a public surface"): a consumer surface says what the software does and what
+  changed, never our item identifiers, phase and plan language, ADR numbers, meta-repo paths or
+  process commentary. `PUBLIC-SURFACE-HYGIENE`.
+  Ported from `ncpdp`'s copy rather than `hl7`'s, which carries three fixes the original lacks
+  (the `src/` string-literal fourth pass, the plural `phases?` stem, and `/` in the ADR separator
+  class), plus rule 7 (prose roadmap citation) from `cli`, the only sibling that has it.
+  **The recorded figure for this repo was "mllp 4" and was wrong by two orders of magnitude.**
+  Measured on the base commit `a34998a` with the final rule set, over four surfaces: public
+  markdown + npm metadata **4**, `src/` doc comments **389 rows / 376 locations across 18 of the
+  29 tracked source files the gate scans**, `src/` string literals **0**, and the built
+  declarations **440 rows across all eight `.d.ts`/`.d.cts` files** of the three published entry
+  points plus the shared type chunk. All four are now **0**, re-derived on both trees after the
+  rule set was final. The "4" was the public-markdown surface alone.
+  Three rule additions are this repo's own, each forced by a measured false positive rather than
+  by taste: a repo-local identifier vocabulary (`PLAN`/`CLIENT`/`SERVER`/`FRAME`/`LIFE`/`OBS`/
+  `WARN`/`ERR`/`SC` plus the single-letter `D`/`W`/`B`/`T` decision labels) that no sibling has
+  and that was the overwhelming majority of the mass; a compound-adjective guard on the phase
+  rule, because `two-phase` (HL7 enhanced acknowledgement mode) and `connect-phase` are ordinary
+  vocabulary; and `where|are|was|were|during|at` on the ordinary-English lookahead, because
+  `ConnectionErrorPhase` is a **published** API field whose own doc comment reads "phase where
+  the error occurred".
+  A **scanner-blindness self-test** refuses the run if the `grep` on `PATH` silently skips a file
+  (the `-I` / `--ignore-files` behaviour of `ugrep` and of any wrapper forcing them), which is the
+  fourth distinct mechanism by which gates of this family have reported OK over live violations.
+  **Each surface figure above counts rows these seven rules match**, which is not the same as a
+  claim that no internal reference of any kind survives. The gate reads this repository's sources
+  and published docs; it does not read the built declarations it protects, and no rule detects
+  prose that merely describes how the software came to exist.
+
 - **Em-dash brand gate (`scripts/check-no-emdash.sh`, `pnpm check:no-emdash`, and
   `.github/workflows/no-emdash.yml`).** Enforces the founder directive that bans `U+2014`
   outright (`knowledgebase/06-brand/voice-and-tone.md`: "No em dashes. Ever."), which names
@@ -86,6 +118,34 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   live. Docs only: no runtime or public-API change.
 
 ### Fixed
+
+- **Three doc comments that had outlived the code they described**, all of which shipped into the
+  published type declarations. The `'reconnecting'` payload was documented as carrying
+  `connectionId` only, while `MllpClient` populates `attempt` and `delayMs` when it schedules a
+  reconnect; a bare `Connection` does emit `connectionId` alone, which is why the false sentence
+  was CUT rather than replaced with a blanket promise. `MllpServer.getStats()` was documented as
+  returning 0 for `totalBytesIn`/`totalBytesOut`, which it aggregates across live connections; and
+  `createStarterServer` was documented as a stub while being fully implemented. The `createClient`
+  examples also showed `send()` commented out as not yet available. `PUBLIC-SURFACE-HYGIENE`.
+
+- **`docs-content/installation.md` said the package is published at `0.0.1`.** It was `0.0.2`,
+  verified against the registry. The number is now gone from that status line rather than
+  corrected: a pinned version on a live page has a one-release half-life, and the changeset in this
+  very change bumps the package again, so writing today's number back would have reproduced the
+  defect. The ladder statement beside it already tells a reader what they need. A stale claim on a
+  page published to docs.cosyte.com, and a reminder that no pattern finds a statement that was true
+  when it was written. `PUBLIC-SURFACE-HYGIENE`.
+
+- **`Connection.beforeClose` no longer claims the server and client register drain logic through
+  it.** They do not: `MllpServer` assigns an explicit no-op and `MllpClient` never assigns the hook
+  at all, and its `close()` REJECTS pending sends rather than draining them. The doc now describes
+  the hook as what it is: a replaceable pre-close step, promising no drain. **The falsehood is older
+  than this change** (it read as a phase-labelled plan before), but stripping the phase label turned
+  a plan into a flat present-tense assertion about two exported classes, which is worse; a refuter
+  caught it. On a healthcare transport the difference matters, because it told a consumer `close()`
+  drains in-flight ACKs. Fixed alongside it, and PRE-EXISTING: a missing separator between an
+  internal design label and the following clause on the exported `isTransientConnectionError` JSDoc,
+  which left a malformed sentence in the shipped declarations. `PUBLIC-SURFACE-HYGIENE`.
 
 - **`ack-from-hl7`: a non-text `encoding` override is now rejected on a `Buffer` inbound too, not just
   the text path, and this fixes a flaky `verify` failure (MLLP-ACK-NONTEXT-CODEC-BUFFER).**

@@ -1,5 +1,5 @@
 /**
- * Security-warning codes and payload shape shared by the client and server (Phase 8).
+ * Security-warning codes and payload shape shared by the client and server.
  *
  * These codes are a **public API**, they appear in `'securityWarning'` event
  * handlers, log pipelines, and monitoring dashboards. Renaming or removing a

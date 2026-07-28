@@ -1,18 +1,18 @@
 /**
- * MLLP Client ACK correlator, pure data structure (CONTEXT D-03/A1).
+ * MLLP Client ACK correlator, pure data structure.
  *
  * Unified `Map<correlationKey, PendingAck>` with ES2015 insertion-ordered
  * iteration is the single source of truth for in-flight + queued sends.
  *
  * - FIFO mode keys by synthetic monotonic `sendSeq: number`.
- * - controlId mode (PLAN-03) keys by MSH-10 `string`.
- * - `maxInFlight=1` (PLAN-05 `pipeline:false`) is enforced as a guard
- *   on the same store; not a separate class (D-06).
+ * - controlId mode keys by MSH-10 `string`.
+ * - `maxInFlight=1` (`pipeline:false`) is enforced as a guard
+ *   on the same store; not a separate class.
  *
  * **INTERNAL**, not re-exported from the package barrel. The class knows
  * nothing about `Connection`, the event emitter, sockets, or timers. Sweep
  * cadence is driven externally by the periodic sweep tick on `MllpClient`
- * so the Correlator itself stays timer-free (D-03).
+ * so the Correlator itself stays timer-free.
  *
  * @packageDocumentation
  */
@@ -40,32 +40,32 @@ export {
   extractMsaControlId,
 } from "../internal/control-id.js";
 
-/** A single pending send awaiting its ACK (D-03). */
+/** A single pending send awaiting its ACK. */
 export interface PendingAck {
   readonly key: CorrelationKey;
   readonly frame: Buffer;
   readonly controlId: string | null;
   readonly byteCount: number;
-  /** Epoch ms recorded by `markFlushed()`; `null` until transport flush (CLIENT-04). */
+  /** Epoch ms recorded by `markFlushed()`; `null` until transport flush. */
   sentAt: number | null;
   readonly resolve: (ack: Buffer) => void;
   readonly reject: (err: Error) => void;
 }
 
-/** Graveyard bookkeeping for late-ACK detection (D-04). */
+/** Graveyard bookkeeping for late-ACK detection. */
 export interface GraveyardEntry {
   readonly timedOutAt: number;
   readonly controlId: string | null;
 }
 
-/** JSON-serializable snapshot used by `client.getStats()` (D-26). */
+/** JSON-serializable snapshot used by `client.getStats()`. */
 export interface CorrelatorStats {
   readonly size: number;
   readonly queueBytes: number;
   readonly graveyardSize: number;
   readonly sendSeq: number;
   /**
-   * Count of live entries with `sentAt !== null` (PLAN-06 / D-26).
+   * Count of live entries with `sentAt !== null`.
    *
    * Distinct from `size`. `size` includes pre-flush entries (an entry was
    * `enqueue()`'d but `markFlushed()` has not been called yet) AND
@@ -77,16 +77,16 @@ export interface CorrelatorStats {
 
 /** Constructor options. INTERNAL callback-bag pattern (mirrors `FrameReaderOptions`). */
 export interface CorrelatorOptions {
-  /** `'fifo'` (default) or `'controlId'` (PLAN-03 wires controlId). */
+  /** `'fifo'` (default) or `'controlId'`. */
   readonly mode?: "fifo" | "controlId";
-  /** Default `30_000` (CLIENT-04). */
+  /** Default `30_000`. */
   readonly ackTimeoutMs?: number;
-  /** Default `Infinity`. PLAN-05 sets `1` for `pipeline:false`. */
+  /** Default `Infinity`; set to `1` for `pipeline:false`. */
   readonly maxInFlight?: number;
   /**
-   * Emits `MLLP_ACK_AFTER_TIMEOUT` (D-04) and `MLLP_ACK_UNMATCHED_CONTROL_ID`
-   * (D-05, PLAN-03). `byteOffset` is forwarded from the inbound ACK frame
-   * for observability (W-05).
+   * Emits `MLLP_ACK_AFTER_TIMEOUT` and `MLLP_ACK_UNMATCHED_CONTROL_ID`.
+   * `byteOffset` is forwarded from the inbound ACK frame
+   * for observability.
    */
   readonly onWarning: (
     code: WarningCode,
@@ -96,7 +96,7 @@ export interface CorrelatorOptions {
       byteOffset: number;
     },
   ) => void;
-  /** Called by `matchAck()` in controlId mode (PLAN-03) on unmatched-ACK. */
+  /** Called by `matchAck()` in controlId mode on unmatched-ACK. */
   readonly onUnmatchedAck?: (controlId: string) => void;
   /** Fired by `expireDue()`; `MllpClient` turns into `MllpTimeoutError`. */
   readonly onTimeout: (entry: PendingAck, elapsedMs: number) => void;
@@ -136,7 +136,7 @@ export class Correlator {
   private _sendSeq = 0;
   private _queueBytes = 0;
   /**
-   * PLAN-06, count of pending entries with `sentAt !== null` (D-26 / B-01).
+   * Count of pending entries with `sentAt !== null`.
    * Maintained at every site that mutates `entry.sentAt` or removes a
    * flushed entry: `markFlushed`, `remove`, `matchAck`, `expireDue`, `clear`.
    */
@@ -175,7 +175,7 @@ export class Correlator {
   /**
    * Enqueue a new send awaiting its ACK. Returns the assigned
    * `correlationKey`, or `null` if `maxInFlight` is reached (caller awaits
-   * drain, PLAN-05's `pipeline:false`).
+   * drain, `pipeline:false`).
    */
   enqueue(
     frame: Buffer,
@@ -207,7 +207,7 @@ export class Correlator {
   }
 
   /**
-   * Record write-flush timestamp (CLIENT-04, clock starts at flush, NOT
+   * Record write-flush timestamp (the clock starts at flush, NOT
    * at `send()` call). No-op if key is unknown (e.g. removed by abort).
    */
   markFlushed(key: CorrelationKey, now?: number): void {
@@ -226,16 +226,16 @@ export class Correlator {
    *   removed from live store. Caller calls `entry.resolve(ackPayload)`.
    * - controlId: keyed lookup by `controlIdFromAck`. Live-store hit returns
    *   the entry; graveyard hit fires `MLLP_ACK_AFTER_TIMEOUT` warning
-   *   (CLIENT-16, D-04) and returns `null`; otherwise fires
-   *   `onUnmatchedAck(controlIdFromAck)` (CLIENT-15, D-05) and returns `null`.
+   *   and returns `null`; otherwise fires
+   *   `onUnmatchedAck(controlIdFromAck)` and returns `null`.
    *
-   * Triggers lazy graveyard eviction (D-04).
+   * Triggers lazy graveyard eviction.
    *
    * @param _payload Inbound ACK bytes (framing stripped). MSA-2 extraction
    *   happens at MllpClient's `_onAckPayload` hook; this method takes the
    *   already-extracted control ID as a parameter.
    * @param controlIdFromAck MSA-2 extracted from ACK (controlId mode only).
-   * @param byteOffsetFromAck Stream offset; forwarded to `onWarning` (W-05).
+   * @param byteOffsetFromAck Stream offset; forwarded to `onWarning`.
    */
   matchAck(
     _payload: Buffer,
@@ -293,9 +293,9 @@ export class Correlator {
 
   /**
    * Sweep live entries; expire those past `sentAt + ackTimeoutMs`.
-   * Fires `onTimeout(entry, elapsedMs)`; entries move to graveyard (D-04).
+   * Fires `onTimeout(entry, elapsedMs)`; entries move to graveyard.
    * Driven externally by `MllpClient`'s periodic sweep tick, Correlator
-   * itself owns no timers (D-03).
+   * itself owns no timers.
    */
   expireDue(now?: number): void {
     const t = now ?? this._opts.now();
@@ -319,8 +319,7 @@ export class Correlator {
   /**
    * Reject every live entry with `reason` (insertion order) and clear
    * the live store. Graveyard is left intact (ages out via lazy eviction).
-   * Used by FIFO reconnect-reject (D-07, PLAN-04 wraps in MllpConnectionError)
-   * and `MllpClient.close()` to cancel pending sends.
+   * Used by `MllpClient`'s correlator teardown to cancel pending sends.
    */
   clear(reason: Error): void {
     for (const entry of this._pending.values()) entry.reject(reason);
@@ -331,7 +330,7 @@ export class Correlator {
     this._inFlight = 0;
   }
 
-  /** Iterate live entries in insertion order (PLAN-04 reconnect-resend, D-07). */
+  /** Iterate live entries in insertion order (reconnect-resend). */
   *liveEntries(): IterableIterator<PendingAck> {
     for (const entry of this._pending.values()) yield entry;
   }
@@ -339,7 +338,7 @@ export class Correlator {
   /**
    * Remove a live entry by key WITHOUT resolving/rejecting. Returns the
    * removed entry, or `null` if no entry with that key exists.
-   * Used by `MllpClient.send()` for AbortSignal cleanup and PLAN-04's
+   * Used by `MllpClient.send()` for AbortSignal cleanup and by the
    * reconnect-reject FSM walk.
    */
   remove(key: CorrelationKey): PendingAck | null {
@@ -363,7 +362,7 @@ export class Correlator {
     };
   }
 
-  /** Lazy graveyard eviction (D-04): drop entries past `timedOutAt + 2 * ackTimeoutMs`. */
+  /** Lazy graveyard eviction: drop entries past `timedOutAt + 2 * ackTimeoutMs`. */
   private _evictGraveyardDue(now: number): void {
     const threshold = 2 * this._opts.ackTimeoutMs;
     for (const [key, entry] of this._graveyard) {

@@ -125,8 +125,8 @@ A **non-text** `encoding` override is a step past even that. It is **rejected**,
 **every** input shape. `"base64"`/`"base64url"`/`"hex"` reinterpret the ACK *string* as encoded data,
 and `"utf16le"`/`"ucs2"` NUL-pad every byte, so the emitted frame is wholesale garbage a receiver
 cannot parse. Because a garbage frame is a caller mistake rather than a runtime condition,
-`buildMllpAck` throws a `TypeError` at the boundary for a non-text codec (MLLP-ACK-NONTEXT-CODEC-FRAME
-/ -BUFFER); only text codecs (`"utf8"`/`"ascii"`/`"latin1"`/`"binary"`) are accepted. This includes a
+`buildMllpAck` throws a `TypeError` at the boundary for a non-text codec; only text codecs
+(`"utf8"`/`"ascii"`/`"latin1"`/`"binary"`) are accepted. This includes a
 `Buffer` inbound: a non-text codec there garbles the *inbound* decode into the unparseable fallback
 (empty MSA-2, so the `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof never runs) and then serializes the
 fallback ACK to garbage bytes that ~3–4 % of the time (identically on Node 22 and 24) contain a
@@ -144,7 +144,7 @@ accepted while messages 2..N went unread. `buildMllpAck` refuses via its unparse
 `VT` inside a payload is the same class of hazard from the transport side: the decoder discards the
 accumulated bytes (`MLLP_TRAILING_BYTES`) and delivers only the fragment after it, and the auto-ACK
 path downgrades that frame rather than positively acknowledge a destroyed message. Batch ACK is its
-own unbuilt feature (`MLLP-BATCH`).
+own unbuilt feature.
 
 ## The API is not stable yet
 

@@ -19,9 +19,9 @@
 /**
  * Connection lifecycle phase where the error occurred.
  *
- * All 5 phases are defined in Phase 3 even though `'reconnect'` is only
- * exercised in Phase 5 (CLIENT-17). Locking the full union now prevents a
- * breaking type change later (ERR-03).
+ * All 5 phases are defined even though `'reconnect'` is only
+ * exercised by the client. Locking the full union now prevents a
+ * breaking type change later.
  */
 export type ConnectionErrorPhase = "connect" | "send" | "receive" | "close" | "reconnect";
 
@@ -33,18 +33,18 @@ export type ConnectionErrorPhase = "connect" | "send" | "receive" | "close" | "r
  * removing a member is a breaking change.
  *
  * - `'fifo-unsafe'`, A queued send was rejected during reconnect because
- *   FIFO ordering cannot be safely resumed across sessions (CLIENT-17).
+ *   FIFO ordering cannot be safely resumed across sessions.
  * - `'in-flight-orphan'`, An in-flight send (already write-flushed,
  *   ACK timer started) was rejected during reconnect in FIFO mode because
  *   the at-most-once delivery contract cannot be preserved across a
- *   socket drop (D-08, healthcare medication/orders semantics).
- * - `'tls-verify'` (Phase 8), The TLS handshake failed certificate
+ *   socket drop (healthcare medication/orders semantics).
+ * - `'tls-verify'`, The TLS handshake failed certificate
  *   verification (untrusted chain, expired/not-yet-valid cert, hostname
  *   mismatch, revocation, …). See {@link isTlsVerificationErrorCode} for the
  *   exact underlying error codes. Classified **permanent** by
  *   `isTransientConnectionError`, never auto-reconnect-looped into a
  *   misconfigured or MITM'd endpoint.
- * - `'tls-handshake'` (Phase 8), A TLS-**protocol**-shaped handshake
+ * - `'tls-handshake'`, A TLS-**protocol**-shaped handshake
  *   failure observed before `'secureConnect'`: `ERR_SSL_*` codes, `EPROTO`,
  *   or an OpenSSL alert-bearing error (protocol version mismatch, no shared
  *   cipher, a required mutual-TLS client certificate rejected by the

@@ -51,7 +51,7 @@ export class MllpFramingError extends Error {
    * This is a **copied** Buffer, isolated from the source buffer so it remains
    * valid after the underlying buffer is reused or overwritten.
    *
-   * **PHI contract (MLLP-9):** the decoder only ever populates this with the single
+   * **PHI contract:** the decoder only ever populates this with the single
    * framing-boundary byte that violated the frame structure (whose hex value the
    * `message` already discloses), never a run of payload content bytes. For anomalies
    * whose fault is not a specific byte (`MLLP_FRAME_TOO_LARGE`, the accumulated size),
