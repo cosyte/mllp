@@ -142,6 +142,68 @@ These three bind every change in this repo (mirrored from the cosyte meta-repo's
 3. **Crew + knowledgebase feedback loop.** When a standard, decision, or public surface changes,
    flag whether a `crew` skill or `knowledgebase` doc needs creating/updating. Never silently skip.
 
+4. **No internal project bookkeeping on a public surface** (founder directive, 2026-07-27). What a
+   consumer reads (`README.md`, `docs-content/`, the npm `description`, a release body, and the
+   JSDoc their editor renders on hover) says what the software does and what changed. Item
+   identifiers (`MLLP-9`, `CLIENT-04`, `D-23`, `T-05-04-09`), phase and plan language, ADR numbers,
+   meta-repo paths and "how this got built" commentary belong in the changeset, `CHANGELOG.md`, the
+   commit, the PR and the roadmap. It is a **translation** at the boundary, not a deletion, and
+   when you strip an identifier off the front of a line, repair the head: a fragment reads worse
+   than the text it replaced. Gated by `pnpm check:no-internal-refs`
+   (`.github/workflows/no-internal-refs.yml`, check-run context **`no-internal-refs`**).
+
+   **Four surfaces, four different answers.** `/** */` doc comments compile into the `.d.ts` and
+   `.d.cts` of **all three** entry points (`.`, `/testing`, `/ack-from-hl7`) plus a shared type
+   chunk, so they are **gated**, and in this repo they were the mass: 389 rows against 4 on the
+   public markdown. String literals are **gated too**, because this package does not merely log,
+   it puts text on a **wire protocol** (`buildMllpAck` composes an ACK's MSA-3). `//` and plain
+   `/* */` comments are **not** gated and identifiers are **welcome** in them, because the
+   convention says source comments are a place identifiers belong. **Do not justify that boundary
+   from what reaches `dist/`** (two attempts in `ncpdp` did and both were false): everything in
+   `src/` is in the tarball. The line is what the consumer is **shown**.
+
+   **THIS REPO IS THE SHARPEST INSTANCE OF THE WORD-N TRAP IN THE ECOSYSTEM**, because `WORD-N` is
+   the notation of its entire subject matter. `MSH-10`, `MSA-2`, `MSH-9`, `PID-3`, `BTS-1` and
+   `MSH-3..6` are HL7 v2 segment-field references; `ITI-19` and `TF-2` are IHE designations;
+   `UTF-8` and `ISO-8859-1` are encodings. All are the reference material a consumer came for.
+   **Never re-key rule 1 on the `WORD-N` shape.** Three guards are load-bearing and each was
+   forced by a measured false positive, not by taste:
+   - **`ERR` is restricted to the zero-padded `ERR-0\d`.** `ERR-02`/`03`/`04` are ours; `ERR-3`
+     and `ERR-4` are the HL7 **error segment's** fields, which `ack-from-hl7` documents and tests.
+     HL7 field numbers are never zero-padded; ours always are. The residual runs the OTHER way
+     from what an earlier draft claimed: the arm needs a literal `0`, so HL7's `ERR-10..12` are
+     safe and what the gate would MISS is any non-zero-padded `ERR-N` of our own.
+   - **The phase rule carries a compound-adjective guard `(?<![A-Za-z]-)`.** `two-phase` is HL7
+     enhanced acknowledgement mode and `connect-phase` is ordinary English. It is a **shape, not a
+     word list**: a first draft enumerated `two-|three-|multi-|...` and the second false positive
+     walked straight past it.
+   - **`where|are|was|were|during|at` are on the ordinary-English lookahead** because
+     `ConnectionErrorPhase` is a **published** API field (`0.0.2`) whose doc comment necessarily
+     reads "phase where the error occurred". The name cannot be changed.
+
+   **Bare `§` is deliberately NOT ruled, and here that is not a close call.** All 49 `§` on the
+   gated surface are normative citations: `HL7 v2.5.1 §2.9.2.2` (the MSA-2-echoes-MSH-10
+   requirement this package is built around), `RFC 8446 §4.4.2`, `ITI TF-2 §3.19.6.2.3`. Keying on
+   `§` is the WORD-N trap arriving through punctuation. Pinned by a negative self-test.
+
+   **A zero from a rule set is not a zero: check truth, not just tidiness.** Three doc comments
+   here were not merely untidy, they were **false**, and all three shipped into the published
+   declarations (the `'reconnecting'` payload, `getStats()` byte totals, `createStarterServer`).
+   And **the remediation prose is itself a defect surface**: cut the claim, never rewrite it, but
+   **cut the CLAIM, not the qualifier that bounds it**, or a deletion upgrades a bounded statement
+   into a guarantee the code does not provide.
+
+   **`CHANGELOG.md` is deliberately out of scope** even though it ships inside the npm tarball,
+   because the convention names it as a place identifiers belong. That contradiction is
+   ecosystem-wide, is recorded rather than decided, and is not for one repo to settle.
+
+   **The gate refuses to run under a blinded scanner.** A `grep` with `-I` or `--ignore-files`
+   forced (ugrep, and the shell function this container ships) silently skips files at exit 1 with
+   nothing on stderr, which defeats every stderr-based refusal in the script, and `--ignore-files`
+   honours `.gitignore`, where `dist/` lives. A behavioural self-test seeds a violation in a
+   NUL-bearing file and refuses on silence. Verified red under an `-I`-forcing grep and green
+   under GNU grep 3.8.
+
 Build, lint, format, and TypeScript settings come from the shared `@cosyte/*` config packages
 (`@cosyte/tsconfig` · `@cosyte/eslint-config` · `@cosyte/prettier-config`; see
 `documentation/conventions.md` → "Canonical toolchain (enforced)"). Node ≥ 22.

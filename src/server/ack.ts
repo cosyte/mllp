@@ -206,8 +206,8 @@ const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
  *   3. **A batch or concatenated messages.** An `FHS`/`BHS`/`BTS`/`FTS` envelope (§2.10.3)
  *      or a second `MSH` in the same frame: a single MSA-2 can echo only ONE control ID, so
  *      a positive ACK naming the first silently drops the rest (see
- *      {@link containsBatchOrExtraMessage}). Batch ACK is its own feature (`MLLP-BATCH`),
- *      until it is designed, a batch must stay a **loud non-positive** answer.
+ *      {@link containsBatchOrExtraMessage}). Batch ACK is its own feature; until it is
+ *      designed, a batch must stay a **loud non-positive** answer.
  *
  * This is a **refusal**, not a tolerance widening: it never makes an unreadable message
  * readable, never re-bases on a located `MSH`, never parses a batch. It only recognizes

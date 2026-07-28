@@ -40,8 +40,8 @@ export type WarningCode =
 /**
  * A frozen warning object emitted when the decoder tolerates a framing deviation.
  *
- * `connectionId` is `undefined` when emitted by a standalone `FrameReader` (Phase 2).
- * Phase 3 `Connection` enriches it to the real UUIDv4 before forwarding upstream.
+ * `connectionId` is `undefined` when emitted by a standalone `FrameReader`.
+ * `Connection` enriches it to the real UUIDv4 before forwarding upstream.
  *
  * @example
  * ```typescript
@@ -60,7 +60,7 @@ export interface MllpWarning {
   readonly byteOffset: number;
   /**
    * Connection identifier. `undefined` at the framing layer;
-   * enriched by Phase 3 `Connection` before emitting upstream.
+   * enriched by `Connection` before emitting upstream.
    */
   readonly connectionId: string | undefined;
   /** Wall-clock time at point of emission. */
@@ -81,8 +81,8 @@ export type OnWarning = (warning: MllpWarning) => void;
  * Create a frozen `MllpWarning` object. The returned object is `Object.freeze()`'d
  * so subscribers cannot mutate shared warning state.
  *
- * `connectionId` is always `undefined` here, Phase 3 enriches via
- * `{ ...w, connectionId: this.connectionId }` then re-freezes (D-08).
+ * `connectionId` is always `undefined` here; `Connection` enriches it via
+ * `{ ...w, connectionId: this.connectionId }` then re-freezes.
  *
  * @example
  * ```typescript

@@ -237,8 +237,8 @@ all-ASCII control ID round-trips identically under every codec, so the common ca
 The check reads the control ID's **pre-encoding code units**, not the emitted bytes, on purpose. A
 lossy `{ encoding: "ascii" }` override truncates a code unit to its low 8 bits, so a value above
 `0xFF` (say `U+0153`, what a windows-1252 decode yields for a `0x9C` wire byte) is masked *into* the
-ASCII byte range (`0x53`, `'S'`). An emitted-byte proxy would fall silent on exactly that corruption
-(MLLP-ACK-ASCII-OVERRIDE-BLEED); the code units carry the high bit whatever the codec did to the byte,
+ASCII byte range (`0x53`, `'S'`). An emitted-byte proxy would fall silent on exactly that corruption;
+the code units carry the high bit whatever the codec did to the byte,
 so the strongly-discouraged text-plus-override path is flagged for the same reason the default is.
 
 ```ts
@@ -275,8 +275,8 @@ buildAckAA(wireBuffer, { encoding: "base64" });  // ❌ throws too, same reason,
 buildAckAA(wireBuffer, { encoding: "latin1" });  // ✅ charset codec: the byte-level escape hatch
 ```
 
-This is a caller mistake, caught loudly and immediately. It applies to a **`Buffer` inbound too**
-(MLLP-ACK-NONTEXT-CODEC-BUFFER): a non-text codec there garbles the *inbound* decode so it never
+This is a caller mistake, caught loudly and immediately. It applies to a **`Buffer` inbound too**:
+a non-text codec there garbles the *inbound* decode so it never
 parses as `MSH` (routing to the unparseable fallback whose MSA-2 is empty, so the
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check never runs) and then serializes that fallback ACK to
 garbage bytes that intermittently contain a framing delimiter and trip the strict frame encoder

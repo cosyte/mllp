@@ -3,7 +3,7 @@
  *
  * All transports implement this callback-bag contract. Implementations:
  * - `NetTransport`, wraps `net.Socket` (production TCP)
- * - `TlsTransport`, wraps `tls.TLSSocket` (Phase 8, MLLPS / TLS hardening)
+ * - `TlsTransport`, wraps `tls.TLSSocket` (MLLPS / TLS hardening)
  * - `InMemoryTransport`, deterministic test double (`@cosyte/mllp/testing`)
  *
  * @example

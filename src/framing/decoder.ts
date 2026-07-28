@@ -38,7 +38,7 @@ const INITIAL_ACCUMULATOR_SIZE = 4096;
  * Shared empty snippet for framing errors whose anomaly is not a specific byte (e.g.
  * `MLLP_FRAME_TOO_LARGE`, where the fault is the accumulated size, not any content byte).
  * Emitting a run of accumulated payload bytes here would leak a field-body slice of clinical
- * content onto a public error field (MLLP-9 PHI audit).
+ * content onto a public error field.
  */
 const EMPTY_SNIPPET = Buffer.alloc(0);
 
@@ -47,7 +47,7 @@ const EMPTY_SNIPPET = Buffer.alloc(0);
  *
  * All tolerance opts default to `false`, every framing deviation throws unless
  * explicitly enabled. Server-level defaults (allowFsOnly, allowLfAfterFs, allowLeadingWhitespace)
- * are applied by Phase 4 when constructing readers per SERVER-12.
+ * are applied by the server when constructing readers.
  *
  * @example
  * ```typescript
@@ -72,27 +72,27 @@ export interface FrameReaderOptions {
    */
   onFrame: (payload: Buffer, byteOffset: number, warnings: readonly MllpWarning[]) => void;
   /**
-   * Called for each tolerated framing deviation. Wrapped in try/catch per WARN-06.
+   * Called for each tolerated framing deviation. Wrapped in try/catch.
    * A throwing handler will not corrupt FSM state.
    */
   onWarning?: (w: MllpWarning) => void;
   /**
    * Maximum accumulated payload bytes before `MllpFramingError('MLLP_FRAME_TOO_LARGE')`.
-   * Default: 16 MiB (FRAME-11 DoS prevention).
+   * Default: 16 MiB (DoS prevention).
    */
   maxFrameSizeBytes?: number;
-  /** FRAME-07: Tolerate FS without trailing CR; emits `MLLP_FS_WITHOUT_CR`. */
+  /** Tolerate FS without trailing CR; emits `MLLP_FS_WITHOUT_CR`. */
   allowFsOnly?: boolean;
-  /** FRAME-08: Tolerate FS+LF instead of FS+CR; emits `MLLP_LF_AFTER_FS`. */
+  /** Tolerate FS+LF instead of FS+CR; emits `MLLP_LF_AFTER_FS`. */
   allowLfAfterFs?: boolean;
-  /** FRAME-09: Tolerate missing leading VT; emits `MLLP_MISSING_LEADING_VT`. */
+  /** Tolerate missing leading VT; emits `MLLP_MISSING_LEADING_VT`. */
   allowMissingLeadingVt?: boolean;
-  /** FRAME-10: Tolerate SP/TAB/LF/CR before VT; emits `MLLP_LEADING_WHITESPACE`. */
+  /** Tolerate SP/TAB/LF/CR before VT; emits `MLLP_LEADING_WHITESPACE`. */
   allowLeadingWhitespace?: boolean;
   /**
    * When `true`, escalates the following tolerances to thrown `MllpFramingError`
    * even if individual opt-ins (`allowFsOnly`, `allowLfAfterFs`, `allowMissingLeadingVt`,
-   * `allowLeadingWhitespace`) are enabled (WARN-08):
+   * `allowLeadingWhitespace`) are enabled:
    * - `MLLP_MISSING_LEADING_VT`
    * - `MLLP_FS_WITHOUT_CR`
    * - `MLLP_LF_AFTER_FS`
@@ -138,9 +138,9 @@ export class FrameReader {
   private _writePos = 0;
   /** Monotonic absolute stream byte offset across the entire connection lifetime. */
   private _byteOffset = 0;
-  /** Byte offset where current leading-whitespace run started (FRAME-10). */
+  /** Byte offset where current leading-whitespace run started. */
   private _wsStart = 0;
-  /** Count of leading whitespace bytes accumulated in current run (FRAME-10). */
+  /** Count of leading whitespace bytes accumulated in current run. */
   private _wsCount = 0;
   /** Byte offset of the VT byte that started the current frame. */
   private _frameStartOffset = 0;
@@ -180,7 +180,7 @@ export class FrameReader {
   /**
    * Clear internal accumulator state and reset byte offset to 0.
    *
-   * Call on reconnect / connection reuse to start fresh without allocating a new reader (D-03).
+   * Call on reconnect / connection reuse to start fresh without allocating a new reader.
    * Pending partial frame state is discarded silently.
    *
    * @example
@@ -481,7 +481,7 @@ export class FrameReader {
 
   /**
    * Copy accumulated payload bytes into a new Buffer and deliver via `onFrame`.
-   * The copy isolates callers from internal accumulator reuse (T-02-03-03).
+   * The copy isolates callers from internal accumulator reuse.
    */
   private _deliverFrame(): void {
     const payload = Buffer.from(this._accumulator.subarray(0, this._writePos));
@@ -492,7 +492,7 @@ export class FrameReader {
     this._opts.onFrame(payload, frameStart, frameWarnings);
   }
 
-  /** Emit a warning via the `onWarning` callback, swallowing any handler exceptions (WARN-06). */
+  /** Emit a warning via the `onWarning` callback, swallowing any handler exceptions. */
   private _emitWarning(code: WarningCode, byteOffset: number, message: string): void {
     const warning = createWarning(code, byteOffset, message);
     // Accumulate per-frame warnings unconditionally (independent of onWarning handler presence)

@@ -27,9 +27,9 @@ import { MllpConnectionError } from "./error.js";
 import type { ConnectionErrorPhase } from "./error.js";
 
 /**
- * The 6 connection states from LIFE-01.
+ * The 6 connection states.
  *
- * Transitions are validated against the LIFE-02 edge graph. Illegal transitions
+ * Transitions are validated against the legal-transition edge graph. Illegal transitions
  * are silently ignored to preserve FSM integrity.
  */
 export type ConnectionState =
@@ -59,8 +59,8 @@ export interface StateChangeEvent {
 /**
  * Payload for the 'reconnecting' event. Always `Object.freeze`'d.
  *
- * Phase 5 will populate `attempt` and `delayMs` once the reconnect backoff loop
- * is implemented. For now only `connectionId` is present at the point of emission.
+ * `attempt` and `delayMs` are populated by `MllpClient` when it schedules a
+ * reconnect. A `Connection` emitting on its own supplies `connectionId` only.
  *
  * @example
  * ```typescript
@@ -71,12 +71,12 @@ export interface StateChangeEvent {
  */
 export interface ReconnectingEvent {
   readonly connectionId: string;
-  readonly attempt?: number; // Phase 5 will populate
-  readonly delayMs?: number; // Phase 5 will populate
+  readonly attempt?: number;
+  readonly delayMs?: number;
 }
 
 /**
- * Return type of `connection.getStats()`, JSON-serializable per OBS-04.
+ * Return type of `connection.getStats()`, JSON-serializable.
  *
  * All timestamps are `Date | null` (not epoch milliseconds). `JSON.stringify()`
  * serialises them to ISO 8601 strings by default with no information loss.
@@ -119,19 +119,19 @@ export interface ConnectionOptions {
   transport: Transport;
   /** Called for each decoded MLLP frame (raw payload bytes, framing stripped). */
   onMessage?: (payload: Buffer) => void;
-  /** Per-connection warning subscriber (WARN-10). Replaces previous subscription. */
+  /** Per-connection warning subscriber. Replaces previous subscription. */
   onWarning?: (w: MllpWarning) => void;
-  /** Drain timeout used by close() in Phase 4/5 (default: 30_000 ms). */
+  /** Drain timeout used by close() (default: 30_000 ms). */
   drainTimeoutMs?: number;
   /** FrameReader options (tolerance, maxFrameSizeBytes). onFrame/onWarning are managed internally. */
   framing?: Omit<FrameReaderOptions, "onFrame" | "onWarning">;
 }
 
-/** Warning ring buffer cap (OBS-05). */
+/** Warning ring buffer cap. */
 const MAX_WARNINGS = 100;
 
 /**
- * Legal state transitions per LIFE-02.
+ * Legal state transitions.
  *
  * CONNECTING → CONNECTED | RECONNECTING | CLOSED
  * CONNECTED  → DRAINING  | RECONNECTING | DISCONNECTED | CLOSED
@@ -171,7 +171,7 @@ const LEGAL_TRANSITIONS: ReadonlyMap<ConnectionState, ReadonlySet<ConnectionStat
  * ```
  */
 export class Connection extends EventEmitter {
-  /** Stable UUIDv4 identifier for this connection (D-11). */
+  /** Stable UUIDv4 identifier for this connection. */
   readonly connectionId: string;
 
   private _state: ConnectionState = "CONNECTING";
@@ -188,11 +188,11 @@ export class Connection extends EventEmitter {
   private _lastByteInAt: Date | null = null;
   private _lastByteOutAt: Date | null = null;
 
-  /** Ring buffer: last MAX_WARNINGS entries (OBS-05). */
+  /** Ring buffer: last MAX_WARNINGS entries. */
   private _warningBuffer: MllpWarning[] = [];
-  /** Accurate total counts per code, unaffected by ring buffer truncation (OBS-05). */
+  /** Accurate total counts per code, unaffected by ring buffer truncation. */
   private readonly _warningsByCode: Map<string, number> = new Map();
-  /** Set to true once the ring buffer overflows (OBS-05). */
+  /** Set to true once the ring buffer overflows. */
   private _warningsTruncated = false;
 
   private _onWarningFn: ((w: MllpWarning) => void) | null = null;
@@ -201,9 +201,8 @@ export class Connection extends EventEmitter {
   /**
    * beforeClose hook, no-op default that resolves immediately.
    *
-   * Phase 4 (Server) and Phase 5 (Client) override this instance property to
-   * register ACK-drain and send-queue drain logic respectively (D-07/D-08).
-   * Connection calls this during `close()`, racing against `drainTimeoutMs`.
+   * An owner may replace this instance property to run work before the socket
+   * closes. Connection calls it during `close()`, racing against `drainTimeoutMs`.
    */
   beforeClose: (drainTimeoutMs: number) => Promise<void> = () => Promise.resolve();
 
@@ -268,7 +267,7 @@ export class Connection extends EventEmitter {
   }
 
   /**
-   * Current FSM state. One of the 6 `ConnectionState` values (LIFE-01).
+   * Current FSM state. One of the 6 `ConnectionState` values.
    *
    * Subscribe to `'stateChange'` events for reactive state monitoring.
    */
@@ -277,10 +276,10 @@ export class Connection extends EventEmitter {
   }
 
   /**
-   * Register or replace the per-connection warning subscriber (WARN-10).
+   * Register or replace the per-connection warning subscriber.
    *
    * Subsequent calls replace the previous handler (set-once semantics prevent leaks).
-   * The handler is called synchronously and any exception it throws is swallowed (WARN-06).
+   * The handler is called synchronously and any exception it throws is swallowed.
    *
    * @example
    * ```typescript
@@ -322,7 +321,7 @@ export class Connection extends EventEmitter {
   /**
    * Write raw bytes to the transport (no framing applied).
    *
-   * Phase 4 (Server) and Phase 5 (Client) wrap this with `encodeFrame()` to add MLLP framing.
+   * The server and the client wrap this with `encodeFrame()` to add MLLP framing.
    * Returns `false` if the connection is CLOSED or DISCONNECTED (no bytes written).
    *
    * @returns `true` if bytes flushed immediately; `false` if buffered (backpressure) or not writable.
@@ -345,7 +344,7 @@ export class Connection extends EventEmitter {
    * Initiate graceful close of the connection.
    *
    * - If `CONNECTING` or `RECONNECTING`: cancels the pending attempt, transitions
-   *   directly to `CLOSED`, and calls `transport.destroy()` (LIFE-05).
+   *   directly to `CLOSED`, and calls `transport.destroy()`.
    * - If `CONNECTED`: transitions to `DRAINING`, calls `beforeClose(drainTimeoutMs)`,
    *   then `DRAINING → DISCONNECTED` once the hook resolves, or `DRAINING → CLOSED`
    *   if the drain timeout elapses first.
@@ -389,7 +388,7 @@ export class Connection extends EventEmitter {
    * Race `beforeClose()` against the drain timeout.
    *
    * On normal completion: `DRAINING → DISCONNECTED` + `transport.close()`.
-   * On timeout: `DRAINING → CLOSED` + `transport.destroy()` (T-03-04-01).
+   * On timeout: `DRAINING → CLOSED` + `transport.destroy()`.
    */
   private async _drainWithTimeout(timeoutMs: number): Promise<void> {
     const drainPromise = this.beforeClose(timeoutMs);
@@ -439,7 +438,7 @@ export class Connection extends EventEmitter {
   }
 
   /**
-   * Return a JSON-serializable observability snapshot (OBS-03/04/05).
+   * Return a JSON-serializable observability snapshot.
    *
    * All timestamp fields are `Date | null` (not epoch milliseconds). `JSON.stringify()`
    * serialises them to ISO 8601 strings with no information loss.

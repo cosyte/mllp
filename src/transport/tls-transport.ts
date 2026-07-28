@@ -1,5 +1,5 @@
 /**
- * TlsTransport, `Transport` implementation wrapping a `tls.TLSSocket` (Phase 8).
+ * TlsTransport, `Transport` implementation wrapping a `tls.TLSSocket`.
  *
  * Identical wiring to `NetTransport` with one deliberate difference: `onConnect`
  * maps to the socket's `'secureConnect'` event (fires once the TLS handshake

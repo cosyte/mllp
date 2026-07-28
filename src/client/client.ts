@@ -6,11 +6,8 @@
  * events with frozen payloads. Supports `AbortSignal` cancellation on every
  * awaitable and `Symbol.asyncDispose` for `await using` ergonomics.
  *
- * Phase 5 PLAN-01 shipped the lifecycle scaffolding, `connect()`, `close()`,
- * `destroy()`, event re-emission. PLAN-02 added `send()` + `MllpTimeoutError`.
- * The `correlateByControlId` option (MSH-10 → MSA-2 ACK matching) lights up
- * out-of-order ACK handling. Subsequent plans add auto-reconnect (Plan 04),
- * backpressure (Plan 05), and `createStarterClient` + `getStats()` (PLAN-06).
+ * The `correlateByControlId` option (MSH-10 → MSA-2 ACK matching) enables
+ * out-of-order ACK handling.
  *
  * @example
  * ```typescript
@@ -18,7 +15,7 @@
  *
  * const client = createClient({ host: 'localhost', port: 2575 });
  * await client.connect();
- * // PLAN-02 will add: const ack = await client.send(payloadBuffer);
+ * const ack = await client.send(payloadBuffer);
  * await client.close();
  * ```
  *
@@ -52,7 +49,7 @@ import {
 } from "./error.js";
 
 /**
- * Module-level "never aborts" sentinel for `RetryContext.signal` (D-18, W-07).
+ * Module-level "never aborts" sentinel for `RetryContext.signal`.
  *
  * When `connect()` is called WITHOUT a signal, `RetryContext.signal` must
  * still be a real `AbortSignal` (the type is non-optional). This sentinel
@@ -60,16 +57,14 @@ import {
  * no new AbortController is allocated per cycle.
  *
  * The originating `AbortController` is held in module-private scope and
- * never exposed; hostile callers cannot abort the sentinel (T-05-04-09).
+ * never exposed; hostile callers cannot abort the sentinel.
  */
 const NEVER_ABORTING_SIGNAL: AbortSignal = new AbortController().signal;
 
 /**
- * Context passed to a custom `retryStrategy` hook on each reconnect attempt
- * (CLIENT-12, D-15).
+ * Context passed to a custom `retryStrategy` hook on each reconnect attempt.
  *
- * Frozen via `Object.freeze` before invocation, handlers cannot mutate
- * (T-05-04-04 mitigation).
+ * Frozen via `Object.freeze` before invocation, handlers cannot mutate.
  *
  * @example
  * ```typescript
@@ -91,24 +86,24 @@ export interface RetryContext {
   readonly totalElapsedMs: number;
   /** Ms since the last successful ACK. `Infinity` if no success seen. */
   readonly sinceLastSuccessMs: number;
-  /** CLIENT-18 classification (Composition A, D-16). */
+  /** How the failure that triggered this reconnect attempt was classified. */
   readonly classifiedAs: "transient" | "permanent";
   /**
    * The same `AbortSignal` passed into `connect()`. If no signal was
    * supplied, the module-level `NEVER_ABORTING_SIGNAL` sentinel is provided
-   * so handlers always have a real `AbortSignal` to inspect. (D-18, W-07)
+   * so handlers always have a real `AbortSignal` to inspect.
    */
   readonly signal: AbortSignal;
 }
 
 /**
- * Custom reconnect-backoff hook (CLIENT-12). Return `null` to halt
- * reconnection (D-17), the FSM transitions to `CLOSED`.
+ * Custom reconnect-backoff hook. Return `null` to halt
+ * reconnection, the FSM transitions to `CLOSED`.
  */
 export type RetryStrategy = (ctx: RetryContext) => number | null;
 
 /**
- * Combined count + byte-based queue cap. Stricter-of-two wins (D-23).
+ * Combined count + byte-based queue cap. Stricter-of-two wins.
  *
  * - `number`, count cap only (default 64).
  * - `{ bytes }`, byte cap only.
@@ -127,8 +122,6 @@ export type HighWaterMark = number | { readonly count?: number; readonly bytes?:
 /**
  * Options for {@link createClient} and the {@link MllpClient} constructor.
  *
- * Phase 5 plans extend this incrementally, new fields are additive and optional.
- *
  * @example
  * ```typescript
  * const opts: ClientOptions = { host: 'localhost', port: 2575, drainTimeoutMs: 10_000 };
@@ -144,54 +137,54 @@ export interface ClientOptions {
   /** Drain timeout for {@link MllpClient.close} (default: `30_000` ms). */
   readonly drainTimeoutMs?: number;
   /**
-   * Per-message ACK timeout in milliseconds (CLIENT-04). The clock starts at
+   * Per-message ACK timeout in milliseconds. The clock starts at
    * the underlying `write()` flush callback, NOT at the `send()` call,
    * pre-flush queue time is not charged to the peer. Default: `30_000`.
    */
   readonly ackTimeoutMs?: number;
   /**
-   * If `true`, ACKs are matched against outgoing sends by MSH-10 → MSA-2
-   * (CLIENT-03 controlId branch). Default `false` (FIFO mode).
+   * If `true`, ACKs are matched against outgoing sends by MSH-10 → MSA-2.
+   * Default `false` (FIFO mode).
    *
    * Out-of-order ACKs from the peer are supported in this mode. MSH-10 is
    * extracted from the outbound payload before send; MSA-2 is extracted from
    * the inbound ACK payload. An ACK whose MSA-2 matches no pending send
    * (and is not in the late-ACK graveyard) emits a frozen
-   * `MllpFramingError('MLLP_ACK_UNMATCHED_CONTROL_ID')` to the `'error'` event
-   * (CLIENT-15). A late ACK whose MSA-2 matches a graveyard entry emits a
-   * `MLLP_ACK_AFTER_TIMEOUT` warning (CLIENT-16) and is dropped.
+   * `MllpFramingError('MLLP_ACK_UNMATCHED_CONTROL_ID')` to the `'error'` event.
+   * A late ACK whose MSA-2 matches a graveyard entry emits a
+   * `MLLP_ACK_AFTER_TIMEOUT` warning and is dropped.
    *
    * @default false
    */
   readonly correlateByControlId?: boolean;
   /**
-   * Auto-reconnect on transient disconnect (CLIENT-05). Default `false`.
+   * Auto-reconnect on transient disconnect. Default `false`.
    *
    * When `true`, dropped connections caused by transient errors (per
    * {@link isTransientConnectionError}) trigger the FSM cycle
    * `CONNECTED → DISCONNECTED → RECONNECTING → CONNECTING → CONNECTED`
-   * with exponential backoff per D-19 unless overridden by
+   * with exponential backoff unless overridden by
    * {@link ClientOptions.retryStrategy}. Permanent errors halt and
-   * transition directly to `CLOSED` (Composition A, D-16).
+   * transition directly to `CLOSED`.
    */
   readonly autoReconnect?: boolean;
   /**
-   * Custom reconnect-backoff hook (CLIENT-12, D-15). Return `null` to halt
-   * reconnection (D-17). Receives a frozen {@link RetryContext}. Defaults
-   * to the exponential strategy described in D-19.
+   * Custom reconnect-backoff hook. Return `null` to halt
+   * reconnection. Receives a frozen {@link RetryContext}. Defaults
+   * to the exponential strategy.
    */
   readonly retryStrategy?: RetryStrategy;
-  /** First delay (ms) on auto-reconnect; default 100. (CLIENT-05, D-19) */
+  /** First delay (ms) on auto-reconnect; default 100. */
   readonly initialDelayMs?: number;
-  /** Maximum backoff cap (ms); default 30_000. (CLIENT-05, D-19) */
+  /** Maximum backoff cap (ms); default 30_000. */
   readonly maxDelayMs?: number;
-  /** Backoff multiplier; default 2. (CLIENT-05, D-19) */
+  /** Backoff multiplier; default 2. */
   readonly multiplier?: number;
-  /** Jitter fraction, e.g. 0.2 = ±20%; default 0.2. (CLIENT-05, D-19) */
+  /** Jitter fraction, e.g. 0.2 = ±20%; default 0.2. */
   readonly jitter?: number;
   /**
-   * Application-level high-water mark on the in-flight + queued send set
-   * (CLIENT-07, D-23). `number` configures a count cap (default 64);
+   * Application-level high-water mark on the in-flight + queued send set.
+   * `number` configures a count cap (default 64);
    * `{ bytes }` configures a byte cap; `{ count, bytes }` configures
    * both, with the stricter-of-two trigger winning.
    *
@@ -202,17 +195,17 @@ export interface ClientOptions {
    */
   readonly highWaterMark?: HighWaterMark;
   /**
-   * Behavior when the high-water mark is exceeded (CLIENT-07).
+   * Behavior when the high-water mark is exceeded.
    *
    * - `'reject'` (default), `send()` rejects with `MllpBackpressureError`.
    * - `'wait'`, `send()` awaits the `'drain'` event OR the per-message
-   *   `ackTimeoutMs` OR `signal` abort, whichever fires first (CLIENT-11).
+   *   `ackTimeoutMs` OR `signal` abort, whichever fires first.
    *
    * @default 'reject'
    */
   readonly onBackpressure?: "reject" | "wait";
   /**
-   * Strict serialization send → await-ACK → send (CLIENT-19, D-06).
+   * Strict serialization send → await-ACK → send.
    *
    * - `true` (default), concurrent in-flight sends up to
    *   {@link ClientOptions.highWaterMark}.
@@ -227,23 +220,23 @@ export interface ClientOptions {
    * TCP keepalive interval (ms). Sets `socket.setKeepAlive(true, ms)` on
    * the underlying `net.Socket` BEFORE wrapping in `NetTransport`. OS-level
    * half-open detection (network partitions, NAT-table eviction). Independent
-   * of {@link ClientOptions.deadPeerTimeoutMs} (CLIENT-08, D-11/A3).
+   * of {@link ClientOptions.deadPeerTimeoutMs}.
    *
    * @default undefined (off)
    */
   readonly keepaliveIntervalMs?: number;
   /**
-   * Application-idle timeout (ms) keyed on last inbound bytes / ACK / warning
-   * (CLIENT-08, D-11). On trip, calls `connection.destroy(new Error('dead
+   * Application-idle timeout (ms) keyed on last inbound bytes / ACK / warning.
+   * On trip, calls `connection.destroy(new Error('dead
    * peer timeout'))` which surfaces as `MllpConnectionError({ phase: 'receive' })`.
-   * Trip honors {@link ClientOptions.autoReconnect} (D-13). Independent of
-   * {@link ClientOptions.keepaliveIntervalMs} (D-11/A3).
+   * Trip honors {@link ClientOptions.autoReconnect}. Independent of
+   * {@link ClientOptions.keepaliveIntervalMs}.
    *
    * @default undefined (off)
    */
   readonly deadPeerTimeoutMs?: number;
   /**
-   * Enable TLS (MLLPS) for this connection (Phase 8). `true` enables TLS with
+   * Enable TLS (MLLPS) for this connection. `true` enables TLS with
    * all defaults, including certificate verification **on**. Pass a
    * {@link TlsOptions} object to customize (`ca`/`cert`/`key`, minimum
    * version, ciphers, `allowUnverified`, …).
@@ -256,16 +249,16 @@ export interface ClientOptions {
 }
 
 /**
- * Observability snapshot returned by {@link MllpClient.getStats} (OBS-01, D-26).
+ * Observability snapshot returned by {@link MllpClient.getStats}.
  *
- * All fields are JSON-serializable (OBS-04), no Buffers, no class instances,
+ * All fields are JSON-serializable, no Buffers, no class instances,
  * no Maps, no circular references. `lastConnectedAt` and `lastAckAt` are
  * **epoch milliseconds** (numbers), NOT `Date` instances, log-pipeline
- * friendly per D-26.
+ * friendly.
  *
  * `warningsByCode` keys are constrained to the public {@link WarningCode}
  * union, adding/removing a code is a breaking change (CLAUDE.md
- * stable-codes guardrail enforced at the type boundary, B-05).
+ * stable-codes guardrail enforced at the type boundary).
  *
  * @example
  * ```typescript
@@ -287,7 +280,7 @@ export interface ClientStats {
   readonly inFlight: number;
   /**
    * Aggregated warning counts. Keys are constrained to the public
-   * {@link WarningCode} union (B-05). Connection-level warnings + Correlator
+   * {@link WarningCode} union. Connection-level warnings + Correlator
    * `MLLP_ACK_*` warnings are merged.
    */
   readonly warningsByCode: Partial<Record<WarningCode, number>>;
@@ -301,29 +294,29 @@ export interface ClientStats {
   readonly ackedTotal: number;
   /** Total ACK timeouts since construction. */
   readonly timedOutTotal: number;
-  /** Total reconnect attempts since construction (W-02). */
+  /** Total reconnect attempts since construction. */
   readonly reconnectAttempts: number;
   /** Epoch ms of the last `CONNECTED` transition. `null` until first connect. */
   readonly lastConnectedAt: number | null;
   /** Epoch ms of the most recent successful ACK. `null` until first ACK. */
   readonly lastAckAt: number | null;
-  /** Whether this client is configured for TLS (Phase 8). Mirrors `ClientOptions.tls` being set. */
+  /** Whether this client is configured for TLS. Mirrors `ClientOptions.tls` being set. */
   readonly tls: boolean;
 }
 
 /**
- * MLLP client, composes a single Phase 3 {@link Connection} over a {@link NetTransport}
+ * MLLP client, composes a single {@link Connection} over a {@link NetTransport}
  * (production) or any other `Transport` (testing via {@link InMemoryTransport}).
  *
- * Public events, every payload `Object.freeze`'d before emission (D-25):
+ * Public events, every payload `Object.freeze`'d before emission:
  * - `'stateChange'`, `{ from, to, reason? }` from the underlying Connection FSM
  * - `'connect'`, `{ connectionId }` once the FSM enters `CONNECTED`
  * - `'disconnect'`, `{ connectionId }` once the FSM enters `DISCONNECTED`
- * - `'reconnecting'`, `{ connectionId, attempt?, delayMs? }` (Plan 04 populates)
+ * - `'reconnecting'`, `{ connectionId, attempt?, delayMs? }`
  * - `'close'`, `{ connectionId }` once the FSM enters terminal `CLOSED`
  * - `'message'`, `{ payload, connectionId, byteOffset, warnings }` for every inbound frame
  * - `'warning'`, `MllpWarning` enriched with `connectionId` from the Connection layer
- * - `'securityWarning'`, `SecurityWarning` (Phase 8). Emitted on every successful
+ * - `'securityWarning'`, `SecurityWarning`. Emitted on every successful
  *   `secureConnect` (initial + every reconnect) when `tls.allowUnverified` is `true`
  *   with code `MLLP_TLS_VERIFY_DISABLED`. Also mirrored to `process.emitWarning`.
  * - `'error'`, re-emitted from Connection. Guarded by `listenerCount('error') > 0` so
@@ -335,7 +328,7 @@ export interface ClientStats {
  * client.on('stateChange', ({ from, to }) => logger.info({ from, to }));
  * client.on('message', ({ payload }) => logger.info({ bytes: payload.length }));
  * await client.connect();
- * // PLAN-02 will add: const ack = await client.send(payloadBuffer);
+ * const ack = await client.send(payloadBuffer);
  * await client.close();
  * ```
  */
@@ -349,15 +342,15 @@ export class MllpClient extends EventEmitter {
    */
   private _state: ConnectionState = "DISCONNECTED";
 
-  /** Per-message ACK timeout in ms (CLIENT-04). Resolved at construction. */
+  /** Per-message ACK timeout in ms. Resolved at construction. */
   private readonly _ackTimeoutMs: number;
-  /** controlId-mode flag (CLIENT-03 branch). `false` → FIFO. */
+  /** controlId-mode flag. `false` → FIFO. */
   private readonly _correlateByControlId: boolean;
-  /** Unified ACK correlator (D-03/A1). Built during `_attachConnection`. */
+  /** Unified ACK correlator. Built during `_attachConnection`. */
   private _correlator: Correlator | null = null;
   /**
    * Periodic ACK-timeout sweep timer. Drives `_correlator.expireDue()` because
-   * the Correlator is timer-free per D-03. Cleared on close/destroy.
+   * the Correlator is timer-free. Cleared on close/destroy.
    */
   private _ackSweepTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -372,12 +365,12 @@ export class MllpClient extends EventEmitter {
   /** 0-indexed attempt counter for the current reconnect cycle. */
   private _attempt = 0;
   /**
-   * W-02, total reconnect attempts since construction. Read by PLAN-06 for
+   * Total reconnect attempts since construction, surfaced as
    * `getStats().reconnectAttempts`. Incremented at the entry of every
    * `_handleDisconnect` invocation that proceeds to schedule a backoff.
    */
   private _reconnectAttempts = 0;
-  /** Epoch ms of the last successful ACK. Drives W-01 backoff-reset. */
+  /** Epoch ms of the last successful ACK. Drives backoff-reset. */
   private _lastSuccessAt: number | null = null;
   /** Epoch ms when the current reconnect cycle began. `null` outside a cycle. */
   private _reconnectCycleStartedAt: number | null = null;
@@ -395,12 +388,12 @@ export class MllpClient extends EventEmitter {
   private readonly _onBackpressure: "reject" | "wait";
   /** Pipeline flag; default `true` (parallel up to highWaterMark). */
   private readonly _pipeline: boolean;
-  /** Dead-peer idle timer (Plan 05, D-11). `null` when not armed. */
+  /** Dead-peer idle timer. `null` when not armed. */
   private _deadPeerTimer: ReturnType<typeof setTimeout> | null = null;
   /** True once the self-'ack' listener that resets the dead-peer timer
    * has been attached. Guards against duplicate listeners on reconnect. */
   private _ackResetWired = false;
-  /** Most recently bound `connect()` signal. Reread on every RetryContext build (W-07). */
+  /** Most recently bound `connect()` signal. Reread on every RetryContext build. */
   private _connectSignal: AbortSignal | undefined;
   /** Set when close()/destroy()/abort fires; reconnect handler short-circuits. */
   private _userClosed = false;
@@ -430,7 +423,7 @@ export class MllpClient extends EventEmitter {
   /**
    * Aggregated Correlator-emitted warning counts (MLLP_ACK_*). Connection-level
    * warnings are read directly from `_connection.getStats().warningsByCode`
-   * at observation time and merged into the snapshot (D-26).
+   * at observation time and merged into the snapshot.
    */
   private _aggregatedWarningsByCode: Partial<Record<WarningCode, number>> = {};
 
@@ -475,8 +468,8 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Open a TCP (or TLS, Phase 8) connection to the configured `host:port`
-   * and attach a Phase 3 {@link Connection} to it. Resolves once the FSM
+   * Open a TCP (or TLS) connection to the configured `host:port`
+   * and attach a {@link Connection} to it. Resolves once the FSM
    * enters `CONNECTED`, for TLS, on `'secureConnect'` (handshake complete,
    * including certificate verification when it is on).
    *
@@ -625,7 +618,7 @@ export class MllpClient extends EventEmitter {
    * Build the raw socket + `Transport` pair for a connect / reconnect attempt.
    *
    * Plaintext (`ClientOptions.tls` unset): a `net.Socket` wrapped in
-   * `NetTransport`. TLS (Phase 8): a `tls.TLSSocket` wrapped in
+   * `NetTransport`. TLS: a `tls.TLSSocket` wrapped in
    * `TlsTransport`, verification defaults **on**
    * (`rejectUnauthorized: !allowUnverified`), floor `minVersion: 'TLSv1.2'`
    * (the IHE ATNA ITI-19 BCP195 floor), `servername` defaulting to
@@ -659,7 +652,7 @@ export class MllpClient extends EventEmitter {
 
   /**
    * Wrap a connect-phase socket error as `MllpConnectionError`, classifying
-   * TLS failures (Phase 8) into the additive `connectionCause`:
+   * TLS failures into the additive `connectionCause`:
    *
    * - `'tls-verify'`, certificate-verification failures
    *   ({@link isTlsVerificationErrorCode}).
@@ -711,7 +704,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Emit the per-connection insecure-TLS warning (Phase 8) when
+   * Emit the per-connection insecure-TLS warning when
    * `tls.allowUnverified === true`, fires on EVERY successful
    * `secureConnect`, initial connect and every reconnect. Emits both a frozen
    * `'securityWarning'` event and `process.emitWarning`. No-op for plaintext
@@ -741,11 +734,11 @@ export class MllpClient extends EventEmitter {
 
   /**
    * Wire a Connection's events through to this MllpClient. Every re-emitted
-   * payload is `Object.freeze`'d before emission (D-25), even though the
+   * payload is `Object.freeze`'d before emission, even though the
    * Connection layer already freezes, defense-in-depth, harmless on
    * already-frozen objects.
    *
-   * Builds the unified `Correlator` (D-03/A1) bound to this Connection and
+   * Builds the unified `Correlator` bound to this Connection and
    * arms the periodic ACK-timeout sweep. The Correlator is teardown-aware:
    * `close()` / `destroy()` clear the sweep timer and reject pending sends.
    *
@@ -909,7 +902,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Arm (or re-arm) the dead-peer idle timer (Plan 05, CLIENT-08, D-11).
+   * Arm (or re-arm) the dead-peer idle timer.
    * No-op when `deadPeerTimeoutMs` is unset.
    */
   private _armDeadPeerTimer(): void {
@@ -924,8 +917,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Clear the dead-peer idle timer (Plan 05, D-14 timer cleanup on
-   * every transition out of CONNECTED).
+   * Clear the dead-peer idle timer on every transition out of CONNECTED.
    */
   private _clearDeadPeerTimer(): void {
     if (this._deadPeerTimer !== null) {
@@ -935,22 +927,22 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Disconnect handler, Plan 04 reconnect FSM core.
+   * Disconnect handler, reconnect FSM core.
    *
    * Implements:
-   * - CLIENT-17 hybrid in-flight handling (D-08): controlId mode preserves
+   * - Hybrid in-flight handling: controlId mode preserves
    *   pending sends for resend; FIFO mode rejects in-flight with
    *   `connectionCause: 'in-flight-orphan'` and queued with `'fifo-unsafe'`.
-   * - CLIENT-18 classifier-first (Composition A, D-16): permanent errors
+   * - Classifier-first: permanent errors
    *   transition straight to CLOSED without invoking `retryStrategy`.
-   * - W-01 backoff-reset on recent success: first disconnect after a
+   * - Backoff-reset on recent success: first disconnect after a
    *   successful ACK on the prior session resets `_attempt` to 0.
-   * - W-02 `_reconnectAttempts` counter increment.
-   * - D-15 frozen RetryContext + D-17 null-return halts.
-   * - D-19 default exponential strategy.
+   * - `_reconnectAttempts` counter increment.
+   * - Frozen RetryContext; a `null` return from the strategy halts reconnection.
+   * - Default exponential strategy.
    *
-   * Invoked from the SINGLE `_onStateChange` hook, no parallel listener
-   * (B-04). Idempotent across same-cycle re-entry: cycle-start flag
+   * Invoked from the SINGLE `_onStateChange` hook, no parallel listener.
+   * Idempotent across same-cycle re-entry: cycle-start flag
    * coordinates first-disconnect vs subsequent-within-cycle behavior.
    */
   private _handleDisconnect(err: Error): void {
@@ -1098,7 +1090,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Default retry strategy (D-19): `min(maxDelay, initialDelay * multiplier^attempt)`
+   * Default retry strategy: `min(maxDelay, initialDelay * multiplier^attempt)`
    * with ±jitter applied.
    */
   private _defaultRetryStrategy = (ctx: RetryContext): number => {
@@ -1215,7 +1207,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Test seam, capture or rebind the connect-signal mid-flight (W-07).
+   * Test seam, capture or rebind the connect-signal mid-flight.
    *
    * @internal
    */
@@ -1242,12 +1234,11 @@ export class MllpClient extends EventEmitter {
    *
    * - FIFO mode: passes `null` controlId so `matchAck` returns the head of
    *   the live store.
-   * - controlId mode: extracts MSA-2 at the `HOOK_EXTENSION_POINT: ack-payload`
-   *   anchor and passes it to `matchAck` for keyed lookup.
+   * - controlId mode: extracts MSA-2 and passes it to `matchAck` for keyed
+   *   lookup.
    *
    * Called from the SINGLE `'message'` listener registered in `_attachConnection`.
-   * No parallel listener is registered, downstream plans extend at the named
-   * anchor (B-04).
+   * No parallel listener is registered.
    */
   private _onAckPayload(ackPayload: Buffer, byteOffset: number): void {
     if (this._correlator === null) return;
@@ -1264,10 +1255,8 @@ export class MllpClient extends EventEmitter {
   /**
    * Single source-of-truth for a successfully matched ACK (live-store hit).
    *
-   * PLAN-02: emit frozen 'ack' event, call matched.resolve().
-   * Plan 04 extends at HOOK_EXTENSION_POINT: ack-matched to update _lastSuccessAt.
-   * PLAN-06 extends at HOOK_EXTENSION_POINT: ack-matched to bump _ackedTotal and
-   *   set _lastAckAt.
+   * Emits the frozen 'ack' event and resolves the pending send. Updates
+   * `_lastSuccessAt`, `_ackedTotal` and `_lastAckAt`.
    *
    * Called from _onAckPayload when matchAck() returns a non-null PendingAck.
    */
@@ -1297,7 +1286,7 @@ export class MllpClient extends EventEmitter {
 
   /**
    * Emit a frozen `'drain'` event when the queue depth and bytes fall below
-   * both configured caps (Plan 05, D-24). Called from `_onAckMatched`
+   * both configured caps. Called from `_onAckMatched`
    * (every successful ACK) and from the Correlator's `onTimeout` callback
    * (every expired send), both code paths free a live-store slot.
    */
@@ -1320,12 +1309,9 @@ export class MllpClient extends EventEmitter {
   /**
    * Single source-of-truth for Connection FSM transitions.
    *
-   * PLAN-02: re-emit frozen 'stateChange' (was inline in PLAN-01; centralized
-   * here so Plan 04 / Plan 05 can extend at named anchors).
-   * Plan 04 extends at HOOK_EXTENSION_POINT: state-change to detect
-   *   CONNECTED → DISCONNECTED|RECONNECTING and trigger _handleDisconnect.
-   * Plan 05 extends at HOOK_EXTENSION_POINT: state-change to clear/arm
-   *   dead-peer timer on transitions out of / into CONNECTED.
+   * Re-emits a frozen 'stateChange' event, detects
+   * CONNECTED → DISCONNECTED|RECONNECTING to trigger `_handleDisconnect`, and
+   * clears or arms the dead-peer timer on transitions out of / into CONNECTED.
    *
    * Called from the SINGLE 'stateChange' listener registered in _attachConnection.
    */
@@ -1377,17 +1363,16 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Send an MLLP-framed payload and await the inbound ACK (CLIENT-02).
+   * Send an MLLP-framed payload and await the inbound ACK.
    *
    * Resolves with the ACK Buffer (framing stripped). Rejects with:
-   * - `DOMException('Aborted', 'AbortError')` if `signal` aborts before ACK
-   *   (CLIENT-11 send branch).
-   * - `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs` (ERR-02).
+   * - `DOMException('Aborted', 'AbortError')` if `signal` aborts before the ACK.
+   * - `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs`.
    *   The clock starts at the underlying `write()` flush callback, NOT at
-   *   the `send()` call (CLIENT-04, D-19).
+   *   the `send()` call.
    * - `MllpConnectionError({ phase: 'send' })` if the client is not connected.
    *
-   * Emits a frozen `'ack'` event on every successful match (D-25 + Specifics).
+   * Emits a frozen `'ack'` event on every successful match.
    *
    * @example
    * ```typescript
@@ -1396,7 +1381,7 @@ export class MllpClient extends EventEmitter {
    * ```
    *
    * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.
-   * @param opts.signal AbortSignal, aborting cancels the ACK wait (CLIENT-11).
+   * @param opts.signal AbortSignal, aborting cancels the ACK wait.
    */
   send(payload: Buffer, opts?: { signal?: AbortSignal; ackTimeoutMs?: number }): Promise<Buffer> {
     const signal = opts?.signal;
@@ -1513,12 +1498,12 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * 'wait'-mode backpressure handler (Plan 05, CLIENT-07/CLIENT-11).
+   * 'wait'-mode backpressure handler.
    *
    * Awaits one of three terminating signals, in order:
    * - `'drain'` event → re-enter `send()` (the gate will now pass).
    * - `ackTimeoutMs` elapses → reject with `MllpTimeoutError`.
-   * - Caller's `signal` aborts → reject with `AbortError` (B-06). Cleanup
+   * - Caller's `signal` aborts → reject with `AbortError`. Cleanup
    *   removes the drain listener AND the abort listener AND clears the
    *   timer to prevent leaks.
    */
@@ -1715,7 +1700,7 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Returns a JSON-serializable observability snapshot (OBS-01, D-26).
+   * Returns a JSON-serializable observability snapshot.
    *
    * All fields are plain values, no Buffers, no class instances, no Maps,
    * no circular refs. Safe to `JSON.stringify` directly.
@@ -1786,7 +1771,7 @@ export class MllpClient extends EventEmitter {
  *
  * const client = createClient({ host: 'localhost', port: 2575 });
  * await client.connect();
- * // PLAN-02 will add: const ack = await client.send(payloadBuffer);
+ * const ack = await client.send(payloadBuffer);
  * await client.close();
  * ```
  */
@@ -1795,9 +1780,9 @@ export function createClient(opts: ClientOptions): MllpClient {
 }
 
 /**
- * Options for {@link createStarterClient} (PLAN-06, CLIENT-10).
+ * Options for {@link createStarterClient}.
  *
- * The starter applies opinionated D-22 defaults on top of `ClientOptions`,
+ * The starter applies opinionated defaults on top of `ClientOptions`,
  * so every override here is optional except `host` + `port`. The
  * starter-specific addition is `handleSignals` (mirrors `createStarterServer`).
  *
@@ -1834,32 +1819,31 @@ export interface StarterClientOptions {
   readonly onBackpressure?: "reject" | "wait";
   /** Override default `true` (auto-reconnect on transient errors). */
   readonly autoReconnect?: boolean;
-  /** Custom reconnect-backoff hook (CLIENT-12). */
+  /** Custom reconnect-backoff hook. */
   readonly retryStrategy?: RetryStrategy;
   /** Drain timeout for `close()` (default `30_000`). */
   readonly drainTimeoutMs?: number;
   /** FrameReader options (passthrough). */
   readonly framing?: ClientOptions["framing"];
-  /** TCP keepalive interval ms (CLIENT-08). */
+  /** TCP keepalive interval ms. */
   readonly keepaliveIntervalMs?: number;
-  /** Application-idle dead-peer timeout ms (CLIENT-08). */
+  /** Application-idle dead-peer timeout ms. */
   readonly deadPeerTimeoutMs?: number;
-  /** Enable TLS (MLLPS) for this connection (Phase 8). Passthrough to `ClientOptions.tls`. */
+  /** Enable TLS (MLLPS) for this connection. Passthrough to `ClientOptions.tls`. */
   readonly tls?: TlsOptions | true;
   /**
    * Register process SIGTERM/SIGINT handlers that close the client. Default
-   * `false` (D-22). When `true`, SIGTERM/SIGINT both call `client.close()`
-   * and exit the process. Handlers self-deregister on `'close'` (T-05-06-01).
+   * `false`. When `true`, SIGTERM/SIGINT both call `client.close()`
+   * and exit the process. Handlers self-deregister on `'close'`.
    */
   readonly handleSignals?: boolean;
 }
 
 /**
- * Three-line MLLP client with batteries-included defaults (PLAN-06,
- * CLIENT-10, D-22). The returned client is already CONNECTED, `connect()`
- * has been awaited.
+ * Three-line MLLP client with batteries-included defaults. The returned
+ * client is already CONNECTED, `connect()` has been awaited.
  *
- * D-22 defaults:
+ * Defaults:
  * - `autoReconnect: true`
  * - `ackTimeoutMs: 30_000`
  * - `correlateByControlId: false` (FIFO mode, simplest mental model)

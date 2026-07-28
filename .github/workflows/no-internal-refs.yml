@@ -1,0 +1,85 @@
+name: Public-surface gate
+
+# The founder directive of 2026-07-27, written down in the meta-repo at
+# `documentation/conventions.md` ("No internal project bookkeeping on a public
+# surface"): anything a consumer reads describes what the software does and what
+# changed, never our item identifiers, phase and plan language, ADR numbers or
+# process commentary. The founder's words: "The releases should also not speak on
+# anything regarding phases, etc. That has no relevance to the user consuming it.
+# This goes for readmes and documentation as well."
+#
+# WHY THIS IS A GATE AND NOT A MEMORY NOTE. Founder, the same day: "it needs to not
+# just be a memory note, but something that is addressed in the workflow accordingly.
+# This needs to not happen again." A one-time sweep regresses the first time someone
+# writes `(CLIENT-20)` into a doc comment. mllp is the fifth repo to run this item and
+# every earlier one confirmed the same thing: the class regrows wherever no gate holds
+# it.
+#
+# mllp WAS NOT CLEAN when this landed, and the measurement is worth keeping next to
+# the workflow because the recorded figure was wrong by two orders of magnitude. The
+# backlog carried "mllp 4". Measured on the base commit with the final rule set, over
+# four surfaces: public markdown + npm metadata 4, `src/` doc comments 389 rows across
+# 18 of the 29 tracked source files this gate scans, `src/` string literals 0, and the
+# BUILT declarations 440 rows across all eight `.d.ts`/`.d.cts` files of the three
+# published entry points plus the shared type chunk. All four are now 0. The "4" was the
+# public-markdown surface alone, which turned out to be about one percent of the job.
+#
+# EVERY FIGURE ABOVE WAS RE-DERIVED ON BOTH TREES AFTER THE RULE SET WAS FINAL, and that
+# is not pedantry: the first figures quoted here were 391/378/444 over "31 files", taken
+# before the compound-adjective guard and the `where|are|was|were` lookahead landed and
+# counting two `.gitkeep` files the gate never opens. A refuter caught all four. This
+# script's own residual (xii) says it plainly: A COUNT IS A FUNCTION OF THE RULE SET, so
+# quote a count with the tree AND the rules it was taken under, or not at all.
+#
+# WHY A SEPARATE WORKFLOW, and not a job in ci.yml: the same reasoning as
+# `no-emdash.yml` in this repo. mllp's `ci` job calls
+# cosyte/.github/.github/workflows/ci.yml@main, a fixed ladder that runs no arbitrary
+# repo script, and adding this rule there would red every caller that has not done
+# this remediation yet. The gate stays per-repo until every caller carries a script.
+#
+# NO PR-TEXT HALF, and that is the one structural difference from `no-emdash.yml`.
+# That gate scans the PR title, body and commit messages because the brand rule names
+# commit messages explicitly. THIS rule says the opposite: identifiers BELONG in the
+# commit, the PR, the changeset and CHANGELOG.md. Scanning PR text here would red on
+# correct work. The half that keeps identifiers out of a published RELEASE BODY exists
+# and is not here: `cosyte/.github` `scripts/release-notes.mjs assert` runs inside the
+# shared release pipeline.
+#
+# THE JOB ID IS THE CHECK-RUN CONTEXT. This job is named `no-internal-refs` and that
+# string, not this workflow's `name:`, is what a branch ruleset must require. The
+# distinction is not academic: `transform` shipped a workflow titled
+# "Public-surface gate" (as this one is) whose emitted context is `no-internal-refs`,
+# and requiring the title would have blocked every pull request permanently.
+#
+# Run it locally with `pnpm check:no-internal-refs`, which is also on
+# `scripts/verify.sh mllp`'s ladder in the meta-repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  no-internal-refs:
+    runs-on: ubuntu-latest
+    steps:
+      # SHA-pinned rather than tagged, matching `no-emdash.yml` in this repo: these are
+      # the only two workflows here that call a third-party action directly. The pin was
+      # resolved against the upstream repo rather than copied on faith: actions/checkout
+      # tag v7.0.0 is commit 9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # `node` is required by the script, which reads package.json's `files`,
+      # `description` and `keywords` through it. The runner image ships Node, and the
+      # script refuses rather than silently skipping the npm-metadata half if it is
+      # absent, so no setup-node step is needed here.
+      - name: Check the public surface, src doc comments, and src string literals
+        run: bash scripts/check-no-internal-refs.sh
