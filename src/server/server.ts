@@ -358,7 +358,9 @@ export interface ServerOptions {
  *
  * const server = await createStarterServer({
  *   port: 2575,
- *   onMessage: (buf) => buildAckBuffer(buf),
+ *   onMessage: async (payload) => {
+ *     await db.commit(payload); // the durable-commit step; throw here to answer AE
+ *   },
  * });
  * // server is listening, auto-ACK enabled, Symbol.asyncDispose wired
  * await using _ = server; // closes on scope exit
