@@ -359,7 +359,7 @@ export interface ServerOptions {
  * const server = await createStarterServer({
  *   port: 2575,
  *   onMessage: async (payload) => {
- *     await db.commit(payload); // the durable-commit step; throw here to answer AE
+ *     await db.commit(payload); // the durable-commit step; a throw answers a negative ACK
  *   },
  * });
  * // server is listening, auto-ACK enabled, Symbol.asyncDispose wired

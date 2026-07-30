@@ -26,7 +26,8 @@ pnpm add @cosyte/mllp
 import { createStarterServer } from "@cosyte/mllp";
 
 // Auto-ACK is on by default: the server awaits your handler (the durable-commit
-// step), then answers AA on success, or a negative ACK if it throws.
+// step) before it answers, so a positive ACK can never precede the commit.
+// A throw answers a negative ACK instead.
 const server = await createStarterServer({
   port: 2575,
   onMessage: async (payload) => {
@@ -92,7 +93,11 @@ const server = createServer({
 });
 ```
 
-Handler resolves ⇒ `AA`. Handler throws ⇒ `AE` (or `AR` via `MllpAckError`). **A positive ACK cannot
+Handler resolves ⇒ `AA`, **unless the inbound could not carry a correlatable positive ACK** (no
+readable `MSH`, an empty `MSH-10`, a batch or concatenated payload, or trailing bytes the framer
+discarded). In that case the commit still happened, but the ACK is downgraded to `AE` and a `nack`
+event names the reason, because a positive ACK the sender cannot match is one it will resend.
+Handler throws ⇒ `AE` (or `AR` via `MllpAckError`). **A positive ACK cannot
 precede a successful commit.** `autoAck: 'AA'` *without* a handler is documented as a
 transport-accept: "received and framed", not "processed".
 
