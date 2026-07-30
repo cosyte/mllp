@@ -228,7 +228,7 @@ export interface ServerStats {
  * ```typescript
  * const opts: ServerOptions = {
  *   onMessage: (payload, meta, conn) => {
- *     const ack = buildAck(payload);
+ *     const ack = buildRawAck(payload, "AA");
  *     conn.send(ack);
  *   },
  *   framing: { maxFrameSizeBytes: 4 * 1024 * 1024 },
@@ -1483,7 +1483,9 @@ export function createServer(opts: ServerOptions = {}): MllpServer {
  *
  * const server = await createStarterServer({
  *   port: 2575,
- *   onMessage: (payload) => buildAck(payload),
+ *   onMessage: async (payload) => {
+ *     await db.commit(payload); // the durable-commit step; a throw answers a negative ACK
+ *   },
  * });
  * ```
  */
