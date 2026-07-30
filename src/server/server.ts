@@ -228,7 +228,7 @@ export interface ServerStats {
  * ```typescript
  * const opts: ServerOptions = {
  *   onMessage: (payload, meta, conn) => {
- *     const ack = buildRawAck(payload, "AA");
+ *     const ack = buildAck(payload);
  *     conn.send(ack);
  *   },
  *   framing: { maxFrameSizeBytes: 4 * 1024 * 1024 },
