@@ -358,7 +358,9 @@ export interface ServerOptions {
  *
  * const server = await createStarterServer({
  *   port: 2575,
- *   onMessage: (buf) => buildAckBuffer(buf),
+ *   onMessage: async (payload) => {
+ *     await db.commit(payload); // the durable-commit step; a throw answers a negative ACK
+ *   },
  * });
  * // server is listening, auto-ACK enabled, Symbol.asyncDispose wired
  * await using _ = server; // closes on scope exit
@@ -1481,7 +1483,9 @@ export function createServer(opts: ServerOptions = {}): MllpServer {
  *
  * const server = await createStarterServer({
  *   port: 2575,
- *   onMessage: (payload) => buildAck(payload),
+ *   onMessage: async (payload) => {
+ *     await db.commit(payload); // the durable-commit step; a throw answers a negative ACK
+ *   },
  * });
  * ```
  */

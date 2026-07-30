@@ -1,3 +1,5 @@
+![@cosyte/mllp: an MLLP client and server for Node.js that sends and receives HL7 v2 messages](https://cosyte.com/social/cosyte-banner-mllp-1200x300.png)
+
 # @cosyte/mllp
 
 > Send and receive HL7 v2 over a production-grade MLLP connection in a few lines, with framing, ACK correlation, auto-reconnect, and backpressure handled for you.
@@ -23,8 +25,15 @@ pnpm add @cosyte/mllp
 ```ts
 import { createStarterServer } from "@cosyte/mllp";
 
-// Echoes every received frame straight back as the ACK.
-const server = await createStarterServer({ port: 2575, onMessage: (buf) => buf });
+// Auto-ACK is on by default: the server awaits your handler (the durable-commit
+// step) before it answers, so a positive ACK can never precede the commit.
+// A throw answers a negative ACK instead.
+const server = await createStarterServer({
+  port: 2575,
+  onMessage: async (payload) => {
+    await db.commit(payload);
+  },
+});
 ```
 
 ```ts
@@ -48,7 +57,7 @@ const server = createServer({ tls: { cert: certPem, key: keyPem } });
 await server.listen(2575, "127.0.0.1");
 
 // Server: mutual TLS (ATNA ITI-19)
-const server = createServer({
+const mutualTlsServer = createServer({
   tls: { cert: certPem, key: keyPem, ca: clientCaPem, clientAuth: "MUST" },
 });
 ```
@@ -58,7 +67,7 @@ const server = createServer({
 const client = createClient({ host: "mllp.example.com", port: 2575, tls: { ca: caPem } });
 
 // Client: mutual TLS
-const client = createClient({
+const mutualTlsClient = createClient({
   host: "mllp.example.com",
   port: 2575,
   tls: { ca: caPem, cert: clientCertPem, key: clientKeyPem },
@@ -84,7 +93,11 @@ const server = createServer({
 });
 ```
 
-Handler resolves ⇒ `AA`. Handler throws ⇒ `AE` (or `AR` via `MllpAckError`). **A positive ACK cannot
+Handler resolves ⇒ `AA`, **unless the inbound could not carry a correlatable positive ACK** (no
+readable `MSH`, an empty `MSH-10`, a batch or concatenated payload, or trailing bytes the framer
+discarded). In that case the commit still happened, but the ACK is downgraded to `AE` and a `nack`
+event names the reason, because a positive ACK the sender cannot match is one it will resend.
+Handler throws ⇒ `AE` (or `AR` via `MllpAckError`). **A positive ACK cannot
 precede a successful commit.** `autoAck: 'AA'` *without* a handler is documented as a
 transport-accept: "received and framed", not "processed".
 
