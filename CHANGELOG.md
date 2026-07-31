@@ -110,7 +110,10 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   `InMemoryTransport.pair()`; the receive example's fictional `respond`/`buildAck` → the real
   `createServer({ onMessage })`). Bumps the `@cosyte/vitest-config` devDependency to `^0.0.2` for the
   `/snippets` export. Docs and tests only: no runtime or public-API change.
-- **README header swapped from the per-package banner to the shared Cosyte lockup.** The banner
+- **README header swapped from the per-package banner to the shared Cosyte lockup.** Both sides of
+  this swap happened inside one unreleased window, so no published version carries the banner and
+  the release notes for this version describe only the lockup. It is recorded here, where build
+  history belongs, rather than dropped. The banner
   (`cosyte-banner-mllp-1200x300.png`) baked the package name and its one line summary into the
   artwork, and the `# @cosyte/mllp` H1 and the blockquote directly beneath it repeat both, so the
   same two strings appeared three times in the first four lines of the page. The header is now a
