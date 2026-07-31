@@ -141,7 +141,7 @@ If a peer's quirk is *expected* (it pads with junk, omits the leading `<VT>`, se
 the tolerance opt-ins above are the supported answer. They turn the throw into a warning and recover
 the payload.
 
-## Diagnostics never echo payload bytes
+## Diagnostics never echo a run of payload bytes
 
 `MllpFramingError.snippet` carries **at most a single byte** (the one at the structural violation)
 and **never a run of payload content**. The payload of an HL7 v2 message is PHI, and an error message

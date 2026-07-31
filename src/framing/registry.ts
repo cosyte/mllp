@@ -58,16 +58,15 @@ export interface MllpWarning {
    * Stable human-readable description. It carries structural facts (a byte
    * offset, an accumulated size) and **never a run of payload content**.
    *
-   * Stated exactly, because the shorter claim that used to sit here ("never
-   * contains payload bytes") is not true of two codes: `MLLP_MISSING_LEADING_VT`
-   * and `MLLP_FS_WITHOUT_CR` render the hex of the **one** byte found where a
-   * framing byte was expected, and on a stream missing its leading `VT` that
-   * byte is the first byte of the unframed content. One byte, never a run, the
-   * same bound the `snippet` field carries and for the same reason. If that is
-   * more than your threat model allows, log `code` and `byteOffset` and not
-   * `message`.
+   * Two codes carry exactly one input byte, and it is worth knowing which:
+   * `MLLP_MISSING_LEADING_VT` and `MLLP_FS_WITHOUT_CR` render the hex of the
+   * single byte found where a framing byte was expected, and on a stream that
+   * omits its leading `VT` that byte is the first byte of the unframed content.
+   * One byte, never a run, the same bound `MllpFramingError.snippet` carries. If
+   * that is more than your threat model allows, log `code` and `byteOffset`
+   * rather than `message`.
    *
-   * The ACK-correlation codes are stricter still: their text comes from a frozen
+   * The ACK-correlation codes are stricter: their text comes from a frozen
    * registry and does not vary with the wire at all.
    */
   readonly message: string;
