@@ -149,11 +149,11 @@ interface ControlIdHarness {
     typeof vi.fn<
       (
         code: WarningCode,
-        ctx: { controlId: string | null; elapsedSinceSendMs: number; byteOffset: number },
+        ctx: { controlIdBytes: number | null; elapsedSinceSendMs: number; byteOffset: number },
       ) => void
     >
   >;
-  onUnmatchedAck: ReturnType<typeof vi.fn<(controlId: string) => void>>;
+  onUnmatchedAck: ReturnType<typeof vi.fn<(controlIdBytes: number | null) => void>>;
 }
 
 function controlIdHarness(overrides?: Partial<CorrelatorOptions>): ControlIdHarness {
@@ -167,13 +167,13 @@ function controlIdHarness(overrides?: Partial<CorrelatorOptions>): ControlIdHarn
     (
       code: WarningCode,
       ctx: {
-        controlId: string | null;
+        controlIdBytes: number | null;
         elapsedSinceSendMs: number;
         byteOffset: number;
       },
     ) => void
   >();
-  const onUnmatchedAck = vi.fn<(controlId: string) => void>();
+  const onUnmatchedAck = vi.fn<(controlIdBytes: number | null) => void>();
   const correlator = new Correlator({
     mode: "controlId",
     ackTimeoutMs: 100,
@@ -232,7 +232,8 @@ describe("Correlator (controlId mode), Task 2: matchAck branch + graveyard", () 
     const result = correlator.matchAck(Buffer.from("ACK"), "NOPE");
     expect(result).toBeNull();
     expect(onUnmatchedAck).toHaveBeenCalledTimes(1);
-    expect(onUnmatchedAck).toHaveBeenCalledWith("NOPE");
+    // The byte LENGTH of the peer id crosses this boundary, never its bytes.
+    expect(onUnmatchedAck).toHaveBeenCalledWith(4);
     expect(onWarning).not.toHaveBeenCalled();
     // Live entry untouched
     expect(correlator.size).toBe(1);
@@ -260,7 +261,7 @@ describe("Correlator (controlId mode), Task 2: matchAck branch + graveyard", () 
     const [code, ctx] = onWarning.mock.calls[0] ?? [];
     expect(code).toBe("MLLP_ACK_AFTER_TIMEOUT");
     expect(ctx).toMatchObject({
-      controlId: "A",
+      controlIdBytes: 1,
       elapsedSinceSendMs: 50, // 1_150 - 1_100 (timedOutAt)
       byteOffset: 4_242,
     });
@@ -295,7 +296,7 @@ describe("Correlator (controlId mode), Task 2: matchAck branch + graveyard", () 
     // After eviction, the controlId is unmatched (CLIENT-15) not late (CLIENT-16).
     expect(onWarning).not.toHaveBeenCalled();
     expect(onUnmatchedAck).toHaveBeenCalledTimes(1);
-    expect(onUnmatchedAck).toHaveBeenCalledWith("A");
+    expect(onUnmatchedAck).toHaveBeenCalledWith(1);
     expect(correlator.graveyardSize).toBe(0);
   });
 
@@ -305,9 +306,10 @@ describe("Correlator (controlId mode), Task 2: matchAck branch + graveyard", () 
     // Caller failed to extract MSA-2; correlator should treat as unmatched.
     const result = correlator.matchAck(Buffer.from("ACK"), null);
     expect(result).toBeNull();
-    // The defensive branch fires onUnmatchedAck('') so observers see the anomaly.
+    // The defensive branch fires onUnmatchedAck(null), meaning 'no MSA-2 at all',
+    // so observers see the anomaly without a value crossing the boundary.
     expect(onUnmatchedAck).toHaveBeenCalledTimes(1);
-    expect(onUnmatchedAck).toHaveBeenCalledWith("");
+    expect(onUnmatchedAck).toHaveBeenCalledWith(null);
   });
 });
 

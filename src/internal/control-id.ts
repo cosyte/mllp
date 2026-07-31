@@ -46,11 +46,13 @@ const SEGMENT_SEPARATOR_LF = 0x0a;
  *      overwrites the first in the `Map`, and the first send's promise can never
  *      be settled by its own ACK. `latin1` is a 1:1 byte↔code-unit mapping, so
  *      every distinct byte string stays a distinct key.
- *   2. **Corrupted observability.** The extracted ID is what we hand to
- *      `MLLP_ACK_UNMATCHED_CONTROL_ID` / `MLLP_ACK_AFTER_TIMEOUT` warnings and to
- *      `MllpTimeoutError.messageControlId`. A masked ID is a control ID that never
- *      existed on the wire, it misdirects exactly the operator who is trying to
- *      trace a lost message.
+ *   2. **Corrupted observability.** The extracted ID is what the correlator keys
+ *      its graveyard on, so a masked ID is a control ID that never existed on the
+ *      wire: a late ACK for the real one finds no graveyard entry and is reported
+ *      as unmatched, misdirecting exactly the operator who is trying to trace a
+ *      lost message. (The diagnostics themselves report the ID's byte length and
+ *      never the ID, so a masked ID cannot reach a log line; a masked KEY still
+ *      breaks correlation.)
  *
  * Reachable whenever MSH-18 declares a non-ASCII charset (e.g. `8859/1`), where
  * high-bit bytes in a control ID are legal.
@@ -287,10 +289,12 @@ export interface MshSegment {
  * which has only 6 fields, the count therefore ran *past the `CR`* and kept counting
  * separators inside the next segment. The "MSH-10" it returned was `PID-3`: the
  * patient's **MRN**. That value became the client's correlation key, and was carried
- * into `MllpTimeoutError.messageControlId` and the `MLLP_ACK_UNMATCHED_CONTROL_ID` /
+ * into the ACK timeout error and the `MLLP_ACK_UNMATCHED_CONTROL_ID` /
  * `MLLP_ACK_AFTER_TIMEOUT` warnings, a patient identifier in a log line, and a
- * mis-read one at that. A field that does not exist must read as absent, never as the
- * next segment's contents.
+ * mis-read one at that. Those diagnostics now report byte lengths only, so that
+ * particular route out is closed; the reader must still be right, because a field
+ * that does not exist must read as absent, never as the next segment's contents,
+ * and the correlation KEY is still the value this returns.
  *
  * The two rules are independent, and both are needed. Bounding the scan is what kills
  * the PID-3 read. **Locating** the MSH (rather than demanding it at byte 0) is what

@@ -24,7 +24,7 @@
  *   await client.send(payload);
  * } catch (err) {
  *   if (err instanceof MllpTimeoutError) {
- *     logger.warn({ elapsedMs: err.elapsedMs, controlId: err.messageControlId });
+ *     logger.warn({ elapsedMs: err.elapsedMs, idBytes: err.messageControlIdBytes });
  *   }
  * }
  * ```
@@ -32,8 +32,20 @@
 export class MllpTimeoutError extends Error {
   override readonly name = "MllpTimeoutError" as const;
 
-  /** MSH-10 control ID of the timed-out send (FIFO mode: `undefined`). */
-  readonly messageControlId: string | undefined;
+  /**
+   * Byte length of the timed-out send's MSH-10 control ID, or `undefined` when
+   * there was none to read (FIFO mode, or a payload with no MSH-10).
+   *
+   * **The control ID itself is deliberately not here.** An `Error` is a
+   * diagnostic surface: it is logged, and its `stack` is what an error reporter
+   * ships off the box. MSH-10 is payload content, and a scanner that returns
+   * the wrong field returns payload content of some other kind, which is how a
+   * patient identifier reaches a log line. Nothing is lost by withholding it,
+   * because this error rejects the very `send()` whose payload the caller
+   * passed in, so the caller already holds the bytes. Control IDs are decoded
+   * `latin1`, a 1:1 byte to code-unit map, so this count is a byte count.
+   */
+  readonly messageControlIdBytes: number | undefined;
 
   /** Milliseconds elapsed between write-flush and timeout fire. */
   readonly elapsedMs: number;
@@ -44,19 +56,19 @@ export class MllpTimeoutError extends Error {
   /**
    * Construct an MLLP timeout error.
    *
-   * @param message - Human-readable error message.
-   * @param opts - Timeout context (originating message control id, elapsed time, flush timestamp).
+   * @param message - Human-readable error message. Structural facts only, never field content.
+   * @param opts - Timeout context (control-id byte length, elapsed time, flush timestamp).
    */
   constructor(
     message: string,
     opts: {
-      messageControlId: string | undefined;
+      messageControlIdBytes: number | undefined;
       elapsedMs: number;
       sentAt: number;
     },
   ) {
     super(message);
-    this.messageControlId = opts.messageControlId;
+    this.messageControlIdBytes = opts.messageControlIdBytes;
     this.elapsedMs = opts.elapsedMs;
     this.sentAt = opts.sentAt;
     if (Error.captureStackTrace) {

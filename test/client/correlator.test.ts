@@ -19,11 +19,11 @@ interface Harness {
     typeof vi.fn<
       (
         code: WarningCode,
-        ctx: { controlId: string | null; elapsedSinceSendMs: number; byteOffset: number },
+        ctx: { controlIdBytes: number | null; elapsedSinceSendMs: number; byteOffset: number },
       ) => void
     >
   >;
-  onUnmatchedAck: ReturnType<typeof vi.fn<(controlId: string) => void>>;
+  onUnmatchedAck: ReturnType<typeof vi.fn<(controlIdBytes: number | null) => void>>;
 }
 
 function harness(overrides?: Partial<CorrelatorOptions>): Harness {
@@ -37,13 +37,13 @@ function harness(overrides?: Partial<CorrelatorOptions>): Harness {
     (
       code: WarningCode,
       ctx: {
-        controlId: string | null;
+        controlIdBytes: number | null;
         elapsedSinceSendMs: number;
         byteOffset: number;
       },
     ) => void
   >();
-  const onUnmatchedAck = vi.fn<(controlId: string) => void>();
+  const onUnmatchedAck = vi.fn<(controlIdBytes: number | null) => void>();
 
   const correlator = new Correlator({
     mode: "fifo",

@@ -13,6 +13,7 @@ import { MllpTimeoutError } from "../../src/client/error.js";
 import { MllpFramingError } from "../../src/framing/index.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { encodeFrame } from "../../src/framing/index.js";
+import { ackDiagnosticMessage } from "../../src/client/ack-diagnostics.js";
 
 interface Harness {
   client: MllpClient;
@@ -134,11 +135,11 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     const errorEvents: Array<{
       connectionId: string;
       error: MllpFramingError;
-      controlId: string;
+      controlIdBytes: number | null;
     }> = [];
     client.on(
       "error",
-      (e: { connectionId: string; error: MllpFramingError; controlId: string }) => {
+      (e: { connectionId: string; error: MllpFramingError; controlIdBytes: number | null }) => {
         errorEvents.push(e);
         expect(Object.isFrozen(e)).toBe(true);
       },
@@ -158,7 +159,11 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     expect(errorEvents.length).toBe(1);
     expect(errorEvents[0]?.error).toBeInstanceOf(MllpFramingError);
     expect(errorEvents[0]?.error.code).toBe("MLLP_ACK_UNMATCHED_CONTROL_ID");
-    expect(errorEvents[0]?.controlId).toBe("GHOST");
+    // The peer's MSA-2 is reported as a byte LENGTH, and the id itself appears
+    // on no surface of the event. This assertion used to read `.toBe("GHOST")`.
+    expect(errorEvents[0]?.controlIdBytes).toBe("GHOST".length);
+    expect(errorEvents[0]?.error.message).not.toContain("GHOST");
+    expect(JSON.stringify(errorEvents[0])).not.toContain("GHOST");
     await client.close();
   });
 
@@ -171,11 +176,20 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
       code: string;
       byteOffset: number;
       message: string;
+      controlIdBytes?: number | null;
     }> = [];
-    client.on("warning", (w: { code: string; byteOffset: number; message: string }) => {
-      warnings.push(w);
-      expect(Object.isFrozen(w)).toBe(true);
-    });
+    client.on(
+      "warning",
+      (w: {
+        code: string;
+        byteOffset: number;
+        message: string;
+        controlIdBytes?: number | null;
+      }) => {
+        warnings.push(w);
+        expect(Object.isFrozen(w)).toBe(true);
+      },
+    );
     const p = client.send(buildMessageWithControlId("LATE"));
     // Wait for it to time out
     let caught: unknown;
@@ -192,7 +206,13 @@ describe("MllpClient.send (controlId mode, PLAN-03)", () => {
     await new Promise((r) => setTimeout(r, 20));
     const lateWarnings = warnings.filter((w) => w.code === "MLLP_ACK_AFTER_TIMEOUT");
     expect(lateWarnings.length).toBe(1);
-    expect(lateWarnings[0]?.message).toContain("LATE");
+    // The control id is reported as a byte length. The message is a frozen
+    // registry entry, byte-for-byte identical whatever the id was, so it is
+    // compared against the registry rather than searched for a substring. This
+    // assertion used to read `.toContain("LATE")`.
+    expect(lateWarnings[0]?.message).toBe(ackDiagnosticMessage("MLLP_ACK_AFTER_TIMEOUT"));
+    expect(lateWarnings[0]?.controlIdBytes).toBe("LATE".length);
+    expect(JSON.stringify(lateWarnings[0])).not.toContain("LATE");
     await client.close();
   });
 
