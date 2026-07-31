@@ -110,6 +110,23 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   `InMemoryTransport.pair()`; the receive example's fictional `respond`/`buildAck` → the real
   `createServer({ onMessage })`). Bumps the `@cosyte/vitest-config` devDependency to `^0.0.2` for the
   `/snippets` export. Docs and tests only: no runtime or public-API change.
+- **README header swapped from the per-package banner to the shared Cosyte lockup.** The banner
+  (`cosyte-banner-mllp-1200x300.png`) baked the package name and its one line summary into the
+  artwork, and the `# @cosyte/mllp` H1 and the blockquote directly beneath it repeat both, so the
+  same two strings appeared three times in the first four lines of the page. The header is now a
+  `<picture>` carrying the theme-aware Cosyte lockup tile (`cosyte-lockup-tile-on-dark-1200x300.png`
+  and its `-on-light` counterpart), which reads "Cosyte" rather than the package name, so the
+  duplication goes and the heading stays untouched. The `<picture>` element was deliberately avoided
+  when the banner landed, on the grounds that npm sanitizer behaviour was unverified; that has since
+  been verified rather than assumed. On GitHub in dark mode `currentSrc` resolves to the on-dark tile
+  with parent element `PICTURE`, and on npm the `<img>` is hoisted out of the `<picture>` by GitHub's
+  anchor wrapper so the light fallback renders, which is the correct cut there because npmjs.com has
+  no dark mode. The block was copied programmatically out of `hl7`'s README rather than retyped, and
+  both URLs were fetched live (`200 image/png`) rather than trusted from the stored
+  `published-urls.json` declaration, since a typo in either is a 404 on a public package page. The
+  alt text now describes the artwork rather than the package, because a screen reader on the npm page
+  should hear what the image is and the package summary is already the next line. Docs only: no
+  runtime or public-API change.
 - **`docs-content/installation.md` publish-status note corrected (README-ORG-SWEEP).** The Status
   callout said the package was "not yet published to npm" and that the install command was "the shape
   it will take at first publish": stale now that `@cosyte/mllp` is published on npm at `0.0.1` and
