@@ -99,16 +99,25 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 - **A diagnostic-surface PHI gate that instantiates a client (`test/phi/diagnostic-phi-leak.test.ts`).**
   Binds the shared `assertNoDiagnosticPhiLeak` runner (`@cosyte/test-utils`, pin raised to `^0.0.2`;
   a caret on a `0.0.x` version resolves to that version exactly, so without the bump the runner is not
-  even installed). Seventeen declared slots, each naming the diagnostic code it must reach, covering
+  even installed). Nineteen declared slots, each naming the diagnostic code it must reach, covering
   the message control ID through correlation, an ACK's own MSH-10 and MSA-3, the outbound payload
   body, embedded VT and FS bytes inbound and outbound, an oversized frame, missing leading VT,
   leading whitespace, FS without CR, LF after FS, an empty payload after a marker-bearing frame, the
-  in-flight orphan on disconnect, and the ACK adapter's unparseable-inbound path. The suite it
-  supplements scoped itself to the framing layer and never instantiated a client, which is exactly
-  why the three correlation surfaces were the three it could not reach. Verified red on the base
-  commit on three slots before any fix existed. `checkLengthInvariance` is enabled on the three slots
-  whose diagnostics must not move with the planted value and off on the rest, where a byte offset or
-  a byte count is the prescribed report and growth is correct.
+  in-flight orphan on disconnect, and all three of the ACK adapter's control-ID paths (unparseable
+  inbound, a provably non-verbatim echo, and an unverifiable text echo). The suite it supplements
+  scoped itself to the framing layer and never instantiated a client, which is exactly why the three
+  correlation surfaces were the three it could not reach. Verified red on the base commit on three
+  slots before any fix existed, and re-verified by four mutations afterwards, one of which is a
+  hex-encoded echo that a verbatim match cannot see and `checkLengthInvariance` catches.
+  `checkLengthInvariance` is decided **per slot and by measurement**: 8 of the 19 hold it, and the
+  other 11 give it up because a byte offset or a byte count is the prescribed report there and
+  growth is correct. A first draft split the table in two by argument and was wrong about four
+  slots, which were giving up the re-encoded-echo check for nothing.
+  Scope, stated precisely rather than generously: this closes **unbounded** consumer-controlled input
+  on the `correlateByControlId` path. Two framing codes still render the hex of a **single** byte, and
+  `MllpFramingError.snippet` still carries one, both bounded by design and both now described
+  accurately on `MllpWarning.message` (whose doc comment claimed the opposite, and shipped that claim
+  into the published declarations).
 - **Repo-side PHI commit-scanner (`scripts/phi-scan.ts`), matching the `@cosyte/hl7` pilot.**
   mllp transports HL7 v2 payloads (MLLP wraps HL7 in `VT … FS CR`), so its data fixtures
   (`test/**` `.frame.bin` frames) carry the same PHI shapes hl7's do. The scanner is a direct

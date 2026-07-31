@@ -349,7 +349,10 @@ export interface ClientStats {
  * - `'reconnecting'`, `{ connectionId, attempt?, delayMs? }`
  * - `'close'`, `{ connectionId }` once the FSM enters terminal `CLOSED`
  * - `'message'`, `{ payload, connectionId, byteOffset, warnings }` for every inbound frame
- * - `'warning'`, `MllpWarning` enriched with `connectionId` from the Connection layer
+ * - `'warning'`, `MllpWarning | AckCorrelationWarning`. A framing deviation arrives as a
+ *   `MllpWarning` enriched with `connectionId` from the Connection layer; the two
+ *   ACK-correlation codes arrive as {@link AckCorrelationWarning}, which adds
+ *   `controlIdBytes` and `elapsedSinceSendMs`. Narrow on `code` before reading either.
  * - `'securityWarning'`, `SecurityWarning`. Emitted on every successful
  *   `secureConnect` (initial + every reconnect) when `tls.allowUnverified` is `true`
  *   with code `MLLP_TLS_VERIFY_DISABLED`. Also mirrored to `process.emitWarning`.

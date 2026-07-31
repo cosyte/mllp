@@ -19,8 +19,17 @@
  * sender controls on the wire (the message control id as it travels through
  * correlation, the payload body, embedded VT and FS bytes, an oversized frame,
  * and everything the client reports on timeout, mismatch, reconnect and
- * ACK-correlation failure) and forces each one to reach the diagnostic it
- * names via `expectCode`.
+ * ACK-correlation failure) and names the diagnostic code each one must reach.
+ *
+ * **What `expectCode` proves, exactly.** The runner asserts it in **lenient mode
+ * on the short probe only**, deliberately: a strict mode throws on the first
+ * deviation, so only the earliest slot could ever satisfy its code there. So a
+ * slot that reaches its branch on the short lenient probe and nowhere else would
+ * still pass reach. Every slot here was checked to reach its code on all four of
+ * its probes, but that is a measurement taken once, not a standing assertion.
+ * The same caveat applies to the cache below: a miss in strict mode or on the
+ * long probe is swallowed by the runner's own `try`/`catch` around `parse`,
+ * which is why slot names are asserted unique rather than assumed to be.
  *
  * ## The async-to-sync bridge, and why it is here
  *
@@ -298,26 +307,48 @@ interface Slot {
   readonly name: string;
   readonly expectCode: string;
   readonly build: (marker: string) => ClientScenario;
+  /**
+   * Whether this slot takes `checkLengthInvariance`. Decided **per slot and by
+   * measurement**, never per group by argument: a first draft split the table in
+   * two on the reasoning that "a correlation or framing diagnostic counts its
+   * input, so invariance would red all of them", and measuring one call per slot
+   * showed that was true of 9 of the 13, not 13. The four it was wrong about were
+   * giving up the re-encoded-echo check for nothing. If you add a slot, measure
+   * it rather than reasoning about it, and expect the answer to change when a
+   * diagnostic gains a number.
+   */
+  readonly lengthInvariant: boolean;
 }
 
 /**
- * Group A: the planted value must be **entirely absent** from the diagnostic,
- * and every number the diagnostic carries is constant across both probes. These
- * take `checkLengthInvariance`, which is what would catch a hex or base64 echo
- * that a verbatim match walks straight past.
+ * Every consumer-controlled position on the wire, one slot each.
+ *
+ * `lengthInvariant: true` marks a slot on which `checkLengthInvariance` is worth
+ * having: the planted value must be absent from the diagnostic altogether AND no
+ * number the diagnostic carries moves between the two probes, so any growth can
+ * only be a re-encoded echo. Verified by mutation: attaching
+ * `entry.frame.toString("hex")` to the ACK timeout error is invisible to the
+ * verbatim sweep and reds the invariance check.
+ *
+ * `lengthInvariant: false` marks a slot where a byte offset, a byte count or an
+ * accumulated size is the prescribed PHI-free report and grows with the input
+ * correctly. There the check would red a correct diagnostic and would call the
+ * growth an echo, which is the wrong diagnosis.
  */
-const LENGTH_INVARIANT_SLOTS: readonly Slot[] = [
+const CLIENT_SLOTS: readonly Slot[] = [
   {
     // The peer's ACK carries the marker in its OWN MSH-10 while MSA-2 holds a
     // fixed unmatched id, so nothing the diagnostic legitimately counts moves.
     name: "client/correlateByControlId/inbound ACK MSH-10 (unmatched ACK)",
     expectCode: "MLLP_ACK_UNMATCHED_CONTROL_ID",
+    lengthInvariant: true,
     build: (marker) => ({ inbound: frame(ackPayload("NOMATCH01", marker)) }),
   },
   {
     // MSA-3, the ACK's free-text reason. Pure payload body on the ACK frame.
     name: "client/correlateByControlId/inbound ACK MSA-3 text (unmatched ACK)",
     expectCode: "MLLP_ACK_UNMATCHED_CONTROL_ID",
+    lengthInvariant: true,
     build: (marker) => ({ inbound: frame(ackPayload("NOMATCH01", "ACKID001", marker)) }),
   },
   {
@@ -325,24 +356,17 @@ const LENGTH_INVARIANT_SLOTS: readonly Slot[] = [
     // reach the timeout error, and the error's numbers are clock-pinned.
     name: "client/correlateByControlId/outbound payload body (ACK timeout)",
     expectCode: "MllpTimeoutError",
+    lengthInvariant: true,
     build: (marker) => ({
       outbound: message("OUTID0001", `ZZZ|1|${marker}\r`),
       expireAck: true,
     }),
   },
-];
-
-/**
- * Group B: the diagnostic is *supposed* to grow with the planted value, because
- * a byte offset, a byte count or an accumulated size is the prescribed PHI-free
- * report here. `checkLengthInvariance` would red every one of them and would
- * report the growth as an echo, which is the wrong diagnosis.
- */
-const COUNTING_SLOTS: readonly Slot[] = [
   {
     // The headline defect: the peer's MSA-2, unbounded, straight onto a message.
     name: "client/correlateByControlId/inbound ACK MSA-2 (unmatched ACK)",
     expectCode: "MLLP_ACK_UNMATCHED_CONTROL_ID",
+    lengthInvariant: false,
     build: (marker) => ({ inbound: frame(ackPayload(marker)) }),
   },
   {
@@ -350,6 +374,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
     // on timeout, then named by the late-ACK diagnostic.
     name: "client/correlateByControlId/outbound MSH-10 (late ACK after timeout)",
     expectCode: "MLLP_ACK_AFTER_TIMEOUT",
+    lengthInvariant: false,
     build: (marker) => ({
       outbound: message(marker),
       expireAck: true,
@@ -359,6 +384,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
   {
     name: "client/correlateByControlId/outbound MSH-10 (ACK timeout)",
     expectCode: "MllpTimeoutError",
+    lengthInvariant: false,
     build: (marker) => ({ outbound: message(marker), expireAck: true }),
   },
   {
@@ -366,6 +392,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
     // it is rejected with a typed connection error naming the cause.
     name: "client/fifo/outbound MSH-10 (in-flight orphan on disconnect)",
     expectCode: "in-flight-orphan",
+    lengthInvariant: true,
     build: (marker) => ({
       outbound: message(marker),
       correlateByControlId: false,
@@ -375,6 +402,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
   {
     name: "framing/inbound frame payload bytes (oversized frame)",
     expectCode: "MLLP_FRAME_TOO_LARGE",
+    lengthInvariant: true,
     build: (marker) => ({
       inbound: frame(Buffer.from(marker.padEnd(SMALL_FRAME_CAP * 4, "X"), "latin1")),
       maxFrameSizeBytes: SMALL_FRAME_CAP,
@@ -385,6 +413,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
     // run is payload content and the diagnostic reports its size, not its bytes.
     name: "framing/inbound embedded VT mid-payload (discarded bytes)",
     expectCode: "MLLP_TRAILING_BYTES",
+    lengthInvariant: false,
     build: (marker) => ({
       inbound: Buffer.concat([
         Buffer.from([VT]),
@@ -398,6 +427,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
   {
     name: "framing/inbound embedded FS without CR",
     expectCode: "MLLP_FS_WITHOUT_CR",
+    lengthInvariant: false,
     build: (marker) => ({
       inbound: Buffer.concat([
         frame(Buffer.from(marker, "latin1"), { tail: [FS] }),
@@ -408,6 +438,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
   {
     name: "framing/inbound LF after FS",
     expectCode: "MLLP_LF_AFTER_FS",
+    lengthInvariant: false,
     build: (marker) => ({
       inbound: frame(Buffer.from(marker, "latin1"), { tail: [FS, LF] }),
     }),
@@ -415,6 +446,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
   {
     name: "framing/inbound missing leading VT",
     expectCode: "MLLP_MISSING_LEADING_VT",
+    lengthInvariant: true,
     build: (marker) => ({
       inbound: frame(Buffer.from(marker, "latin1"), { vt: false }),
     }),
@@ -422,6 +454,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
   {
     name: "framing/inbound leading whitespace before VT",
     expectCode: "MLLP_LEADING_WHITESPACE",
+    lengthInvariant: true,
     build: (marker) => ({
       inbound: Buffer.concat([Buffer.from("  \t"), frame(Buffer.from(marker, "latin1"))]),
     }),
@@ -431,6 +464,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
     // the marker, so this pins that a prior frame's bytes cannot bleed forward.
     name: "framing/inbound empty payload after a marker-bearing frame",
     expectCode: "MLLP_EMPTY_PAYLOAD",
+    lengthInvariant: false,
     build: (marker) => ({
       inbound: Buffer.concat([frame(Buffer.from(marker, "latin1")), Buffer.from([VT, FS, CR])]),
     }),
@@ -440,6 +474,7 @@ const COUNTING_SLOTS: readonly Slot[] = [
     // unframeable, and the throw must name the byte, never the surrounding run.
     name: "framing/outbound payload contains VT",
     expectCode: "MLLP_PAYLOAD_CONTAINS_VT",
+    lengthInvariant: false,
     build: (marker) => ({
       outbound: Buffer.concat([Buffer.from(marker, "latin1"), Buffer.from([VT])]),
     }),
@@ -447,13 +482,14 @@ const COUNTING_SLOTS: readonly Slot[] = [
   {
     name: "framing/outbound payload contains FS",
     expectCode: "MLLP_PAYLOAD_CONTAINS_FS",
+    lengthInvariant: false,
     build: (marker) => ({
       outbound: Buffer.concat([Buffer.from(marker, "latin1"), Buffer.from([FS])]),
     }),
   },
 ];
 
-const ALL_SLOTS: readonly Slot[] = [...LENGTH_INVARIANT_SLOTS, ...COUNTING_SLOTS];
+const ALL_SLOTS: readonly Slot[] = CLIENT_SLOTS;
 
 // ---------------------------------------------------------------------------
 // Precomputed scenario cache (the async-to-sync bridge)
@@ -512,41 +548,40 @@ afterAll(() => {
 // The gate
 // ---------------------------------------------------------------------------
 
+/** Run the gate over the slots carrying a given `lengthInvariant` setting. */
+function runGate(lengthInvariant: boolean): void {
+  const slots = CLIENT_SLOTS.filter((slot) => slot.lengthInvariant === lengthInvariant);
+  assertNoDiagnosticPhiLeak<SlotProbe, Collected>({
+    slots: slots.map((slot) => ({
+      name: slot.name,
+      plant: plantFor(slot),
+      expectCode: slot.expectCode,
+    })),
+    parse: lookup("lenient"),
+    parseStrict: lookup("strict"),
+    getDiagnostics: (c) => c.diagnostics,
+    getModelIdentifiers: (c) => c.identifiers,
+    largeProbeRepeats: LARGE_PROBE_REPEATS,
+    checkLengthInvariance: lengthInvariant,
+  });
+}
+
 describe("PHI: no consumer-controlled input reaches a diagnostic surface", () => {
-  it("holds on the slots whose diagnostics carry no input-derived number", () => {
-    assertNoDiagnosticPhiLeak<SlotProbe, Collected>({
-      slots: LENGTH_INVARIANT_SLOTS.map((slot) => ({
-        name: slot.name,
-        plant: plantFor(slot),
-        expectCode: slot.expectCode,
-      })),
-      parse: lookup("lenient"),
-      parseStrict: lookup("strict"),
-      getDiagnostics: (c) => c.diagnostics,
-      getModelIdentifiers: (c) => c.identifiers,
-      largeProbeRepeats: LARGE_PROBE_REPEATS,
-      // On here precisely because nothing in these diagnostics is allowed to
-      // move with the planted value, so growth can only be a re-encoded echo.
-      checkLengthInvariance: true,
-    });
+  it("holds on the slots whose diagnostics cannot move with the planted value", () => {
+    expect(CLIENT_SLOTS.filter((s) => s.lengthInvariant).length).toBeGreaterThan(0);
+    runGate(true);
   });
 
   it("holds on the slots whose diagnostics legitimately count the input", () => {
-    assertNoDiagnosticPhiLeak<SlotProbe, Collected>({
-      slots: COUNTING_SLOTS.map((slot) => ({
-        name: slot.name,
-        plant: plantFor(slot),
-        expectCode: slot.expectCode,
-      })),
-      parse: lookup("lenient"),
-      parseStrict: lookup("strict"),
-      getDiagnostics: (c) => c.diagnostics,
-      getModelIdentifiers: (c) => c.identifiers,
-      largeProbeRepeats: LARGE_PROBE_REPEATS,
-      // Off: a byte offset and a byte count are the prescribed report here, and
-      // both gain digits as the planted value grows. See the header note.
-      checkLengthInvariance: false,
-    });
+    runGate(false);
+  });
+
+  it("declares one slot per consumer-controlled position, each with a distinct name", () => {
+    // A duplicate name would make two slots share a cache entry, so one of them
+    // would silently probe the other's scenario. Cheap, and the only thing
+    // standing between the cache bridge and a slot that tests nothing.
+    const names = CLIENT_SLOTS.map((s) => s.name);
+    expect(new Set(names).size).toBe(names.length);
   });
 });
 
@@ -561,51 +596,86 @@ describe("PHI: no consumer-controlled input reaches a diagnostic surface", () =>
  * checked here as a slot rather than restated as prose.
  */
 describe("PHI: the ack-from-hl7 subpath forwards no inbound bytes", () => {
-  it("holds for an unparseable inbound and for a control id it cannot verify", () => {
-    interface AckCollected {
-      readonly diagnostics: readonly DiagnosticEnvelope[];
-      readonly identifiers: readonly string[];
-    }
-    const drive = (raw: Buffer | string): AckCollected => {
-      const ack = buildAckAA(raw);
-      return {
-        diagnostics: [
-          // Both collections: this subpath's own warnings AND the built ACK's,
-          // because the unswept one is where a leak would live.
-          ...ack.warnings.map((w) => ({
-            code: w.code,
-            surface: "MllpAck.warnings",
-            raw: w,
-          })),
-          ...ack.ack.warnings.map((w: { code: string }) => ({
-            code: w.code,
-            surface: "MllpAck.ack.warnings",
-            raw: w,
-          })),
-        ],
-        // Structural identifiers on the built ACK: the segment names of the
-        // message this package composed. `MllpAck.correlationId` is
-        // deliberately NOT here; see the note in the test body below.
-        identifiers: ack.ack.rawSegments.map((s: { name: string }) => s.name),
-      };
-    };
+  interface AckCollected {
+    readonly diagnostics: readonly DiagnosticEnvelope[];
+    readonly identifiers: readonly string[];
+  }
 
-    assertNoDiagnosticPhiLeak<Buffer, AckCollected>({
-      slots: [
-        {
-          name: "ack-from-hl7/inbound bytes (unparseable, no MSH)",
-          plant: (m) => Buffer.from(`ZZZ|1|${m}\r`, "latin1"),
-          expectCode: "MLLP_ACK_INBOUND_UNPARSEABLE",
-        },
+  const drive = (raw: Buffer | string): AckCollected => {
+    const ack = buildAckAA(raw);
+    return {
+      diagnostics: [
+        // Both collections: this subpath's own warnings AND the built ACK's,
+        // because the unswept one is where a leak would live.
+        ...ack.warnings.map((w) => ({
+          code: w.code,
+          surface: "MllpAck.warnings",
+          raw: w,
+        })),
+        ...ack.ack.warnings.map((w: { code: string }) => ({
+          code: w.code,
+          surface: "MllpAck.ack.warnings",
+          raw: w,
+        })),
       ],
+      // Structural identifiers on the built ACK: the segment names of the
+      // message this package composed. `MllpAck.correlationId` is
+      // deliberately NOT here; see the note in the last test of this block.
+      identifiers: ack.ack.rawSegments.map((s: { name: string }) => s.name),
+    };
+  };
+
+  const runAckGate = (
+    name: string,
+    plant: (marker: string) => Buffer | string,
+    expectCode: string,
+    lengthInvariant: boolean,
+  ): void => {
+    assertNoDiagnosticPhiLeak<Buffer | string, AckCollected>({
+      slots: [{ name, plant, expectCode }],
       parse: drive,
       // The subpath has no strict mode; declared rather than omitted.
       parseStrict: null,
       getDiagnostics: (c) => c.diagnostics,
       getModelIdentifiers: (c) => c.identifiers,
       largeProbeRepeats: LARGE_PROBE_REPEATS,
-      checkLengthInvariance: true,
+      checkLengthInvariance: lengthInvariant,
     });
+  };
+
+  it("holds when the inbound cannot be parsed at all", () => {
+    runAckGate(
+      "ack-from-hl7/inbound bytes (unparseable, no MSH)",
+      (m) => Buffer.from(`ZZZ|1|${m}\r`, "latin1"),
+      "MLLP_ACK_INBOUND_UNPARSEABLE",
+      true,
+    );
+  });
+
+  it("holds when the emitted MSA-2 provably differs from the inbound MSH-10", () => {
+    // A control ID holding the escape character is re-escaped on the way into
+    // MSA-2, so the byte-level verbatim check fails and the warning fires. The
+    // slot exists because that warning is the one place this subpath has an
+    // inbound and an outbound control ID in hand at the same moment, which is
+    // exactly the shape that once put a patient identifier in a log in hex.
+    // Invariance is off: the warning reports both byte lengths, and those grow.
+    runAckGate(
+      "ack-from-hl7/inbound MSH-10 (echo provably not verbatim)",
+      (m) => message(`${m}\\X`),
+      "MLLP_ACK_CONTROL_ID_NOT_VERBATIM",
+      false,
+    );
+  });
+
+  it("holds when a text inbound makes the echo unverifiable", () => {
+    // The text path cannot run the byte-level proof, so it reports the weaker
+    // signal instead. Same requirement: a code-unit count, never the id.
+    runAckGate(
+      "ack-from-hl7/inbound MSH-10 (text inbound, non-ASCII, unverifiable)",
+      (m) => message(`${m}\u00e9`).toString("latin1"),
+      "MLLP_ACK_CONTROL_ID_UNVERIFIABLE",
+      false,
+    );
   });
 
   it("MllpAck.correlationId is carried data, not a structural identifier", () => {
