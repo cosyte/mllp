@@ -76,6 +76,52 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Security
 
+- **BREAKING: ACK-correlation diagnostics no longer carry the control ID (`PHI-WARNING-MESSAGE-LEAK`).**
+  The opt-in `correlateByControlId` path built its diagnostics by interpolation, and both ends were
+  consumer-controlled and unbounded. The unmatched-ACK path read the **peer's** MSA-2 straight off an
+  inbound frame into `MllpFramingError.message` and onto a `controlId` field of the frozen `'error'`
+  payload; measured against a peer sending a 1,000,000-byte MSA-2, that produced a 1,000,026-byte
+  `Error.message` and an equally large event field, both headed for a log. `MLLP_ACK_AFTER_TIMEOUT`
+  did the same with the timed-out send's own MSH-10, and `MllpTimeoutError.messageControlId` carried
+  it on an `Error`, whose `stack` is what an error reporter ships off the box.
+  The fix is the frozen-registry shape: `src/client/ack-diagnostics.ts` holds one literal per code and
+  `ackDiagnosticMessage(code)` takes **no value parameter**, so no caller can widen it into an
+  interpolation site. The `Correlator` withholds the string at the source: `onWarning` now receives
+  `controlIdBytes` and `onUnmatchedAck` receives a byte length (or `null` when no MSA-2 could be read
+  at all), so nothing downstream of it has a control ID to interpolate.
+  Breaking field changes, all pre-alpha: `MllpTimeoutError.messageControlId: string | undefined` is
+  now `messageControlIdBytes: number | undefined`; the `'error'` event's `controlId` is now
+  `controlIdBytes`; the `'warning'` payload for the two correlation codes is the new exported
+  `AckCorrelationWarning` (`MllpWarning` plus `controlIdBytes` and `elapsedSinceSendMs`). Warning
+  codes are unchanged. A truncated ID was considered and rejected, as was a hex rendering: both still
+  grow the diagnostic with the input and both still disclose the bytes. This is the same answer the
+  ACK adapter's verbatim-echo warning already reached.
+- **A diagnostic-surface PHI gate that instantiates a client (`test/phi/diagnostic-phi-leak.test.ts`).**
+  Binds the shared `assertNoDiagnosticPhiLeak` runner (`@cosyte/test-utils`, pin raised to `^0.0.2`;
+  a caret on a `0.0.x` version resolves to that version exactly, so without the bump the runner is not
+  even installed). Nineteen declared slots, each naming the diagnostic code it must reach, covering
+  the message control ID through correlation, an ACK's own MSH-10 and MSA-3, the outbound payload
+  body, embedded VT and FS bytes inbound and outbound, an oversized frame, missing leading VT,
+  leading whitespace, FS without CR, LF after FS, an empty payload after a marker-bearing frame, the
+  in-flight orphan on disconnect, and all three of the ACK adapter's control-ID paths (unparseable
+  inbound, a provably non-verbatim echo, and an unverifiable text echo). The suite it supplements
+  scoped itself to the framing layer and never instantiated a client, which is exactly why the three
+  correlation surfaces were the three it could not reach. Verified red on the base commit on three
+  slots before any fix existed, and re-verified by four mutations afterwards, one of which is a
+  hex-encoded echo that a verbatim match cannot see and `checkLengthInvariance` catches.
+  `checkLengthInvariance` is decided **per slot and by measurement**: 8 of the 19 hold it, and the
+  other 11 give it up because a byte offset or a byte count is the prescribed report there and
+  growth is correct. A first draft split the table in two by argument and was wrong about four
+  slots, which were giving up the re-encoded-echo check for nothing.
+  Scope, stated precisely rather than generously: this closes **unbounded** consumer-controlled input
+  on the `correlateByControlId` path. The slot table covers three surfaces (the client, framing via
+  `Connection`, and `ack-from-hl7`) and **no slot instantiates `MllpServer`**; the server's diagnostic
+  surfaces were read and carry static strings, counts, or Node's own TLS and socket text, so that gap
+  holds no HL7 payload today, which is why it was not urgent rather than why the table is complete.
+  Two framing codes still render the hex of a **single** byte, and
+  `MllpFramingError.snippet` still carries one, both bounded by design and both now described
+  accurately on `MllpWarning.message` (whose doc comment claimed the opposite, and shipped that claim
+  into the published declarations).
 - **Repo-side PHI commit-scanner (`scripts/phi-scan.ts`), matching the `@cosyte/hl7` pilot.**
   mllp transports HL7 v2 payloads (MLLP wraps HL7 in `VT … FS CR`), so its data fixtures
   (`test/**` `.frame.bin` frames) carry the same PHI shapes hl7's do. The scanner is a direct

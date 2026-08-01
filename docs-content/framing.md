@@ -141,7 +141,7 @@ If a peer's quirk is *expected* (it pads with junk, omits the leading `<VT>`, se
 the tolerance opt-ins above are the supported answer. They turn the throw into a warning and recover
 the payload.
 
-## Diagnostics never echo payload bytes
+## Diagnostics never echo a run of payload bytes
 
 `MllpFramingError.snippet` carries **at most a single byte** (the one at the structural violation)
 and **never a run of payload content**. The payload of an HL7 v2 message is PHI, and an error message
@@ -157,7 +157,19 @@ is the easiest way for PHI to escape into a log aggregator.
   One byte, never a run, but if even that is more than your threat model allows, do not log
   `snippet` directly.
 
-Warning `message` fields are stable, human-readable descriptions and never contain payload bytes.
+Warning `message` fields are stable, human-readable descriptions. They carry structural facts (a
+byte offset, an accumulated size) and **never a run of payload content**. The same one-byte
+exception the list above spells out applies here too: `MLLP_MISSING_LEADING_VT` and
+`MLLP_FS_WITHOUT_CR` render the hex of the single byte found where a framing byte was expected,
+which on a missing-`<VT>` stream is the first byte of the unframed content.
 
-Correlate on `code` + `byteOffset`, and if you need the message itself, log it deliberately through
-your own PHI-aware channel.
+The ACK-correlation warnings go further, because the value they report on is a **field**, not one
+byte. `MLLP_ACK_UNMATCHED_CONTROL_ID` and `MLLP_ACK_AFTER_TIMEOUT` take their `message`
+from a frozen registry: the text is identical for a given code no matter what arrived on the
+wire, and the control ID is reported only as `controlIdBytes`, its byte length. The ID itself is
+withheld because a warning goes to a log and MSH-10 is payload content. Nothing is lost by that:
+the outbound bytes are the payload you handed to `send()`, and the inbound frame reaches you on
+the `'message'` event.
+
+Correlate on `code` + `byteOffset`, and if you need the field values themselves, log them
+deliberately through your own PHI-aware channel.

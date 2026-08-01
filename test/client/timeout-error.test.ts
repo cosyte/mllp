@@ -11,19 +11,19 @@ import { MllpTimeoutError } from "../../src/client/error.js";
 describe("MllpTimeoutError (PLAN-02 / ERR-02)", () => {
   it("Test 1: constructs with all fields readable as readonly", () => {
     const err = new MllpTimeoutError("ack timeout", {
-      messageControlId: "MSG00001",
+      messageControlIdBytes: 8,
       elapsedMs: 30_000,
       sentAt: 1234567890,
     });
     expect(err.message).toBe("ack timeout");
-    expect(err.messageControlId).toBe("MSG00001");
+    expect(err.messageControlIdBytes).toBe(8);
     expect(err.elapsedMs).toBe(30_000);
     expect(err.sentAt).toBe(1234567890);
   });
 
   it('Test 2: name is "MllpTimeoutError" and instanceof checks pass', () => {
     const err = new MllpTimeoutError("ack timeout", {
-      messageControlId: "MSG00002",
+      messageControlIdBytes: 8,
       elapsedMs: 100,
       sentAt: 1,
     });
@@ -32,19 +32,19 @@ describe("MllpTimeoutError (PLAN-02 / ERR-02)", () => {
     expect(err).toBeInstanceOf(MllpTimeoutError);
   });
 
-  it("Test 3: messageControlId accepts undefined (FIFO mode)", () => {
+  it("Test 3: messageControlIdBytes accepts undefined (FIFO mode)", () => {
     const err = new MllpTimeoutError("ack timeout (fifo)", {
-      messageControlId: undefined,
+      messageControlIdBytes: undefined,
       elapsedMs: 50,
       sentAt: 100,
     });
-    expect(err.messageControlId).toBeUndefined();
+    expect(err.messageControlIdBytes).toBeUndefined();
     expect(err.elapsedMs).toBe(50);
   });
 
   it("Test 4: stack trace excludes the constructor frame", () => {
     const err = new MllpTimeoutError("ack timeout", {
-      messageControlId: "MSG-X",
+      messageControlIdBytes: 5,
       elapsedMs: 10,
       sentAt: 0,
     });

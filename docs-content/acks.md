@@ -117,6 +117,37 @@ peer's response budget.
 committed by the receiver and the ACK lost on the way back. This is the at-least-once boundary; see
 [Limitations](./limitations.md).
 
+### Correlation diagnostics report lengths, not control IDs
+
+Everything correlation reports is a number. The warning payload carries `controlIdBytes` (the
+control ID's byte length, or `null` when there was none to read) and `elapsedSinceSendMs`, and its
+`message` is a frozen registry entry that does not vary with the wire. `MllpTimeoutError` carries
+`messageControlIdBytes` for the same reason: an `Error` is logged, and its `stack` is what an
+error reporter ships off the box.
+
+The `'warning'` event carries both kinds, so narrow before reading the correlation fields: a
+framing warning is a plain `MllpWarning` and has neither.
+
+```ts
+import { ackDiagnosticMessage } from "@cosyte/mllp";
+
+client.on("warning", (w) => {
+  if (w.code === "MLLP_ACK_UNMATCHED_CONTROL_ID" || w.code === "MLLP_ACK_AFTER_TIMEOUT") {
+    logger.warn({ code: w.code, idBytes: w.controlIdBytes, elapsedMs: w.elapsedSinceSendMs });
+  } else {
+    logger.warn({ code: w.code, byteOffset: w.byteOffset });
+  }
+});
+```
+
+`ackDiagnosticMessage(code)` is exported so you can compare a warning's `message` against the
+registry entry, or render your own text from the code and never log ours.
+
+MSH-10 is payload content, so it is not on any of those surfaces. You are not missing anything you
+do not already have: the outbound bytes are the payload you passed to `send()`, and the inbound
+ACK frame reaches you on the `'message'` event, both under your own PHI handling rather than your
+logger's.
+
 ## Building spec-correct ACKs: `ack-from-hl7`
 
 Framing an ACK means building a real HL7 v2 `ACK^` message. That is *parsing* work, and this package

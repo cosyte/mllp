@@ -17,7 +17,7 @@
  * @packageDocumentation
  */
 
-import type { WarningCode } from "../framing/index.js";
+import type { AckCorrelationCode } from "./ack-diagnostics.js";
 
 /** Correlation key, number for FIFO (`sendSeq`), string for controlId (MSH-10). */
 export type CorrelationKey = number | string;
@@ -87,17 +87,29 @@ export interface CorrelatorOptions {
    * Emits `MLLP_ACK_AFTER_TIMEOUT` and `MLLP_ACK_UNMATCHED_CONTROL_ID`.
    * `byteOffset` is forwarded from the inbound ACK frame
    * for observability.
+   *
+   * **The context carries numbers, never the control ID itself.**
+   * `controlIdBytes` is its byte length (`null` when there is no id), because
+   * this context is handed to a warning that goes to a log, and a control ID is
+   * payload content. The correlator withholds the string at the source so no
+   * consumer downstream of it can interpolate one.
    */
   readonly onWarning: (
-    code: WarningCode,
+    code: AckCorrelationCode,
     ctx: {
-      controlId: string | null;
+      controlIdBytes: number | null;
       elapsedSinceSendMs: number;
       byteOffset: number;
     },
   ) => void;
-  /** Called by `matchAck()` in controlId mode on unmatched-ACK. */
-  readonly onUnmatchedAck?: (controlId: string) => void;
+  /**
+   * Called by `matchAck()` in controlId mode on unmatched-ACK.
+   *
+   * Receives the **byte length** of the inbound MSA-2, or `null` when no MSA-2
+   * could be extracted at all. The bytes themselves are deliberately not passed:
+   * see {@link CorrelatorOptions.onWarning}.
+   */
+  readonly onUnmatchedAck?: (controlIdBytes: number | null) => void;
   /** Fired by `expireDue()`; `MllpClient` turns into `MllpTimeoutError`. */
   readonly onTimeout: (entry: PendingAck, elapsedMs: number) => void;
   /** Injected clock; default `Date.now`. Tests inject deterministic clock. */
@@ -226,8 +238,8 @@ export class Correlator {
    *   removed from live store. Caller calls `entry.resolve(ackPayload)`.
    * - controlId: keyed lookup by `controlIdFromAck`. Live-store hit returns
    *   the entry; graveyard hit fires `MLLP_ACK_AFTER_TIMEOUT` warning
-   *   and returns `null`; otherwise fires
-   *   `onUnmatchedAck(controlIdFromAck)` and returns `null`.
+   *   and returns `null`; otherwise fires `onUnmatchedAck` with the id's
+   *   **byte length** and returns `null`.
    *
    * Triggers lazy graveyard eviction.
    *
@@ -258,7 +270,7 @@ export class Correlator {
       // Caller failed to extract MSA-2; treat as unmatched. (MllpClient is
       // responsible for extraction; this is a defensive fallback.)
       if (this._opts.onUnmatchedAck !== undefined) {
-        this._opts.onUnmatchedAck("");
+        this._opts.onUnmatchedAck(null);
       }
       return null;
     }
@@ -276,7 +288,9 @@ export class Correlator {
       // byte offset (W-05) so observers see where in the stream it landed.
       const elapsedSinceSendMs = this._opts.now() - grave.timedOutAt;
       this._opts.onWarning("MLLP_ACK_AFTER_TIMEOUT", {
-        controlId: grave.controlId,
+        // The LENGTH, never the id. Control IDs are decoded `latin1`, a 1:1
+        // byte to code-unit map, so `.length` is a byte count.
+        controlIdBytes: grave.controlId === null ? null : grave.controlId.length,
         elapsedSinceSendMs,
         byteOffset: byteOffsetFromAck,
       });
@@ -285,8 +299,9 @@ export class Correlator {
       return null;
     }
     // CLIENT-15: unmatched controlId (live store empty + not in graveyard).
+    // The LENGTH crosses this boundary, never the peer's bytes.
     if (this._opts.onUnmatchedAck !== undefined) {
-      this._opts.onUnmatchedAck(controlIdFromAck);
+      this._opts.onUnmatchedAck(controlIdFromAck.length);
     }
     return null;
   }

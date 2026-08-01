@@ -40,6 +40,8 @@ import { MllpFramingError } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning, WarningCode } from "../framing/index.js";
 import { Correlator, extractMshControlId, extractMsaControlId } from "./correlator.js";
 import type { PendingAck } from "./correlator.js";
+import { ackDiagnosticMessage } from "./ack-diagnostics.js";
+import type { AckCorrelationCode } from "./ack-diagnostics.js";
 import {
   MllpTimeoutError,
   MllpBackpressureError,
@@ -60,6 +62,38 @@ import {
  * never exposed; hostile callers cannot abort the sentinel.
  */
 const NEVER_ABORTING_SIGNAL: AbortSignal = new AbortController().signal;
+
+/**
+ * The `'warning'` payload the client emits for an ACK-correlation deviation
+ * (`MLLP_ACK_UNMATCHED_CONTROL_ID`, `MLLP_ACK_AFTER_TIMEOUT`).
+ *
+ * A `MllpWarning` with two extra numeric fields. `message` is a **frozen
+ * registry entry**, byte-for-byte identical for a given code no matter what
+ * arrived on the wire, and everything input-derived is a number: the control
+ * ID's byte length and the elapsed time. A warning is a log line, so it carries
+ * no field content.
+ *
+ * @example
+ * ```typescript
+ * client.on('warning', (w: AckCorrelationWarning) => {
+ *   logger.warn({ code: w.code, idBytes: w.controlIdBytes, elapsedMs: w.elapsedSinceSendMs });
+ * });
+ * ```
+ */
+export interface AckCorrelationWarning extends MllpWarning {
+  /** The correlation code this warning reports. */
+  readonly code: AckCorrelationCode;
+  /**
+   * Byte length of the control ID involved, or `null` when there was none to
+   * read. Control IDs are decoded `latin1`, so a code-unit count is a byte count.
+   */
+  readonly controlIdBytes: number | null;
+  /**
+   * Milliseconds between the send's write-flush (or its timeout, for a late
+   * ACK) and this warning.
+   */
+  readonly elapsedSinceSendMs: number;
+}
 
 /**
  * Context passed to a custom `retryStrategy` hook on each reconnect attempt.
@@ -315,7 +349,10 @@ export interface ClientStats {
  * - `'reconnecting'`, `{ connectionId, attempt?, delayMs? }`
  * - `'close'`, `{ connectionId }` once the FSM enters terminal `CLOSED`
  * - `'message'`, `{ payload, connectionId, byteOffset, warnings }` for every inbound frame
- * - `'warning'`, `MllpWarning` enriched with `connectionId` from the Connection layer
+ * - `'warning'`, `MllpWarning | AckCorrelationWarning`. A framing deviation arrives as a
+ *   `MllpWarning` enriched with `connectionId` from the Connection layer; the two
+ *   ACK-correlation codes arrive as {@link AckCorrelationWarning}, which adds
+ *   `controlIdBytes` and `elapsedSinceSendMs`. Narrow on `code` before reading either.
  * - `'securityWarning'`, `SecurityWarning`. Emitted on every successful
  *   `secureConnect` (initial + every reconnect) when `tls.allowUnverified` is `true`
  *   with code `MLLP_TLS_VERIFY_DISABLED`. Also mirrored to `process.emitWarning`.
@@ -760,18 +797,20 @@ export class MllpClient extends EventEmitter {
         onWarning: (code, ctx) => {
           // PLAN-06 (OBS-01, D-26), aggregate Correlator-emitted warning counts.
           this._aggregatedWarningsByCode[code] = (this._aggregatedWarningsByCode[code] ?? 0) + 1;
-          this._emitContained(
-            "warning",
-            Object.freeze({
-              code,
-              byteOffset: ctx.byteOffset,
-              message: `${code}: controlId=${ctx.controlId} elapsed=${ctx.elapsedSinceSendMs}ms`,
-              connectionId: this._connection?.connectionId ?? conn.connectionId,
-              timestamp: new Date(),
-            }),
-          );
+          // The message is a REGISTRY LOOKUP, not an interpolation. Everything
+          // input-derived is a number on its own field. See ack-diagnostics.ts.
+          const warning: AckCorrelationWarning = Object.freeze({
+            code,
+            byteOffset: ctx.byteOffset,
+            message: ackDiagnosticMessage(code),
+            controlIdBytes: ctx.controlIdBytes,
+            elapsedSinceSendMs: ctx.elapsedSinceSendMs,
+            connectionId: this._connection?.connectionId ?? conn.connectionId,
+            timestamp: new Date(),
+          });
+          this._emitContained("warning", warning);
         },
-        onUnmatchedAck: (controlId) => {
+        onUnmatchedAck: (controlIdBytes) => {
           // CLIENT-15: unmatched ACK in controlId mode. Emit a frozen
           // MllpFramingError('MLLP_ACK_UNMATCHED_CONTROL_ID') to the 'error'
           // event. listenerCount-guarded so absent listeners don't crash the
@@ -781,14 +820,17 @@ export class MllpClient extends EventEmitter {
             "MLLP_ACK_UNMATCHED_CONTROL_ID",
             0,
             Buffer.alloc(0),
-            `Unmatched ACK control ID${controlId === "" ? "" : `: ${controlId}`}`,
+            ackDiagnosticMessage("MLLP_ACK_UNMATCHED_CONTROL_ID"),
           );
           safeEmitError(
             this,
             Object.freeze({
               connectionId: this._connection?.connectionId ?? conn.connectionId,
               error: err,
-              controlId,
+              // The peer's MSA-2 byte LENGTH. The bytes themselves used to be
+              // here and on the message above; a peer sending a one-megabyte
+              // MSA-2 produced a one-megabyte Error.message, straight into a log.
+              controlIdBytes,
             }),
           );
         },
@@ -797,7 +839,7 @@ export class MllpClient extends EventEmitter {
           this._timedOutTotal += 1;
           entry.reject(
             new MllpTimeoutError(`ACK timeout after ${elapsedMs}ms`, {
-              messageControlId: entry.controlId ?? undefined,
+              messageControlIdBytes: entry.controlId?.length,
               elapsedMs,
               sentAt: entry.sentAt ?? 0,
             }),
@@ -1532,7 +1574,7 @@ export class MllpClient extends EventEmitter {
         cleanup();
         reject(
           new MllpTimeoutError(`waiting for drain timed out after ${ackTimeoutMs}ms`, {
-            messageControlId: undefined,
+            messageControlIdBytes: undefined,
             elapsedMs: ackTimeoutMs,
             sentAt: Date.now(),
           }),

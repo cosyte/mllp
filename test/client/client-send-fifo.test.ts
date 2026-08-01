@@ -102,7 +102,7 @@ describe("MllpClient.send (FIFO mode, PLAN-02)", () => {
     // assertion is that elapsedMs is recorded against sentAt (a positive number).
     expect(tErr.sentAt).toBeGreaterThan(0);
     expect(totalElapsed).toBeGreaterThanOrEqual(50);
-    expect(tErr.messageControlId).toBeUndefined();
+    expect(tErr.messageControlIdBytes).toBeUndefined();
     await client.close();
   });
 

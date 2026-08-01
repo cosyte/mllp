@@ -13,7 +13,9 @@ export {
   type StarterClientOptions,
   type RetryContext,
   type RetryStrategy,
+  type AckCorrelationWarning,
 } from "./client.js";
+export { ackDiagnosticMessage, type AckCorrelationCode } from "./ack-diagnostics.js";
 export {
   MllpTimeoutError,
   MllpBackpressureError,

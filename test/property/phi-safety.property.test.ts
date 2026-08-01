@@ -18,6 +18,14 @@
  * Mutation check: restore the old `snippet = accumulator.subarray(writePos-32, writePos)`
  * in `decoder.ts` and the `snippet` assertions below flip to red (the marker bytes
  * reappear in the snippet).
+ *
+ * **Scope, stated because a reader took it wider than it goes.** This file constructs a
+ * `FrameReader` and an `encodeFrame` call and never a client, so it says nothing at all
+ * about the surfaces a control ID travels: the correlator, the two ACK-correlation
+ * diagnostics, and the ACK timeout error. Those leaked, unbounded, while this suite was
+ * green, because the code path was unreachable from here. `test/phi/diagnostic-phi-leak.test.ts`
+ * is the suite that stands up a client and covers them; add a new consumer-controlled
+ * position to its slot table, not to this file.
  */
 
 import { describe, it, expect } from "vitest";

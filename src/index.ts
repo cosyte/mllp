@@ -99,4 +99,7 @@ export {
   isTransientConnectionError,
   isTlsVerificationErrorCode,
   isTlsProtocolError,
+  ackDiagnosticMessage,
+  type AckCorrelationCode,
+  type AckCorrelationWarning,
 } from "./client/index.js";
