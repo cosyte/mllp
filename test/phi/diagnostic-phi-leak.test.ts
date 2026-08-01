@@ -15,11 +15,20 @@
  * peer's own MSA-2 bytes with no bound at all, and the suite was green over
  * it because the code path was unreachable from a `FrameReader`.
  *
- * So the slot table below is the deliverable. It enumerates every position a
- * sender controls on the wire (the message control id as it travels through
- * correlation, the payload body, embedded VT and FS bytes, an oversized frame,
- * and everything the client reports on timeout, mismatch, reconnect and
- * ACK-correlation failure) and names the diagnostic code each one must reach.
+ * So the slot table below is the deliverable. It enumerates the positions a
+ * sender controls on the wire across three surfaces (the client, framing as it
+ * is reached through `Connection`, and the `ack-from-hl7` subpath): the message
+ * control id as it travels through correlation, the payload body, embedded VT
+ * and FS bytes, an oversized frame, and what the client reports on timeout,
+ * mismatch, disconnect and ACK-correlation failure. Each slot names the
+ * diagnostic code it must reach.
+ *
+ * **What it does NOT cover, said rather than implied.** No slot instantiates
+ * `MllpServer`. Its diagnostic surfaces were read (`'nack'`, `'connection'`,
+ * `'clientError'`, `'tlsClientError'`, and `_dispatchAck`'s connection error)
+ * and carry static strings, counts, or Node's own TLS and socket text, so the
+ * gap holds no HL7 payload today. That is a reason it was not urgent, not a
+ * reason to call the table complete. Add server slots before relying on it.
  *
  * **What `expectCode` proves, exactly.** The runner asserts it in **lenient mode
  * on the short probe only**, deliberately: a strict mode throws on the first
@@ -287,6 +296,8 @@ async function runClientScenario(spec: ClientScenario, strict: boolean): Promise
 
     // Structural identifiers on the model. All three are generated or
     // socket-level, never payload-derived, which is the claim under test.
+    // The 'ack' event's `controlId` is deliberately NOT among them; it is
+    // carried data, disclosed and pinned in its own test below.
     const identifiers = [
       conn.connectionId,
       client.getStats().connectionId ?? "",
@@ -574,6 +585,48 @@ describe("PHI: no consumer-controlled input reaches a diagnostic surface", () =>
 
   it("holds on the slots whose diagnostics legitimately count the input", () => {
     runGate(false);
+  });
+
+  it("the 'ack' event's controlId is carried data, not a structural identifier", async () => {
+    // Disclosed rather than swept, for the same reason `MllpAck.correlationId`
+    // is: the event already carries the whole ACK `payload`, so the id is bytes
+    // the subscriber holds either way, and it is the correlation datum the
+    // event exists to deliver. It is called out here because the enumeration in
+    // `getModelIdentifiers` is meant to be reviewable, and a payload-derived
+    // string on a public frozen event that is neither swept nor mentioned reads
+    // as an oversight rather than a decision. What must never carry it is a
+    // diagnostic, and that is what the slots above pin.
+    const id = "SYNTHID002";
+    const acks: Array<{ payload: Buffer; controlId: string | null }> = [];
+    const [local, peer] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: local, framing: {} });
+    const client = createClient({
+      host: "127.0.0.1",
+      port: 0,
+      ackTimeoutMs: ACK_TIMEOUT_MS,
+      correlateByControlId: true,
+    });
+    client.on("ack", (e: { payload: Buffer; controlId: string | null }) => {
+      acks.push(e);
+    });
+    client._attachExistingConnection(conn);
+    conn.notifyConnect("127.0.0.1", 2575);
+    try {
+      const sent = client.send(message(id));
+      await settle();
+      peer.write(frame(ackPayload(id)));
+      await settle();
+      await sent;
+
+      expect(acks).toHaveLength(1);
+      // It IS there, on purpose. The assertion is the justification: the same
+      // bytes are already in `payload`, which the event exists to hand over.
+      expect(acks[0]?.controlId).toBe(id);
+      expect(acks[0]?.payload.includes(Buffer.from(id, "latin1"))).toBe(true);
+    } finally {
+      client.destroy(new Error("disclosure complete"));
+      await settle();
+    }
   });
 
   it("declares one slot per consumer-controlled position, each with a distinct name", () => {

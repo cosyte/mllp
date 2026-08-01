@@ -114,7 +114,11 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   growth is correct. A first draft split the table in two by argument and was wrong about four
   slots, which were giving up the re-encoded-echo check for nothing.
   Scope, stated precisely rather than generously: this closes **unbounded** consumer-controlled input
-  on the `correlateByControlId` path. Two framing codes still render the hex of a **single** byte, and
+  on the `correlateByControlId` path. The slot table covers three surfaces (the client, framing via
+  `Connection`, and `ack-from-hl7`) and **no slot instantiates `MllpServer`**; the server's diagnostic
+  surfaces were read and carry static strings, counts, or Node's own TLS and socket text, so that gap
+  holds no HL7 payload today, which is why it was not urgent rather than why the table is complete.
+  Two framing codes still render the hex of a **single** byte, and
   `MllpFramingError.snippet` still carries one, both bounded by design and both now described
   accurately on `MllpWarning.message` (whose doc comment claimed the opposite, and shipped that claim
   into the published declarations).
