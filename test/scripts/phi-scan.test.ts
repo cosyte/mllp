@@ -9,7 +9,10 @@
  *     than none) and PASS genuinely synthetic, allow-listed content; and
  *   - the MLLP unwrap works, a framed message's HL7 payload is scanned exactly
  *     as an un-framed one, and malformed frames (missing end-block, double
- *     framing) do NOT bypass detection.
+ *     framing) do NOT bypass detection; and
+ *   - the enumeration TOCTOU window: what a file that goes away between the walk
+ *     and the read is allowed to do to a sweep (its own block below, with its own
+ *     deterministic harness).
  *
  * The committed differential golden frames (`test/differential/fixtures/*.frame.bin`)
  * are the real end-to-end negative case: the `all`-mode sweep must pass on them.
@@ -26,13 +29,23 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, mkdtempSync, rmSync, readFileSync, appendFileSync } from "node:fs";
+import {
+  writeFileSync,
+  mkdtempSync,
+  mkdirSync,
+  copyFileSync,
+  existsSync,
+  rmSync,
+  readFileSync,
+  appendFileSync,
+} from "node:fs";
 import { join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 
 const REPO_ROOT = process.cwd();
 const SCANNER_PATH = join(REPO_ROOT, "scripts", "phi-scan.ts");
 const OVERRIDES_PATH = join(REPO_ROOT, "phi-scan-overrides.md");
+const ALLOW_LIST_REL = join("scripts", "phi-allow-list.txt");
 const TSX_BIN = join(REPO_ROOT, "node_modules", ".bin", "tsx");
 
 // MLLP Release 1 framing bytes.
@@ -492,5 +505,231 @@ describe("phi-scan: --allow-fixture override gate", () => {
     } finally {
       writeFileSync(OVERRIDES_PATH, original);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Enumeration TOCTOU
+// ---------------------------------------------------------------------------
+
+/**
+ * `all` mode lists `test/` + `src/`, then reads each file. Anything created and
+ * removed inside that window makes a read throw `ENOENT`, and the scanner used
+ * to refuse the entire sweep over it (exit 2).
+ *
+ * This repo reaches that window through its OWN suite, unlike its sibling
+ * parsers: the two capture tests above `mkdtemp` a directory INSIDE `test/`,
+ * which is a walk root, write a fixture into it and remove it again. Measured on
+ * this checkout, those two directories exist for about 510 ms each per suite
+ * run. They cannot simply be moved elsewhere, because what they exist to prove
+ * is that a capture whose repo-relative path starts with `test/` earns the
+ * structured scan, so the path IS the fixture.
+ *
+ * These tests hit the window WITHOUT a sleep and WITHOUT a real build. The
+ * scanner runs `git check-ignore` and `git ls-files` after the walk and before
+ * the first read, so a `git` shim placed first on `PATH` is a deterministic hook
+ * into exactly that gap: it removes the decoy, then execs the real git. The shim
+ * is a file exec'd through PATH, not a shell-form spawn from this suite.
+ *
+ * Everything runs against a throwaway git repo (`cwd`, which is the scanner's
+ * `REPO_ROOT`), so no decoy is ever written into this repo and a parallel worker
+ * cannot see one.
+ *
+ * Two branches are NOT pinned here, deliberately rather than by oversight:
+ *   - a tolerated file written BACK before the post-sweep re-check. Nothing in
+ *     the scanner calls git after the reads, so there is no second deterministic
+ *     hook, and reaching it needs a timed re-create against a deliberately
+ *     slowed sweep. A load-sensitive sleep guarding a load-dependent race is the
+ *     failure mode this defect itself teaches. That branch can only turn a
+ *     tolerated skip back into the refusal these tests already pin, so losing it
+ *     loses the re-check, never the tolerance's bounds.
+ *   - `walk()`'s own `existsSync` -> `readdirSync` race, one phase earlier. It
+ *     has no hook at all (no subprocess runs before the walk), and it matters
+ *     more here than in the siblings because this repo's transient is a
+ *     DIRECTORY, removed wholesale. See the CHANGELOG entry for the disclosure.
+ */
+
+const tempRoots: string[] = [];
+
+function tempDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tempRoots.push(d);
+  return d;
+}
+
+/** Absolute path of the real `git`, resolved from PATH without a subprocess. */
+function realGit(): string {
+  for (const entry of (process.env["PATH"] ?? "").split(":")) {
+    if (entry.length === 0) continue;
+    const candidate = join(entry, "git");
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error("git not found on PATH");
+}
+
+function gitIn(cwd: string, args: string[]): void {
+  const r = spawnSync("git", args, { cwd, encoding: "utf8", shell: false });
+  expect(r.status, r.stderr).toBe(0);
+}
+
+/**
+ * A throwaway repo the scanner can treat as REPO_ROOT (git init is optional).
+ * It carries the allow-list the scanner loads, plus one CLEAN synthetic fixture
+ * under `test/` (the walk root), so a sweep here always observes at least one
+ * file and "observed nothing" cannot fire by accident.
+ */
+function makeScanRepo(opts: { git: boolean; track?: boolean }): string {
+  const d = tempDir("mllp-phi-toctou-");
+  if (opts.git) {
+    const init = spawnSync("git", ["init", "-q"], { cwd: d, encoding: "utf8", shell: false });
+    expect(init.status, init.stderr).toBe(0);
+  }
+  mkdirSync(join(d, "scripts"), { recursive: true });
+  mkdirSync(join(d, "test"), { recursive: true });
+  copyFileSync(join(REPO_ROOT, ALLOW_LIST_REL), join(d, ALLOW_LIST_REL));
+  copyFileSync(OVERRIDES_PATH, join(d, "phi-scan-overrides.md"));
+  writeFileSync(
+    join(d, "test", "corpus.hl7"),
+    msg(MSH, "PID|1||MRN12345^^^HOSP^MR||Doe^John^Q||19800115|M"),
+  );
+  if (opts.git && opts.track !== false) gitIn(d, ["add", "test/corpus.hl7"]);
+  return d;
+}
+
+/** A `git` that runs `pre` (a line of `sh`) before delegating to the real git. */
+function gitShim(pre: string): string {
+  const shimDir = tempDir("mllp-phi-shim-");
+  writeFileSync(join(shimDir, "git"), `#!/bin/sh\n${pre}\nexec '${realGit()}' "$@"\n`, {
+    mode: 0o755,
+  });
+  return shimDir;
+}
+
+function runScannerIn(
+  cwd: string,
+  shimDir: string | null,
+  extraEnv?: NodeJS.ProcessEnv,
+): RunResult {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
+  if (shimDir !== null) env["PATH"] = `${shimDir}:${process.env["PATH"] ?? ""}`;
+  const r = spawnSync(TSX_BIN, [SCANNER_PATH], { cwd, encoding: "utf8", shell: false, env });
+  return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+// The decoy is shaped like THIS repo's real transient, the mkdtemp'd capture
+// directory the two tests above create inside `test/`, not like a repo-root
+// build artifact (neither walk root is the repo root, so one would never be
+// enumerated here).
+const TRANSIENT_DIR = "phi-scan-cap-1a2b3c";
+const TRANSIENT_REL = `test/${TRANSIENT_DIR}/capture.txt`;
+
+function writeTransient(repo: string): string {
+  mkdirSync(join(repo, "test", TRANSIENT_DIR), { recursive: true });
+  const abs = join(repo, "test", TRANSIENT_DIR, "capture.txt");
+  writeFileSync(abs, "adapter capture, removed by the suite that wrote it\n");
+  return abs;
+}
+
+afterAll(() => {
+  for (const d of tempRoots) rmSync(d, { recursive: true, force: true });
+});
+
+describe("phi-scan: enumeration TOCTOU", () => {
+  it("tolerates an UNTRACKED file gone between enumeration and read, and reports it", () => {
+    const repo = makeScanRepo({ git: true });
+    const decoy = writeTransient(repo);
+    const r = runScannerIn(repo, gitShim(`rm -rf '${join(repo, "test", TRANSIENT_DIR)}'`));
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+    // Never silent: the skip is named, with the file that went away.
+    expect(r.stderr).toMatch(/skipped 1 untracked file\(s\) gone between enumeration and read/);
+    expect(r.stderr).toContain(TRANSIENT_REL);
+    expect(existsSync(decoy)).toBe(false);
+  });
+
+  it("still REFUSES when a TRACKED file vanishes in the same window", () => {
+    // The committed corpus is what the gate promises to have observed, so a
+    // tracked file that cannot be read is an incomplete scan, not a transient.
+    const repo = makeScanRepo({ git: true });
+    const doomed = join(repo, "test", "corpus.hl7");
+    const r = runScannerIn(repo, gitShim(`rm -f '${doomed}'`));
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/could not read test\/corpus\.hl7/);
+    expect(r.stderr).toMatch(/ENOENT/);
+  });
+
+  it("still REFUSES a non-ENOENT read failure on an untracked file", () => {
+    // Replaced by a directory rather than removed: EISDIR is a scan that failed,
+    // not a file that went away, so the tolerance must not swallow it.
+    const repo = makeScanRepo({ git: true });
+    const decoy = writeTransient(repo);
+    const r = runScannerIn(repo, gitShim(`rm -f '${decoy}'\nmkdir -p '${decoy}'`));
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/could not read/);
+    expect(r.stderr).toMatch(/EISDIR/);
+  });
+
+  it("REFUSES the tolerance outright when git cannot say what is tracked", () => {
+    // Fail closed: with no tracked set there is no way to tell a transient from
+    // committed content, so nothing is tolerated.
+    const repo = makeScanRepo({ git: false });
+    const decoy = writeTransient(repo);
+    const r = runScannerIn(repo, gitShim(`rm -f '${decoy}'`), {
+      GIT_CEILING_DIRECTORIES: tmpdir(),
+    });
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/could not read/);
+  });
+
+  it("REFUSES the tolerance when git answers with an EMPTY tracked set", () => {
+    // A removed `.git/index` makes `git ls-files` exit 0 with NO output, which
+    // would make every file untracked, the one state in which the tracked-file
+    // bound stops existing. An empty answer therefore counts as no answer. (A
+    // CORRUPT index exits 128 and was always caught by the `catch`.)
+    const repo = makeScanRepo({ git: true, track: false });
+    const decoy = writeTransient(repo);
+    const r = runScannerIn(repo, gitShim(`rm -f '${decoy}'`));
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/could not read/);
+  });
+
+  it("REFUSES an all-mode sweep that observed no files", () => {
+    // The refuse-a-scan-that-observes-nothing rule, now explicit: tolerating a
+    // vanished file must never be able to decay into a clean report of nothing.
+    // Nothing tracked and everything ignored, so the walk finds files and the
+    // filters leave zero targets. (`git check-ignore` never reports a TRACKED
+    // path as ignored, which is why the corpus fixture is left unstaged here.)
+    const repo = makeScanRepo({ git: true, track: false });
+    writeFileSync(join(repo, ".gitignore"), "*\n");
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/observed no files/);
+  });
+
+  it("still CATCHES a violator in an untracked file that does not vanish", () => {
+    // The tolerance is about a file that is GONE, never about untracked files.
+    const repo = makeScanRepo({ git: true });
+    writeFileSync(
+      join(repo, "test", "leak.hl7"),
+      msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M"),
+    );
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toMatch(/Anderson/);
+  });
+
+  it("still CATCHES a violator inside a transient that is NOT removed", () => {
+    // The mllp-shaped case: the capture directory this repo's own suite creates
+    // is scanned in full whenever it is still there when the read arrives.
+    const repo = makeScanRepo({ git: true });
+    mkdirSync(join(repo, "test", TRANSIENT_DIR), { recursive: true });
+    writeFileSync(
+      join(repo, "test", TRANSIENT_DIR, "capture.txt"),
+      frame(msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M")),
+    );
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toMatch(/PID-5/);
+    expect(r.stderr).toMatch(/Anderson/);
   });
 });

@@ -74,6 +74,25 @@
   the gate prints OK. When the gate goes red the fix is never to re-encode the character: rewrite
   with a period, colon, comma, or parentheses. Remaining known limits are in the script header and
   are shared across every copy, so fix them there, not here.
+- **The PHI scanner's enumeration is narrowed, and the refusal is not softened.** `all` mode lists
+  `test/` + `src/`, then reads; a file removed inside that window used to refuse the whole sweep.
+  **Exactly one case is tolerated** now: a file the walk enumerated **itself**, that **git does not
+  track**, failing with **`ENOENT`**, reported on stderr as skipped, never silent. Still refusing: a
+  tracked file that cannot be read, any non-`ENOENT` failure, a tolerated file back on disk at
+  sweep end, a `git` that cannot report the tracked set, and an **empty** tracked set. `all` mode
+  also refuses when it observed **no** files. **▶ NEVER soften the refuse-a-scan-that-observed-
+  nothing rule** and never widen the tolerance; narrow the enumeration instead. **This repo is the
+  one that could actually reach it**, because `test/scripts/phi-scan.test.ts` `mkdtemp`s capture
+  directories inside `test/`, a walk root (measured: ~510 ms each, twice per suite run). Those
+  tests must keep writing there, the `test/` prefix IS what they prove. A repo-root `tsup`
+  transient is out of scope only because neither walk root is the repo root, so **widening a walk
+  root reintroduces this verbatim**. **The test technique is the reusable part:** the scanner runs
+  `git` between the walk and the first read, so a `git` shim first on `PATH` is a deterministic
+  hook into exactly that gap, with **no sleep and no real build** (five of the eight tests use it).
+  Contract and residuals are in `phi-scan-overrides.md`: a path-keyed re-check misses a mid-sweep
+  rename; the **back-on-disk re-check is unpinned** (stubbing it leaves the suite green, and pinning
+  it needs the load-sensitive sleep this defect argues against); `walk()` skips symlinks; and
+  `walk()`'s own `existsSync`->`readdirSync` race exits **1**, the code reserved for "hits found".
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed
   `@cosyte/hl7-mllp` → `@cosyte/mllp`**. Not yet published, so the rename is free.
 - Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).

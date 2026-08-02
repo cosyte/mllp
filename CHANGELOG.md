@@ -185,6 +185,89 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **The PHI scanner no longer refuses an entire sweep because a transient file went away while it
+  was reading.** `all` mode lists `test/` + `src/`, then reads each file; anything created and
+  removed inside that window made a read throw `ENOENT` and took the whole scan down with it
+  (exit 2, the invocation-error code). The refusal was never wrong, the **enumeration** was, so the
+  enumeration is what changed. `PHI-SCAN-ENUMERATE-THEN-READ-CLASS`, porting the remedy that
+  shipped in `ccda#80`.
+
+  **This repo is genuinely reachable, and that was measured rather than read off the code.** With a
+  `git` shim first on `PATH` (the scanner runs `git` between the walk and the first read, so the
+  shim is a deterministic hook into exactly that gap), a `test/phi-scan-cap-*/capture.txt` removed
+  in the window made `pnpm phi-scan` on this checkout exit 2. Those directories are not
+  hypothetical: `test/scripts/phi-scan.test.ts` `mkdtemp`s two of them inside `test/`, which IS a
+  walk root, and polling the tree during a suite run measured each existing for about **510 ms**
+  (about 1.03 s of exposure per `pnpm test`). The siblings are spared only because their walk roots
+  are not the repo root, which is where a build transient lands. **The exposure is real but not
+  self-triggering:** nothing in this repo runs an `all`-mode sweep beside the suite (CI runs
+  `pnpm phi-scan` as a step strictly before `pnpm test` in one sequential job, the pre-commit hook
+  runs `--staged` and reads blobs from the index, and inside the test file the sweep is ordered
+  before both capture tests), so what is live is a hand-run or agent-run sweep during a test run.
+  Racing 88 sweeps against 6 suite runs produced 0 refusals, which is consistent with the measured
+  duty cycle: walk 2-4 ms, `git check-ignore` 6-9 ms, reads 11-19 ms, inside a ~4 s process.
+
+  **Exactly one case is now tolerated:** a file the walk enumerated **itself**, that **git does not
+  track**, failing with **`ENOENT`**. It is reported on stderr as skipped, naming the path, and is
+  never silent. **Still refusing:** a tracked file that cannot be read, any non-`ENOENT` failure, a
+  tolerated file back on disk at sweep end, a `git` that cannot report the tracked set, and an
+  **empty** tracked set (a removed `.git/index` exits 0 with no output, which would make every file
+  untracked and quietly delete the tracked-file bound; a corrupt one exits 128 and was already
+  caught). `all` mode additionally refuses when it observed **no** files, so the tolerance can never
+  decay into a clean report of nothing.
+
+  **Which bounds are pinned, and which are only disclosed.** Pinned by eight tests in
+  `test/scripts/phi-scan.test.ts`, each against a throwaway tree under `tmpdir()` (seven of them a
+  git repo, one deliberately not) and **five** of them driven by the `git`-shim technique, with no
+  sleep and no real build: the tolerance itself; the tracked-file bound; the `ENOENT`-only bound
+  (`EISDIR` via a decoy replaced by a directory); git unable to answer; the empty tracked set;
+  `observed no files`; a violator in an untracked file that does not vanish; and a violator inside a
+  transient that is still there when the read arrives. Each bound was **mutation-tested**: widening
+  `tolerateVanish` to `true` fails three of them, dropping the `ENOENT` check fails one, dropping
+  the `size > 0` guard fails one, and dropping the `observed === 0` refusal fails one. **Not pinned,
+  and measured as not pinned:** the back-on-disk re-check. Stubbing it out leaves all 40 tests
+  green. Reaching it needs a timed re-create against a deliberately slowed sweep, and a
+  load-sensitive sleep guarding a load-dependent race is the failure mode this defect itself
+  teaches; losing that branch loses the re-check, never the tolerance's bounds. **The gate drove
+  that branch by hand** (shim anchored on the second git call, `git ls-files`, against a 20,000-file
+  read loop with a tuned re-create delay) and confirmed the code right at all three delays, so the
+  branch is measured-correct and unpinned rather than unknown.
+
+  **Two residuals carried, not closed.** The post-sweep re-check is keyed on the enumerated PATH,
+  not on content, so an untracked file RENAMED inside the window goes unscanned under a clean
+  report; it is bounded (committing the file means `git add`, after which it is tracked and
+  untolerable) and closing it needs a content-addressed sweep, a different design rather than a
+  wider bound. And `walk()`'s own `existsSync` -> `readdirSync` race, one phase earlier, is
+  untouched: a directory removed in that window throws a plain `SystemError` `main()` does not
+  convert, so Node exits **1**, the code the contract reserves for "hits found". It matters more
+  here than in the siblings because this repo's transient is a **directory**, removed wholesale, and
+  it is unpinnable by the same technique because nothing runs before the walk.
+
+  **The suite keeps writing inside the walk root, deliberately.** The two capture tests exist to
+  prove that a file whose repo-relative path starts with `test/` earns the structured scan, so the
+  path is the fixture and moving them would delete what they test.
+
+  **Three things the gate checked hardest and could not break, recorded so they are not re-derived.**
+  The tracked-set spelling comparison holds: instrumented against this checkout, **zero** files come
+  out `tolerateVanish: true`, so the tolerance is inert on a clean tree, and a purpose-built repo of
+  15 adversarial tracked filenames (space, tab, newline, quote, backslash, `$`, `*`, `;`, non-ASCII,
+  CJK, emoji, plus an invalid-UTF-8 name) never marked a tracked file untracked, because `-z`
+  suppresses `core.quotePath` on both sides. The tolerance cannot reach `paths` or `staged` mode,
+  and `--allow-fixture` forces `mode = "paths"`, so an allow-list subtraction can never be used to
+  drive `all` mode to zero observed files. And in `all` mode `report()` is unreachable while
+  `observed === 0`, while in every mode a sweep that observed nothing has no hits to publish.
+  (`staged` legitimately reaches `report()` at `observed === 0` and prints `OK, no hits` when a
+  commit stages nothing in scope, which is why the refusal is scoped to `all`.)
+
+  **Two scope notes surfaced by the same review, one pre-existing and one introduced here.**
+  PRE-EXISTING: `walk()` tests `e.isFile()`, which is false for a symlink Dirent, so a symlinked
+  file under `test/` or `src/` is never swept in `all` mode; it is bounded, because git cannot
+  commit content through a symlink and `--staged` reads the index. INTRODUCED by this change: a
+  tolerated skip exits **0** with only a stderr line, including in CI, where the tree is at rest and
+  a skip is therefore anomalous by definition. On the base commit that same input exited 2. Both are
+  stated rather than changed: the first is not this defect, and the second **is** the shipped design
+  under review.
+
 - **Three doc comments that had outlived the code they described**, all of which shipped into the
   published type declarations. The `'reconnecting'` payload was documented as carrying
   `connectionId` only, while `MllpClient` populates `attempt` and `delayMs` when it schedules a
