@@ -104,6 +104,62 @@ exists to stop (caught by the conformance-refuter).
   with no HL7 segment line at all (a genuinely non-HL7 blob) is limited to the
   conservative dashed-SSN + email pass.
 
+## What a file that goes away mid-sweep may do
+
+`all` mode lists `test/` + `src/`, then reads each file. Anything created and
+removed inside that window makes a read throw `ENOENT`. The refusal was never
+wrong; the enumeration was, so the fix is scoped to the enumeration rather than
+to what a failed read means.
+
+**Exactly one case is tolerated:** a file the walk enumerated **itself**, that
+**git does not track**, failing with **`ENOENT`**. It is reported on stderr as
+skipped, naming the path, and is never silent.
+
+**Everything else still refuses (exit 2):** a tracked file that cannot be read,
+any non-`ENOENT` failure (`EACCES`, `EISDIR`, …), a tolerated file that is back
+on disk when the sweep ends, a `git` that cannot report the tracked set, and an
+**empty** tracked set (a removed `.git/index` makes `git ls-files` exit 0 with no
+output, which would make every file untracked and quietly delete the tracked-file
+bound; a corrupt one exits 128 and was always caught). `all` mode additionally
+refuses when it observed **no** files, so the tolerance can never decay into a
+clean report of nothing. **Do not soften that rule.** `--staged` reads blobs out
+of the index (`git show :path`) and never depends on any of this; a path named on
+the CLI is read as named and is never tolerated.
+
+This repo reaches the window through its **own suite**, which is what separates
+it from the sibling parsers: `test/scripts/phi-scan.test.ts` `mkdtemp`s capture
+directories inside `test/`, a walk root, and removes them again (measured: two
+directories, about 510 ms each per suite run). They are not moved elsewhere
+because what they exist to prove is that a capture whose repo-relative path
+starts with `test/` earns the structured scan, so the path **is** the fixture.
+A repo-root build transient (`tsup.config.bundled_<hash>.mjs`) is not enumerated
+here only because neither walk root is the repo root. **Widening a walk root
+removes that accident**, and the file is gitignored in none of the parsers.
+
+Four residuals, stated rather than hidden:
+
+- **The back-on-disk re-check is unpinned**, and that is deliberate. Stubbing it out leaves the
+  whole suite green. Reaching it needs a timed re-create against a deliberately slowed sweep, and a
+  load-sensitive sleep guarding a load-dependent race is the failure mode this defect teaches. It
+  has been driven by hand and behaves as described; losing it would lose the re-check, never the
+  tolerance's bounds.
+- **`walk()` skips symlinks** (`e.isFile()` is false for a symlink Dirent), so a symlinked file
+  under `test/` or `src/` is never swept in `all` mode. Pre-existing and bounded: git cannot commit
+  content through a symlink, and `--staged` reads the index.
+
+- **The post-sweep re-check is keyed on the enumerated PATH, not on content.** An
+  untracked file renamed inside the window is `ENOENT` at the old path and was
+  never enumerated under the new one, so its bytes go unscanned under a clean
+  report. Bounded: the file must be untracked, and committing it means `git add`,
+  after which it is tracked and untolerable. Closing it needs a content-addressed
+  sweep, a different design, not a wider bound.
+- **`walk()`'s own `existsSync` -> `readdirSync` race, one phase earlier.** A
+  directory removed inside that window throws a plain `SystemError` that `main()`
+  does not convert, so Node exits **1**, the code the contract reserves for "hits
+  found". It matters more here than in the siblings, because this repo's
+  transient is a **directory**, removed wholesale. Untouched by this gate and
+  unpinned: nothing runs before the walk, so there is no deterministic hook.
+
 ## Format
 
 Each entry is a markdown subsection:
