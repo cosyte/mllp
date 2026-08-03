@@ -128,7 +128,7 @@
     "test:coverage": "vitest run --coverage",
     "certs:gen": "node scripts/generate-test-certs.mjs",
     "clean": "rm -rf dist coverage",
-    "attw": "attw --pack . --profile node16",
+    "attw": "node scripts/attw.mjs --profile node16",
     "pack:docs": "bash scripts/build-docs-artifacts.sh",
     "version": "changeset version && node scripts/sync-version.mjs && prettier --write package.json src/index.ts",
     "publish:dry": "pnpm publish --dry-run --no-git-checks",

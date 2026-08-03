@@ -107,7 +107,9 @@ summary.
   `@cosyte/tsconfig`. **Target ES2023**, `NodeNext`.
 - **Build:** dual ESM + CJS + `.d.ts` via `tsup` (`@cosyte/tsup-config`); `attw` is a publish gate
   (per-condition types: `.d.ts` for `import`, `.d.cts` for `require`) across all three subpaths
-  (root, `/testing`, `/ack-from-hl7`).
+  (root, `/testing`, `/ack-from-hl7`). **The `attw` script is `node scripts/attw.mjs --profile
+  node16`, NOT the bare CLI** (see the guardrail below); the CLI reports a tarball with no
+  declarations as "does not contain types" and **exits 0**.
 - **Node:** **>= 22** (CI matrix 22 + 24).
 - **Package manager:** `pnpm@10`.
 - **Lint/format:** **ESLint 10** + unified `typescript-eslint` (type-checked) via
@@ -149,6 +151,53 @@ summary.
 - Short, testable functions over big state-machine blobs.
 - Coverage target: ≥ 90 % per-directory on `src/framing/`, `src/client/`, `src/connection/`, `src/server/`, `src/transport/` (enforced by `pnpm test:coverage`).
 - **In-memory transport is a first-class deliverable** (`@cosyte/mllp/testing`). Every test that can run over it must run over it; sockets are reserved for integration smoke tests.
+- **▶ `attw` SAYS "does not contain types" AND EXITS 0, SO THE `attw` SCRIPT IS A WRAPPER, NOT THE
+  BARE CLI.** `getExitCode.js` in `@arethetypeswrong/cli@0.18.4` opens with `if (!analysis.types)
+  return 0`, so the problem list is never consulted and no `--profile`, `--ignore-rules` or config
+  setting reaches that early return. For a package that ships types it means the declarations were
+  **not in the tarball**, which is a broken publish reported as a pass. **Measured on this package at
+  `0.0.6`, with ZERO concurrency**, under the old `attw --pack . --profile node16`: `rm -rf dist &&
+  pnpm attw` printed the sentence and exited **0**. **The race only supplies the condition**, so the
+  answer is **not** a lock, a lease or a build queue: the gate must be able to say its own inputs were
+  missing, whatever removed them.
+  **▶ THE EXIT-0 PATH NEEDS THE TARBALL TO CARRY NO DECLARATION AT ALL, AND THAT BOUNDARY IS SPECIFIC
+  TO THIS PACKAGE. NEVER RESTATE IT AS "MISSING DECLARATIONS EXIT 0".** `tsup` emits a shared type
+  chunk (`dist/index-<hash>.d.ts`) beside the three entry declarations. Measured: deleting only the
+  six entry `.d.ts`/`.d.cts` files leaves that chunk in the tarball, `analysis.types` is truthy, the
+  problem list IS consulted, and attw reds honestly (`❌ No types`, UntypedResolution, **exit 1**);
+  the same removal **plus** `dist/index-*.d.*ts` is what prints the sentence and exits **0**. A draft
+  of this entry claimed the six-file removal exited 0 and was wrong. The die message therefore refuses
+  to promise which way attw would have gone, and `test/scripts/attw-gate.test.ts` reds if the promise
+  is restored. The build window lands squarely in the exit-0 state anyway, because `tsup` writes JS in
+  one pass and **every** declaration in a later one, so no moment exists where only some are present:
+  polling two real clean builds here for `dist/index.mjs` and then the **first declaration of any
+  kind** gave windows of **4.25s and 3.31s**, holding JS and zero declarations throughout. **Do not
+  write a single figure down as the window** (the absolute timings move run to run and with load); the
+  stable and sufficient claim is that the gap is **seconds, not milliseconds**, which is wide enough
+  for a concurrent build or `pnpm clean` to land `attw` in it.
+  `scripts/attw.mjs` carries **two nets that catch different things**: a preflight that every relative
+  path `package.json` promises (`main`, `module`, `types`, `typings`, every string leaf of `exports`)
+  exists and is non-empty, which catches the build window and **names the missing file**; and a
+  post-check on the untyped sentence, which catches what the preflight structurally cannot, namely
+  declarations present on disk but excluded from the tarball by `files`/`.npmignore`. **No instance of
+  that second case is on record here.** **This package has three subpaths, so the preflight has twelve
+  artifact paths to check**, and `test/scripts/attw-gate.test.ts` pins that it reaches a subpath's
+  `require` branch and not just the root. **The one disclosed hole in net 1:** `tsup` emits a shared
+  type chunk (`dist/index-<hash>.d.ts`) that `package.json` names nowhere, so the preflight cannot see
+  it go missing; that is left to net 2 and to `attw` itself rather than papered over with a glob.
+  **The post-check reads a string, so what would hide that string is refused**, by option name and
+  wholesale rather than by value. **Three routes were re-measured here**, on this package's own
+  untyped pack and under its own `--profile node16`, each handing back exit 0 with the sentence
+  unreadable: `--quiet`, `--format json`, and a `.attw.json` setting either (`readConfig()` applies it
+  after argv). `--config-path` is refused too, but **by inference, not measurement**.
+  **`--profile node16` is deliberate here and is forwarded, not dropped** (this repo does not support
+  the node10 resolution); a fixture that is red under the default profile and green under `node16`
+  pins that through the wrapper, so dropping the flag reds the suite. `scripts/verify.sh` in the
+  meta-repo needs no change and must not be touched for this. The test file also pins **the upstream
+  exit-0 itself**, so an `attw` upgrade that reworks the wording or fixes the exit code reds the suite
+  instead of letting the net go quietly slack, plus a **negative control** on a well-formed package
+  and that a **real `attw` failure still fails**: a gate that only ever fails is not a gate, and one
+  that swallows the status is not one either.
 
 ## Standing disciplines (every change)
 
