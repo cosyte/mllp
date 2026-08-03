@@ -91,12 +91,22 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   `git show :<path>`, and git stores a symbolic link as its **target path** under mode `120000`, so
   it scanned the path text.
 
-  **Neither route follows the link.** Following would read bytes the enumeration does not control
-  (outside the repo, a loop, a device, a FIFO that blocks the gate forever), and git does not carry
-  those bytes anyway, so a hit on them would be a claim about something no commit contains. The
-  enumeration is narrowed instead: a non-regular in-scope entry **refuses the scan** (exit 2, the
-  existing "could not complete" code), naming **every** offender. `--staged` now reads
-  `git diff --cached --raw -z` so the destination mode is visible.
+  **Neither route follows a link it finds INSIDE a scan root.** Following would read bytes the
+  enumeration does not control (outside the repo, a loop, a device, a FIFO that blocks the gate
+  forever), and git does not carry those bytes anyway, so a hit on them would be a claim about
+  something no commit contains. The enumeration is narrowed instead: a non-regular in-scope entry
+  **refuses the scan** (exit 2, the existing "could not complete" code), naming **every** offender.
+  `--staged` now reads `git diff --cached --raw -z` so the destination mode is visible. The scan
+  roots' own names are matched as well as the prefix, because an entry named exactly `test` or `src`
+  does not sit inside a root, it **replaces** one, and a prefix test alone let a staged mode-`120000`
+  blob named `test` through at exit 0.
+
+  **The root itself is the one thing still followed, and a flat "neither route follows a link" would
+  be false.** `walk()` opens `test/` and `src/` with `existsSync` + `readdirSync`, and both follow,
+  so replacing a walk root with a link to a directory outside the repo makes the walk read straight
+  through it. Pre-existing and **fail-safe rather than blind**: measured, the tree beyond the link is
+  read and its PHI is reported as a hit. Disclosed rather than closed, because refusing a linked root
+  is a decision about repo layout, not this defect.
 
   **`--diff-filter` admits `T` (typechange), and leaving it out would have made the mode check
   unreachable whenever the file being replaced was already tracked.** Replacing a **tracked** regular
@@ -121,7 +131,12 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   unchanged. The gitlink (mode `160000`) arm is **not** a hole this closes: `--staged`'s scope already
   reached a staged submodule under both roots and `git show` on one fails with `bad object`, so the
   base commit already refused it, and what changed is that the diagnostic now says what the entry is.
-  The refuse-a-sweep-that-observed-nothing rule and the vanished-transient tolerance are untouched.
+  The refuse-a-sweep-that-observed-nothing rule and the vanished-transient tolerance are untouched:
+  a non-regular entry that goes away mid-sweep therefore still **refuses**, because that tolerance is
+  scoped to the read and these entries are refused at enumeration. That asymmetry is deliberate in
+  direction, fail-closed being the correct way for a PHI gate to be wrong, and it is not reachable
+  here: nothing in this repo creates a non-regular entry under a scan root, and every one the tests
+  create lives in a throwaway repo under `tmpdir()`.
 
   **This corrects a claim made under this same heading by the previous scanner change**, which called
   the symlink gap "bounded, because git cannot commit content through a symlink and `--staged` reads

@@ -101,7 +101,12 @@
   0 "OK, no hits" over a name-bearing payload that exited 1 when named explicitly. Following a link
   was refused as the remedy (bytes the enumeration does not control, and git carries none of them);
   the enumeration is narrowed instead, and every offender is named. **A refusal never reports the
-  link target** (working-tree text that can itself carry PHI). **▶ `--diff-filter` MUST KEEP `T`:**
+  link target** (working-tree text that can itself carry PHI). **▶ NEVER WRITE "NEITHER ROUTE FOLLOWS
+  A LINK" FLAT: `walk()` opens the ROOTS with `existsSync` + `readdirSync`, which both follow**, so
+  replacing `test/` or `src/` itself with a link is read straight through. Pre-existing and fail-safe
+  rather than blind (the tree beyond it is read and its PHI reported), disclosed not closed. The
+  scope test matches the roots' own NAMES as well as the prefix, because an entry named exactly
+  `test` or `src` replaces a root instead of sitting in one. **▶ `--diff-filter` MUST KEEP `T`:**
   replacing a **tracked** file with a link is neither add nor modify, so `AM` deleted the record
   before any mode was read and the hook passed mode `120000` green (measured on git 2.39.5: `AM`
   yields an empty raw stage). **"In scope" is each route's own ROOT** (`test/`, `src/`); the

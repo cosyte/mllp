@@ -176,12 +176,21 @@ both walk roots:
 Naming the target explicitly exited 1 with every hit throughout. The payload was
 always detectable; the two routes never looked at it.
 
-**Neither route is made to follow a link.** Following would read bytes the
-enumeration does not control (outside the repo, a loop, a device, a FIFO that
-blocks the gate forever), and git does not carry those bytes anyway, so a hit on
-them would be a claim about something no commit contains. Refusing states the
-only true thing available: there is an entry here the scan cannot account for, so
-the scan is not clean.
+**Neither route follows a link it finds INSIDE a scan root.** Following would read
+bytes the enumeration does not control (outside the repo, a loop, a device, a
+FIFO that blocks the gate forever), and git does not carry those bytes anyway, so
+a hit on them would be a claim about something no commit contains. Refusing
+states the only true thing available: there is an entry here the scan cannot
+account for, so the scan is not clean.
+
+**The root itself is the exception, and the flat sentence "neither route follows
+a link" was false.** `walk()` opens `test/` and `src/` with `existsSync` +
+`readdirSync`, and both follow, so replacing a walk root with a link to a
+directory outside the repo makes the walk read straight through it.
+**Pre-existing and fail-safe rather than blind**: measured, the tree beyond the
+link is read and its PHI is reported as a hit (exit 1). Disclosed rather than
+closed, because refusing a linked root is a decision about repo layout, not this
+defect.
 
 **"In scope" is each route's own existing root, not a new boundary.** The walk
 still exempts a gitignored entry (the same rule that already exempts a gitignored
@@ -206,8 +215,16 @@ before any mode could be read and the hook passed a mode-`120000` blob green
 Admitting `T` also scans the reverse typechange, a link replaced by a real file
 that bears PHI.
 
-Three residuals here, stated rather than hidden:
+Residuals here, stated rather than hidden. **No count is written down**, because a list with a
+tally on the front gets read as complete and this one was already short by two:
 
+- **A non-regular entry that goes away mid-sweep still REFUSES**, unlike a regular file. The
+  vanished-transient tolerance above is scoped to the READ, and these entries are refused at
+  enumeration, before any read. The asymmetry is deliberate in direction (fail-closed is the correct
+  way for a PHI gate to be wrong) and is not reachable in this repo: nothing here creates a
+  non-regular entry under `test/` or `src/`, and the tests that create them confine every one to a
+  throwaway repo under `tmpdir()`. **Do not close it by widening the tolerance** (the standing rule
+  is to narrow the enumeration, never to soften the refusal).
 - **A `Dirent` whose every predicate is false is resolved with one `lstat`, and that branch is
   unpinned.** `readdir` may return no type for an entry (`DT_UNKNOWN`, which some filesystems do),
   which leaves `isFile()`, `isDirectory()` and the whole closed set all false. That is an **absent

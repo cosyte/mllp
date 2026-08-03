@@ -997,6 +997,23 @@ describe("phi-scan: --staged refuses a non-regular staged entry", () => {
     expect(r.stderr).toContain("a gitlink");
   });
 
+  it("REFUSES a staged entry named exactly `test` or `src`, which REPLACES a walk root", () => {
+    // A prefix test alone lets this one through: it is not "under" a root, it
+    // IS one. Measured before the root's own name was matched: `--staged` exited
+    // 0 "OK, no hits" over a staged mode-120000 blob named `test`.
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    rmSync(join(repo, "test"), { recursive: true, force: true });
+    symlinkSync(file, join(repo, "test"));
+    gitIn(repo, ["add", "-A", "test"]);
+    expect(gitOut(repo, ["diff", "--cached", "--raw", "--", "test"])).toMatch(/ 120000 /);
+
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/refusing the scan/);
+    expect(r.stderr).toContain("a symbolic link");
+  });
+
   it("does NOT refuse a non-regular entry OUTSIDE both roots (the scope is not widened)", () => {
     const repo = makeScanRepo({ git: true });
     const { file } = plantPayload(repo);

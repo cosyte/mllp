@@ -83,12 +83,21 @@
  * explicitly exited 1 with every hit. The payload was always detectable; the
  * two routes never looked at it.
  *
- * Neither route is made to follow a link: following would read bytes the
- * enumeration does not control (outside the repo, a loop, a device, a FIFO that
- * blocks the gate forever), and git does not carry those bytes anyway, so a hit
- * on them would be a claim about something no commit contains. Refusing states
- * the only true thing available: there is an entry here the scan cannot account
- * for, so the scan is not clean.
+ * Neither route follows a link it finds INSIDE a scan root: following would read
+ * bytes the enumeration does not control (outside the repo, a loop, a device, a
+ * FIFO that blocks the gate forever), and git does not carry those bytes anyway,
+ * so a hit on them would be a claim about something no commit contains. Refusing
+ * states the only true thing available: there is an entry here the scan cannot
+ * account for, so the scan is not clean.
+ *
+ * ▶ THE ROOT ITSELF IS THE EXCEPTION, AND WRITING "NEITHER ROUTE FOLLOWS A LINK"
+ * FLAT WAS FALSE. `walk()` opens `TEST_ROOT` / `SRC_ROOT` with `existsSync` +
+ * `readdirSync`, and both FOLLOW, so replacing `test/` or `src/` itself with a
+ * link to a directory outside the repo makes the walk read straight through it.
+ * PRE-EXISTING and fail-safe rather than blind (measured: the tree beyond the
+ * link is read and its PHI is reported as a hit, exit 1), which is why it is
+ * disclosed here instead of closed: refusing a linked root is a different
+ * decision about repo layout, not this defect. Do not restore the flat claim.
  *
  * "In scope" is each route's own existing ROOT, not a new boundary: the walk
  * still excludes a gitignored entry (the same rule that already excludes a
@@ -155,12 +164,22 @@ function isScannableTestFile(relPath: string): boolean {
   return relPath.startsWith("test/") && !relPath.endsWith(".ts") && !relPath.endsWith(".md");
 }
 
-// The two scan ROOTS, by prefix. This is the boundary a NON-REGULAR entry is
-// judged against on both routes: the extension rules above and in
-// `buildTargetsForStaged` are judgements about bytes the route could have read,
-// and a link's name says nothing about the other side. See the banner.
+// The two scan ROOTS. This is the boundary a NON-REGULAR entry is judged against
+// on both routes: the extension rules above and in `buildTargetsForStaged` are
+// judgements about bytes the route could have read, and a link's name says
+// nothing about the other side. See the banner.
+//
+// The ROOT'S OWN NAME is matched as well as the prefix, and that is not
+// symmetry for its own sake: a prefix test alone lets a staged entry named
+// exactly `test` or `src` through, which is the one path that REPLACES a walk
+// root rather than sitting inside it.
 function isUnderScanRoot(relPath: string): boolean {
-  return relPath.startsWith("test/") || relPath.startsWith("src/");
+  return (
+    relPath === "test" ||
+    relPath === "src" ||
+    relPath.startsWith("test/") ||
+    relPath.startsWith("src/")
+  );
 }
 
 // Person-name fields keyed by segment id. XPN fields carry family in component 1
