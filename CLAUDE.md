@@ -91,8 +91,33 @@
   hook into exactly that gap, with **no sleep and no real build** (five of the eight tests use it).
   Contract and residuals are in `phi-scan-overrides.md`: a path-keyed re-check misses a mid-sweep
   rename; the **back-on-disk re-check is unpinned** (stubbing it leaves the suite green, and pinning
-  it needs the load-sensitive sleep this defect argues against); `walk()` skips symlinks; and
+  it needs the load-sensitive sleep this defect argues against); and
   `walk()`'s own `existsSync`->`readdirSync` race exits **1**, the code reserved for "hits found".
+- **A non-regular entry under a scan root refuses the scan, on BOTH routes, and follows nothing.** A
+  symbolic link read CLEAN on both: `walk()` enumerates `Dirent.isFile()`, an **lstat** answer, so a
+  link is neither a file nor a directory (and `isDirectory()` is lstat too, so a **linked directory**
+  took its whole subtree with it), while `--staged` read `git show :<path>`, which for mode `120000`
+  hands back the **target path text**, never the target's bytes. Measured on `d854e81`: both exited
+  0 "OK, no hits" over a name-bearing payload that exited 1 when named explicitly. Following a link
+  was refused as the remedy (bytes the enumeration does not control, and git carries none of them);
+  the enumeration is narrowed instead, and every offender is named. **A refusal never reports the
+  link target** (working-tree text that can itself carry PHI). **▶ NEVER WRITE "NEITHER ROUTE FOLLOWS
+  A LINK" FLAT: `walk()` opens the ROOTS with `existsSync` + `readdirSync`, which both follow**, so
+  replacing `test/` or `src/` itself with a link is read straight through. Pre-existing and
+  link-NEUTRAL: the tree beyond it is scanned exactly as the root it replaced would have been, with
+  that root's own limits (so a payload behind a linked `test/` is reported, exit 1, while the same
+  payload behind a linked `src/` gets only the conservative pass). Disclosed, not closed, and never
+  restate it as a promise that a linked root is always caught. The
+  scope test matches the roots' own NAMES as well as the prefix, because an entry named exactly
+  `test` or `src` replaces a root instead of sitting in one. **▶ `--diff-filter` MUST KEEP `T`:**
+  replacing a **tracked** file with a link is neither add nor modify, so `AM` deleted the record
+  before any mode was read and the hook passed mode `120000` green (measured on git 2.39.5: `AM`
+  yields an empty raw stage). **"In scope" is each route's own ROOT** (`test/`, `src/`); the
+  `.ts`/`.md` **name** exemptions deliberately do NOT carry over to a non-regular entry, because they
+  are judgements about bytes. Disclosed, not fixed: `R`/`C` rename/copy are not enumerated by
+  `--staged` at all (**pre-existing**), and explicit-path mode still reads **through** a link.
+  Mode `160000` gitlinks were **already** refused here (`git show` fails `bad object`); only the
+  diagnostic changed. **Do not "resync" this to a sibling parser's scope** and do not soften it.
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed
   `@cosyte/hl7-mllp` → `@cosyte/mllp`**. Not yet published, so the rename is free.
 - Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).
