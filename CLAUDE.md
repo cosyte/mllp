@@ -143,8 +143,12 @@ summary.
   `src/framing|client|connection|server|transport`.
   **A slow case states its own budget; the suite-wide `testTimeout` is not for widening.** Raising
   the global buys a false green everywhere to spend a false red in one place, so a case that needs
-  more than the ceiling says so at its own site, with the reason. The sites doing that today name
-  themselves; `grep` for `timeout:` under `test/`. Two rules learned by measuring rather than
+  more than the ceiling says so at its own site, with the reason. **No list of those sites is kept,
+  here or anywhere; read them off the tests, and know there are two spellings** (the options object
+  `{ timeout: N }` and a **bare trailing number** on `it`, which the `attw` gate uses through a
+  named constant, so a `timeout:` search misses it and finds `spawnSync`'s unrelated kill timeout
+  instead). Three drafts of this slice kept such a list and all three were wrong. Two rules learned
+  by measuring rather than
   reading, and both apply to the next repo that tries this: **a budget equal to the framework
   default is a no-op** (Vitest 4.1.4's own defaults are 5,000 ms per test and 10,000 ms per hook,
   which is what made the old `hookTimeout` line do nothing), and **trim before you bound**. On this

@@ -14,9 +14,10 @@ three runs out of three on correct code and head passed three out of three.
 carrying no budget of its own peaks at 2.6 s under four concurrent suites, so the shared ceiling is
 no longer what stands between this suite and a false red, and moving it either way would be churn.
 
-The one number that did move is `test/tls/**`, where every case generates an RSA key pair and
-completes a real handshake and the slowest peaked at 9.70 s against a 10 s ceiling. Both TLS files
-now carry a suite-level budget stated at the site.
+Two sites gain a budget and no pre-existing number changes value. The larger is `test/tls/**`, where
+every case generates an RSA key pair and completes a real handshake and the slowest peaked at 9.70 s
+against a 10 s ceiling; both TLS files now carry a suite-level budget stated at the site. The smaller
+is the one case this slice adds, which peaked at 9.20 s for the same reason.
 
 Two trims did the rest. The phi-scan suite spawned the scanner through `tsx` dozens of times (466 ms
 a start against 137 ms for bare `node`) and now spawns `node` with native type stripping, going from

@@ -282,21 +282,26 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   **`testTimeout: 10_000` stays, and the reason is not the one this change set out to give.** After
   the trim, the slowest case in the suite that carries **no budget of its own** is a `fast-check`
   property sweep at **2.6 s peak** under four concurrent coverage suites, and across three loaded
-  runs **not one** unbudgeted case passed 5 s. So neither 10,000 nor Vitest's 5,000 is what stands
+  runs **not one** unbudgeted case passed 5 s. (Every `attw` gate case is budgeted for this count,
+  in the bare-trailing-number form described at the end of this entry, which is why the suite's
+  slowest cases are not in it.) So neither 10,000 nor Vitest's 5,000 is what stands
   between this suite and a false red any more, and an earlier draft of this entry was wrong to say
   the framework default would sit close to reddening correct code. The literal is left alone because
   no measurement asks it to move: halving a documented ceiling with nothing near it is churn, and
   `PARSER-TESTTIMEOUT-ASSERTS-AN-IDLE-BOX` is satisfied by removing what was near it. The literal was
   never what asserted an idle box.
 
-  **`test/tls/**` gets a suite-level budget, and this is the one place a number moved.** Every case
-  there generates an RSA key pair and completes a real TLS handshake, both CPU-bound and
+  **Two sites gain a budget, and no pre-existing number changes value.** The larger is `test/tls/**`,
+  where every case generates an RSA key pair and completes a real TLS handshake, both CPU-bound and
   proportional to machine load, while what each case asserts is an outcome (a classification, a
   flag, a frame delivered) and never a duration. Over 96 TLS case-runs under four concurrent
   coverage suites the WANT-authorized regression **peaked at 9.70 s**, against the 10 s ceiling it
   used to run under. No TLS case was observed timing out, and the budget is not claimed to fix an
   observed red: a 3 % margin on a load-proportional case is a coin flip, and the budget is what buys
-  it out of the shared ceiling.
+  it out of the shared ceiling. The smaller is the one case this slice adds, the `tsx`/`node` parity
+  check below: it is the only case in the suite still paying a `tsx` cold start, and it **peaked at
+  9.20 s** under the same four concurrent suites, which is the same argument at 92 % of the ceiling.
+  On a quiet box it runs in under 2 s, so the budget looks gratuitous there and is not.
 
   **Trim first: the phi-scan suite was paying a `tsx` start per case.** It spawns the scanner dozens
   of times through two helpers, and on this scanner `tsx` costs **466 ms** against **137 ms** for a
@@ -333,11 +338,23 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   and `pnpm test:coverage`, so the suite is paid for twice per matrix leg.
 
   **The rule this leaves behind, stated once:** a case that needs more than the shared ceiling
-  states its own budget at its own site and says why. **The sites doing that name themselves; `grep`
-  for `timeout:` under `test/` rather than trusting a list here, which is how two drafts of this
-  entry came to name the wrong set.** The quirk corpus's large-payload case was briefly given one
-  and then had it taken away again, because after the trim it no longer needed one, and a budget
-  that changes nothing is the same defect as the `hookTimeout` line above.
+  states its own budget at its own site and says why. **No list of those sites is kept anywhere,
+  because three drafts of this entry kept one and all three named the wrong set.** Read them off the
+  tests, and note there are **two spellings**: the options object (`it(name, { timeout: N }, fn)`,
+  `describe(name, { timeout: N }, fn)`) and a **bare trailing number** (`it(name, fn, N)`), which is
+  the form the `attw` gate uses through a named constant. A search for `timeout:` alone finds
+  neither the second form nor the constant, and does turn up `spawnSync`'s unrelated child-process
+  kill timeout. The quirk corpus's large-payload case was briefly given a budget and then had it
+  taken away again, because after the trim it no longer needed one, and a budget that changes
+  nothing is the same defect as the `hookTimeout` line above.
+
+  **Disclosed, not fixed, and it outranks everything above: the tightest idle-box assumption in
+  `test/tls/**` is not a test budget at all.** Both TLS files poll with a local
+  `waitFor(cond, timeoutMs = 3000)` helper, and two cases pass 5,000 ms explicitly. Those are
+  wall-clock ceilings on a loaded box exactly the way `testTimeout` was, they are unchanged here and
+  unchanged from base, and no per-suite budget relaxes them. They did not red in any run measured
+  for this slice. Tightening them is its own slice; widening them is not obviously right either,
+  since a poll ceiling is also what stops a hung case from burning the whole 60 s budget.
 
   **Disclosed, not fixed.** `engines.node` says `>=22.0.0`, while node's type stripping is on by
   default only from 22.18, so the phi-scan suite now needs the newer 22 that CI's 22 and 24 matrix

@@ -15,7 +15,11 @@
  *
  * Use it only where the size makes it worth the indirection. A short payload is
  * clearer as a plain `toEqual`, and every other assertion in the suite stays that
- * way on purpose.
+ * way on purpose. That is not only taste: `Buffer.equals` compares BYTES, so it
+ * reads a `Uint8Array` with the same contents as equal where `toEqual` would
+ * throw on the type. The `Buffer` parameter types here are what pin that, and
+ * Buffer-ness at the two call sites is still asserted by their neighbouring
+ * plain `toEqual`s, so do not widen these signatures to `Uint8Array`.
  */
 import { expect } from "vitest";
 

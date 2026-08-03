@@ -20,8 +20,9 @@ import { cosyteVitest } from "@cosyte/vitest-config";
  * TIMEOUTS. The rule is that a case needing more than this ceiling states its OWN budget at its
  * own site, with the reason, so the ceiling never has to be widened for one case and never
  * becomes the thing standing between a loaded machine and a false red. Which sites do that is
- * deliberately not listed here: `grep` for `timeout:` under `test/`, because a list in this
- * comment went stale inside one slice. `hookTimeout` was removed because it was set to exactly
+ * deliberately NOT listed here, because a list in this comment went stale inside one slice; read
+ * them off the tests, and note two spellings, the `{ timeout: N }` options object and a bare
+ * trailing number on `it`. `hookTimeout` was removed because it was set to exactly
  * Vitest's own default and changed nothing. `testTimeout` is kept at 10_000, not because the
  * suite needs it (measured, the slowest case with no budget of its own is well under Vitest's
  * own 5,000 ms default even under concurrent suites) but because nothing measured asks it to
