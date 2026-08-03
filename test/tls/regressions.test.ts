@@ -47,7 +47,14 @@ async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   }
 }
 
-describe("Phase 8 TLS regressions", () => {
+// Every case here generates an RSA key pair and completes a real TLS handshake over
+// a real socket. That cost is CPU-bound and scales with how loaded the machine is,
+// while the thing each case asserts is an OUTCOME (a classification, a flag, a frame
+// delivered), never a duration. Measured under `pnpm test:coverage` with four suites
+// running concurrently, cases here reached the suite-wide 10 s ceiling and red on
+// correct code. The budget is stated here so the ceiling is not what protects them.
+// See the CHANGELOG entry for the spread.
+describe("Phase 8 TLS regressions", { timeout: 60_000 }, () => {
   const clients: MllpClient[] = [];
   const mllpServers: MllpServer[] = [];
   const rawServers: Array<TlsServer | RawNetServer> = [];

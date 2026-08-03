@@ -83,7 +83,7 @@
   also refuses when it observed **no** files. **▶ NEVER soften the refuse-a-scan-that-observed-
   nothing rule** and never widen the tolerance; narrow the enumeration instead. **This repo is the
   one that could actually reach it**, because `test/scripts/phi-scan.test.ts` `mkdtemp`s capture
-  directories inside `test/`, a walk root (measured: ~510 ms each, twice per suite run). Those
+  directories inside `test/`, a walk root, twice per suite run. Those
   tests must keep writing there, the `test/` prefix IS what they prove. A repo-root `tsup`
   transient is out of scope only because neither walk root is the repo root, so **widening a walk
   root reintroduces this verbatim**. **The test technique is the reusable part:** the scanner runs
@@ -141,6 +141,18 @@ summary.
   `@cosyte/eslint-config`; Prettier via `@cosyte/prettier-config`. Lint at `--max-warnings=0`.
 - **Testing:** **Vitest 4** + v8 coverage (`@cosyte/vitest-config`), per-directory >= 90 gates on
   `src/framing|client|connection|server|transport`.
+  **A slow case states its own budget; the suite-wide `testTimeout` is not for widening.** Raising
+  the global buys a false green everywhere to spend a false red in one place, so a case that needs
+  more than the ceiling says so at its own site, with the reason. The sites doing that today name
+  themselves; `grep` for `timeout:` under `test/`. Two rules learned by measuring rather than
+  reading, and both apply to the next repo that tries this: **a budget equal to the framework
+  default is a no-op** (Vitest 4.1.4's own defaults are 5,000 ms per test and 10,000 ms per hook,
+  which is what made the old `hookTimeout` line do nothing), and **trim before you bound**. On this
+  suite the two dominant costs were a `tsx` start paid per subprocess spawn and `toEqual` walking a
+  megabyte of `Buffer` element by element in JS; both were cost, not subject, and removing them beat
+  every candidate number. The method, conditions and figures are in `CHANGELOG.md`, and **measure
+  under `pnpm test:coverage` and under concurrent suites or the figures come out roughly half of
+  what CI sees.**
 - **CI/CD:** thin callers of the reusable `cosyte/.github` workflows.
 - **Runtime deps:** **Zero.** Node stdlib only (`net`, `tls`, `stream`, `events`, `buffer`, `timers`).
 - **Peer deps:** `@cosyte/hl7` as an **optional** peer dep, referenced only from the

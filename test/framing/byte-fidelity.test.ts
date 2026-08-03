@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { encodeFrame } from "../../src/framing/encoder.js";
 import { FrameReader } from "../../src/framing/decoder.js";
 import { MllpFramingError } from "../../src/framing/error.js";
+import { expectBytesEqual } from "../helpers/bytes.js";
 
 const VT = 0x0b;
 const FS = 0x1c;
@@ -83,24 +84,27 @@ describe("FRAME-12: byte-fidelity round-trip", () => {
 
   it(
     "1 MiB random corpus (excluding VT/FS bytes) round-trips unchanged",
+    // A megabyte through the real encoder and decoder, so it costs more than a
+    // unit case and says so rather than leaning on the suite-wide ceiling. What
+    // it asserts is bytes, not a duration.
     { timeout: 30_000 },
     () => {
-      // Generate 1 MiB of deterministic pseudo-random bytes, filtering out VT and FS
+      // Generate 1 MiB of deterministic pseudo-random bytes, substituting VT and FS
+      // with 0x41 'A' in the SAME pass. The bytes are identical to the two-pass
+      // version this replaced; only the second full traversal is gone, which is
+      // pure cost under v8 coverage instrumentation. Same shape as the 8 KiB
+      // chunked case below.
       const SIZE = 1024 * 1024;
       const raw = Buffer.allocUnsafe(SIZE);
       // Use a simple LCG for determinism (no crypto dependency)
       let seed = 0xdeadbeef;
       for (let i = 0; i < SIZE; i++) {
         seed = (seed * 1664525 + 1013904223) >>> 0;
-        raw[i] = seed & 0xff;
-      }
-      // Strip VT and FS bytes (replace with 0x41 'A')
-      for (let i = 0; i < raw.length; i++) {
-        const b = raw[i];
-        if (b === VT || b === FS) raw[i] = 0x41;
+        const b = seed & 0xff;
+        raw[i] = b === VT || b === FS ? 0x41 : b;
       }
       const decoded = roundTrip(raw);
-      expect(decoded).toEqual(raw);
+      expectBytesEqual(decoded, raw, "1 MiB corpus round-trip");
       expect(decoded.length).toBe(SIZE);
     },
   );
