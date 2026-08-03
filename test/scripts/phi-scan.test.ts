@@ -38,6 +38,8 @@ import {
   rmSync,
   readFileSync,
   appendFileSync,
+  symlinkSync,
+  unlinkSync,
 } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
@@ -572,6 +574,13 @@ function gitIn(cwd: string, args: string[]): void {
   expect(r.status, r.stderr).toBe(0);
 }
 
+/** `gitIn`, but hands back stdout so a test can assert the git premise it rests on. */
+function gitOut(cwd: string, args: string[]): string {
+  const r = spawnSync("git", args, { cwd, encoding: "utf8", shell: false });
+  expect(r.status, r.stderr).toBe(0);
+  return r.stdout;
+}
+
 /**
  * A throwaway repo the scanner can treat as REPO_ROOT (git init is optional).
  * It carries the allow-list the scanner loads, plus one CLEAN synthetic fixture
@@ -609,10 +618,16 @@ function runScannerIn(
   cwd: string,
   shimDir: string | null,
   extraEnv?: NodeJS.ProcessEnv,
+  args: string[] = [],
 ): RunResult {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
   if (shimDir !== null) env["PATH"] = `${shimDir}:${process.env["PATH"] ?? ""}`;
-  const r = spawnSync(TSX_BIN, [SCANNER_PATH], { cwd, encoding: "utf8", shell: false, env });
+  const r = spawnSync(TSX_BIN, [SCANNER_PATH, ...args], {
+    cwd,
+    encoding: "utf8",
+    shell: false,
+    env,
+  });
   return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
@@ -730,6 +745,277 @@ describe("phi-scan: enumeration TOCTOU", () => {
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toMatch(/PID-5/);
+    expect(r.stderr).toMatch(/Anderson/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Non-regular entries under a scan root
+// ---------------------------------------------------------------------------
+
+/**
+ * A symbolic link under a scan root read CLEAN on BOTH enumerating routes, so a
+ * link pointing at a PHI-bearing file passed the gate twice over. Measured on
+ * the base commit `d854e81`, in this repo, with a synthetic name-bearing payload
+ * kept outside both walk roots: a link to it under `test/` gave `all` mode exit
+ * 0 "OK, no hits"; a link to its DIRECTORY did the same and took the whole
+ * subtree with it; `--staged` (this repo's pre-commit gate) exited 0 after
+ * `git add`; and naming the target explicitly exited 1 with every hit. The
+ * payload was always detectable, the two routes never looked at it.
+ *
+ * Two mechanisms, two fixes, and neither follows the link:
+ *   - `walk()` enumerates `Dirent.isFile()`, an lstat answer, so a link is
+ *     neither a file nor a directory. A non-regular entry is now collected and
+ *     REFUSES the sweep (exit 2) instead of falling out of the loop.
+ *   - `--staged` reads `git diff --cached --raw -z` so the DESTINATION MODE is
+ *     visible, and refuses mode `120000`/`160000` rather than handing
+ *     `git show :<path>` a link and scanning the target path text it returns.
+ *
+ * `--diff-filter` admits `T` (typechange). That is not cosmetic: replacing a
+ * TRACKED regular file with a link is neither an add nor a modify, so under the
+ * old `AM` the record died before any mode could be read. The premise is
+ * asserted in the test rather than trusted.
+ *
+ * The payload's own FILENAME carries a synthetic surname, given name and date of
+ * birth, which is what makes "the refusal never reports the link target"
+ * non-vacuous rather than a claim about an empty string.
+ *
+ * Everything runs in throwaway repos. No link is ever created inside this repo,
+ * so a parallel worker cannot see one and the committed corpus is untouched.
+ */
+
+/** A synthetic name-bearing HL7 payload plus a link to it, both outside the walk roots. */
+function plantPayload(repo: string): { dir: string; file: string; rel: string } {
+  const dir = join(repo, "hidden");
+  mkdirSync(dir, { recursive: true });
+  // The filename is itself name-bearing, on purpose: see the block comment.
+  const rel = "Kowalczyk-Bronislawa-19511103.hl7";
+  const file = join(dir, rel);
+  writeFileSync(file, msg(MSH, "PID|1||987654^^^HOSP^MR||Kowalczyk^Bronislawa||19511103|F"));
+  return { dir, file, rel };
+}
+
+/** `makeScanRepo` creates `scripts/` and `test/`; the second walk root is made on demand. */
+function srcRoot(repo: string): string {
+  const p = join(repo, "src");
+  mkdirSync(p, { recursive: true });
+  return p;
+}
+
+/** Every PHI token the planted payload carries, for a leak assertion. */
+const PLANTED_TOKENS = ["Kowalczyk", "Bronislawa", "19511103", "987654"];
+
+describe("phi-scan: a non-regular entry under a scan root refuses the scan", () => {
+  it("REFUSES a symlink to a PHI-bearing file under test/ (all mode)", () => {
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    symlinkSync(file, join(repo, "test", "capture.frame.bin"));
+
+    // Control: the payload IS detectable, so a clean sweep is blindness, not
+    // an absence of PHI.
+    const named = runScannerIn(repo, null, undefined, [file]);
+    expect(named.code, `stderr: ${named.stderr}`).toBe(1);
+    expect(named.stderr).toMatch(/PID-5/);
+
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/refusing the scan/);
+    expect(r.stderr).toContain("test/capture.frame.bin");
+    expect(r.stderr).toContain("a symbolic link");
+  });
+
+  it("REFUSES a linked DIRECTORY, which used to take its whole subtree silently", () => {
+    const repo = makeScanRepo({ git: true });
+    const { dir } = plantPayload(repo);
+    symlinkSync(dir, join(repo, "test", "captures"));
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain("test/captures");
+    expect(r.stderr).toContain("a symbolic link");
+  });
+
+  it("NEVER reports the link target, which is working-tree text that can carry PHI", () => {
+    // The target path here holds a synthetic surname, given name and DOB, so an
+    // implementation that echoed it would fail this and not merely look untidy.
+    const repo = makeScanRepo({ git: true });
+    const { file, rel } = plantPayload(repo);
+    symlinkSync(file, join(repo, "test", "capture.frame.bin"));
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).not.toContain(rel);
+    expect(r.stderr).not.toContain("hidden/");
+    for (const token of PLANTED_TOKENS) expect(r.stderr).not.toContain(token);
+  });
+
+  it("REFUSES a non-regular entry whose NAME carries an exempt extension", () => {
+    // `.ts` under test/ and `.md` anywhere are excluded from the READ set,
+    // because of what such a file's bytes are. A link's name is no evidence at
+    // all about the other side, so the name exemptions must not carry over.
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    symlinkSync(file, join(repo, "test", "fixture.ts"));
+    symlinkSync(file, join(srcRoot(repo), "notes.md"));
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain("test/fixture.ts");
+    expect(r.stderr).toContain("src/notes.md");
+  });
+
+  it("names EVERY offender, not just the first", () => {
+    // A developer who has to re-run the gate once per link learns to distrust it.
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    symlinkSync(file, join(repo, "test", "one.frame.bin"));
+    symlinkSync(file, join(repo, "test", "two.frame.bin"));
+    symlinkSync(file, join(srcRoot(repo), "three.ts"));
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/3 entries are not regular files/);
+    expect(r.stderr).toContain("test/one.frame.bin");
+    expect(r.stderr).toContain("test/two.frame.bin");
+    expect(r.stderr).toContain("src/three.ts");
+  });
+
+  it("describes a FIFO by its own kind, from the engine's closed set", () => {
+    const repo = makeScanRepo({ git: true });
+    const r = spawnSync("mkfifo", [join(srcRoot(repo), "pipe")], {
+      encoding: "utf8",
+      shell: false,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const out = runScannerIn(repo, null);
+    expect(out.code, `stderr: ${out.stderr}`).toBe(2);
+    expect(out.stderr).toContain("src/pipe");
+    expect(out.stderr).toContain("a FIFO");
+  });
+
+  it("EXEMPTS a gitignored non-regular entry, keeping one boundary rather than two", () => {
+    // A gitignored file is already out of scope for the file route, so a link
+    // does not get a second, stricter boundary of its own.
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    symlinkSync(file, join(srcRoot(repo), "scratch.log"));
+    writeFileSync(join(repo, ".gitignore"), "*.log\n");
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("leaves the committed corpus passing (the refusal is not just always-red)", () => {
+    const repo = makeScanRepo({ git: true });
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+  });
+});
+
+describe("phi-scan: --staged refuses a non-regular staged entry", () => {
+  it("REFUSES a staged symlink, and the git premise it rests on holds", () => {
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    symlinkSync(file, join(repo, "test", "capture.frame.bin"));
+    gitIn(repo, ["add", "test/capture.frame.bin"]);
+
+    // PREMISE: git stores a symlink as its TARGET PATH under mode 120000, so
+    // `git show :<path>` hands back path text, never the target's bytes.
+    const raw = gitOut(repo, ["diff", "--cached", "--raw", "--", "test/capture.frame.bin"]);
+    expect(raw).toMatch(/^:000000 120000 /);
+    expect(gitOut(repo, ["show", ":test/capture.frame.bin"])).toContain("hidden");
+
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/refusing the scan/);
+    expect(r.stderr).toContain("test/capture.frame.bin");
+    expect(r.stderr).toContain("a symbolic link");
+    for (const token of PLANTED_TOKENS) expect(r.stderr).not.toContain(token);
+  });
+
+  it("REFUSES a TYPECHANGE, which the old AM filter dropped before any mode was read", () => {
+    // Replacing a TRACKED regular file with a link is neither an add nor a
+    // modify. Under `--diff-filter=AM` the record simply did not exist, so the
+    // mode check below was unreachable and the hook passed a mode-120000 blob
+    // green. The premise is asserted, not assumed.
+    const repo = makeScanRepo({ git: true });
+    gitIn(repo, ["-c", "user.email=t@t.t", "-c", "user.name=t", "commit", "-qm", "base"]);
+    const { file } = plantPayload(repo);
+    unlinkSync(join(repo, "test", "corpus.hl7"));
+    symlinkSync(file, join(repo, "test", "corpus.hl7"));
+    gitIn(repo, ["add", "test/corpus.hl7"]);
+
+    expect(gitOut(repo, ["diff", "--cached", "--raw", "--diff-filter=AM"]).trim()).toBe("");
+    expect(gitOut(repo, ["diff", "--cached", "--raw", "--diff-filter=AMT"])).toMatch(
+      /^:100644 120000 .* T\t/m,
+    );
+
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain("test/corpus.hl7");
+    expect(r.stderr).toContain("a symbolic link");
+  });
+
+  it("SCANS the reverse typechange, a link replaced by a real file bearing PHI", () => {
+    // Admitting `T` closes both directions. Under `AM` this record was dropped
+    // too, so a PHI-bearing file that replaced a link was never read.
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    unlinkSync(join(repo, "test", "corpus.hl7"));
+    symlinkSync(file, join(repo, "test", "corpus.hl7"));
+    gitIn(repo, ["add", "test/corpus.hl7"]);
+    gitIn(repo, ["-c", "user.email=t@t.t", "-c", "user.name=t", "commit", "-qm", "base"]);
+    unlinkSync(join(repo, "test", "corpus.hl7"));
+    copyFileSync(file, join(repo, "test", "corpus.hl7"));
+    gitIn(repo, ["add", "test/corpus.hl7"]);
+
+    expect(gitOut(repo, ["diff", "--cached", "--raw", "--diff-filter=AM"]).trim()).toBe("");
+
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toMatch(/PID-5/);
+    expect(r.stderr).toMatch(/Kowalczyk/);
+  });
+
+  it("names a staged GITLINK by its kind (the arm the base commit refused by accident)", () => {
+    // Not a hole this closes: `git show :<path>` on a gitlink fails with `bad
+    // object`, so the base commit already refused, as an incidental read
+    // failure. What changes is that the diagnostic says what the entry IS.
+    // `--staged`'s scope reaches a staged submodule under BOTH roots here.
+    const repo = makeScanRepo({ git: true });
+    const nested = join(repo, "test", "nested");
+    mkdirSync(nested, { recursive: true });
+    gitIn(nested, ["init", "-q"]);
+    writeFileSync(join(nested, "f"), "x\n");
+    gitIn(nested, ["add", "f"]);
+    gitIn(nested, ["-c", "user.email=t@t.t", "-c", "user.name=t", "commit", "-qm", "i"]);
+    gitIn(repo, ["add", "test/nested"]);
+
+    expect(gitOut(repo, ["diff", "--cached", "--raw", "--", "test/nested"])).toMatch(
+      /^:000000 160000 /,
+    );
+
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain("test/nested");
+    expect(r.stderr).toContain("a gitlink");
+  });
+
+  it("does NOT refuse a non-regular entry OUTSIDE both roots (the scope is not widened)", () => {
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    symlinkSync(file, join(repo, "elsewhere.frame.bin"));
+    gitIn(repo, ["add", "elsewhere.frame.bin"]);
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+  });
+
+  it("still scans a staged regular file (negative control)", () => {
+    // A gate that only ever refuses is not a gate.
+    const repo = makeScanRepo({ git: true });
+    writeFileSync(
+      join(repo, "test", "leak.hl7"),
+      msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M"),
+    );
+    gitIn(repo, ["add", "test/leak.hl7"]);
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toMatch(/Anderson/);
   });
 });

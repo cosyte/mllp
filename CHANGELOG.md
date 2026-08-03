@@ -76,6 +76,58 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Security
 
+- **The PHI scanner refuses a non-regular entry under a scan root, on both routes
+  (`PHI-SCAN-SYMLINK-BLIND-ON-BOTH-ROUTES`).** A symbolic link under `test/` or `src/` read CLEAN on
+  **both** enumerating routes, so a link pointing at a PHI-bearing file passed the gate twice over.
+  Reproduced on `d854e81` with a synthetic name-bearing payload kept outside both walk roots: a link
+  to it under `test/` gave `all` mode exit 0 "OK, no hits"; a link to its **directory** did the same
+  and took the whole subtree with it; `--staged`, which is this repo's pre-commit gate, exited 0
+  after `git add`; and naming the target explicitly exited 1 with every hit. The payload was always
+  detectable, the two routes never looked at it.
+
+  Two mechanisms, two fixes. `walk()` enumerates `Dirent.isFile()`, an **lstat** answer, so a link is
+  neither a file nor a directory and fell out of the loop; `isDirectory()` is an lstat answer too,
+  which is how a linked directory vanished wholesale. `--staged` read content with
+  `git show :<path>`, and git stores a symbolic link as its **target path** under mode `120000`, so
+  it scanned the path text.
+
+  **Neither route follows the link.** Following would read bytes the enumeration does not control
+  (outside the repo, a loop, a device, a FIFO that blocks the gate forever), and git does not carry
+  those bytes anyway, so a hit on them would be a claim about something no commit contains. The
+  enumeration is narrowed instead: a non-regular in-scope entry **refuses the scan** (exit 2, the
+  existing "could not complete" code), naming **every** offender. `--staged` now reads
+  `git diff --cached --raw -z` so the destination mode is visible.
+
+  **`--diff-filter` admits `T` (typechange), and leaving it out would have made the mode check
+  unreachable whenever the file being replaced was already tracked.** Replacing a **tracked** regular
+  file with a link is neither an add nor a modify; git raises it as `T`, so `--diff-filter=AM` deleted
+  the record before any mode could be read and the hook passed a mode-`120000` blob green. Measured on
+  git 2.39.5 against a tracked `test/differential/fixtures/*.frame.bin`: with `AM` the raw output for
+  that stage is **empty**. Admitting `T` also scans the reverse typechange, a link replaced by a real
+  file bearing PHI. Both premises are asserted in the tests rather than trusted.
+
+  A refusal names the entry's own repo-relative path and an engine-owned kind token, **never the link
+  target**, which is working-tree text that can itself carry PHI. Pinned with a synthetic name-bearing
+  payload whose target **filename** also carries a name, so the never-echo assertion is not a claim
+  about an empty string. 10 of the 14 new cases are red on `d854e81`; the other four are boundary
+  controls that must stay green (a gitignored entry stays exempt, an entry outside both roots is not
+  refused, the committed corpus still passes, a staged regular file still scans).
+
+  **Scope, stated rather than left to be read charitably.** "In scope" is each route's own existing
+  **root**; the `.ts` / `.md` **name** exemptions deliberately do not carry over to a non-regular
+  entry, because they are judgements about a file whose bytes the route could have read. `R`/`C`
+  rename and copy are still not enumerated by `--staged` at all: **pre-existing** (`AM` excluded them
+  too), disclosed rather than fixed. Explicit-path mode still reads **through** a link and is
+  unchanged. The gitlink (mode `160000`) arm is **not** a hole this closes: `--staged`'s scope already
+  reached a staged submodule under both roots and `git show` on one fails with `bad object`, so the
+  base commit already refused it, and what changed is that the diagnostic now says what the entry is.
+  The refuse-a-sweep-that-observed-nothing rule and the vanished-transient tolerance are untouched.
+
+  **This corrects a claim made under this same heading by the previous scanner change**, which called
+  the symlink gap "bounded, because git cannot commit content through a symlink and `--staged` reads
+  the index". The first half is true and the conclusion does not follow: the gate's promise is that it
+  observed what is under its roots, and both routes reported clean over an entry neither had read.
+
 - **BREAKING: ACK-correlation diagnostics no longer carry the control ID (`PHI-WARNING-MESSAGE-LEAK`).**
   The opt-in `correlateByControlId` path built its diagnostics by interpolation, and both ends were
   consumer-controlled and unbounded. The unmatched-ACK path read the **peer's** MSA-2 straight off an
@@ -316,8 +368,11 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
   **Two scope notes surfaced by the same review, one pre-existing and one introduced here.**
   PRE-EXISTING: `walk()` tests `e.isFile()`, which is false for a symlink Dirent, so a symlinked
-  file under `test/` or `src/` is never swept in `all` mode; it is bounded, because git cannot
-  commit content through a symlink and `--staged` reads the index. INTRODUCED by this change: a
+  file under `test/` or `src/` is never swept in `all` mode. **The "bounded" reading recorded here
+  was wrong and is corrected under Security above (`PHI-SCAN-SYMLINK-BLIND-ON-BOTH-ROUTES`): git
+  not committing content through a link does not make a route that reports clean over an unread
+  entry safe, and `--staged` reading the index is exactly how the link's target path text got
+  scanned in place of any content.** INTRODUCED by this change: a
   tolerated skip exits **0** with only a stderr line, including in CI, where the tree is at rest and
   a skip is therefore anomalous by definition. On the base commit that same input exited 2. Both are
   stated rather than changed: the first is not this defect, and the second **is** the shipped design

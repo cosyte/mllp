@@ -136,17 +136,13 @@ A repo-root build transient (`tsup.config.bundled_<hash>.mjs`) is not enumerated
 here only because neither walk root is the repo root. **Widening a walk root
 removes that accident**, and the file is gitignored in none of the parsers.
 
-Four residuals, stated rather than hidden:
+Three residuals, stated rather than hidden:
 
 - **The back-on-disk re-check is unpinned**, and that is deliberate. Stubbing it out leaves the
   whole suite green. Reaching it needs a timed re-create against a deliberately slowed sweep, and a
   load-sensitive sleep guarding a load-dependent race is the failure mode this defect teaches. It
   has been driven by hand and behaves as described; losing it would lose the re-check, never the
   tolerance's bounds.
-- **`walk()` skips symlinks** (`e.isFile()` is false for a symlink Dirent), so a symlinked file
-  under `test/` or `src/` is never swept in `all` mode. Pre-existing and bounded: git cannot commit
-  content through a symlink, and `--staged` reads the index.
-
 - **The post-sweep re-check is keyed on the enumerated PATH, not on content.** An
   untracked file renamed inside the window is `ENOENT` at the old path and was
   never enumerated under the new one, so its bytes go unscanned under a clean
@@ -159,6 +155,83 @@ Four residuals, stated rather than hidden:
   found". It matters more here than in the siblings, because this repo's
   transient is a **directory**, removed wholesale. Untouched by this gate and
   unpinned: nothing runs before the walk, so there is no deterministic hook.
+
+## What a non-regular entry under a scan root may do
+
+**Nothing. It refuses the scan (exit 2), on both routes.** It is never silently
+skipped, because both enumerating routes were blind to it in a way that read as
+clean. Measured on `d854e81` with a synthetic name-bearing payload kept outside
+both walk roots:
+
+- the walk enumerates `Dirent.isFile()`, an **lstat** answer, so a symbolic link
+  is neither a file nor a directory and fell out of the loop whatever it pointed
+  at. `isDirectory()` is an lstat answer too, so a **linked directory** took its
+  whole subtree with it. A link to the payload under `test/` gave exit 0, "OK, no
+  hits"; a link to its directory did the same.
+- `--staged` read content with `git show :<path>`, and git stores a symbolic link
+  as its **target path** under mode `120000`, so that route was handed the path
+  text and never the target's bytes. Exit 0 after `git add`. That route is this
+  repo's pre-commit gate.
+
+Naming the target explicitly exited 1 with every hit throughout. The payload was
+always detectable; the two routes never looked at it.
+
+**Neither route is made to follow a link.** Following would read bytes the
+enumeration does not control (outside the repo, a loop, a device, a FIFO that
+blocks the gate forever), and git does not carry those bytes anyway, so a hit on
+them would be a claim about something no commit contains. Refusing states the
+only true thing available: there is an entry here the scan cannot account for, so
+the scan is not clean.
+
+**"In scope" is each route's own existing root, not a new boundary.** The walk
+still exempts a gitignored entry (the same rule that already exempts a gitignored
+file), and `--staged` still only looks under `test/` and `src/`. What does **not**
+carry over to a non-regular entry is the `.ts` / `.md` **name** exemptions: those
+are judgements about a file whose bytes the route could have read, and a link's
+name is no evidence at all about the other side. Dropping them also keeps the two
+routes agreeing on what they refuse.
+
+**A refusal names the entry's own repo-relative path and an engine-owned token
+for its kind, never the link target.** The target is text off the working tree
+and can itself carry PHI: a target path of the shape
+`../captures/<surname>-<given>-<dob>.hl7` is the whole reason. The shape is
+written out rather than an example, because a diagnostic about a PHI leak is
+itself a PHI surface, and that applies to the prose explaining it too.
+
+`--staged` reads `git diff --cached --raw -z --diff-filter=AMT`. **`T`
+(typechange) is load-bearing:** replacing a **tracked** regular file with a link
+is neither an add nor a modify, so under the old `AM` filter the record died
+before any mode could be read and the hook passed a mode-`120000` blob green
+(measured on git 2.39.5: with `AM` the raw output for that stage is empty).
+Admitting `T` also scans the reverse typechange, a link replaced by a real file
+that bears PHI.
+
+Three residuals here, stated rather than hidden:
+
+- **A `Dirent` whose every predicate is false is resolved with one `lstat`, and that branch is
+  unpinned.** `readdir` may return no type for an entry (`DT_UNKNOWN`, which some filesystems do),
+  which leaves `isFile()`, `isDirectory()` and the whole closed set all false. That is an **absent
+  answer**, not evidence of a non-regular entry, and refusing on it would red every sweep on such a
+  filesystem: a gate that refuses with no fix available is a gate someone turns off. It is not
+  reachable on the filesystem this repo is developed and tested on, so nothing pins it. If that
+  `lstat` finds the entry gone, the entry is skipped, which narrows the **enumeration** one phase
+  earlier and does not soften what a failed **read** means.
+- **`R` (rename) and `C` (copy) are not enumerated by `--staged` at all**, so a
+  staged rename that appends PHI passes that route. **Pre-existing** (the old
+  `AM` filter excluded them too) and not narrowed here: admitting them needs the
+  two-path `--raw` record shape handled, which is a scope decision of its own. If
+  one ever reached the parser the two-field stride desyncs and the run refuses,
+  which is the safe outcome.
+- **Explicit-path mode still reads THROUGH a link**, because `statSync` follows
+  it. Unchanged and deliberate: that mode reads exactly what the caller named, and
+  a caller naming a path is not the enumeration reporting clean over one.
+
+The gitlink (mode `160000`) arm is **not** a hole this closes, and saying so
+would be false here: `--staged`'s scope already reaches a staged submodule under
+**both** roots, and `git show :<path>` on one fails with `bad object`, so the base
+commit already refused it. What changed is the diagnostic, from an incidental read
+failure to a named kind. The `.gitignore` note about orphan agent-worktree
+gitlinks is why the arm is worth keeping legible.
 
 ## Format
 
