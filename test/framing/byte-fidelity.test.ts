@@ -86,7 +86,10 @@ describe("FRAME-12: byte-fidelity round-trip", () => {
     "1 MiB random corpus (excluding VT/FS bytes) round-trips unchanged",
     // A megabyte through the real encoder and decoder, so it costs more than a
     // unit case and says so rather than leaning on the suite-wide ceiling. What
-    // it asserts is bytes, not a duration.
+    // it asserts is bytes, not a duration. This budget is pre-existing and was
+    // NOT enough on its own: with the assertion below still a `toEqual`, this
+    // case measured 31.1 s and red under four concurrent coverage suites. The
+    // trim, not the budget, is what fixed it.
     { timeout: 30_000 },
     () => {
       // Generate 1 MiB of deterministic pseudo-random bytes, substituting VT and FS

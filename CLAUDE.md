@@ -83,8 +83,8 @@
   also refuses when it observed **no** files. **▶ NEVER soften the refuse-a-scan-that-observed-
   nothing rule** and never widen the tolerance; narrow the enumeration instead. **This repo is the
   one that could actually reach it**, because `test/scripts/phi-scan.test.ts` `mkdtemp`s capture
-  directories inside `test/`, a walk root, twice per suite run. Those
-  tests must keep writing there, the `test/` prefix IS what they prove. A repo-root `tsup`
+  directories inside `test/`, a walk root, twice per suite run. Those tests must keep writing
+  there, the `test/` prefix IS what they prove. A repo-root `tsup`
   transient is out of scope only because neither walk root is the repo root, so **widening a walk
   root reintroduces this verbatim**. **The test technique is the reusable part:** the scanner runs
   `git` between the walk and the first read, so a `git` shim first on `PATH` is a deterministic
@@ -150,9 +150,12 @@ summary.
   which is what made the old `hookTimeout` line do nothing), and **trim before you bound**. On this
   suite the two dominant costs were a `tsx` start paid per subprocess spawn and `toEqual` walking a
   megabyte of `Buffer` element by element in JS; both were cost, not subject, and removing them beat
-  every candidate number. The method, conditions and figures are in `CHANGELOG.md`, and **measure
-  under `pnpm test:coverage` and under concurrent suites or the figures come out roughly half of
-  what CI sees.**
+  every candidate number. The method, conditions and figures are in `CHANGELOG.md`. **Measure under
+  concurrent suites and interleave base with head, or you are timing the box.** Measure under
+  `pnpm test:coverage` because **CI runs both `pnpm test` and `pnpm test:coverage`**, not because
+  coverage is slower: measured here the two are within noise, since the critical path is
+  `attw-gate`'s real `npm pack` subprocesses, which v8 coverage does not instrument. **That last
+  point is repo-specific and does not port** to a sibling whose critical path is in-process.
 - **CI/CD:** thin callers of the reusable `cosyte/.github` workflows.
 - **Runtime deps:** **Zero.** Node stdlib only (`net`, `tls`, `stream`, `events`, `buffer`, `timers`).
 - **Peer deps:** `@cosyte/hl7` as an **optional** peer dep, referenced only from the

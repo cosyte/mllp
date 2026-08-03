@@ -261,62 +261,83 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   runtime, public API or published artifact is affected. `PARSER-TESTTIMEOUT-ASSERTS-AN-IDLE-BOX`.
 
   **What the numbers below were measured under, because the condition is the finding.** Every
-  figure comes from `pnpm test:coverage`, which is what CI gates on and which is slower than a bare
-  `vitest run`; the load-sensitive ones additionally come from four suites running at once, which is
-  what a parallel session on this box actually does. Base and head were run interleaved, alternating
-  within the same minutes, so machine load cancels instead of being attributed to the change.
+  figure comes from `pnpm test:coverage`, run on a shared box that had other repos' suites on it
+  throughout, with base and head **interleaved** (alternating within the same minutes, three rounds
+  each) so contention cancels instead of being attributed to the change. The load-sensitive figures
+  additionally come from **four concurrent coverage suites**, which is what a parallel session here
+  actually does. Single figures are medians; peaks are called peaks.
 
-  **`hookTimeout: 10_000` was a verbatim no-op and is gone.** Vitest 4.1.4's default hook budget is
-  exactly 10,000 ms, measured on this repo's own installed version rather than read from a doc: a
-  hook sleeping past it reports "Hook timed out in 10000ms" with the line absent. The same probe put
-  the default test budget at 5,000 ms.
+  **The headline, and it is a pass/fail rather than a stopwatch reading: under four concurrent
+  coverage suites the base commit FAILED three runs out of three, on correct code, and head passed
+  three out of three.** Base red on `test/framing/byte-fidelity.test.ts` (the 1 MiB corpus, 31.1 s,
+  over its **own** 30 s budget), on `test/conformance/quirk-corpus.test.ts` (§3.7 large payload,
+  10.7 s and 14.2 s) and on `test/scripts/phi-scan.test.ts` (`--staged` negative control, 14.6 s).
+  All three were spending that time on **cost rather than subject**, which is why the remedy is the
+  trim and not a number.
 
-  **`testTimeout: 10_000` stays, and that conclusion is the opposite of the one this change set out
-  to reach.** Deleting the literal does not remove a ceiling, it halves it to Vitest's own 5,000 ms.
-  Under the conditions above the slowest case that carries no budget of its own (the `fast-check`
-  control-ID property sweep) lands in the low seconds, so the framework default would sit close
-  enough to red correct code. The literal is not what was asserting an idle box.
+  **`hookTimeout: 10_000` was a verbatim no-op and is gone.** Vitest 4.1.4 resolves
+  `hookTimeout ??= 1e4` and `testTimeout ??= 5e3` for a non-browser run, read out of this repo's own
+  installed copy. The line restated the default exactly.
 
-  **What was asserting an idle box is `test/tls/**`, and it was caught reddening.** Every case there
-  generates an RSA key pair and completes a real TLS handshake, both CPU-bound and proportional to
-  machine load, while what each case asserts is an outcome (a classification, a flag, a frame
-  delivered) and never a duration. Under four concurrent coverage suites, the WANT-authorized
-  regression timed out just past 10 s in two runs of four, on correct code. Both TLS files now carry
-  a suite-level budget with the reasoning at the site, so the shared ceiling is not what stands
-  between a busy machine and a false red.
+  **`testTimeout: 10_000` stays, and the reason is not the one this change set out to give.** After
+  the trim, the slowest case in the suite that carries **no budget of its own** is a `fast-check`
+  property sweep at **2.6 s peak** under four concurrent coverage suites, and across three loaded
+  runs **not one** unbudgeted case passed 5 s. So neither 10,000 nor Vitest's 5,000 is what stands
+  between this suite and a false red any more, and an earlier draft of this entry was wrong to say
+  the framework default would sit close to reddening correct code. The literal is left alone because
+  no measurement asks it to move: halving a documented ceiling with nothing near it is churn, and
+  `PARSER-TESTTIMEOUT-ASSERTS-AN-IDLE-BOX` is satisfied by removing what was near it. The literal was
+  never what asserted an idle box.
 
-  **Trim first: the phi-scan suite was paying a `tsx` start per case.** It spawns the scanner
-  dozens of times through two helpers, and `tsx` costs several times a bare `node` start on this
-  scanner (roughly half a second against roughly a seventh of one). The suite now spawns `node`
-  directly and relies on node's native type stripping; across three interleaved rounds under
-  coverage the file went from around 32 s to around 13 s **while gaining a test**. The gained test
-  is the backstop: `pnpm phi-scan` still runs `tsx scripts/phi-scan.ts`, so one case spawns both
-  runners on a framed violator and on a clean file and requires they agree on exit code, stdout and
-  stderr byte for byte. Without it the cheap runner would be testing something the commit gate does
-  not run.
+  **`test/tls/**` gets a suite-level budget, and this is the one place a number moved.** Every case
+  there generates an RSA key pair and completes a real TLS handshake, both CPU-bound and
+  proportional to machine load, while what each case asserts is an outcome (a classification, a
+  flag, a frame delivered) and never a duration. Over 96 TLS case-runs under four concurrent
+  coverage suites the WANT-authorized regression **peaked at 9.70 s**, against the 10 s ceiling it
+  used to run under. No TLS case was observed timing out, and the budget is not claimed to fix an
+  observed red: a 3 % margin on a load-proportional case is a coin flip, and the budget is what buys
+  it out of the shared ceiling.
+
+  **Trim first: the phi-scan suite was paying a `tsx` start per case.** It spawns the scanner dozens
+  of times through two helpers, and on this scanner `tsx` costs **466 ms** against **137 ms** for a
+  bare `node` (medians of seven, same clean fixture). The suite now spawns `node` directly and relies
+  on node's native type stripping; the file went from **29.7 s to 12.4 s** **while gaining a test**.
+  The gained test is the backstop: `pnpm phi-scan` still runs `tsx scripts/phi-scan.ts`, so one case
+  spawns both runners on a framed violator and on a clean file and requires they agree on exit code,
+  stdout and stderr byte for byte. Without it the cheap runner would be testing something the commit
+  gate does not run.
 
   **Trim second, and this one was the surprise: `expect(a).toEqual(b)` on a megabyte of Buffer was
   the whole cost of the framing corpus test.** `toEqual` walks two Buffers element by element in JS.
-  Measured alone on a 1 MiB pair it took over five seconds, against tens of milliseconds for the
+  Timed around the assertion alone on a 1 MiB pair it took **8.46 s under coverage** (4.32 s without
+  it), against **0.5 ms** for `Buffer.equals` on the same pair and tens of milliseconds for the
   encode and decode round trip the test exists to exercise. The two large-payload assertions (the
   1 MiB byte-fidelity corpus and the quirk corpus's accumulator-growth case) now use a native
   `Buffer.equals` through `test/helpers/bytes.ts`, which reports the first differing offset and both
   bytes on failure, so the diagnostic is better than the truncated structural diff it replaced. Those
-  two files together went from around 13 s to around 4 s under coverage. Under four concurrent
-  suites the 1 MiB case had been overrunning even its own 30 s budget; it now finishes in single
-  digit seconds. The helper's failure paths are pinned by their own tests, since a byte comparison
-  that cannot fail is worse than the assertion it replaced.
+  two files together went from **14.9 s to 1.2 s**. The helper's failure paths are pinned by their
+  own tests, since a byte comparison that cannot fail is worse than the assertion it replaced.
 
-  **Said plainly, because it is easy to oversell:** the whole-suite wall under coverage moved only
-  from roughly 34 s to roughly 28 s. The suite's critical path is `test/scripts/attw-gate.test.ts`,
-  which runs a real `npm pack` per case, was not touched here, and already carries its own budget.
-  The per-file cuts are large; the total is bounded by a file this change deliberately left alone.
+  **Said plainly, because it is easy to oversell:** the whole-suite wall moved only from **33.3 s to
+  27.8 s** (median of three interleaved rounds). The suite's critical path is
+  `test/scripts/attw-gate.test.ts`, which runs a real `npm pack` per case, peaked at 43.9 s in one
+  case under four concurrent suites, was not touched here, and already carries a 120 s per-case
+  budget. The per-file cuts are large; the total is bounded by a file this change deliberately left
+  alone.
+
+  **One assumption carried in from a sibling repo was measured here and is false here.**
+  `pnpm test:coverage` is **not** materially slower than a bare `pnpm test` on this suite: four
+  interleaved rounds put the two within noise of each other, because the critical path is
+  `attw-gate`'s real `npm pack` subprocesses, which v8 coverage does not instrument. Coverage is
+  still the right thing to measure under, for the different reason that CI runs **both** `pnpm test`
+  and `pnpm test:coverage`, so the suite is paid for twice per matrix leg.
 
   **The rule this leaves behind, stated once:** a case that needs more than the shared ceiling
-  states its own budget at its own site and says why. The cases doing that today are the two TLS
-  suites, the 1 MiB framing corpus and the `attw` gate. The quirk corpus's large-payload case was
-  briefly given one and then had it taken away again, because after the trim it no longer needed
-  one, and a budget that changes nothing is the same defect as the `hookTimeout` line above.
+  states its own budget at its own site and says why. **The sites doing that name themselves; `grep`
+  for `timeout:` under `test/` rather than trusting a list here, which is how two drafts of this
+  entry came to name the wrong set.** The quirk corpus's large-payload case was briefly given one
+  and then had it taken away again, because after the trim it no longer needed one, and a budget
+  that changes nothing is the same defect as the `hookTimeout` line above.
 
   **Disclosed, not fixed.** `engines.node` says `>=22.0.0`, while node's type stripping is on by
   default only from 22.18, so the phi-scan suite now needs the newer 22 that CI's 22 and 24 matrix

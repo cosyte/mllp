@@ -17,15 +17,15 @@ import { cosyteVitest } from "@cosyte/vitest-config";
  *    ~87.6 / ~75.8 / ~77.1 / ~88.9). `server.ts` has the largest test gap (graceful-shutdown and
  *    error paths). // TODO(coverage): add server tests, restore all four to 90.
  *
- * TIMEOUTS. `testTimeout` stays, and the reason is measurement rather than habit: a slice that
- * set out to delete it found that on this suite the framework default would red correct code.
- * The rule is that a case which needs more than the ceiling states its own budget, so the
- * ceiling never has to be widened for one case and never becomes the thing standing between a
- * loaded machine and a false red. The cases carrying their own budgets today are the real-socket
- * TLS suites, the framing byte-fidelity corpus, the quirk-corpus large-payload case and the
- * attw gate; each says why at its own site. `hookTimeout` was removed because it was set to
- * exactly Vitest's own default and changed nothing. Figures, method and what the trim bought
- * are in CHANGELOG.md, not repeated here.
+ * TIMEOUTS. The rule is that a case needing more than this ceiling states its OWN budget at its
+ * own site, with the reason, so the ceiling never has to be widened for one case and never
+ * becomes the thing standing between a loaded machine and a false red. Which sites do that is
+ * deliberately not listed here: `grep` for `timeout:` under `test/`, because a list in this
+ * comment went stale inside one slice. `hookTimeout` was removed because it was set to exactly
+ * Vitest's own default and changed nothing. `testTimeout` is kept at 10_000, not because the
+ * suite needs it (measured, the slowest case with no budget of its own is well under Vitest's
+ * own 5,000 ms default even under concurrent suites) but because nothing measured asks it to
+ * move. Figures, method and what the trim bought are in CHANGELOG.md, not repeated here.
  */
 export default cosyteVitest({
   coverageDirs: ["framing", "client", "connection", "server", "transport", "ack-from-hl7"],

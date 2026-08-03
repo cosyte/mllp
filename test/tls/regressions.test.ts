@@ -51,9 +51,10 @@ async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
 // a real socket. That cost is CPU-bound and scales with how loaded the machine is,
 // while the thing each case asserts is an OUTCOME (a classification, a flag, a frame
 // delivered), never a duration. Measured under `pnpm test:coverage` with four suites
-// running concurrently, cases here reached the suite-wide 10 s ceiling and red on
-// correct code. The budget is stated here so the ceiling is not what protects them.
-// See the CHANGELOG entry for the spread.
+// running concurrently, the R5 case below peaked at 9.70 s against the suite-wide
+// 10 s ceiling it used to run under. No timeout was observed; a 3 % margin on a
+// load-proportional case is the point, and this budget is what buys it out of the
+// shared ceiling. See the CHANGELOG entry for the spread.
 describe("Phase 8 TLS regressions", { timeout: 60_000 }, () => {
   const clients: MllpClient[] = [];
   const mllpServers: MllpServer[] = [];
