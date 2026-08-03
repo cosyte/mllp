@@ -283,7 +283,7 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   the trim, the slowest case in the suite that carries **no budget of its own** is a `fast-check`
   property sweep at **2.6 s peak** under four concurrent coverage suites, and across three loaded
   runs **not one** unbudgeted case passed 5 s. (Every `attw` gate case is budgeted for this count,
-  in the bare-trailing-number form described at the end of this entry, which is why the suite's
+  in the bare-trailing-number form described later in this entry, which is why the suite's
   slowest cases are not in it.) So neither 10,000 nor Vitest's 5,000 is what stands
   between this suite and a false red any more, and an earlier draft of this entry was wrong to say
   the framework default would sit close to reddening correct code. The literal is left alone because
@@ -341,7 +341,8 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   states its own budget at its own site and says why. **No list of those sites is kept anywhere,
   because three drafts of this entry kept one and all three named the wrong set.** Read them off the
   tests, and note there are **two spellings**: the options object (`it(name, { timeout: N }, fn)`,
-  `describe(name, { timeout: N }, fn)`) and a **bare trailing number** (`it(name, fn, N)`), which is
+  `describe(name, { timeout: N }, fn)`) and a **bare trailing number** (`it(name, fn, N)`, and the
+  same on `describe`), which is
   the form the `attw` gate uses through a named constant. A search for `timeout:` alone finds
   neither the second form nor the constant, and does turn up `spawnSync`'s unrelated child-process
   kill timeout. The quirk corpus's large-payload case was briefly given a budget and then had it

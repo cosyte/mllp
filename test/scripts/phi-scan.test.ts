@@ -160,7 +160,7 @@ describe("phi-scan: the `tsx` entry point `pnpm phi-scan` uses is the same scann
   // 10 s ceiling. Same argument as test/tls/**; see the CHANGELOG entry.
   //
   // What it does NOT cover, stated so nobody reads it as more than it is: single
-  // -file mode only, one detector category, two of this file's invocations. A
+  // -file mode only, one violator shape, two of this file's invocations. A
   // tsx-only CRASH or false positive still reds CI, which runs `pnpm phi-scan`
   // for real; a tsx-only FALSE NEGATIVE outside this path would not.
   it(
