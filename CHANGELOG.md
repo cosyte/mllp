@@ -185,6 +185,61 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **The `attw` publish gate no longer passes on a tarball that carries no types.** `pnpm attw` was
+  `attw --pack . --profile node16`, and `@arethetypeswrong/cli@0.18.4`'s `getExitCode.js` opens with
+  `if (!analysis.types) return 0`, so the problem list is never read and no `--profile`,
+  `--ignore-rules` or config setting reaches that early return. For a package that ships types, "does
+  not contain types" means the declarations were not in the tarball, which is a broken publish
+  reported as a pass. A false red costs an hour; a false green merges.
+  `ATTW-FALSE-GREEN-PORT`, porting the remedy that shipped in `terminology#28` (`bf153cb`).
+
+  **Measured on this package at `0.0.6` with zero concurrency**, under the old invocation:
+  `rm -rf dist && pnpm attw` printed "This package does not contain types." and exited **0**.
+  Concurrency supplies only the condition, so the remedy is not a lock, a lease or a build queue: the
+  gate has to be able to say its own inputs were missing, whatever removed them.
+
+  **The exit-0 path needs the tarball to carry no declaration at all**, which is a boundary specific
+  to how this package is built and is stated here because it is easy to get wrong. `tsup` emits a
+  shared type chunk (`dist/index-<hash>.d.ts`) beside the three entry declarations, so deleting only
+  the six entry `.d.ts`/`.d.cts` files leaves that chunk in the tarball and `attw` reds honestly
+  (`❌ No types`, UntypedResolution, exit 1); the same removal **plus** `dist/index-*.d.*ts` is what
+  exits 0. The build window lands in the exit-0 state regardless, because `tsup` writes JS in one
+  pass and every declaration in a later one, so no moment exists where only some are present: polling
+  two real clean builds here for `dist/index.mjs` and then the first declaration of any kind gave
+  windows of **4.25s and 3.31s**, holding JS and zero declarations throughout. The absolute timings
+  move run to run, so no single figure is quoted as "the" window; the stable claim is that the gap is
+  seconds rather than milliseconds, which is wide enough for a concurrent build or `pnpm clean` to
+  land `attw` in it.
+
+  `pnpm attw` is now `node scripts/attw.mjs --profile node16`. The wrapper hardcodes `--pack .` and
+  forwards the rest, so **`--profile node16` is preserved**, not dropped. Two nets, which catch
+  different things: a **preflight** that every relative path `package.json` promises (`main`,
+  `module`, `types`, `typings`, and every string leaf of `exports`) exists and is non-empty, which
+  catches the build window and names the missing file; and a **post-check** that promotes `attw`'s
+  untyped sentence to a failure, which catches declarations present on disk but excluded from the
+  tarball by `files`/`.npmignore` (no instance of that is on record here). This package declares
+  three subpaths, so the preflight has **twelve** artifact paths to check. Because the post-check
+  reads a string, the options that would hide it are refused by name and wholesale rather than by
+  value: `--quiet`/`-q`, `--format`/`-f`, `--config-path`, and a `.attw.json` setting `quiet` or
+  `format`. The first three of those were re-measured here, on this package's own untyped pack and
+  under its own `--profile node16`, each handing back exit 0 with the sentence unreadable;
+  `--config-path` is refused by inference, not measurement.
+
+  **Disclosed gap:** the preflight cannot see that shared type chunk go missing, because
+  `package.json` names it nowhere. It is left to the post-check and to `attw` itself rather than
+  papered over with a glob. For the same reason the preflight's failure message does not promise
+  which way `attw` would have gone, since it cannot tell the two states apart.
+
+  `test/scripts/attw-gate.test.ts` pins both nets against the real binary, including **the upstream
+  exit 0 itself** (so an `attw` upgrade that rewords the sentence or fixes the exit code reds the
+  suite rather than letting the net go slack), that the preflight reaches a **subpath's `require`
+  branch** and not just the root entry, **the boundary above** (a tarball keeping a shared chunk reds
+  on `attw`'s own account, so the failure message must not claim the exit-0 counterfactual), that
+  **`--profile node16` survives the wrapper** (the fixture is red under the default profile and green
+  under `node16`), a **negative control** on a well-formed package, and that a **real `attw` failure
+  still fails** with `attw`'s own exit status. Build and
+  packaging only: no runtime, framing, transport, or public-API change.
+
 - **The PHI scanner no longer refuses an entire sweep because a transient file went away while it
   was reading.** `all` mode lists `test/` + `src/`, then reads each file; anything created and
   removed inside that window made a read throw `ENOENT` and took the whole scan down with it

@@ -72,4 +72,5 @@ const { MllpClient, MllpServer } = require("@cosyte/mllp");
 
 The types are published per-condition (`.d.ts` for `import`, `.d.cts` for `require`) and gated by
 `attw` on every release, across all three subpaths (root, `/testing`, `/ack-from-hl7`), so editor
-IntelliSense matches the build you actually load.
+IntelliSense matches the build you actually load. A build that would publish a tarball without those
+declarations fails the release rather than shipping.
