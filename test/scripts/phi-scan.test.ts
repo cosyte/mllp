@@ -25,6 +25,20 @@
  * no shell-form. PHI-shaped literals (SSN etc.) are assembled from parts and the
  * assertion regexes are digit-group-anchored, so no literal identifier lives in
  * this source and no code-scanning tool reads one.
+ *
+ * RUNNER: the sweep spawns `node` directly on the `.ts` scanner and relies on
+ * node's native type stripping, because this file is spawn-bound and a `tsx`
+ * start costs several times a `node` start (see the CHANGELOG entry for the
+ * measured figures on this suite). Two consequences, both deliberate:
+ *   - `pnpm phi-scan` still runs `tsx scripts/phi-scan.ts`, so ONE test below
+ *     spawns `tsx` and asserts the two runners agree byte for byte. Delete it
+ *     and a tsx-only breakage ships green, with the cheap runner testing
+ *     something the commit gate does not run.
+ *   - node's type stripping is on by default from Node 22.18, while
+ *     `engines.node` is `>=22.0.0`. CI's 22 + 24 matrix resolves above that; a
+ *     developer on 22.0-22.17 needs a newer 22 to run this file. Stripping is
+ *     erasure-only, and the scanner uses no construct that needs emit, which the
+ *     tsx-pinned test reds if it ever stops being true.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -49,6 +63,8 @@ const SCANNER_PATH = join(REPO_ROOT, "scripts", "phi-scan.ts");
 const OVERRIDES_PATH = join(REPO_ROOT, "phi-scan-overrides.md");
 const ALLOW_LIST_REL = join("scripts", "phi-allow-list.txt");
 const TSX_BIN = join(REPO_ROOT, "node_modules", ".bin", "tsx");
+/** The cheap runner every case below uses. See the RUNNER note in the file header. */
+const NODE_BIN = process.execPath;
 
 // MLLP Release 1 framing bytes.
 const VT = 0x0b;
@@ -76,6 +92,16 @@ interface RunResult {
 }
 
 function runScanner(args: string[]): RunResult {
+  const r = spawnSync(NODE_BIN, [SCANNER_PATH, ...args], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    shell: false,
+  });
+  return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+/** The `tsx` invocation `pnpm phi-scan` really uses, kept for the one test that pins it. */
+function runScannerViaTsx(args: string[]): RunResult {
   const r = spawnSync(TSX_BIN, [SCANNER_PATH, ...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
@@ -104,6 +130,65 @@ beforeAll(() => {
 
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// The runner backstop: `pnpm phi-scan` uses tsx, this file uses node
+// ---------------------------------------------------------------------------
+
+describe("phi-scan: the `tsx` entry point `pnpm phi-scan` uses is the same scanner", () => {
+  // THE ONE CASE THAT STILL PAYS A tsx COLD START, and it is what makes the cheap
+  // runner trustworthy. `pnpm phi-scan` (the pre-commit hook and CI) runs
+  // `tsx scripts/phi-scan.ts`; every other case here runs `node scripts/phi-scan.ts`.
+  // Without this case a tsx-only breakage (a tsx upgrade, a loader difference, a
+  // TypeScript construct node's erasure-only stripping rejects but tsx compiles)
+  // would ship green.
+  //
+  // It asserts EQUIVALENCE, not merely that tsx works: both runners must agree on
+  // exit code, stdout and stderr byte for byte.
+  //
+  // BOTH OUTCOMES RUN, because the scanner uses a different channel for each and
+  // comparing two empty channels proves nothing. A violator writes hits to stderr
+  // and nothing to stdout; a clean file writes the OK line to stdout and nothing to
+  // stderr. The violator is MLLP-FRAMED, which is this scanner's own half: it is
+  // the path where a runner difference in byte handling would show up first.
+  //
+  // WHY IT CARRIES A BUDGET when it runs in under 2 s on a quiet box: four
+  // spawns, two of them the tsx cold start no other case here pays any more, are
+  // load-proportional the same way a TLS handshake is. Measured under four
+  // concurrent coverage suites this case PEAKED AT 9.20 s, 92 % of the shared
+  // 10 s ceiling. Same argument as test/tls/**; see the CHANGELOG entry.
+  //
+  // What it does NOT cover, stated so nobody reads it as more than it is: single
+  // -file mode only, one violator shape, two of this file's invocations. A
+  // tsx-only CRASH or false positive still reds CI, which runs `pnpm phi-scan`
+  // for real; a tsx-only FALSE NEGATIVE outside this path would not.
+  it(
+    "agrees with `node` byte for byte on a framed violator AND on a clean file",
+    { timeout: 30_000 },
+    () => {
+      const violator = join(dir, "parity-violator.frame.bin");
+      writeFileSync(
+        violator,
+        frame(msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M")),
+      );
+      const vNode = runScanner([violator]);
+      const vTsx = runScannerViaTsx([violator]);
+      expect(vNode.code, `stderr: ${vNode.stderr}`).toBe(1);
+      expect(vNode.stdout).toBe("");
+      expect(vNode.stderr).not.toBe("");
+      expect(vTsx).toEqual(vNode);
+
+      const clean = join(dir, "parity-clean.hl7");
+      writeFileSync(clean, msg(MSH, "PID|1||MRN12345^^^HOSP^MR||Doe^John^Q||19800115|M"));
+      const cNode = runScanner([clean]);
+      const cTsx = runScannerViaTsx([clean]);
+      expect(cNode.code, `stderr: ${cNode.stderr}`).toBe(0);
+      expect(cNode.stdout).not.toBe("");
+      expect(cNode.stderr).toBe("");
+      expect(cTsx).toEqual(cNode);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -622,7 +707,7 @@ function runScannerIn(
 ): RunResult {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
   if (shimDir !== null) env["PATH"] = `${shimDir}:${process.env["PATH"] ?? ""}`;
-  const r = spawnSync(TSX_BIN, [SCANNER_PATH, ...args], {
+  const r = spawnSync(NODE_BIN, [SCANNER_PATH, ...args], {
     cwd,
     encoding: "utf8",
     shell: false,

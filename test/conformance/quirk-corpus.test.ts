@@ -23,6 +23,7 @@ import { FrameReader, type FrameReaderOptions } from "../../src/framing/decoder.
 import { type MllpFramingError } from "../../src/framing/error.js";
 import type { MllpWarning } from "../../src/framing/registry.js";
 import { VT, FS, CR, LF } from "../../src/framing/constants.js";
+import { expectBytesEqual } from "../helpers/bytes.js";
 
 /** A realistic, synthetic ADT^A01 admit, multi-segment, spec-clean, PHI-free. */
 const ADT_A01 = Buffer.from(
@@ -115,7 +116,12 @@ describe("quirk corpus: a real HL7 message survives each §3 deviation", () => {
     // growth path a multi-MB base64-PDF OBX takes, without the multi-MB runtime.
     const big = Buffer.concat([ADT_A01, Buffer.alloc(256 * 1024, 0x41)]);
     const { frames } = decode(frame(big), { maxFrameSizeBytes: 1024 * 1024 });
-    expect(frames[0]).toEqual(big);
+    // Native byte compare: see test/helpers/bytes.ts for why the payload size,
+    // not the decode, is what made this the slowest case in the file.
+    expect(frames).toHaveLength(1);
+    const decoded = frames[0];
+    if (decoded === undefined) throw new Error("§3.7: no frame decoded");
+    expectBytesEqual(decoded, big, "§3.7 large payload");
   });
 
   it("§3.7 oversized payload → MLLP_FRAME_TOO_LARGE (the ONLY sanctioned throw)", () => {

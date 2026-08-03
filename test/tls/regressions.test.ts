@@ -47,7 +47,21 @@ async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   }
 }
 
-describe("Phase 8 TLS regressions", () => {
+// Every case here generates an RSA key pair and completes a real TLS handshake over
+// a real socket. That cost is CPU-bound and scales with how loaded the machine is,
+// while the thing each case asserts is an OUTCOME (a classification, a flag, a frame
+// delivered), never a duration. Measured under `pnpm test:coverage` with four suites
+// running concurrently, the R5 case below peaked at 9.70 s against the suite-wide
+// 10 s ceiling it used to run under. No timeout was observed; a 3 % margin on a
+// load-proportional case is the point, and this budget is what buys it out of the
+// shared ceiling. See the CHANGELOG entry for the spread.
+//
+// NOT what this budget covers, and it is the tighter assumption of the two: the
+// `waitFor` default below is 3,000 ms of wall clock, and two cases pass 5,000 ms
+// explicitly. Those are idle-box assumptions in exactly the way the suite-wide
+// ceiling was, a per-suite budget does not relax them, and they are unchanged
+// here. They did not red in any run measured for the slice that added this line.
+describe("Phase 8 TLS regressions", { timeout: 60_000 }, () => {
   const clients: MllpClient[] = [];
   const mllpServers: MllpServer[] = [];
   const rawServers: Array<TlsServer | RawNetServer> = [];

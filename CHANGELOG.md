@@ -255,6 +255,112 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
 
 ### Fixed
 
+- **The test suite stopped assuming an idle machine, and the fix was mostly to make it cheaper
+  rather than to move a number.** `vitest.config.ts` carried `testTimeout: 10_000` and
+  `hookTimeout: 10_000`; the shared `@cosyte/vitest-config` sets neither. Test-only change: no
+  runtime, public API or published artifact is affected. `PARSER-TESTTIMEOUT-ASSERTS-AN-IDLE-BOX`.
+
+  **What the numbers below were measured under, because the condition is the finding.** Every
+  figure comes from `pnpm test:coverage`, run on a shared box that had other repos' suites on it
+  throughout, with base and head **interleaved** (alternating within the same minutes, three rounds
+  each) so contention cancels instead of being attributed to the change. The load-sensitive figures
+  additionally come from **four concurrent coverage suites**, which is what a parallel session here
+  actually does. Single figures are medians; peaks are called peaks.
+
+  **The headline, and it is a pass/fail rather than a stopwatch reading: under four concurrent
+  coverage suites the base commit FAILED three runs out of three, on correct code, and head passed
+  three out of three.** Base red on `test/framing/byte-fidelity.test.ts` (the 1 MiB corpus, 31.1 s,
+  over its **own** 30 s budget), on `test/conformance/quirk-corpus.test.ts` (§3.7 large payload,
+  10.7 s and 14.2 s) and on `test/scripts/phi-scan.test.ts` (`--staged` negative control, 14.6 s).
+  All three were spending that time on **cost rather than subject**, which is why the remedy is the
+  trim and not a number.
+
+  **`hookTimeout: 10_000` was a verbatim no-op and is gone.** Vitest 4.1.4 resolves
+  `hookTimeout ??= 1e4` and `testTimeout ??= 5e3` for a non-browser run, read out of this repo's own
+  installed copy. The line restated the default exactly.
+
+  **`testTimeout: 10_000` stays, and the reason is not the one this change set out to give.** After
+  the trim, the slowest case in the suite that carries **no budget of its own** is a `fast-check`
+  property sweep at **2.6 s peak** under four concurrent coverage suites, and across three loaded
+  runs **not one** unbudgeted case passed 5 s. (Every `attw` gate case is budgeted for this count,
+  in the bare-trailing-number form described later in this entry, which is why the suite's
+  slowest cases are not in it.) So neither 10,000 nor Vitest's 5,000 is what stands
+  between this suite and a false red any more, and an earlier draft of this entry was wrong to say
+  the framework default would sit close to reddening correct code. The literal is left alone because
+  no measurement asks it to move: halving a documented ceiling with nothing near it is churn, and
+  `PARSER-TESTTIMEOUT-ASSERTS-AN-IDLE-BOX` is satisfied by removing what was near it. The literal was
+  never what asserted an idle box.
+
+  **Two sites gain a budget, and no pre-existing number changes value.** The larger is `test/tls/**`,
+  where every case generates an RSA key pair and completes a real TLS handshake, both CPU-bound and
+  proportional to machine load, while what each case asserts is an outcome (a classification, a
+  flag, a frame delivered) and never a duration. Over 96 TLS case-runs under four concurrent
+  coverage suites the WANT-authorized regression **peaked at 9.70 s**, against the 10 s ceiling it
+  used to run under. No TLS case was observed timing out, and the budget is not claimed to fix an
+  observed red: a 3 % margin on a load-proportional case is a coin flip, and the budget is what buys
+  it out of the shared ceiling. The smaller is the one case this slice adds, the `tsx`/`node` parity
+  check below: it is the only case in the suite still paying a `tsx` cold start, and it **peaked at
+  9.20 s** under the same four concurrent suites, which is the same argument at 92 % of the ceiling.
+  On a quiet box it runs in under 2 s, so the budget looks gratuitous there and is not.
+
+  **Trim first: the phi-scan suite was paying a `tsx` start per case.** It spawns the scanner dozens
+  of times through two helpers, and on this scanner `tsx` costs **466 ms** against **137 ms** for a
+  bare `node` (medians of seven, same clean fixture). The suite now spawns `node` directly and relies
+  on node's native type stripping; the file went from **29.7 s to 12.4 s** **while gaining a test**.
+  The gained test is the backstop: `pnpm phi-scan` still runs `tsx scripts/phi-scan.ts`, so one case
+  spawns both runners on a framed violator and on a clean file and requires they agree on exit code,
+  stdout and stderr byte for byte. Without it the cheap runner would be testing something the commit
+  gate does not run.
+
+  **Trim second, and this one was the surprise: `expect(a).toEqual(b)` on a megabyte of Buffer was
+  the whole cost of the framing corpus test.** `toEqual` walks two Buffers element by element in JS.
+  Timed around the assertion alone on a 1 MiB pair it took **8.46 s under coverage** (4.32 s without
+  it), against **0.5 ms** for `Buffer.equals` on the same pair and tens of milliseconds for the
+  encode and decode round trip the test exists to exercise. The two large-payload assertions (the
+  1 MiB byte-fidelity corpus and the quirk corpus's accumulator-growth case) now use a native
+  `Buffer.equals` through `test/helpers/bytes.ts`, which reports the first differing offset and both
+  bytes on failure, so the diagnostic is better than the truncated structural diff it replaced. Those
+  two files together went from **14.9 s to 1.2 s**. The helper's failure paths are pinned by their
+  own tests, since a byte comparison that cannot fail is worse than the assertion it replaced.
+
+  **Said plainly, because it is easy to oversell:** the whole-suite wall moved only from **33.3 s to
+  27.8 s** (median of three interleaved rounds). The suite's critical path is
+  `test/scripts/attw-gate.test.ts`, which runs a real `npm pack` per case, peaked at 43.9 s in one
+  case under four concurrent suites, was not touched here, and already carries a 120 s per-case
+  budget. The per-file cuts are large; the total is bounded by a file this change deliberately left
+  alone.
+
+  **One assumption carried in from a sibling repo was measured here and is false here.**
+  `pnpm test:coverage` is **not** materially slower than a bare `pnpm test` on this suite: four
+  interleaved rounds put the two within noise of each other, because the critical path is
+  `attw-gate`'s real `npm pack` subprocesses, which v8 coverage does not instrument. Coverage is
+  still the right thing to measure under, for the different reason that CI runs **both** `pnpm test`
+  and `pnpm test:coverage`, so the suite is paid for twice per matrix leg.
+
+  **The rule this leaves behind, stated once:** a case that needs more than the shared ceiling
+  states its own budget at its own site and says why. **No list of those sites is kept anywhere,
+  because three drafts of this entry kept one and all three named the wrong set.** Read them off the
+  tests, and note there are **two spellings**: the options object (`it(name, { timeout: N }, fn)`,
+  `describe(name, { timeout: N }, fn)`) and a **bare trailing number** (`it(name, fn, N)`, and the
+  same on `describe`), which is
+  the form the `attw` gate uses through a named constant. A search for `timeout:` alone finds
+  neither the second form nor the constant, and does turn up `spawnSync`'s unrelated child-process
+  kill timeout. The quirk corpus's large-payload case was briefly given a budget and then had it
+  taken away again, because after the trim it no longer needed one, and a budget that changes
+  nothing is the same defect as the `hookTimeout` line above.
+
+  **Disclosed, not fixed, and it outranks everything above: the tightest idle-box assumption in
+  `test/tls/**` is not a test budget at all.** Both TLS files poll with a local
+  `waitFor(cond, timeoutMs = 3000)` helper, and two cases pass 5,000 ms explicitly. Those are
+  wall-clock ceilings on a loaded box exactly the way `testTimeout` was, they are unchanged here and
+  unchanged from base, and no per-suite budget relaxes them. They did not red in any run measured
+  for this slice. Tightening them is its own slice; widening them is not obviously right either,
+  since a poll ceiling is also what stops a hung case from burning the whole 60 s budget.
+
+  **Disclosed, not fixed.** `engines.node` says `>=22.0.0`, while node's type stripping is on by
+  default only from 22.18, so the phi-scan suite now needs the newer 22 that CI's 22 and 24 matrix
+  already resolves to. Narrowing `engines` is a consumer-facing change and belongs in its own slice.
+
 - **The `attw` publish gate no longer passes on a tarball that carries no types.** `pnpm attw` was
   `attw --pack . --profile node16`, and `@arethetypeswrong/cli@0.18.4`'s `getExitCode.js` opens with
   `if (!analysis.types) return 0`, so the problem list is never read and no `--profile`,

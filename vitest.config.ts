@@ -16,6 +16,17 @@ import { cosyteVitest } from "@cosyte/vitest-config";
  *  - `src/server/**` floors are statements 87 / branches 75 / functions 77 / lines 88 (measured
  *    ~87.6 / ~75.8 / ~77.1 / ~88.9). `server.ts` has the largest test gap (graceful-shutdown and
  *    error paths). // TODO(coverage): add server tests, restore all four to 90.
+ *
+ * TIMEOUTS. The rule is that a case needing more than this ceiling states its OWN budget at its
+ * own site, with the reason, so the ceiling never has to be widened for one case and never
+ * becomes the thing standing between a loaded machine and a false red. Which sites do that is
+ * deliberately NOT listed here, because a list in this comment went stale inside one slice; read
+ * them off the tests, and note two spellings, the `{ timeout: N }` options object and a bare
+ * trailing number on `it`. `hookTimeout` was removed because it was set to exactly
+ * Vitest's own default and changed nothing. `testTimeout` is kept at 10_000, not because the
+ * suite needs it (measured, the slowest case with no budget of its own is well under Vitest's
+ * own 5,000 ms default even under concurrent suites) but because nothing measured asks it to
+ * move. Figures, method and what the trim bought are in CHANGELOG.md, not repeated here.
  */
 export default cosyteVitest({
   coverageDirs: ["framing", "client", "connection", "server", "transport", "ack-from-hl7"],
@@ -29,6 +40,5 @@ export default cosyteVitest({
     environment: "node",
     include: ["test/**/*.test.ts", "src/**/*.test.ts"],
     testTimeout: 10_000,
-    hookTimeout: 10_000,
   },
 });

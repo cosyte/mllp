@@ -35,7 +35,10 @@ async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   }
 }
 
-describe("TLS / MLLPS handshake matrix (Phase 8)", () => {
+// Same reasoning as test/tls/regressions.test.ts: RSA key generation plus a real
+// handshake per case, CPU-bound and machine-proportional, asserting outcomes rather
+// than durations. Budgeted here rather than through the suite-wide ceiling.
+describe("TLS / MLLPS handshake matrix (Phase 8)", { timeout: 60_000 }, () => {
   const servers: MllpServer[] = [];
   const clients: MllpClient[] = [];
 
