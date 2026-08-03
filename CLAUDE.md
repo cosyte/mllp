@@ -103,8 +103,11 @@
   the enumeration is narrowed instead, and every offender is named. **A refusal never reports the
   link target** (working-tree text that can itself carry PHI). **▶ NEVER WRITE "NEITHER ROUTE FOLLOWS
   A LINK" FLAT: `walk()` opens the ROOTS with `existsSync` + `readdirSync`, which both follow**, so
-  replacing `test/` or `src/` itself with a link is read straight through. Pre-existing and fail-safe
-  rather than blind (the tree beyond it is read and its PHI reported), disclosed not closed. The
+  replacing `test/` or `src/` itself with a link is read straight through. Pre-existing and
+  link-NEUTRAL: the tree beyond it is scanned exactly as the root it replaced would have been, with
+  that root's own limits (so a payload behind a linked `test/` is reported, exit 1, while the same
+  payload behind a linked `src/` gets only the conservative pass). Disclosed, not closed, and never
+  restate it as a promise that a linked root is always caught. The
   scope test matches the roots' own NAMES as well as the prefix, because an entry named exactly
   `test` or `src` replaces a root instead of sitting in one. **▶ `--diff-filter` MUST KEEP `T`:**
   replacing a **tracked** file with a link is neither add nor modify, so `AM` deleted the record

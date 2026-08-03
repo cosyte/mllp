@@ -94,10 +94,15 @@
  * FLAT WAS FALSE. `walk()` opens `TEST_ROOT` / `SRC_ROOT` with `existsSync` +
  * `readdirSync`, and both FOLLOW, so replacing `test/` or `src/` itself with a
  * link to a directory outside the repo makes the walk read straight through it.
- * PRE-EXISTING and fail-safe rather than blind (measured: the tree beyond the
- * link is read and its PHI is reported as a hit, exit 1), which is why it is
- * disclosed here instead of closed: refusing a linked root is a different
- * decision about repo layout, not this defect. Do not restore the flat claim.
+ * PRE-EXISTING. The precise reading, which is NOT "its PHI is reported": the
+ * tree beyond the link is scanned exactly as the root it replaced would have
+ * been, WITH THAT ROOT'S OWN LIMITS. So a fixture-like payload behind a linked
+ * `test/` is reported (measured, exit 1), while the same payload behind a linked
+ * `src/` gets only the conservative pass and can read clean, exactly as it would
+ * through a real `src/`. It is link-NEUTRAL, which is why it is disclosed here
+ * instead of closed: refusing a linked root is a different decision about repo
+ * layout, not this defect. Do not restore the flat claim, and do not upgrade
+ * this one into a promise that a linked root is always caught.
  *
  * "In scope" is each route's own existing ROOT, not a new boundary: the walk
  * still excludes a gitignored entry (the same rule that already excludes a

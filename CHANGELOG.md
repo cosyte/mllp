@@ -104,9 +104,12 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   **The root itself is the one thing still followed, and a flat "neither route follows a link" would
   be false.** `walk()` opens `test/` and `src/` with `existsSync` + `readdirSync`, and both follow,
   so replacing a walk root with a link to a directory outside the repo makes the walk read straight
-  through it. Pre-existing and **fail-safe rather than blind**: measured, the tree beyond the link is
-  read and its PHI is reported as a hit. Disclosed rather than closed, because refusing a linked root
-  is a decision about repo layout, not this defect.
+  through it. Pre-existing, and the precise reading is **not** "its PHI is reported": the tree beyond
+  the link is scanned exactly as the root it replaced would have been, **with that root's own
+  limits**. A fixture-like payload behind a linked `test/` is reported (measured, exit 1); the same
+  payload behind a linked `src/` gets only the conservative pass and can read clean, exactly as it
+  would through a real `src/`. It is link-**neutral**, which is why it is disclosed rather than
+  closed: refusing a linked root is a decision about repo layout, not this defect.
 
   **`--diff-filter` admits `T` (typechange), and leaving it out would have made the mode check
   unreachable whenever the file being replaced was already tracked.** Replacing a **tracked** regular

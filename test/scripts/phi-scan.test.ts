@@ -1012,6 +1012,10 @@ describe("phi-scan: --staged refuses a non-regular staged entry", () => {
     expect(r.code, `stderr: ${r.stderr}`).toBe(2);
     expect(r.stderr).toMatch(/refusing the scan/);
     expect(r.stderr).toContain("a symbolic link");
+    // The refused path IS the root here, while the target's filename is
+    // name-bearing, so this is the case where echoing the target would be
+    // easiest to miss.
+    for (const token of PLANTED_TOKENS) expect(r.stderr).not.toContain(token);
   });
 
   it("does NOT refuse a non-regular entry OUTSIDE both roots (the scope is not widened)", () => {

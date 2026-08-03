@@ -187,10 +187,13 @@ account for, so the scan is not clean.
 a link" was false.** `walk()` opens `test/` and `src/` with `existsSync` +
 `readdirSync`, and both follow, so replacing a walk root with a link to a
 directory outside the repo makes the walk read straight through it.
-**Pre-existing and fail-safe rather than blind**: measured, the tree beyond the
-link is read and its PHI is reported as a hit (exit 1). Disclosed rather than
-closed, because refusing a linked root is a decision about repo layout, not this
-defect.
+Pre-existing, and the precise reading is **not** "its PHI is reported": the tree
+beyond the link is scanned exactly as the root it replaced would have been, **with
+that root's own limits**. A fixture-like payload behind a linked `test/` is
+reported (measured, exit 1); the same payload behind a linked `src/` gets only the
+conservative pass and can read clean, exactly as it would through a real `src/`.
+It is link-**neutral**, which is why it is disclosed rather than closed: refusing
+a linked root is a decision about repo layout, not this defect.
 
 **"In scope" is each route's own existing root, not a new boundary.** The walk
 still exempts a gitignored entry (the same rule that already exempts a gitignored
@@ -215,12 +218,14 @@ before any mode could be read and the hook passed a mode-`120000` blob green
 Admitting `T` also scans the reverse typechange, a link replaced by a real file
 that bears PHI.
 
-Residuals here, stated rather than hidden. **No count is written down**, because a list with a
-tally on the front gets read as complete and this one was already short by two:
+Residuals here, stated rather than hidden. **No count is written down**, because a list with a tally
+on the front gets read as complete, and the tally that used to sit here was read that way and was
+wrong:
 
 - **A non-regular entry that goes away mid-sweep still REFUSES**, unlike a regular file. The
-  vanished-transient tolerance above is scoped to the READ, and these entries are refused at
-  enumeration, before any read. The asymmetry is deliberate in direction (fail-closed is the correct
+  vanished-transient tolerance above is scoped to the READ, and a non-regular entry is refused on the
+  strength of what `readdir` reported, without a re-check. (The one exception is the `DT_UNKNOWN`
+  branch in the next bullet, which resolves with an `lstat` and skips an entry that has gone.) The asymmetry is deliberate in direction (fail-closed is the correct
   way for a PHI gate to be wrong) and is not reachable in this repo: nothing here creates a
   non-regular entry under `test/` or `src/`, and the tests that create them confine every one to a
   throwaway repo under `tmpdir()`. **Do not close it by widening the tolerance** (the standing rule
