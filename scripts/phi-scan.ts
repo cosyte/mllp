@@ -122,6 +122,30 @@
  * written out rather than an example, because a diagnostic ABOUT a PHI leak is
  * itself a PHI surface, and that applies to the prose explaining it too.
  *
+ * ▶ THREE MORE WAYS AN IN-SCOPE ENTRY REACHED NEITHER ROUTE, ALL MEASURED ON
+ * `2252d33` BEFORE ANYTHING WAS TOUCHED, AND THE FIRST TWO ARE AT PRE-COMMIT:
+ *
+ *   - RENAME AND COPY RECORDS WERE NOT ENUMERATED AT ALL. `R`/`C` carry two
+ *     paths and `--diff-filter=AMT` deletes them, so `git mv <link> test/<name>`
+ *     staged as `R100` at mode `120000` and `--staged` exited 0 over it, and a
+ *     rename that also substituted a real name staged as `R051` and exited 0
+ *     over live PID-5 / PID-7 / PID-3. `--no-renames` closes both: the
+ *     destination arrives as an ordinary single-path `A`, the source as a `D`
+ *     the filter drops. The enumeration is a strict SUPERSET of the previous
+ *     one and no record shape changed;
+ *   - A REGULAR BLOB STAGED AT EXACTLY `test` OR `src` was in scope for the
+ *     REFUSAL above and out of scope for the READ, so nothing looked at it:
+ *     exit 0 over the same live values. Both roots' read predicates now admit
+ *     the root's own path, and `test` earns the structured scan, because an
+ *     entry that REPLACES a root is judged with that root's own limits;
+ *   - A WALK ROOT THAT IS NOT A DIRECTORY threw `ENOTDIR` out of `readdirSync`
+ *     uncaught, and an uncaught throw exits **1**, the code this contract
+ *     reserves for "hits found". A false finding is not the same failure as a
+ *     crash and is worse than one, because it is actionable-looking. A dangling
+ *     link at a root was the silent half of the same shape: `existsSync`
+ *     follows, so the walk returned and the sweep reported OK over the entire
+ *     corpus that root stands for. Both refuse now (exit 2); see `walkRoot`.
+ *
  * The gitlink (mode `160000`) arm is NOT a hole this closes, and saying so would
  * be false here: `--staged`'s scope already reaches a staged submodule under
  * BOTH roots, and `git show :<path>` on one fails with `bad object`, so the base
@@ -131,7 +155,7 @@
  * ---------------------------------------------------------------------------
  */
 
-import { readFileSync, statSync, lstatSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, statSync, lstatSync, existsSync, readdirSync, type Dirent } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, resolve, relative, sep, isAbsolute } from "node:path";
 
@@ -165,8 +189,24 @@ const SRC_ROOT = join(REPO_ROOT, "src");
 // all (the directory `test/differential/fixtures/README.md` tells developers to
 // drop real captures into), which is precisely the false negative this gate
 // exists to stop.
+// The ROOT'S OWN PATH is admitted as well as the prefix, and it is the one entry
+// this filter used to drop while `isUnderScanRoot` below already claimed it. An
+// index entry at exactly `test` is never a directory (git records none), so it is
+// the corpus root REPLACED by a blob: in scope for the refusal, out of scope for
+// the read, and therefore scanned by nothing. Measured on `2252d33`, `--staged`
+// exited 0 "OK, no hits" over a staged mode-100644 `test` carrying live PID-5 /
+// PID-7 / PID-3 values that the same bytes report under any other name.
 function isScannableTestFile(relPath: string): boolean {
-  return relPath.startsWith("test/") && !relPath.endsWith(".ts") && !relPath.endsWith(".md");
+  return (
+    (relPath === "test" || relPath.startsWith("test/")) &&
+    !relPath.endsWith(".ts") &&
+    !relPath.endsWith(".md")
+  );
+}
+
+/** The `src/` half of the same rule, root's own path included for the same reason. */
+function isScannableSrcFile(relPath: string): boolean {
+  return (relPath === "src" || relPath.startsWith("src/")) && !relPath.endsWith(".md");
 }
 
 // The two scan ROOTS. This is the boundary a NON-REGULAR entry is judged against
@@ -649,14 +689,115 @@ function nonRegularKind(e: EntryKind): string | null {
 }
 
 /**
+ * Describe a path's OWN kind for a refusal, from an `lstat`, so a link is named
+ * as a link and nothing on the other side of it is read or reported.
+ */
+function pathKind(p: string): string {
+  let st;
+  try {
+    st = lstatSync(p);
+  } catch {
+    return "not a directory";
+  }
+  if (st.isDirectory()) return "a directory";
+  if (st.isFile()) return "a regular file";
+  return nonRegularKind(st) ?? "not a directory";
+}
+
+/** `true` only when `p` is itself a symbolic link, whatever it resolves to. */
+function isSymbolicLink(p: string): boolean {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A scan ROOT that is not a walkable directory REFUSES the scan (exit 2).
+ *
+ * The root is the one path the walk opens by name rather than reaching through a
+ * typed `Dirent`, so it is the one path that can fail to be a directory at all,
+ * and both ways of doing that read as clean or worse:
+ *
+ *   - a root that resolves to a FILE (a regular file at `test`, or a link to
+ *     one) threw `ENOTDIR` out of `readdirSync` UNCAUGHT. Node exits **1** on an
+ *     uncaught throw, which is the code this contract reserves for "hits found",
+ *     so the gate reported a finding it had not made. Measured on `2252d33`;
+ *   - a root that is a DANGLING link fails `existsSync`, which follows, so the
+ *     walk returned silently and the sweep reported OK over the whole corpus
+ *     that root stands for. `observed === 0` does not catch it while the other
+ *     root still has files.
+ *
+ * Reading whatever sits there instead is refused as the remedy: what is missing
+ * is a TREE, and one file read in its place would be evidence about that file
+ * and not about the corpus it replaced. `staged` mode is a different matter and
+ * does read such a blob, because the index has no directories in it to lose: see
+ * `isScannableTestFile`.
+ *
+ * A root that is a link to a DIRECTORY is still followed, exactly as before.
+ * That is pre-existing and link-NEUTRAL (the tree beyond it is scanned as the
+ * root it replaced would have been, with that root's own limits), it is
+ * disclosed in the banner, and re-deciding it is a question about repo layout
+ * rather than about this defect.
+ */
+function walkRoot(root: string, out: string[], unscannable: Unscannable[]): void {
+  let st;
+  try {
+    // statSync FOLLOWS, which is what keeps a linked directory root behaving as
+    // it always has. The refusals below are decided on what it resolves TO.
+    st = statSync(root);
+  } catch (err) {
+    if (errorCode(err) !== "ENOENT") {
+      throw new InvocationError(
+        `could not read the scan root ${normalizePath(root)}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    // ENOENT is two different things. An ABSENT root is legitimate (a repo need
+    // not have both), and a DANGLING link is a root that IS there and stands for
+    // nothing. One lstat tells them apart.
+    if (isSymbolicLink(root)) refuseRoot(root);
+    return;
+  }
+  if (!st.isDirectory()) refuseRoot(root);
+  walk(root, out, unscannable);
+}
+
+function refuseRoot(root: string): never {
+  throw new InvocationError(
+    `refusing the scan: the scan root ${normalizePath(root)} is ${pathKind(root)}, not a ` +
+      `directory, so the walk has no tree to enumerate there. Anything read in its place would ` +
+      `be evidence about one entry rather than about the corpus that root stands for. ` +
+      `Restore it as a directory, or remove it.`,
+  );
+}
+
+/**
  * Enumerate a scan root. `Dirent`'s predicates are lstat answers and are not
  * exhaustive: an entry that is neither a directory nor a regular file is
  * collected into `unscannable` rather than dropped, so the caller can refuse
  * instead of reporting clean over it.
  */
 function walk(dir: string, out: string[], unscannable: Unscannable[]): void {
-  if (!existsSync(dir)) return;
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    // ENOENT: a directory gone between its parent's `readdir` and this one, one
+    // phase before the read window `Target.tolerateVanish` documents. It narrows
+    // the ENUMERATION, exactly as the `lstat` branch below does, and softens
+    // nothing about what a failed READ means.
+    if (errorCode(err) === "ENOENT") return;
+    // Everything else is a walk that FAILED, and it used to leave the process
+    // rather than the function: an uncaught throw exits 1, the code reserved for
+    // "hits found". A refusal is exit 2 and names the directory.
+    throw new InvocationError(
+      `could not enumerate ${normalizePath(dir)}: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  for (const e of entries) {
     const full = join(dir, e.name);
     if (e.isDirectory()) {
       walk(full, out, unscannable);
@@ -775,9 +916,9 @@ function gitTracked(): Set<string> | null {
 function buildTargetsForAll(): Target[] {
   const unscannable: Unscannable[] = [];
   const testFiles: string[] = [];
-  walk(TEST_ROOT, testFiles, unscannable);
+  walkRoot(TEST_ROOT, testFiles, unscannable);
   const srcFiles: string[] = [];
-  walk(SRC_ROOT, srcFiles, unscannable);
+  walkRoot(SRC_ROOT, srcFiles, unscannable);
   // From test/, keep every data file except .ts sources (dispatched to
   // structured-or-conservative by looksLikeHl7). From src/, keep everything
   // walk() surfaced (hand-written code → conservative pass).
@@ -851,10 +992,32 @@ function buildTargetsForStaged(): Target[] {
     // exactly like `A` and `M`, so admitting it costs the two-field stride below
     // nothing, and it also scans the reverse typechange (a link replaced by a
     // real file bearing PHI) as the file it became.
-    listBuf = execFileSync("git", ["diff", "--cached", "--raw", "-z", "--diff-filter=AMT"], {
-      encoding: "buffer",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    //
+    // `--no-renames` FOR THE SAME REASON, AND THE FILTER ALONE WAS NOT ENOUGH.
+    // Rename detection is on by default, and `diff.renames` can turn copy
+    // detection on as well, so `git mv <link> test/<name>` staged as
+    // `:120000 120000 <sha> <sha> R100` with TWO paths, which `--diff-filter=AMT`
+    // then deleted outright: an ordinary `git mv` put a mode-120000 entry under a
+    // scan root and this route printed "OK, no hits" (measured on `2252d33`, exit
+    // 0). A rename that ALSO substitutes a real name staged as `R051` and went the
+    // same way, with live PID-5 / PID-7 / PID-3 values in the destination blob.
+    // Turning detection off makes the destination arrive as an ordinary
+    // single-path `A` (`:000000 120000 0000000 <sha> A`) and the source a `D` the
+    // filter drops. It needs NO two-path record shape and no scope decision, and
+    // it makes the two-field stride below STRUCTURAL rather than conditional: with
+    // detection off git cannot emit an `R` or a `C` whatever the caller's
+    // `diff.renames` is set to. Verified here under `diff.renames` = `true`,
+    // `copies`, `false` and `1`, and under `diff.renameLimit=1`: every stage
+    // yields single-path records and the enumeration is a strict superset of the
+    // previous one.
+    listBuf = execFileSync(
+      "git",
+      ["diff", "--cached", "--raw", "-z", "--no-renames", "--diff-filter=AMT"],
+      {
+        encoding: "buffer",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
   } catch (err) {
     throw new InvocationError(
       `git diff --cached failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -862,17 +1025,18 @@ function buildTargetsForStaged(): Target[] {
   }
 
   // `--raw -z` emits `<info>\0<path>\0` per record. `R` (rename) and `C` (copy)
-  // are the only statuses carrying a SECOND path, and the filter excludes both,
-  // so the stride is two fields. If one ever reached here the stride would
-  // desync and the next record would fail to parse, which REFUSES: the same
-  // outcome as any other unparseable record, and the safe one.
-  //
-  // Excluding `R`/`C` also means this route does not enumerate a staged rename
-  // at all. That is PRE-EXISTING (`--diff-filter=AM` excluded them too) and is
-  // not narrowed here: admitting them needs the two-path record shape handled,
-  // which is a scope decision, not this one. A record that does not parse
+  // are the only statuses carrying a SECOND path, and `--no-renames` above means
+  // git cannot emit either, so the stride is two fields. The regex still admits a
+  // score-suffixed status: if one ever reached here the stride would desync and
+  // the next record would fail to parse, which REFUSES, the same outcome as any
+  // other unparseable record and the safe one. A record that does not parse
   // REFUSES rather than being skipped: a silently shortened list is exactly the
   // shape this scan must never report clean over.
+  //
+  // What this route still does NOT enumerate, stated because the boundary is
+  // narrower than the path prefix alone: `--diff-filter=AMT` also drops `D` (a
+  // deletion has no staged blob to scan) and `U` (an unmerged path has no single
+  // one). Both are PRE-EXISTING.
   const fields = listBuf.toString("utf8").split("\0");
   const staged: { path: string; mode: string }[] = [];
   let i = 0;
@@ -911,10 +1075,9 @@ function buildTargetsForStaged(): Target[] {
       .filter((s) => REGULAR_BLOB_MODES.has(s.mode))
       // Scan the same in-scope set all-mode walks: every test/ data file except
       // .ts sources (they carry deliberate violator literals), plus src/ code.
-      .filter(
-        (s) =>
-          isScannableTestFile(s.path) || (s.path.startsWith("src/") && !s.path.endsWith(".md")),
-      )
+      // Both predicates admit the ROOT'S OWN PATH, which is the entry the walk
+      // cannot have and the index can: see `isScannableTestFile`.
+      .filter((s) => isScannableTestFile(s.path) || isScannableSrcFile(s.path))
       .map(({ path: relPath }) => ({
         path: relPath,
         // SECURITY: array-form execFileSync, no shell. `:<path>` is a git pathspec.
@@ -989,10 +1152,14 @@ function findHeaderLine(text: string): string | undefined {
  * anything not fixture-like (src code, plain text outside test/).
  */
 function looksLikeHl7(text: string, path: string): boolean {
-  const isFixtureLike =
-    path.endsWith(".hl7") ||
-    path.endsWith(".bin") ||
-    (path.startsWith("test/") && !path.endsWith(".ts") && !path.endsWith(".md"));
+  // The `test/` disjunct is `isScannableTestFile` itself rather than a second
+  // copy of it, so the set that EARNS the structured scan cannot drift from the
+  // set that is READ. It carries the root's own name with it: a blob staged at
+  // exactly `test` replaced the fixture root, so it is judged with that root's
+  // limits, and those include the structured scan. Without this the blob is read
+  // and still reports clean, because the conservative pass models no fields (a
+  // draft measured exactly that: exit 0 over PID-5 / PID-7 / PID-3).
+  const isFixtureLike = path.endsWith(".hl7") || path.endsWith(".bin") || isScannableTestFile(path);
   if (!isFixtureLike) return false;
   if (findHeaderLine(text) !== undefined) return true;
   return unwrapMllpFrame(text)

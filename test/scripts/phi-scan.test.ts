@@ -1125,3 +1125,263 @@ describe("phi-scan: --staged refuses a non-regular staged entry", () => {
     expect(r.stderr).toMatch(/Anderson/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The three holes the block above left open
+// ---------------------------------------------------------------------------
+
+/**
+ * `--staged` IS the pre-commit gate here, so a record it never enumerates is a
+ * payload that reaches a commit. Three shapes reached neither route, all
+ * measured on `2252d33` before anything was touched, all with the same
+ * name-bearing synthetic payload `plantPayload` writes:
+ *
+ *   - a RENAME or COPY record. Both carry two paths and `--diff-filter=AMT`
+ *     deletes them outright, so `git mv <link> test/<name>` staged as `R100` at
+ *     mode `120000` and exited 0, and a rename that also substituted a real name
+ *     staged as `R051` and exited 0 over live PID-5 / PID-7 / PID-3;
+ *   - a REGULAR blob staged at exactly `test`, in scope for the refusal and out
+ *     of scope for the read, so nothing looked at it: exit 0 over the same
+ *     values;
+ *   - a walk ROOT that is not a directory, which threw `ENOTDIR` out of
+ *     `readdirSync` uncaught. An uncaught throw exits 1, the code reserved for
+ *     "hits found", so the gate published a finding it had not made.
+ *
+ * Each case asserts the git premise it rests on rather than trusting it, and the
+ * link cases assert that no token off the other side of the link is printed.
+ */
+
+/** The base commit `makeScanRepo` stops short of, needed before a rename exists. */
+function commitBase(repo: string): void {
+  gitIn(repo, ["-c", "user.email=t@t.t", "-c", "user.name=t", "commit", "-qm", "base"]);
+}
+
+/**
+ * A fixture with enough unchanged bulk that git's rename detection fires on a
+ * one-segment substitution. The similarity score is what decides whether the
+ * record is an `R` at all, so the premise this test rests on is built rather
+ * than hoped for.
+ */
+function bulkyFixture(pidLine: string): string {
+  const filler = Array.from({ length: 8 }, (_, i) => `NTE|${String(i + 1)}||routine filler text`);
+  return msg(MSH, ...filler, pidLine);
+}
+
+const CLEAN_PID = "PID|1||MRN12345^^^HOSP^MR||Doe^John^Q||19800115|M";
+const DIRTY_PID = "PID|1||987654^^^HOSP^MR||Kowalczyk^Bronislawa||19511103|F";
+
+describe("phi-scan: --staged enumerates a rename, which detection used to delete", () => {
+  it("REFUSES a link `git mv`d into a scan root, staged as R100 at mode 120000", () => {
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    symlinkSync(file, join(repo, "elsewhere.frame.bin"));
+    gitIn(repo, ["add", "elsewhere.frame.bin"]);
+    commitBase(repo);
+    gitIn(repo, ["mv", "elsewhere.frame.bin", "test/capture.frame.bin"]);
+
+    // PREMISE, both halves. With detection on this is a two-path R100 record at
+    // mode 120000, and `--diff-filter=AMT` then deletes it, so the route saw an
+    // EMPTY stage over a link sitting under a scan root.
+    expect(gitOut(repo, ["diff", "--cached", "--raw"])).toMatch(/^:120000 120000 \S+ \S+ R100\t/m);
+    expect(gitOut(repo, ["diff", "--cached", "--raw", "--diff-filter=AMT"]).trim()).toBe("");
+
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/refusing the scan/);
+    expect(r.stderr).toContain("test/capture.frame.bin");
+    expect(r.stderr).toContain("a symbolic link");
+    for (const token of PLANTED_TOKENS) expect(r.stderr).not.toContain(token);
+  });
+
+  it("SCANS a rename that also substitutes a real name, and reports every field", () => {
+    const repo = makeScanRepo({ git: true });
+    writeFileSync(join(repo, "test", "corpus.hl7"), bulkyFixture(CLEAN_PID));
+    gitIn(repo, ["add", "test/corpus.hl7"]);
+    commitBase(repo);
+    writeFileSync(join(repo, "test", "renamed.hl7"), bulkyFixture(DIRTY_PID));
+    rmSync(join(repo, "test", "corpus.hl7"));
+    gitIn(repo, ["add", "-A", "test"]);
+
+    // PREMISE: a scored rename, deleted by the filter before any blob was read.
+    expect(gitOut(repo, ["diff", "--cached", "--raw"])).toMatch(
+      /^:100644 100644 \S+ \S+ R\d+\ttest\/corpus\.hl7\ttest\/renamed\.hl7$/m,
+    );
+    expect(gitOut(repo, ["diff", "--cached", "--raw", "--diff-filter=AMT"]).trim()).toBe("");
+
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain("test/renamed.hl7");
+    expect(r.stderr).toMatch(/PID-5/);
+    expect(r.stderr).toMatch(/PID-7/);
+    expect(r.stderr).toMatch(/PID-3/);
+  });
+
+  it("cannot be reopened by the caller's own rename / copy configuration", () => {
+    // `--no-renames` is what makes the two-field stride STRUCTURAL: with
+    // detection off git cannot emit an `R` or a `C` whatever these are set to.
+    // Every value is checked against the same rename, not argued about.
+    for (const [key, value] of [
+      ["diff.renames", "true"],
+      ["diff.renames", "copies"],
+      ["diff.renames", "false"],
+      ["diff.renames", "1"],
+      ["diff.renameLimit", "1"],
+    ] as const) {
+      const repo = makeScanRepo({ git: true });
+      gitIn(repo, ["config", key, value]);
+      writeFileSync(join(repo, "test", "corpus.hl7"), bulkyFixture(CLEAN_PID));
+      gitIn(repo, ["add", "test/corpus.hl7"]);
+      commitBase(repo);
+      writeFileSync(join(repo, "test", "renamed.hl7"), bulkyFixture(DIRTY_PID));
+      rmSync(join(repo, "test", "corpus.hl7"));
+      gitIn(repo, ["add", "-A", "test"]);
+
+      const r = runScannerIn(repo, null, undefined, ["--staged"]);
+      expect(r.code, `${key}=${value} stderr: ${r.stderr}`).toBe(1);
+      expect(r.stderr, `${key}=${value}`).toContain("test/renamed.hl7");
+    }
+  });
+
+  it("leaves an ordinary stage exactly as it was (negative control)", () => {
+    // Turning detection off must ADD records, never move one. A stage with no
+    // rename in it enumerates the same single add it always did.
+    const repo = makeScanRepo({ git: true });
+    writeFileSync(join(repo, "test", "clean.hl7"), bulkyFixture(CLEAN_PID));
+    gitIn(repo, ["add", "test/clean.hl7"]);
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+});
+
+describe("phi-scan: a REGULAR blob staged at exactly a walk root is read", () => {
+  it("SCANS a PHI-bearing blob staged as `test`, which replaces the fixture root", () => {
+    // In scope for the refusal (the root's own name is matched) and out of scope
+    // for the read (the read predicate wanted the `test/` PREFIX), so this blob
+    // was scanned by nothing at all: measured exit 0 over all three fields.
+    const repo = makeScanRepo({ git: true, track: false });
+    rmSync(join(repo, "test"), { recursive: true, force: true });
+    writeFileSync(join(repo, "test"), msg(MSH, DIRTY_PID));
+    gitIn(repo, ["add", "test"]);
+
+    // PREMISE: a plain single-path ADD at mode 100644, path exactly `test`. Not
+    // a rename, so this is the read set's own hole and not the one above.
+    expect(gitOut(repo, ["diff", "--cached", "--raw"])).toMatch(
+      /^:000000 100644 \S+ \S+ A\ttest$/m,
+    );
+
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toMatch(/PID-5/);
+    expect(r.stderr).toMatch(/PID-7/);
+    expect(r.stderr).toMatch(/PID-3/);
+  });
+
+  it("gives it the STRUCTURED scan, which reading it alone would not have", () => {
+    // Admitting the path to the read set is only half of it. `looksLikeHl7`
+    // decides what scan it earns, and `test` matches none of the fixture-like
+    // shapes by extension, so a blob that is read but not judged fixture-like
+    // gets the conservative pass, models no fields, and reports clean over a
+    // PID. This asserts the field-aware detectors really ran on it.
+    const repo = makeScanRepo({ git: true, track: false });
+    rmSync(join(repo, "test"), { recursive: true, force: true });
+    writeFileSync(join(repo, "test"), msg(MSH, DIRTY_PID));
+    gitIn(repo, ["add", "test"]);
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.stderr).toContain("person-name token not in synthetic allow-list");
+    expect(r.stderr).toContain("date of birth not in synthetic allow-list");
+  });
+
+  it("gives a blob staged as `src` the SRC root's own limits, not the test root's", () => {
+    // An entry that replaces a root is judged with that root's limits, and
+    // `src/` gets the conservative dashed-SSN + email pass because it is
+    // hand-written code whose examples carry synthetic identifiers. So the same
+    // shape catches a committed SSN and does NOT model PID fields. That second
+    // half is the disclosed limit of the `src` root itself, unchanged here.
+    const repo = makeScanRepo({ git: true });
+    writeFileSync(join(repo, "src"), `const note = "ssn ${["123", "45", "6789"].join("-")}";\n`);
+    gitIn(repo, ["add", "src"]);
+    const caught = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(caught.code, `stderr: ${caught.stderr}`).toBe(1);
+    expect(caught.stderr).toContain("(ssn)");
+
+    const repo2 = makeScanRepo({ git: true });
+    writeFileSync(join(repo2, "src"), msg(MSH, DIRTY_PID));
+    gitIn(repo2, ["add", "src"]);
+    const missed = runScannerIn(repo2, null, undefined, ["--staged"]);
+    expect(missed.code, `stderr: ${missed.stderr}`).toBe(0);
+  });
+});
+
+describe("phi-scan: a walk root that is not a directory refuses the scan", () => {
+  it("REFUSES a root that LINKS TO A FILE, which used to exit 1 uncaught", () => {
+    // `readdirSync` threw ENOTDIR straight out of the process. Node exits 1 on
+    // an uncaught throw, and 1 is this contract's "hits found", so the gate
+    // reported a finding it never made. A refusal is exit 2 and says why.
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    rmSync(join(repo, "test"), { recursive: true, force: true });
+    symlinkSync(file, join(repo, "test"));
+
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/refusing the scan/);
+    expect(r.stderr).toContain("test");
+    expect(r.stderr).toContain("a symbolic link");
+    expect(r.stderr).toContain("not a directory");
+    expect(r.stderr).not.toMatch(/ENOTDIR/);
+    // The root IS the link here, so the target is the easiest thing to echo.
+    for (const token of PLANTED_TOKENS) expect(r.stderr).not.toContain(token);
+  });
+
+  it("REFUSES a root that is a REGULAR FILE, and says which kind it found", () => {
+    const repo = makeScanRepo({ git: true });
+    rmSync(join(repo, "test"), { recursive: true, force: true });
+    writeFileSync(join(repo, "test"), msg(MSH, DIRTY_PID));
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain("a regular file");
+    expect(r.stderr).toContain("not a directory");
+  });
+
+  it("REFUSES a DANGLING link at a root, the silent half of the same shape", () => {
+    // `existsSync` follows, so a dangling link answered false, the walk returned,
+    // and the sweep reported OK over the whole corpus that root stands for. The
+    // `observed === 0` backstop cannot see it while the other root has files.
+    const repo = makeScanRepo({ git: true });
+    // The OTHER root keeps files, so the sweep observes something and the
+    // observed-nothing refusal cannot be what turns this red.
+    writeFileSync(join(repo, "test", "extra.hl7"), msg(MSH, CLEAN_PID));
+    symlinkSync(join(repo, "no-such-directory"), join(repo, "src"));
+    expect(existsSync(join(repo, "src"))).toBe(false);
+
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain("src");
+    expect(r.stderr).toContain("not a directory");
+  });
+
+  it("does NOT refuse a root that is simply ABSENT (the control that isolates it)", () => {
+    // Absent and dangling are the same ENOENT and are not the same thing: a repo
+    // need not have both roots, while a dangling link is a root that IS there
+    // and stands for nothing. This repo has no `src/` at all and passes.
+    const repo = makeScanRepo({ git: true });
+    expect(existsSync(join(repo, "src"))).toBe(false);
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("still FOLLOWS a root that links to a DIRECTORY, unchanged and deliberately", () => {
+    // Pre-existing and link-NEUTRAL: the tree beyond it is scanned exactly as
+    // the root it replaced would have been. Pinned so that changing it is a
+    // decision about repo layout, taken on purpose, and not a side effect.
+    const repo = makeScanRepo({ git: true });
+    const { dir: hidden } = plantPayload(repo);
+    rmSync(join(repo, "test"), { recursive: true, force: true });
+    symlinkSync(hidden, join(repo, "test"));
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toMatch(/PID-5/);
+  });
+});

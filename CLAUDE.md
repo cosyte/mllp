@@ -109,15 +109,44 @@
   payload behind a linked `src/` gets only the conservative pass). Disclosed, not closed, and never
   restate it as a promise that a linked root is always caught. The
   scope test matches the roots' own NAMES as well as the prefix, because an entry named exactly
-  `test` or `src` replaces a root instead of sitting in one. **▶ `--diff-filter` MUST KEEP `T`:**
+  `test` or `src` replaces a root instead of sitting in one. **That last sentence was only half
+  true until `PHI-SCAN-RENAME-BLIND-AT-PRECOMMIT`: the REFUSAL matched the root's name and the
+  READ set did not**, so a mode-`100644` blob staged at exactly `test` was scanned by nothing and
+  `--staged` exited 0 over live `PID-5`/`PID-7`/`PID-3`. Both read predicates now admit the root's
+  own path, and **admitting it is only half the remedy**: `looksLikeHl7` decides what scan a
+  target earns, and a path named `test` matches no fixture-like extension, so a draft read the
+  blob and still reported clean. An entry that REPLACES a root is judged with THAT ROOT'S OWN
+  LIMITS: `test` earns the structured scan, `src` keeps the conservative pass. **▶ `--diff-filter`
+  MUST KEEP `T`:**
   replacing a **tracked** file with a link is neither add nor modify, so `AM` deleted the record
   before any mode was read and the hook passed mode `120000` green (measured on git 2.39.5: `AM`
   yields an empty raw stage). **"In scope" is each route's own ROOT** (`test/`, `src/`); the
   `.ts`/`.md` **name** exemptions deliberately do NOT carry over to a non-regular entry, because they
-  are judgements about bytes. Disclosed, not fixed: `R`/`C` rename/copy are not enumerated by
-  `--staged` at all (**pre-existing**), and explicit-path mode still reads **through** a link.
+  are judgements about bytes. Disclosed, not fixed: explicit-path mode still reads **through** a
+  link. (`R`/`C` rename/copy were disclosed here too, and are **CLOSED** by the bullet below.)
   Mode `160000` gitlinks were **already** refused here (`git show` fails `bad object`); only the
   diagnostic changed. **Do not "resync" this to a sibling parser's scope** and do not soften it.
+- **`--staged` enumerates a rename now, and a walk root that is not a directory refuses instead of
+  publishing a finding it never made** (`PHI-SCAN-RENAME-BLIND-AT-PRECOMMIT`). `R`/`C` carry two
+  paths, so `--diff-filter=AMT` deleted the record outright: `git mv <link>` into a scan root
+  staged as **`R100` at mode `120000`** and `--staged` exited **0** over it, and a rename that also
+  substituted a real name staged as `R051` and passed the same way. **THE REMEDY IS `--no-renames`
+  AND IT COSTS NO STRIDE WORK**: the destination arrives as a single-path `A`, the source as a `D`
+  the filter drops, the enumeration is a strict SUPERSET of the previous one, and the two-field
+  stride becomes STRUCTURAL because git cannot emit an `R` or a `C` with detection off. Verified
+  under `diff.renames` = `true`/`copies`/`false`/`1` and `diff.renameLimit=1`, so the caller's own
+  config cannot reopen it. **The earlier "admitting them needs the two-path record shape, a scope
+  decision" framing was FALSE and was ported in from a sibling; do not restore it.**
+  A walk ROOT that resolves to a FILE threw `ENOTDIR` out of `readdirSync` **uncaught**, and an
+  uncaught throw exits **1**, the code reserved for "hits found", a false finding, which is worse
+  than a crash because it reads as actionable. A **dangling** link at a root was the silent half:
+  `existsSync` FOLLOWS, so the walk returned and the sweep reported OK over the whole corpus that
+  root stands for, with `observed === 0` unable to fire while the other root had files. Both refuse
+  (exit 2) via `walkRoot`, and the refusal never names the link target. **A root that resolves to a
+  DIRECTORY is still followed, unchanged and deliberately** (link-neutral, pinned by a test); an
+  ABSENT root is still legitimate and still exits 0, which is the control that isolates it from a
+  dangling one. **`walk()` no longer lets any `readdir` failure leave the process**: every one
+  other than `ENOENT` is an InvocationError, so the exit code says refusal and not finding.
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed
   `@cosyte/hl7-mllp` → `@cosyte/mllp`**. Not yet published, so the rename is free.
 - Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).
