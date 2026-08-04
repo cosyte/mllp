@@ -195,6 +195,12 @@ conservative pass and can read clean, exactly as it would through a real `src/`.
 It is link-**neutral**, which is why it is disclosed rather than closed: refusing
 a linked root is a decision about repo layout, not this defect.
 
+**That sentence is now bounded on one side, and the bound is narrow: it holds for
+a root that resolves to a DIRECTORY.** A root that resolves to anything else, or
+to nothing, refuses (see the next section). Nothing about the linked-directory
+case changed, and it is pinned by a test so that changing it stays a decision
+rather than a side effect.
+
 **"In scope" is each route's own existing root, not a new boundary.** The walk
 still exempts a gitignored entry (the same rule that already exempts a gitignored
 file), and `--staged` still only looks under `test/` and `src/`. What does **not**
@@ -238,12 +244,6 @@ wrong:
   reachable on the filesystem this repo is developed and tested on, so nothing pins it. If that
   `lstat` finds the entry gone, the entry is skipped, which narrows the **enumeration** one phase
   earlier and does not soften what a failed **read** means.
-- **`R` (rename) and `C` (copy) are not enumerated by `--staged` at all**, so a
-  staged rename that appends PHI passes that route. **Pre-existing** (the old
-  `AM` filter excluded them too) and not narrowed here: admitting them needs the
-  two-path `--raw` record shape handled, which is a scope decision of its own. If
-  one ever reached the parser the two-field stride desyncs and the run refuses,
-  which is the safe outcome.
 - **Explicit-path mode still reads THROUGH a link**, because `statSync` follows
   it. Unchanged and deliberate: that mode reads exactly what the caller named, and
   a caller naming a path is not the enumeration reporting clean over one.
@@ -254,6 +254,89 @@ would be false here: `--staged`'s scope already reaches a staged submodule under
 commit already refused it. What changed is the diagnostic, from an incidental read
 failure to a named kind. The `.gitignore` note about orphan agent-worktree
 gitlinks is why the arm is worth keeping legible.
+
+## What a rename, a root-replacing blob, and a non-directory root may do
+
+**Nothing any more, and all three used to exit 0 or publish a finding they had
+not made.** All three were found by the gate on the slice above, all three were
+live on `2252d33`, and the first two sit on `--staged`, which is this repo's
+**pre-commit** gate.
+
+**A staged RENAME or COPY was not enumerated at all.** `R` and `C` are the only
+statuses carrying a second path, and `--diff-filter=AMT` deletes such a record
+outright, so:
+
+- `git mv <link> test/<name>` staged as `:120000 120000 <sha> <sha> R100` and
+  `--staged` printed `OK, no hits`, with a mode-`120000` entry sitting under a
+  scan root;
+- a rename that also substituted a real name staged as a scored rename and passed the same
+  way, over live `PID-5` / `PID-7` / `PID-3` values in the destination blob.
+
+**The remedy is `--no-renames`, and it needs no two-path record shape and no
+scope decision.** With detection off the destination arrives as an ordinary
+single-path `A` (`:000000 120000 0000000 <sha> A`) and the source as a `D` the
+filter already drops. The enumeration is a strict **superset** of the previous
+one, and that is pinned on the RECORDS and not just on an exit code: a stage with
+no rename in it hands the scanner byte-identical raw output either way, and a
+stage with one gains exactly the record that used to vanish. It
+also makes the two-field stride **structural** rather than conditional, because
+with detection off git cannot emit an `R` or a `C` at all. Verified here under
+`diff.renames` set to `true`, `copies`, `false` and `1`, and under
+`diff.renameLimit=1`: the caller's own configuration cannot reopen it.
+
+**A REGULAR blob staged at exactly `test` or `src` was read by nothing.** The
+root's own name was already matched for the refusal, but the read filter wanted
+the `test/` prefix, so a mode-`100644` blob at exactly `test` was in scope for one
+and out of scope for the other and `--staged` exited 0 over the same three fields.
+Both read predicates now admit the root's own path. **Admitting it to the read set
+is only half the remedy**: `looksLikeHl7` decides what scan a target earns, and a
+path named `test` matches none of the fixture-like extensions, so a first draft
+read the blob and still reported clean over a `PID`. An entry that **replaces** a
+root is judged with **that root's own limits**, so `test` earns the structured
+HL7 scan and `src` keeps the conservative dashed-SSN + email pass, exactly as a
+file inside either root would. The `src` half is a disclosed limit of that root,
+unchanged here and pinned in both directions.
+
+**A walk ROOT that is not a directory refuses (exit 2), and both halves of that
+were failures of a different kind.** A root that resolves to a **file** (a
+regular file at `test`, or a link to one) threw `ENOTDIR` out of `readdirSync`
+**uncaught**, and an uncaught throw exits **1**, the code this contract reserves
+for "hits found": a false finding, which is worse than a crash because it looks
+actionable. A **dangling** link at a root was the silent half: `existsSync`
+follows, so the walk returned and the sweep reported `OK` over the entire corpus
+that root stands for, with the `observed === 0` backstop unable to see it while
+the other root still had files.
+
+Reading whatever sits there instead was refused as the remedy, and the reason is
+the asymmetry with `--staged`: what is missing in the working tree is a **tree**,
+and one file read in its place is evidence about that file rather than about the
+corpus it replaced. The index has no directories in it to lose, so the staged
+route reads such a blob instead. An **absent** root is still legitimate and still
+exits 0 (a repo need not have both), which is the control that isolates dangling
+from absent.
+
+**A bad root and an unscannable entry under the other root come out in one
+refusal.** A first version threw on the first bad root, which named `test`, left
+`src` for a second run, and left the links under a healthy `test/` unreported as
+well. A root whose `stat` itself fails is still reported alone.
+
+**The gitignore exemption stops at the root, and that is deliberate.** A
+gitignored entry INSIDE a root is exempt, because saying a file is not
+commit-eligible content is a statement about that file. A root is refused before
+`git check-ignore` is consulted at all, because no such statement can be made
+about a whole corpus that is missing.
+
+**No failure of this scan may exit 1, because 1 means "hits found".** The
+non-directory root was one route into that; the same gate found two more, both
+`PRE-EXISTING` and both closed here: a **missing** allow-list threw past every
+`catch` in `main`, and an **unreadable** allow-list or override log threw a raw
+`EACCES`. Both exited 1. Nothing ever passed the gate that way, since non-zero
+still blocks the commit, but a gate that names a finding it has not made is worse
+than one that crashes, because it reads as actionable. All three exit 2 now.
+The missing-allow-list route is answered where it arises; the two unreadable ones
+reach the process-level guard, which turns anything still unaccounted for into
+exit 2. That is the honest answer: the scan did not finish, so it proves
+nothing.
 
 ## Format
 

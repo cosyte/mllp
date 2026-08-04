@@ -9,8 +9,12 @@ this file is maintained by hand (Changesets handles the version bump and publish
 
 ## [Unreleased]
 
-The first pre-alpha release (`0.0.1`) will ship the v1 MLLP transport surface below. The package
-begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` until first alpha).
+`@cosyte/mllp` is published on npm and stays on the `0.0.x`-until-first-alpha ladder, so the API can
+change with no deprecation cycle. The sentence this replaces said the first pre-alpha release "will
+ship" the surface below, which stopped being true the day the package first published and had been
+false ever since. **No version literal is written here, on purpose**: what is published is a fact
+about the registry (`npm view @cosyte/mllp version`) and about `package.json`, and a number copied
+into prose here is a claim that goes stale on its own.
 
 ### Added
 
@@ -75,6 +79,76 @@ begins its public history at `0.0.x`, per the cosyte version ladder (`0.0.x` unt
   the script header.
 
 ### Security
+
+- **The PHI scanner enumerates a staged rename, reads a blob that replaced a walk root, and
+  refuses a root that is not a directory (`PHI-SCAN-RENAME-BLIND-AT-PRECOMMIT`).** Three holes, two
+  of them on `--staged`, which is this repo's **pre-commit** gate. All three were reproduced on
+  `2252d33` before anything was touched, with a synthetic name-bearing payload kept outside both
+  walk roots.
+
+  **The rename hole.** `R` (rename) and `C` (copy) are the only `--raw` statuses carrying a second
+  path, and `--diff-filter=AMT` deletes such a record outright, so the route never saw one.
+  Measured: `git mv <link> test/<name>` staged as `:120000 120000 <sha> <sha> R100` and `--staged`
+  printed `OK, no hits` with a mode-`120000` entry sitting under a scan root; a rename that also
+  substituted a real name staged as a scored rename and passed the same way, over live `PID-5` / `PID-7` /
+  `PID-3` values in the destination blob. The remedy is **`--no-renames`**, and it needs no work on
+  the record shape at all: the destination arrives as an ordinary single-path `A` and the source as a
+  `D` the filter already drops. The enumeration is a strict **superset** of the previous one, and
+  that is pinned on the records rather than on an exit code: a stage with no rename in it hands the
+  scanner byte-identical raw output either way. The two-field
+  stride becomes **structural** rather than conditional, because with detection off git cannot emit
+  an `R` or a `C` at all. Verified under `diff.renames` set to `true`, `copies`, `false` and `1`,
+  and under `diff.renameLimit=1`, so the caller's own configuration cannot reopen it. **The earlier
+  disclosure that admitting these "needs the two-path record shape handled, which is a scope
+  decision" was wrong**, and it was wrong because it was carried in from a sibling rather than
+  measured here.
+
+  **The root-replacing blob.** The refusal path already matched a scan root's own name, because an
+  entry at exactly `test` REPLACES the root instead of sitting in it. The read filter did not: it
+  wanted the `test/` prefix. So a mode-`100644` blob staged at exactly `test` was in scope for one
+  and out of scope for the other, and `--staged` exited 0 over the same three fields. Both read
+  predicates now admit the root's own path. **Admitting it to the read set was only half of it**:
+  `looksLikeHl7` decides what scan a target earns and a path named `test` matches none of the
+  fixture-like extensions, so a draft read the blob and still reported clean over a `PID`. An entry
+  that replaces a root is judged with **that root's own limits**, so `test` earns the structured
+  HL7 scan while `src` keeps the conservative dashed-SSN + email pass, exactly as a file inside
+  either root would. Both directions are pinned.
+
+  **The non-directory root.** A walk root that resolves to a **file** (a regular file at `test`, or
+  a link to one) threw `ENOTDIR` straight out of `readdirSync`, uncaught. Node exits **1** on an
+  uncaught throw, which is the code this contract reserves for "hits found", so the gate published
+  a finding it had never made: a false positive that reads as actionable, which is a different and
+  worse failure than a crash. A **dangling** link at a root was the silent half of the same shape,
+  because `existsSync` follows: the walk returned and the sweep reported `OK` over the entire
+  corpus that root stands for, with the `observed === 0` backstop unable to fire while the other
+  root still had files. Both refuse now (exit 2), naming the root and its kind and **never the link
+  target**. Reading whatever sits there instead was refused as the remedy: what is missing in the
+  working tree is a **tree**, and one file read in its place is evidence about that file rather
+  than about the corpus it replaced. `staged` mode does read such a blob, because the index holds
+  no directories to lose. `walk()` also no longer lets any `readdir` failure leave the process:
+  everything but `ENOENT` is now a refusal that names the directory.
+
+  **Two more routes into the same false finding, both `PRE-EXISTING`, both closed here.** A
+  **missing** allow-list threw its refusal past every `catch` in `main`, and an **unreadable**
+  allow-list or override log threw a raw `EACCES`: both exited 1. Nothing ever passed the gate that
+  way, because non-zero still blocks the commit, but the code said the wrong thing. All three exit
+  2 now: the missing-allow-list route is answered where it arises, and the two unreadable ones reach
+  a process-level guard that turns anything still unaccounted for into exit 2. A bad root and an
+  unscannable entry under the other root also come out in one refusal now, rather than one per
+  run.
+
+  **What did not change, deliberately, and is pinned so it stays a decision.** A root that is a
+  link to a **directory** is still followed and is still link-neutral (the tree beyond it is
+  scanned as the root it replaced would have been, with that root's own limits). An **absent** root
+  is still legitimate and still exits 0, which is the control that separates it from a dangling
+  one. Explicit-path mode still reads through a link. And the `test/` walk still excludes `.ts`
+  sources, which is a separate open question about walk-root scope and is not touched here.
+
+  16 new cases; **12 of them run red against the base scanner** and the other four are deliberate
+  controls (an ordinary stage, an absent root, a linked-directory root, and the record-identity
+  comparison, which is a statement about git and holds on both trees). Negative-controlled across packages too: the identical stage reports
+  four HL7 field hits through this scanner and nothing through a sibling's, so the evidence is
+  about this package rather than about the harness.
 
 - **The PHI scanner refuses a non-regular entry under a scan root, on both routes
   (`PHI-SCAN-SYMLINK-BLIND-ON-BOTH-ROUTES`).** A symbolic link under `test/` or `src/` read CLEAN on
