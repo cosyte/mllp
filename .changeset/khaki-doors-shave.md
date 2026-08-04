@@ -8,7 +8,7 @@ Tooling and documentation only: no runtime code, no public API and no published 
 A staged **rename or copy** was not enumerated at all. Both statuses carry a second path and
 `--diff-filter=AMT` deletes such a record outright, so `git mv <link> test/<name>` staged as
 `R100` at mode `120000` and the scan printed `OK, no hits` over a link sitting under a scan root,
-and a rename that also substituted a real name staged as `R051` and passed the same way over live
+and a rename that also substituted a real name staged as a scored rename and passed the same way over live
 `PID-5` / `PID-7` / `PID-3` values. `--no-renames` closes it with no work on the record shape: the
 destination arrives as an ordinary single-path add and the source as a delete the filter already
 drops, so the enumeration is a strict superset of the previous one and the two-field stride becomes
@@ -28,11 +28,14 @@ had never made. A dangling link at a root was the silent half: the existence che
 sweep reported OK over the whole corpus that root stood for. Both refuse now, naming the root and
 its kind and never the link target, and no directory-read failure can leave the process any more.
 A root that links to a directory is still followed, an absent root is still legitimate, and both
-are pinned so that changing either stays a decision.
+are pinned so that changing either stays a decision. Two more routes into the same false finding
+are closed with it: a missing allow-list and an unreadable allow-list or override log both used to
+exit 1, and a process-level guard now turns anything still unaccounted for into exit 2. A refusal
+now names every offender in one message rather than the first one it met.
 
 Also corrected: the changelog's unreleased preamble said the first pre-alpha release "will ship"
 the surface below, which has been false since the package first published. It now states the
 publish state without naming a version, because a number copied into prose goes stale on its own.
 
-12 new cases, 9 of which run red against the previous scanner; the other three are deliberate
+16 new cases, 12 of which run red against the previous scanner; the other four are deliberate
 controls.

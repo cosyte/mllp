@@ -130,7 +130,10 @@
   publishing a finding it never made** (`PHI-SCAN-RENAME-BLIND-AT-PRECOMMIT`). `R`/`C` carry two
   paths, so `--diff-filter=AMT` deleted the record outright: `git mv <link>` into a scan root
   staged as **`R100` at mode `120000`** and `--staged` exited **0** over it, and a rename that also
-  substituted a real name staged as `R051` and passed the same way. **THE REMEDY IS `--no-renames`
+  substituted a real name staged as a SCORED rename and passed the same way. (No score is written
+  down: it is a function of how similar the two blobs are, so it belongs to the fixture and not to
+  the defect. `R100` above is different, an exact rename always scores 100.) **THE REMEDY IS
+  `--no-renames`
   AND IT COSTS NO STRIDE WORK**: the destination arrives as a single-path `A`, the source as a `D`
   the filter drops, the enumeration is a strict SUPERSET of the previous one, and the two-field
   stride becomes STRUCTURAL because git cannot emit an `R` or a `C` with detection off. Verified
@@ -148,7 +151,11 @@
   dangling one. **`walk()` no longer lets any `readdir` failure leave the process**: every one
   other than `ENOENT` is an InvocationError, so the exit code says refusal and not finding.
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed
-  `@cosyte/hl7-mllp` → `@cosyte/mllp`**. Not yet published, so the rename is free.
+  `@cosyte/hl7-mllp` → `@cosyte/mllp`**. The rename was free because it predates the first
+  publish. **It is published now, and this file names no version** (derive it: `npm view
+  @cosyte/mllp version`). The sentence that stood here read "Not yet published", which had been
+  false for as long as the package has been on the registry, and it is the same defect class the
+  CHANGELOG preamble carried.
 - Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).
 
 ## Tech Stack (the shared `@cosyte/*` standard)

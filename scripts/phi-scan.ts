@@ -128,7 +128,7 @@
  *   - RENAME AND COPY RECORDS WERE NOT ENUMERATED AT ALL. `R`/`C` carry two
  *     paths and `--diff-filter=AMT` deletes them, so `git mv <link> test/<name>`
  *     staged as `R100` at mode `120000` and `--staged` exited 0 over it, and a
- *     rename that also substituted a real name staged as `R051` and exited 0
+ *     rename that also substituted a real name staged as a scored rename and exited 0
  *     over live PID-5 / PID-7 / PID-3. `--no-renames` closes both: the
  *     destination arrives as an ordinary single-path `A`, the source as a `D`
  *     the filter drops. The enumeration is a strict SUPERSET of the previous
@@ -740,8 +740,24 @@ function isSymbolicLink(p: string): boolean {
  * root it replaced would have been, with that root's own limits), it is
  * disclosed in the banner, and re-deciding it is a question about repo layout
  * rather than about this defect.
+ *
+ * A bad root is COLLECTED rather than thrown on, for the reason
+ * `refuseUnscannable` already gives: every offender is named, not just the
+ * first. A version that threw named `test` and left `src` to a second run, and
+ * left the links under a healthy `test/` unreported as well.
+ *
+ * This decision is taken BEFORE `gitIgnored` runs, so a gitignored root refuses
+ * too, where a gitignored entry INSIDE a root is exempt. That asymmetry is
+ * deliberate and disclosed: the exemption says a file is not commit-eligible
+ * content, which is a statement about that file, and it cannot be a statement
+ * about a whole corpus that is missing.
  */
-function walkRoot(root: string, out: string[], unscannable: Unscannable[]): void {
+function walkRoot(
+  root: string,
+  out: string[],
+  unscannable: Unscannable[],
+  badRoots: Unscannable[],
+): void {
   let st;
   try {
     // statSync FOLLOWS, which is what keeps a linked directory root behaving as
@@ -757,19 +773,27 @@ function walkRoot(root: string, out: string[], unscannable: Unscannable[]): void
     // ENOENT is two different things. An ABSENT root is legitimate (a repo need
     // not have both), and a DANGLING link is a root that IS there and stands for
     // nothing. One lstat tells them apart.
-    if (isSymbolicLink(root)) refuseRoot(root);
+    if (isSymbolicLink(root)) badRoots.push({ path: normalizePath(root), kind: pathKind(root) });
     return;
   }
-  if (!st.isDirectory()) refuseRoot(root);
+  if (!st.isDirectory()) {
+    badRoots.push({ path: normalizePath(root), kind: pathKind(root) });
+    return;
+  }
   walk(root, out, unscannable);
 }
 
-function refuseRoot(root: string): never {
-  throw new InvocationError(
-    `refusing the scan: the scan root ${normalizePath(root)} is ${pathKind(root)}, not a ` +
-      `directory, so the walk has no tree to enumerate there. Anything read in its place would ` +
-      `be evidence about one entry rather than about the corpus that root stands for. ` +
-      `Restore it as a directory, or remove it.`,
+/** The refusal block for every scan root that is not a walkable directory. */
+function badRootBlock(roots: Unscannable[]): string | null {
+  if (roots.length === 0) return null;
+  const lines = roots.map((r) => `  - ${r.path} (${r.kind})`).join("\n");
+  const noun =
+    roots.length === 1 ? "scan root is not a directory" : "scan roots are not directories";
+  return (
+    `${String(roots.length)} ${noun}:\n${lines}\n` +
+    "The walk enumerates a tree there, so it has nothing to observe, and anything read in place " +
+    "of one would be evidence about a single entry rather than about the corpus that root stands " +
+    "for. Restore it as a directory, or remove it."
   );
 }
 
@@ -856,14 +880,19 @@ function walk(dir: string, out: string[], unscannable: Unscannable[]): void {
  * offender is named, not just the first: a developer who has to re-run the gate
  * once per link learns to distrust it.
  */
-function refuseUnscannable(entries: Unscannable[], why: string, remedy: string): void {
-  if (entries.length === 0) return;
+function unscannableBlock(entries: Unscannable[], why: string, remedy: string): string | null {
+  if (entries.length === 0) return null;
   const lines = entries.map((u) => `  - ${u.path} (${u.kind})`).join("\n");
   const noun =
     entries.length === 1 ? "entry is not a regular file" : "entries are not regular files";
-  throw new InvocationError(
-    `refusing the scan: ${String(entries.length)} ${noun}:\n${lines}\n${why} ${remedy}`,
-  );
+  return `${String(entries.length)} ${noun}:\n${lines}\n${why} ${remedy}`;
+}
+
+/** `unscannableBlock`, thrown. The staged route has only this one class to refuse over. */
+function refuseUnscannable(entries: Unscannable[], why: string, remedy: string): void {
+  const block = unscannableBlock(entries, why, remedy);
+  if (block === null) return;
+  throw new InvocationError(`refusing the scan: ${block}`);
 }
 
 function gitIgnored(paths: string[]): Set<string> {
@@ -915,10 +944,11 @@ function gitTracked(): Set<string> | null {
 
 function buildTargetsForAll(): Target[] {
   const unscannable: Unscannable[] = [];
+  const badRoots: Unscannable[] = [];
   const testFiles: string[] = [];
-  walkRoot(TEST_ROOT, testFiles, unscannable);
+  walkRoot(TEST_ROOT, testFiles, unscannable, badRoots);
   const srcFiles: string[] = [];
-  walkRoot(SRC_ROOT, srcFiles, unscannable);
+  walkRoot(SRC_ROOT, srcFiles, unscannable, badRoots);
   // From test/, keep every data file except .ts sources (dispatched to
   // structured-or-conservative by looksLikeHl7). From src/, keep everything
   // walk() surfaced (hand-written code → conservative pass).
@@ -932,12 +962,22 @@ function buildTargetsForAll(): Target[] {
   // links alone.
   const ignored = gitIgnored([...files, ...unscannable.map((u) => u.path)]);
 
-  refuseUnscannable(
-    unscannable.filter((u) => !ignored.has(u.path)),
-    "The walk can neither read such an entry nor vouch for what is on the other side of it.",
-    "Remove it, replace it with a regular file, or (if it is genuinely not part of the " +
-      "corpus) untrack it and add it to .gitignore.",
-  );
+  // ONE refusal carrying EVERY offender of BOTH kinds. A bad root and an
+  // unscannable entry under the OTHER root are independent findings, and a
+  // developer who has to re-run the gate to be told the second one learns to
+  // distrust it, which is the reason `unscannableBlock` names them all too.
+  const blocks = [
+    badRootBlock(badRoots),
+    unscannableBlock(
+      unscannable.filter((u) => !ignored.has(u.path)),
+      "The walk can neither read such an entry nor vouch for what is on the other side of it.",
+      "Remove it, replace it with a regular file, or (if it is genuinely not part of the " +
+        "corpus) untrack it and add it to .gitignore.",
+    ),
+  ].filter((b): b is string => b !== null);
+  if (blocks.length > 0) {
+    throw new InvocationError(`refusing the scan: ${blocks.join("\n")}`);
+  }
 
   const tracked = gitTracked();
   return files
@@ -999,7 +1039,7 @@ function buildTargetsForStaged(): Target[] {
     // `:120000 120000 <sha> <sha> R100` with TWO paths, which `--diff-filter=AMT`
     // then deleted outright: an ordinary `git mv` put a mode-120000 entry under a
     // scan root and this route printed "OK, no hits" (measured on `2252d33`, exit
-    // 0). A rename that ALSO substitutes a real name staged as `R051` and went the
+    // 0). A rename that ALSO substitutes a real name stages as a SCORED rename and goes the
     // same way, with live PID-5 / PID-7 / PID-3 values in the destination blob.
     // Turning detection off makes the destination arrive as an ordinary
     // single-path `A` (`:000000 120000 0000000 <sha> A`) and the source a `D` the
@@ -1010,6 +1050,13 @@ function buildTargetsForStaged(): Target[] {
     // `copies`, `false` and `1`, and under `diff.renameLimit=1`: every stage
     // yields single-path records and the enumeration is a strict superset of the
     // previous one.
+    //
+    // THE STRIDE BELOW IS COUPLED TO THIS ARGV, so read the coupling before
+    // editing it. `--no-renames` is what makes a two-path record impossible, and
+    // `-B` (break-rewrites) is the flag that would put detection back on top of
+    // it: do not add one. If a two-path record ever did arrive, the stride
+    // desyncs and the run REFUSES rather than scanning a short list, which is the
+    // safe direction, but that is a backstop and not the guarantee.
     listBuf = execFileSync(
       "git",
       ["diff", "--cached", "--raw", "-z", "--no-renames", "--diff-filter=AMT"],
@@ -1599,9 +1646,15 @@ function report(hits: Hit[]): void {
 
 function main(): number {
   let args: Args;
+  let allow: AllowList;
   try {
     args = parseArgs(process.argv.slice(2));
     validateAllowFixtures(args.allowFixtures);
+    // LOADING THE ALLOW-LIST BELONGS INSIDE A GUARD, and it sat outside one: a
+    // missing allow-list threw its `InvocationError` past every catch in this
+    // function. See the process-level guard at the end of the file for the rest
+    // of that class.
+    allow = loadAllowList();
   } catch (err) {
     if (err instanceof InvocationError) {
       process.stderr.write(`[phi-scan] ${err.message}\n`);
@@ -1610,7 +1663,6 @@ function main(): number {
     throw err;
   }
 
-  const allow = loadAllowList();
   const allowed = new Set<string>(args.allowFixtures.map(normalizePath));
 
   let targets: Target[];
@@ -1680,4 +1732,32 @@ function main(): number {
   return hits.length === 0 ? 0 : 1;
 }
 
-process.exit(main());
+/**
+ * NO FAILURE OF THIS SCAN MAY EXIT 1, BECAUSE 1 MEANS "HITS FOUND".
+ *
+ * Every throw that reached the top of the process used to become an uncaught
+ * exception, and node exits 1 on one: a gate publishing a finding it never made,
+ * which is worse than a crash because it reads as actionable. Three live routes
+ * did it (a walk root that was not a directory, a missing allow-list, an
+ * unreadable allow-list or override log) and each was closed at its own site.
+ * This guard is the one that covers the routes nobody has found yet. Exit 2 is
+ * the honest answer for all of them: the scan did not complete, so it proves
+ * nothing, and non-zero still blocks the commit either way.
+ *
+ * What it prints is engine text naming a path this scanner passed IN, which is
+ * the same locus every hit already carries. It never resolves a link, so nothing
+ * from the other side of one reaches it.
+ */
+function run(): number {
+  try {
+    return main();
+  } catch (err) {
+    process.stderr.write(
+      `[phi-scan] refusing: the scan failed before it could finish: ` +
+        `${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
+    );
+    return 2;
+  }
+}
+
+process.exit(run());

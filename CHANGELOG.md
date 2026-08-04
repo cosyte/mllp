@@ -90,7 +90,7 @@ into prose here is a claim that goes stale on its own.
   path, and `--diff-filter=AMT` deletes such a record outright, so the route never saw one.
   Measured: `git mv <link> test/<name>` staged as `:120000 120000 <sha> <sha> R100` and `--staged`
   printed `OK, no hits` with a mode-`120000` entry sitting under a scan root; a rename that also
-  substituted a real name staged as `R051` and passed the same way, over live `PID-5` / `PID-7` /
+  substituted a real name staged as a scored rename and passed the same way, over live `PID-5` / `PID-7` /
   `PID-3` values in the destination blob. The remedy is **`--no-renames`**, and it needs no work on
   the record shape at all: the destination arrives as an ordinary single-path `A` and the source as a
   `D` the filter already drops. The enumeration is a strict **superset** of the previous one (a
@@ -127,6 +127,14 @@ into prose here is a claim that goes stale on its own.
   no directories to lose. `walk()` also no longer lets any `readdir` failure leave the process:
   everything but `ENOENT` is now a refusal that names the directory.
 
+  **Two more routes into the same false finding, both `PRE-EXISTING`, both closed here.** A
+  **missing** allow-list threw its refusal past every `catch` in `main`, and an **unreadable**
+  allow-list or override log threw a raw `EACCES`: both exited 1. Nothing ever passed the gate that
+  way, because non-zero still blocks the commit, but the code said the wrong thing. Each site is
+  fixed and a process-level guard now turns anything still unaccounted for into exit 2. Refusals
+  also name **every** offender in one message now, roots and non-regular entries together, which is
+  the rule the non-regular refusal already stated and the root refusal did not follow.
+
   **What did not change, deliberately, and is pinned so it stays a decision.** A root that is a
   link to a **directory** is still followed and is still link-neutral (the tree beyond it is
   scanned as the root it replaced would have been, with that root's own limits). An **absent** root
@@ -134,8 +142,9 @@ into prose here is a claim that goes stale on its own.
   one. Explicit-path mode still reads through a link. And the `test/` walk still excludes `.ts`
   sources, which is a separate open question about walk-root scope and is not touched here.
 
-  12 new cases; **9 of them run red against the base scanner** and the other three are the
-  deliberate controls above. Negative-controlled across packages too: the identical stage reports
+  16 new cases; **12 of them run red against the base scanner** and the other four are deliberate
+  controls (an ordinary stage, an absent root, a linked-directory root, and the record-identity
+  comparison, which is a statement about git and holds on both trees). Negative-controlled across packages too: the identical stage reports
   four HL7 field hits through this scanner and nothing through a sibling's, so the evidence is
   about this package rather than about the harness.
 

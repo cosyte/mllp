@@ -1139,7 +1139,7 @@ describe("phi-scan: --staged refuses a non-regular staged entry", () => {
  *   - a RENAME or COPY record. Both carry two paths and `--diff-filter=AMT`
  *     deletes them outright, so `git mv <link> test/<name>` staged as `R100` at
  *     mode `120000` and exited 0, and a rename that also substituted a real name
- *     staged as `R051` and exited 0 over live PID-5 / PID-7 / PID-3;
+ *     staged as a scored rename and exited 0 over live PID-5 / PID-7 / PID-3;
  *   - a REGULAR blob staged at exactly `test`, in scope for the refusal and out
  *     of scope for the read, so nothing looked at it: exit 0 over the same
  *     values;
@@ -1251,6 +1251,35 @@ describe("phi-scan: --staged enumerates a rename, which detection used to delete
     const r = runScannerIn(repo, null, undefined, ["--staged"]);
     expect(r.code, `stderr: ${r.stderr}`).toBe(0);
     expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("changes the RECORDS themselves only by addition (the superset, pinned)", () => {
+    // The claim is that the enumeration is a strict SUPERSET, and the control
+    // above only pins the exit code, which a scan could reach for other reasons.
+    // This compares the two raw stages git actually hands the scanner: identical
+    // on a stage with no rename in it, and gaining exactly the record that used
+    // to vanish on one with a rename.
+    const flat = makeScanRepo({ git: true });
+    writeFileSync(join(flat, "test", "one.hl7"), bulkyFixture(CLEAN_PID));
+    gitIn(flat, ["add", "test/one.hl7"]);
+    commitBase(flat);
+    writeFileSync(join(flat, "test", "one.hl7"), bulkyFixture(CLEAN_PID).replace("NTE|1", "NTE|9"));
+    writeFileSync(join(flat, "test", "two.hl7"), bulkyFixture(CLEAN_PID));
+    gitIn(flat, ["add", "-A", "test"]);
+    const args = ["diff", "--cached", "--raw", "--diff-filter=AMT"];
+    expect(gitOut(flat, [...args, "--no-renames"])).toBe(gitOut(flat, args));
+
+    const renamed = makeScanRepo({ git: true });
+    writeFileSync(join(renamed, "test", "corpus.hl7"), bulkyFixture(CLEAN_PID));
+    gitIn(renamed, ["add", "test/corpus.hl7"]);
+    commitBase(renamed);
+    writeFileSync(join(renamed, "test", "renamed.hl7"), bulkyFixture(DIRTY_PID));
+    rmSync(join(renamed, "test", "corpus.hl7"));
+    gitIn(renamed, ["add", "-A", "test"]);
+    const before = gitOut(renamed, args);
+    const after = gitOut(renamed, [...args, "--no-renames"]);
+    expect(before.trim()).toBe("");
+    expect(after).toMatch(/^:000000 100644 \S+ \S+ A\ttest\/renamed\.hl7$/m);
   });
 });
 
@@ -1370,6 +1399,50 @@ describe("phi-scan: a walk root that is not a directory refuses the scan", () =>
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(0);
     expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("names EVERY bad root, not just the first, and the entries under a healthy one", () => {
+    // Same rule the non-regular refusal already states: a developer who has to
+    // re-run the gate once per offender learns to distrust it. A version that
+    // threw on the first root named `test` and left `src` for a second run.
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    rmSync(join(repo, "test"), { recursive: true, force: true });
+    writeFileSync(join(repo, "test"), msg(MSH, DIRTY_PID));
+    symlinkSync(join(repo, "no-such-directory"), join(repo, "src"));
+
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/2 scan roots are not directories/);
+    expect(r.stderr).toContain("test (a regular file)");
+    expect(r.stderr).toContain("src (a symbolic link)");
+    for (const token of PLANTED_TOKENS) expect(r.stderr).not.toContain(token);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("reports a bad root AND a link under the healthy one in a single refusal", () => {
+    const repo = makeScanRepo({ git: true });
+    const { file } = plantPayload(repo);
+    symlinkSync(file, join(repo, "test", "capture.frame.bin"));
+    symlinkSync(join(repo, "no-such-directory"), join(repo, "src"));
+
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain("src (a symbolic link)");
+    expect(r.stderr).toContain("test/capture.frame.bin (a symbolic link)");
+    for (const token of PLANTED_TOKENS) expect(r.stderr).not.toContain(token);
+  });
+
+  it("REFUSES with exit 2, never 1, when the allow-list itself is missing", () => {
+    // The same false-finding class one layer up: `loadAllowList` threw past every
+    // catch in `main`, so a missing allow-list exited 1, which means "hits
+    // found". Nothing ever got past the gate, but the code said the wrong thing.
+    const repo = makeScanRepo({ git: true });
+    rmSync(join(repo, ALLOW_LIST_REL));
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain("allow-list not found");
+    expect(r.stderr).not.toMatch(/at loadAllowList/);
   });
 
   it("still FOLLOWS a root that links to a DIRECTORY, unchanged and deliberately", () => {

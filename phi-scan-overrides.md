@@ -269,15 +269,16 @@ outright, so:
 - `git mv <link> test/<name>` staged as `:120000 120000 <sha> <sha> R100` and
   `--staged` printed `OK, no hits`, with a mode-`120000` entry sitting under a
   scan root;
-- a rename that also substituted a real name staged as `R051` and passed the same
+- a rename that also substituted a real name staged as a scored rename and passed the same
   way, over live `PID-5` / `PID-7` / `PID-3` values in the destination blob.
 
 **The remedy is `--no-renames`, and it needs no two-path record shape and no
 scope decision.** With detection off the destination arrives as an ordinary
 single-path `A` (`:000000 120000 0000000 <sha> A`) and the source as a `D` the
 filter already drops. The enumeration is a strict **superset** of the previous
-one: a stage with no rename in it produces byte-identical records (pinned by a
-negative control), and a stage with one gains the record that used to vanish. It
+one, and that is pinned on the RECORDS and not just on an exit code: a stage with
+no rename in it hands the scanner byte-identical raw output either way, and a
+stage with one gains exactly the record that used to vanish. It
 also makes the two-field stride **structural** rather than conditional, because
 with detection off git cannot emit an `R` or a `C` at all. Verified here under
 `diff.renames` set to `true`, `copies`, `false` and `1`, and under
@@ -313,6 +314,29 @@ corpus it replaced. The index has no directories in it to lose, so the staged
 route reads such a blob instead. An **absent** root is still legitimate and still
 exits 0 (a repo need not have both), which is the control that isolates dangling
 from absent.
+
+**Every offender is named in one refusal, roots and entries together.** A first
+version threw on the first bad root, which named `test` and left `src` for a
+second run, and left the links under a healthy `test/` unreported as well. That
+is the rule this file already states for non-regular entries, and the reason is
+the same: a developer who has to re-run the gate once per offender learns to
+distrust it.
+
+**The gitignore exemption stops at the root, and that is deliberate.** A
+gitignored entry INSIDE a root is exempt, because saying a file is not
+commit-eligible content is a statement about that file. A root is refused before
+`git check-ignore` is consulted at all, because no such statement can be made
+about a whole corpus that is missing.
+
+**No failure of this scan may exit 1, because 1 means "hits found".** The
+non-directory root was one route into that; the same gate found two more, both
+`PRE-EXISTING` and both closed here: a **missing** allow-list threw past every
+`catch` in `main`, and an **unreadable** allow-list or override log threw a raw
+`EACCES`. Both exited 1. Nothing ever passed the gate that way, since non-zero
+still blocks the commit, but a gate that names a finding it has not made is worse
+than one that crashes, because it reads as actionable. Each site is fixed, and a
+process-level guard now turns anything still unaccounted for into exit 2, which
+is the honest answer: the scan did not finish, so it proves nothing.
 
 ## Format
 
