@@ -30,8 +30,9 @@ its kind and never the link target, and no directory-read failure can leave the 
 A root that links to a directory is still followed, an absent root is still legitimate, and both
 are pinned so that changing either stays a decision. Two more routes into the same false finding
 are closed with it: a missing allow-list and an unreadable allow-list or override log both used to
-exit 1, and a process-level guard now turns anything still unaccounted for into exit 2. A refusal
-now names every offender in one message rather than the first one it met.
+exit 1. The first is answered where it arises and the two unreadable ones reach a new
+process-level guard, which turns anything still unaccounted for into exit 2. A bad root and an
+unscannable entry under the other root now come out in one refusal rather than one per run.
 
 Also corrected: the changelog's unreleased preamble said the first pre-alpha release "will ship"
 the surface below, which has been false since the package first published. It now states the

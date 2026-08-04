@@ -1267,7 +1267,13 @@ describe("phi-scan: --staged enumerates a rename, which detection used to delete
     writeFileSync(join(flat, "test", "two.hl7"), bulkyFixture(CLEAN_PID));
     gitIn(flat, ["add", "-A", "test"]);
     const args = ["diff", "--cached", "--raw", "--diff-filter=AMT"];
-    expect(gitOut(flat, [...args, "--no-renames"])).toBe(gitOut(flat, args));
+    // Non-vacuity first: an equality between two empty strings would pass while
+    // proving nothing, which is what a future fixture change could quietly make
+    // of this.
+    const flatRaw = gitOut(flat, args);
+    expect(flatRaw).toMatch(/^:100644 100644 \S+ \S+ M\ttest\/one\.hl7$/m);
+    expect(flatRaw).toMatch(/^:000000 100644 \S+ \S+ A\ttest\/two\.hl7$/m);
+    expect(gitOut(flat, [...args, "--no-renames"])).toBe(flatRaw);
 
     const renamed = makeScanRepo({ git: true });
     writeFileSync(join(renamed, "test", "corpus.hl7"), bulkyFixture(CLEAN_PID));

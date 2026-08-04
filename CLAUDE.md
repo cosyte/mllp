@@ -17,7 +17,7 @@
   (`test/conformance/`), and a PHI/observability audit that closed the `MLLP_FRAME_TOO_LARGE`
   `snippet` payload-slice leak) done. Next: see `operations/roadmaps/mllp.md` for what follows Phase 9.
   For dev/test the
-  unpublished `@cosyte/hl7` peer is consumed as a **vendored packed
+  `@cosyte/hl7` peer is consumed as a **vendored packed
   tarball** (`vendor/cosyte-hl7-0.0.0.tgz`, a devDependency): an interim mechanism until the
   cross-repo consumption decision (umbrella `PW-5` gate) lands; refresh it by re-running
   `pnpm -C ../hl7 build && pnpm -C ../hl7 pack --out ../mllp/vendor/cosyte-hl7-0.0.0.tgz`

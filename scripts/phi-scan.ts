@@ -741,10 +741,9 @@ function isSymbolicLink(p: string): boolean {
  * disclosed in the banner, and re-deciding it is a question about repo layout
  * rather than about this defect.
  *
- * A bad root is COLLECTED rather than thrown on, for the reason
- * `refuseUnscannable` already gives: every offender is named, not just the
- * first. A version that threw named `test` and left `src` to a second run, and
- * left the links under a healthy `test/` unreported as well.
+ * A root that is the wrong TYPE is collected rather than thrown on, so it comes
+ * out alongside the other root's findings in one refusal. A root whose `stat`
+ * itself fails throws where it stands, so that one is reported alone.
  *
  * This decision is taken BEFORE `gitIgnored` runs, so a gitignored root refuses
  * too, where a gitignored entry INSIDE a root is exempt. That asymmetry is
@@ -1053,10 +1052,13 @@ function buildTargetsForStaged(): Target[] {
     //
     // THE STRIDE BELOW IS COUPLED TO THIS ARGV, so read the coupling before
     // editing it. `--no-renames` is what makes a two-path record impossible, and
-    // `-B` (break-rewrites) is the flag that would put detection back on top of
-    // it: do not add one. If a two-path record ever did arrive, the stride
-    // desyncs and the run REFUSES rather than scanning a short list, which is the
-    // safe direction, but that is a backstop and not the guarantee.
+    // `-M`, `-C` and `--find-copies-harder` each turn detection back on over the
+    // top of it: measured on a real rename stage, every one of the three empties
+    // this route again. Do not add them. (`-B` is inert here, and a repeated
+    // `--no-renames` after one of them closes it again: last one wins.) If a
+    // two-path record ever did arrive, the stride desyncs and the run REFUSES
+    // rather than scanning a short list, which is the safe direction, but that is
+    // a backstop and not the guarantee.
     listBuf = execFileSync(
       "git",
       ["diff", "--cached", "--raw", "-z", "--no-renames", "--diff-filter=AMT"],
@@ -1739,8 +1741,9 @@ function main(): number {
  * exception, and node exits 1 on one: a gate publishing a finding it never made,
  * which is worse than a crash because it reads as actionable. Three live routes
  * did it (a walk root that was not a directory, a missing allow-list, an
- * unreadable allow-list or override log) and each was closed at its own site.
- * This guard is the one that covers the routes nobody has found yet. Exit 2 is
+ * unreadable allow-list or override log) and all three now exit 2. Only the
+ * first two are answered where they arise; the unreadable ones reach THIS guard,
+ * so do not delete it believing they are covered elsewhere. Exit 2 is
  * the honest answer for all of them: the scan did not complete, so it proves
  * nothing, and non-zero still blocks the commit either way.
  *

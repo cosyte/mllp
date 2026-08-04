@@ -315,12 +315,10 @@ route reads such a blob instead. An **absent** root is still legitimate and stil
 exits 0 (a repo need not have both), which is the control that isolates dangling
 from absent.
 
-**Every offender is named in one refusal, roots and entries together.** A first
-version threw on the first bad root, which named `test` and left `src` for a
-second run, and left the links under a healthy `test/` unreported as well. That
-is the rule this file already states for non-regular entries, and the reason is
-the same: a developer who has to re-run the gate once per offender learns to
-distrust it.
+**A bad root and an unscannable entry under the other root come out in one
+refusal.** A first version threw on the first bad root, which named `test`, left
+`src` for a second run, and left the links under a healthy `test/` unreported as
+well. A root whose `stat` itself fails is still reported alone.
 
 **The gitignore exemption stops at the root, and that is deliberate.** A
 gitignored entry INSIDE a root is exempt, because saying a file is not
@@ -334,9 +332,11 @@ non-directory root was one route into that; the same gate found two more, both
 `catch` in `main`, and an **unreadable** allow-list or override log threw a raw
 `EACCES`. Both exited 1. Nothing ever passed the gate that way, since non-zero
 still blocks the commit, but a gate that names a finding it has not made is worse
-than one that crashes, because it reads as actionable. Each site is fixed, and a
-process-level guard now turns anything still unaccounted for into exit 2, which
-is the honest answer: the scan did not finish, so it proves nothing.
+than one that crashes, because it reads as actionable. All three exit 2 now.
+The missing-allow-list route is answered where it arises; the two unreadable ones
+reach the process-level guard, which turns anything still unaccounted for into
+exit 2. That is the honest answer: the scan did not finish, so it proves
+nothing.
 
 ## Format
 

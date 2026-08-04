@@ -93,8 +93,9 @@ into prose here is a claim that goes stale on its own.
   substituted a real name staged as a scored rename and passed the same way, over live `PID-5` / `PID-7` /
   `PID-3` values in the destination blob. The remedy is **`--no-renames`**, and it needs no work on
   the record shape at all: the destination arrives as an ordinary single-path `A` and the source as a
-  `D` the filter already drops. The enumeration is a strict **superset** of the previous one (a
-  stage with no rename in it is byte-identical, pinned by a negative control), and the two-field
+  `D` the filter already drops. The enumeration is a strict **superset** of the previous one, and
+  that is pinned on the records rather than on an exit code: a stage with no rename in it hands the
+  scanner byte-identical raw output either way. The two-field
   stride becomes **structural** rather than conditional, because with detection off git cannot emit
   an `R` or a `C` at all. Verified under `diff.renames` set to `true`, `copies`, `false` and `1`,
   and under `diff.renameLimit=1`, so the caller's own configuration cannot reopen it. **The earlier
@@ -130,10 +131,11 @@ into prose here is a claim that goes stale on its own.
   **Two more routes into the same false finding, both `PRE-EXISTING`, both closed here.** A
   **missing** allow-list threw its refusal past every `catch` in `main`, and an **unreadable**
   allow-list or override log threw a raw `EACCES`: both exited 1. Nothing ever passed the gate that
-  way, because non-zero still blocks the commit, but the code said the wrong thing. Each site is
-  fixed and a process-level guard now turns anything still unaccounted for into exit 2. Refusals
-  also name **every** offender in one message now, roots and non-regular entries together, which is
-  the rule the non-regular refusal already stated and the root refusal did not follow.
+  way, because non-zero still blocks the commit, but the code said the wrong thing. All three exit
+  2 now: the missing-allow-list route is answered where it arises, and the two unreadable ones reach
+  a process-level guard that turns anything still unaccounted for into exit 2. A bad root and an
+  unscannable entry under the other root also come out in one refusal now, rather than one per
+  run.
 
   **What did not change, deliberately, and is pinned so it stays a decision.** A root that is a
   link to a **directory** is still followed and is still link-neutral (the tree beyond it is
