@@ -68,16 +68,36 @@ in `phi-scan-overrides.md`. The rules that came out of them:
   tolerance. Narrow the enumeration instead. **This repo is the one that can actually reach it**,
   because `test/scripts/phi-scan.test.ts` `mkdtemp`s inside `test/`, a walk root, twice per run.
   **Those tests must keep writing there: the `test/` prefix IS what they prove.**
+- **▶ THE OBSERVED-NOTHING CHECK IS PER WALK ROOT, AND A GLOBAL COUNT CANNOT REPLACE IT**
+  (`PHI-SCAN-OBSERVED-NOTHING-IS-GLOBAL`). Counting every root together only fires when ALL come
+  back empty, so one healthy root masks an empty one: measured, `test/` emptied and `src/` intact
+  printed `OK, no hits` at exit 0. **A denominator is not the remedy**, because a count counts the
+  roots that DID exist. An **absent** root stays legitimate; an **EMPTIED** one refuses (exit 2).
+  A synthetic-repo fixture must therefore plant something scannable under any root it creates.
 - **Widening a walk root reintroduces the mid-sweep-deletion defect verbatim.** The roots are
-  deliberately `test/` and `src/` and not the repo root.
+  deliberately `test/` and `src/` and not the repo root. **What `test/` ADMITS is a separate
+  question from what the ROOTS are, and the two must not be conflated.**
+- **▶ A `.ts` SOURCE UNDER `test/` IS SCANNED, AND WIDENING IS TWO-SIDED**
+  (`PHI-SCAN-WALK-ROOT-SCOPE`). The old blanket `.ts` exclusion removed **72 of 76** tracked files
+  under `test/` from BOTH routes and left the gate on three framed binaries. **The enumeration half
+  alone finds nothing**: every detector assumes the file IS the document and wants a segment id at
+  the START of a line, so a `PID` in a string literal exited 0 even when NAMED EXPLICITLY on argv.
+  `extractEmbeddedHl7` is the other half. **Never widen one without the other, and never delete the
+  extractor believing the walk covers it.** Its `|` anchor is load-bearing: any-delimiter matched
+  prose. **No match count is recorded, on purpose; derive it (`documentation/agent-notes.md`).** The violator exemption is **per-path and total**
+  (`DELIBERATE_VIOLATOR_SOURCES`), never per-extension.
+- **`src/` KEEPS THE CONSERVATIVE PASS ONLY, and that is a decision, not an oversight.** Its JSDoc
+  `@example` snippets are deliberately not held to the segment-aware detectors. Do not reverse it as
+  a side effect of a change about `test/`.
 - **▶ NEVER WRITE "NEITHER ROUTE FOLLOWS A LINK" FLAT.** `walk()` opens the ROOTS with `existsSync` +
   `readdirSync`, which both follow, so replacing `test/` or `src/` itself with a link is read
   straight through. Disclosed, not closed; never restate it as a promise.
 - **An entry that REPLACES a root is judged with THAT ROOT'S OWN LIMITS** (`test` earns the
   structured scan, `src` the conservative pass), and both read predicates must admit the root's own
   path. Admitting the path is only half the remedy: `looksLikeHl7` decides what scan it earns. **The
-  `.ts`/`.md` name exemptions deliberately do NOT carry over to a non-regular entry**, because they
-  are judgements about bytes.
+  `.md` and per-path violator exemptions deliberately do NOT carry over to a non-regular entry**,
+  because they judge bytes the route could read. (A `.ts` exemption is named here in no other form:
+  the blanket one is gone.)
 - **▶ `--diff-filter` MUST KEEP `T`.** Replacing a tracked file with a link is neither add nor
   modify; measured on git 2.39.5, `AM` yields an empty raw stage and passed mode `120000` green.
 - **`--no-renames` stays.** With rename detection on, `R`/`C` carry two paths and the two-field

@@ -36,6 +36,16 @@
 ID 900000001
 ID 900000002
 
+# --- Tokens in HL7 embedded in `test/**/*.ts` sources ---------------------------
+# These became visible when the scan stopped excluding `.ts` sources under
+# `test/` and gained the embedded-HL7 recogniser. Every one was already in the
+# tree, unscanned by either route; none is new content.
+# test/server/ack-accuracy.test.ts : a PHI-LEAK CANARY. The property test builds
+#   `PID|||999888777^^^FAC||SECRETLAST^SECRETFIRST` and then asserts the ACK does
+#   NOT echo any of the three, so the values are deliberately distinctive
+#   nonsense chosen to be greppable in a failure, never a real identifier.
+ID 999888777
+
 # --- Synthetic patient / person surnames (XPN comp1 / XCN comp2) ---
 NAME DOE
 NAME ROE
@@ -102,6 +112,18 @@ NAME MSGB
 NAME MSGC
 NAME MSGD
 NAME MSGE
+
+# --- Placeholder tokens in HL7 embedded in `test/**/*.ts` sources ---------------
+# `SYNTH` is the corpus-wide "this is fabricated" marker, used in the PID-5 given
+# or middle slot across the ack-from-hl7 and property suites.
+NAME SYNTH
+# `ATTEND` sits in the XCN-2 family slot of `PV1-7` in the golden quirk corpus
+# (`1234^ATTEND^DR`); it names a ROLE, not a person.
+NAME ATTEND
+# The PHI-leak canary halves from test/server/ack-accuracy.test.ts, paired with
+# `ID 999888777` above.
+NAME SECRETLAST
+NAME SECRETFIRST
 
 # --- Synthetic dates of birth (PID-7 / NK1-16), normalized YYYYMMDD or YYYY ---
 DOB 1970

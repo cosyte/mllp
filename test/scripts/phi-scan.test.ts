@@ -553,7 +553,12 @@ describe("phi-scan: structured scan is not silently bypassed (refuter regression
     expect(r.stderr).toMatch(/Fitzgerald/);
   });
 
-  it("keeps src-style .ts content (embedded MSH example) on the text-only pass", () => {
+  it("keeps a header-only .ts example clean (MSH carries no PHI field)", () => {
+    // This file is NOT under `src/`, so it does reach the embedded recogniser.
+    // It stays clean because `scanHl7` skips MSH/FHS/BHS: those segments carry
+    // routing metadata and delimiters, never a PHI field. The `src/`-specific
+    // guarantee (conservative pass only, whatever the content) is pinned
+    // separately, below.
     const path = join(dir, "example.ts");
     writeFileSync(path, 'const example = "MSH|^~\\\\&|A|B|C|D|20260101||ADT^A01|1|P|2.5";\n');
     const r = runScanner([path]);
@@ -884,6 +889,18 @@ function plantPayload(repo: string): { dir: string; file: string; rel: string } 
 function srcRoot(repo: string): string {
   const p = join(repo, "src");
   mkdirSync(p, { recursive: true });
+  // A synthetic repo whose `src/` exists but holds nothing SCANNABLE is not a
+  // shape the real repo can be in, and the per-root "observed nothing" guard
+  // refuses it (correctly: a root the walk entered and read nothing under proves
+  // nothing about that corpus). Plant one benign, hit-free source so these
+  // fixtures test what they claim to and not the guard.
+  //
+  // Written UNCONDITIONALLY, and the `existsSync` guard that used to sit here is
+  // gone rather than refined: check-then-write is a file-system race (CodeQL
+  // `js/file-system-race`, and this suite is the one that races itself on
+  // purpose elsewhere). The content is a constant, so a second call rewrites the
+  // same bytes and the guard bought nothing but the race.
+  writeFileSync(join(p, "index.ts"), "export const ok = true;\n");
   return p;
 }
 
@@ -933,9 +950,12 @@ describe("phi-scan: a non-regular entry under a scan root refuses the scan", () 
   });
 
   it("REFUSES a non-regular entry whose NAME carries an exempt extension", () => {
-    // `.ts` under test/ and `.md` anywhere are excluded from the READ set,
-    // because of what such a file's bytes are. A link's name is no evidence at
-    // all about the other side, so the name exemptions must not carry over.
+    // `.md` anywhere is excluded from the READ set because of what such a file's
+    // bytes are, and the per-path violator exemption is the same kind of
+    // judgement. A link's name is no evidence at all about the other side, so
+    // neither exemption may carry over. The `.ts` arm stays deliberately: it is
+    // now a name with NO exemption behind it, which is the case that proves the
+    // refusal is about the entry's KIND and not about its extension.
     const repo = makeScanRepo({ git: true });
     const { file } = plantPayload(repo);
     symlinkSync(file, join(repo, "test", "fixture.ts"));
@@ -1462,5 +1482,247 @@ describe("phi-scan: a walk root that is not a directory refuses the scan", () =>
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toMatch(/PID-5/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HL7 embedded in a TypeScript source
+// ---------------------------------------------------------------------------
+
+describe("phi-scan: HL7 embedded in a TypeScript source", () => {
+  // `scan()` names the file EXPLICITLY, which bypasses the enumeration entirely.
+  // That is deliberate here: it isolates the RECOGNISER half, so these tests
+  // still fail if someone widens the walk and drops the extractor (or the other
+  // way round), which is exactly the pair that has to move together.
+  it("REPORTS a PID written into a string literal", () => {
+    const r = scan(
+      "embedded-pid.test.ts",
+      [
+        "const inbound = [",
+        '  "PID|1||998877^^^HOSP^MR||MERKELSON^GWENDOLYN^Q||19571103|F|||18 Cranbrook Ter^^ALB^NY^12203",',
+        '].join("\\r");',
+      ].join("\n"),
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain("MERKELSON");
+    expect(r.stderr).toContain("GWENDOLYN");
+    expect(r.stderr).toMatch(/PID-7/);
+    expect(r.stderr).toContain("18 Cranbrook Ter");
+    expect(r.stderr).toContain("998877");
+  });
+
+  it("finds a SECOND segment behind an \\r escape inside the same literal", () => {
+    const r = scan(
+      "embedded-two.test.ts",
+      'const raw = "MSH|^~\\\\&|S|F|R|F2|20240101||ADT^A01|1|P|2.5.1\\rPID|1||||NDIAYE^AMINATA||19640518|F\\r";\n',
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain("NDIAYE");
+    expect(r.stderr).toContain("AMINATA");
+    expect(r.stderr).toMatch(/PID-7/);
+  });
+
+  it("resolves the \\\\& escape so MSH-2 declares the real component separator", () => {
+    // Written `MSH|^~\\&|` in TS, the message HL7 sees is `MSH|^~\&|`. If the
+    // extractor left the doubled backslash in, MSH-2 would read as `^~\\` and
+    // the ESCAPE character would be wrong, which changes how `nameTokens`
+    // strips escape sequences out of a name field.
+    const r = scan(
+      "embedded-msh2.test.ts",
+      'const raw = "MSH|^~\\\\&|S|F|R|F2|20240101||ADT^A01|1|P|2.5.1\\rPID|1||||OKONKWO^ADAEZE\\r";\n',
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    // Componentised on `^`, so family and given come out as separate tokens.
+    expect(r.stderr).toContain("OKONKWO");
+    expect(r.stderr).toContain("ADAEZE");
+  });
+
+  it("does NOT read prose or identifiers as segments", () => {
+    // The regression this pins: anchoring on "any non-alphanumeric delimiter"
+    // matched `ack-from-hl7`, `ERR_MODULE_NOT_FOUND` and `net.createConnection`
+    // and drove the unknown-segment NAME backstop over English words.
+    const r = scan(
+      "embedded-prose.test.ts",
+      [
+        'import { createConnection } from "node:net";',
+        'const a = "ack-from-hl7";',
+        'const b = "not-an-error-object";',
+        'const c = "ERR_MODULE_NOT_FOUND";',
+        'const d = "net.createConnection";',
+        'const e = "Pre-aborted signal short-circuits every method";',
+        'const f = "MSH-10 is echoed into MSA-2 verbatim";',
+        "export const all = [a, b, c, d, e, f];",
+      ].join("\n"),
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("neither guesses nor drops a ${} interpolation", () => {
+    // The runtime value is unknowable, so it becomes `_`: not a letter, so no
+    // name token; not a digit, so no id or DOB. A hit here would be invented and
+    // a crash would be worse.
+    const r = scan(
+      "embedded-interp.test.ts",
+      "const raw = `PID|1||${MRN}^^^HOSP^MR||${FAMILY}^${GIVEN}||${DOB}|F\\r`;\n",
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("gives a .ts source the conservative floor as well as the segment scan", () => {
+    const r = scan(
+      "embedded-floor.test.ts",
+      'const note = "contact clinician@northgate-clinic.invalid";\n',
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toMatch(/\(email\)/);
+  });
+
+  it("finds a segment on its OWN LINE of a multi-line template literal", () => {
+    // The idiomatic multi-segment spelling. Without a real-newline anchor only
+    // the MSH run is recovered, and `scanHl7` SKIPS header segments, so a full
+    // patient identity on the following lines reported clean.
+    const r = scan(
+      "embedded-multiline.test.ts",
+      "const inbound = `MSH|^~\\&|EPIC|HOSP|MIRTH|LAB|20240101||ADT^A01|1|P|2.5.1\n" +
+        "PID|1||447281^^^HOSP^MR||HALVORSEN^INGRID^M||19620914|F|||42 Larkspur Way^^ALB^NY^12203`;\n",
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain("HALVORSEN");
+    expect(r.stderr).toContain("447281");
+    expect(r.stderr).toContain("42 Larkspur Way");
+  });
+
+  it("does not truncate a name at an APOSTROPHE inside a double-quoted literal", () => {
+    // A quote-anchored run ends only on its OWN quote. Ending on any quote cut
+    // the run at the apostrophe and silently dropped every field after it.
+    const r = scan(
+      "embedded-apostrophe.test.ts",
+      `const raw = "PID|1||||O'HALLORAN^SIOBHAN||19620914|F";\n`,
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain("HALLORAN");
+    expect(r.stderr).toContain("SIOBHAN");
+    expect(r.stderr).toMatch(/PID-7/);
+  });
+
+  it("DOCUMENTED LIMIT: a segment written in a COMMENT is scanned like a fixture", () => {
+    // The `|` narrows the ANCHOR; it does not make a recovered run trustworthy.
+    // On today's corpus every recovered id happens to be a real segment id, but
+    // that is an observation about the tree, not a property of the rule, and the
+    // recogniser cannot tell a comment from a literal. Pinned so nobody writes
+    // down the stronger claim.
+    const r = scan(
+      "embedded-comment-zseg.test.ts",
+      'const s = "x";\n// worked example: \\rZDS|1|Kowalczyk^Bronislawa\\r\n',
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toMatch(/ZDS/);
+    expect(r.stderr).toContain("Kowalczyk");
+  });
+
+  it("but ordinary English after a pipe is NOT read as a name", () => {
+    // The unknown-segment backstop needs ADJACENT components each holding
+    // exactly one name token, so a sentence does not trip it. This is why the
+    // recovered-prose limit above is a bounded annoyance and not a gate that
+    // reds on documentation.
+    const r = scan(
+      "embedded-prose.two.test.ts",
+      'const note = "see \\rZDS|1|Kowalczyk^Bronislawa for the trailer";\n',
+    );
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+  });
+
+  it("EXEMPTS this suite, the one deliberate-violator corpus, by explicit path", () => {
+    // This file carries unallowed names, DOBs, MRNs and a non-test-domain email
+    // ON PURPOSE, because its positive tests assert the detectors fire on them.
+    // The exemption is per-path, never per-extension: every OTHER `.ts` source
+    // under `test/` is scanned, which is what the tests above rest on.
+    const r = runScanner([join(REPO_ROOT, "test", "scripts", "phi-scan.test.ts")]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The ENUMERATION half: a `.ts` source under `test/` reaches both routes
+// ---------------------------------------------------------------------------
+
+describe("phi-scan: a .ts source under test/ is enumerated by both routes", () => {
+  // These are the cases that pin the ENUMERATION, not the recogniser. Every
+  // other embedded-HL7 test names its file on argv, which bypasses enumeration
+  // entirely, so without these two, deleting the `.ts` admission from
+  // `isScannableTestFile` would leave the whole suite green.
+  const LEAK = "PID|1||447281^^^HOSP^MR||HALVORSEN^INGRID^M||19620914|F";
+
+  it("all mode REPORTS a .ts test source the walk enumerated", () => {
+    const repo = makeScanRepo({ git: true });
+    writeFileSync(join(repo, "test", "leak.test.ts"), `const inbound = "${LEAK}\\r";\n`);
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain("test/leak.test.ts");
+    expect(r.stderr).toContain("HALVORSEN");
+    expect(r.stderr).toContain("447281");
+  });
+
+  it("--staged REPORTS a staged .ts test source, which is the pre-commit gate", () => {
+    const repo = makeScanRepo({ git: true });
+    writeFileSync(join(repo, "test", "leak.test.ts"), `const inbound = "${LEAK}\\r";\n`);
+    gitIn(repo, ["add", "test/leak.test.ts"]);
+    const r = runScannerIn(repo, null, undefined, ["--staged"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain("test/leak.test.ts");
+    expect(r.stderr).toContain("HALVORSEN");
+  });
+
+  it("keeps src/ on the conservative pass, which this work does not reverse", () => {
+    // The same literal under `src/` must NOT earn the segment-aware scan: the
+    // `@example` snippets there are illustrative and are deliberately not held
+    // to it. If this ever goes red, that is a scope decision being made by
+    // accident.
+    const repo = makeScanRepo({ git: true });
+    writeFileSync(join(srcRoot(repo), "example.ts"), `const example = "${LEAK}\\r";\n`);
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The observed-nothing check is PER WALK ROOT
+// ---------------------------------------------------------------------------
+
+describe("phi-scan: one healthy walk root cannot vouch for an empty one", () => {
+  it("REFUSES when test/ is empty and src/ is intact, naming the empty root", () => {
+    // The defect: the counter was GLOBAL, so it fired only when EVERY root came
+    // back empty and a healthy root masked an empty one indefinitely. A
+    // denominator would not catch this, because a count counts the roots that
+    // DID exist.
+    const repo = makeScanRepo({ git: true });
+    rmSync(join(repo, "test", "corpus.hl7"), { force: true });
+    srcRoot(repo); // present, and holding a scannable file
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/observed no files under test\//);
+  });
+
+  it("REFUSES when src/ is present but holds nothing scannable", () => {
+    const repo = makeScanRepo({ git: true });
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "src", "README.md"), "# notes\n");
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/observed no files under src\//);
+  });
+
+  it("does NOT refuse for an ABSENT root, which stays legitimate", () => {
+    // A repo need not have both, so the check is keyed on the roots the walk
+    // actually ENTERED. `makeScanRepo` creates no `src/` at all.
+    const repo = makeScanRepo({ git: true });
+    expect(existsSync(join(repo, "src"))).toBe(false);
+    const r = runScannerIn(repo, null);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
   });
 });

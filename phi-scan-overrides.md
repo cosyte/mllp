@@ -44,10 +44,17 @@ one whose first byte is `MSH`; and segment ids are matched **case-insensitively*
 (`pid` is normalized to `PID`), because the lenient parser accepts lowercase
 segment ids and the scanner must not go blind where the parser stays tolerant.
 
-Scope: `all`-mode sweeps EVERY data file under `test/` EXCEPT `.ts` sources (and
-`.md` docs), plus all of `src/`. Test `.ts` SOURCES are deliberately excluded:
-they carry intentional violator literals for the positive tests, so sweeping them
-would be self-defeating (the hl7 pilot excludes test `.ts` for the same reason).
+Scope: `all`-mode sweeps EVERY file under `test/` except `.md` docs, plus all of
+`src/`. **Test `.ts` SOURCES ARE SCANNED.** They were excluded until
+`PHI-SCAN-WALK-ROOT-SCOPE`, which measured what that cost here: `test/` tracks 72
+`.ts`, 3 `.frame.bin` and 1 `.md`, so the exclusion removed 72 of 76 tracked files
+from BOTH routes and 12 of the 72 carried inline `PID|` literals. A `.ts` source
+is dispatched to `extractEmbeddedHl7` rather than to the file-is-the-document
+scan, because its HL7 lives inside string literals that every line-oriented
+detector misses; the enumeration and the recogniser are two halves of one remedy
+and neither works alone. The one deliberate-violator corpus
+(`test/scripts/phi-scan.test.ts`, whose positive tests need unallowed values) is
+exempt BY EXPLICIT PATH and totally, never by extension.
 Every other `test/` file is dispatched by `looksLikeHl7`: a file that contains a
 recognizable HL7 segment line after MLLP unwrap, whether a `.frame.bin` frame, a `.hl7`
 file, OR a `.txt` / `.json` / extensionless live-adapter capture (the differential
@@ -98,7 +105,7 @@ exists to stop (caught by the conformance-refuter).
   allow-list. The DOB / SSN / MRN / address gates remain the backstop.
 - **Un-framed vs framed parity.** The scanner treats a framed `.frame.bin` and a
   bare `.hl7` file identically after `unwrapMllpFrame`, and any `test/` data file
-  (whatever its extension, `.ts` excepted) containing a recognizable HL7 segment
+  (whatever its extension) containing a recognizable HL7 segment
   line earns that same structured scan, so a real capture saved as `.txt` /
   `.json` / extensionless is scanned, not silently skipped. Only a `test/` file
   with no HL7 segment line at all (a genuinely non-HL7 blob) is limited to the
@@ -204,7 +211,8 @@ rather than a side effect.
 **"In scope" is each route's own existing root, not a new boundary.** The walk
 still exempts a gitignored entry (the same rule that already exempts a gitignored
 file), and `--staged` still only looks under `test/` and `src/`. What does **not**
-carry over to a non-regular entry is the `.ts` / `.md` **name** exemptions: those
+carry over to a non-regular entry is the `.md` **name** exemption or the per-path
+violator exemption: those
 are judgements about a file whose bytes the route could have read, and a link's
 name is no evidence at all about the other side. Dropping them also keeps the two
 routes agreeing on what they refuse.
@@ -337,6 +345,78 @@ The missing-allow-list route is answered where it arises; the two unreadable one
 reach the process-level guard, which turns anything still unaccounted for into
 exit 2. That is the honest answer: the scan did not finish, so it proves
 nothing.
+
+## What a test source, an emptied root, and an unmerged path may do
+
+Three more ways a sweep reported clean over content it never opened, all measured
+on `3daf2e9` before anything was touched.
+
+**A `.ts` source under `test/` reached neither route, and the enumeration was
+only half of it.** The read filter dropped every `.ts` under the walked root, and
+the measured cost here is 72 of 76 tracked files. But every detector in this
+scanner assumes THE FILE IS THE DOCUMENT and works from a segment id at the START
+of a line, so widening the enumeration alone would have bought the conservative
+SSN/email floor and nothing else: a probe carrying a full `PID` in a string
+literal exited 0 `OK, no hits` even when NAMED EXPLICITLY on argv, which bypasses
+the enumeration entirely, while the identical payload written to a `.hl7` file
+reported `PID-3` / `PID-5` / `PID-7` / `PID-11`. `extractEmbeddedHl7` recovers
+segments out of string literals, resolving TypeScript escapes so a doubled
+backslash in a header yields the real encoding characters, terminating a run at an
+`\r` / `\n` escape (which is the HL7 segment separator), and replacing a template
+placeholder with a non-letter, non-digit token rather than guessing at a runtime
+value. **The `|` anchor is load-bearing and is not an arbitrary narrowing:**
+accepting any delimiter, which is correct for a file that IS a message, matched
+prose and identifiers (`ack-from-hl7`, `ERR_MODULE_NOT_FOUND`,
+`net.createConnection`), which would have driven the unknown-segment name backstop
+over English words. **No match count is recorded here, deliberately: that figure
+was wrong four times and is not reproducible by an independent reader, because raw
+anchor matches are an upper bound on extractor runs rather than the same
+quantity.** The derivation command lives in `documentation/agent-notes.md`; run it
+rather than trusting a number. On today's corpus every recovered id is a real
+segment id, **which is an observation about the tree and not a property of the
+rule**: the recogniser cannot tell a comment from a
+literal, and a clean `\rZDS|1|<surname>^<given>` written in a comment does red.
+What keeps it off ordinary documentation is that the unknown-segment backstop
+needs adjacent components each holding exactly one name token, so a sentence does
+not trip it.
+
+The anchor is four spellings: an opening quote, an `\r` or `\n` escape, and a real
+newline. The last covers the idiomatic multi-line template literal, where the
+segments sit on their own source lines; without it only the header run was
+recovered and `scanHl7` skips header segments, so a full patient identity on the
+following lines reported clean. It costs nothing measurable, the recovered set
+over the tracked sources being identical with and without it. A run ends on the quote that OPENED it rather
+than on any quote, because ending on any quote truncated a name at an apostrophe
+and silently dropped every field after it.
+
+**Disclosed cost, and it is three things rather than one:** a message written with
+a CUSTOM field separator is not recovered at all and gets the conservative pass
+only; a run anchored on an ESCAPE does not know which quote opened the enclosing
+literal, so it still ends at the first quote of any kind; and a segment split
+across a CONCATENATION is recovered only as far as the first operand. A FILE that
+is such a message is unaffected in every case. **`src/` keeps the
+conservative pass only**, on purpose: its `@example` snippets are deliberately not
+held to the segment-aware detectors, and `src/` was never this defect.
+
+**The observed-nothing guard counted every root together.** So it could only fire
+when ALL roots came back empty, and one healthy root masked an empty one
+indefinitely: with `test/` emptied and `src/` intact the sweep printed `OK, no
+hits` and exited 0, directly beneath a comment asserting that `all` mode "always
+reaches the committed fixture corpus under `test/`". Nothing checked that
+assertion. **A denominator is not the remedy and would have looked like one**,
+because a count counts the roots that DID exist (32, which reads healthy). The
+check is per root now and keyed on the roots the walk actually ENTERED, so an
+absent root stays legitimate while an emptied one refuses at exit 2, naming it.
+
+**An unmerged path was enumerated by nothing.** `U` has no stage-0 entry, so
+`--diff-filter=AMT` deletes the record: `--staged` exited 0 over a conflicted
+fixture whose both stages carried live-shaped `PID-3` / `PID-5` / `PID-7` values.
+Scanning a stage is refused as the remedy, because neither side of a conflict is
+what a commit would contain, so a hit on one would be a claim about content that
+may never exist. **Scoped honestly as minor:** `git commit` refuses an unmerged
+index BEFORE the pre-commit hook runs, so this is not a route by which PHI reaches
+a commit. What it fixes is the gate answering a question it cannot answer when
+`--staged` is run directly mid-conflict.
 
 ## Format
 
