@@ -80,6 +80,65 @@ into prose here is a claim that goes stale on its own.
 
 ### Security
 
+- **The PHI scanner reads the test sources it was never opening, and refuses per walk root
+  (`PHI-SCAN-WALK-ROOT-SCOPE`, `PHI-SCAN-OBSERVED-NOTHING-IS-GLOBAL`).** Both reproduced on
+  `3daf2e9` before anything was touched. This repo's scope was **re-derived, not ported**: its walk
+  roots are `test/` and `src/` (a sibling roots at `test/fixtures/` instead), and the two refusal
+  defects a sibling still carries are **not open here**, because a regular-file root, a dangling
+  link at a root and a missing allow-list already exit **2**.
+
+  **The `.ts` hole.** `test/` was walked in full and then every `.ts` file under it was dropped by
+  the read filter, so a tracked test source reached **neither** route. Measured: `test/` tracked 72
+  `.ts` files, 3 `.frame.bin` and 1 `.md`, so the exclusion removed **72 of 76** tracked files and
+  left the gate standing on three framed binaries; **twelve** of the 72 carried inline `PID|`
+  literals. For a transport package whose subject matter is HL7 v2, a message written straight into
+  a test source is the ordinary fixture shape.
+
+  **The remedy is two-sided, and the enumeration is the half that finds nothing on its own.** A
+  blanket extension rule cannot distinguish a file carrying violator literals **on purpose** from
+  one carrying them **by accident**, so it is replaced by an explicit per-path exemption. But every
+  detector assumed **the file is the document** and worked from a segment id at the START of a
+  line, which in a source beginning with `const` or a quote matches nothing: measured, a probe
+  carrying a full `PID` in a string literal exited **0** `OK, no hits` even when **named explicitly
+  on argv**, which bypasses the enumeration entirely, while the identical payload written to a
+  `.hl7` file reported all five fields (`PID-3` / `PID-5` / `PID-7` / `PID-11` and the address).
+  Segments are now recovered from string literals with TypeScript escapes resolved, so a doubled
+  backslash in a header yields the real encoding characters, and a template placeholder is replaced
+  by a non-letter, non-digit token rather than guessed at or dropped. The recogniser anchors on the
+  HL7 **field separator**: anchoring on any delimiter, which is what the file-level rule does,
+  matched prose and identifiers (`ack-from-hl7`, `ERR_MODULE_NOT_FOUND`, `net.createConnection`),
+  which would have driven the unknown-segment name backstop over English words. **No match count is
+  recorded, on purpose:** that figure was wrong four times and is not reproducible by an independent
+  reader, because raw anchor matches are an upper bound on extractor runs rather than the same
+  quantity. The derivation command is in `documentation/agent-notes.md`. On this corpus every
+  recovered id is a real segment id,
+  **which is an observation about the tree and not a property of the rule**: the recogniser cannot
+  tell a comment from a literal, and a clean Z-segment written in one does red. The anchor covers
+  four spellings, including a **real newline**, without which the idiomatic multi-line template
+  literal yielded only its header run, and header segments are skipped, so a full patient identity
+  on the following lines reported clean. A run ends on the quote that OPENED it, because ending on
+  any quote truncated a name at an apostrophe and silently dropped every field after it. Five
+  synthetic tokens surfaced for the first time, including a deliberate leak canary, are now declared
+  in `scripts/phi-allow-list.txt`. Disclosed cost, three things rather than one: a custom field
+  separator is not recovered at all, an escape-anchored run still ends at the first quote of any
+  kind, and a segment split across a concatenation is recovered only as far as the first operand.
+
+  **The observed-nothing guard was global.** It counted every root together, so it could fire only
+  when all of them came back empty and one healthy root masked an empty one indefinitely. Measured:
+  with `test/` emptied and `src/` intact, the sweep printed `OK, no hits` and exited **0**, under a
+  comment asserting that `all` mode "always reaches" the fixture corpus, which nothing checked. **A
+  denominator is not the remedy and would have looked like one**, because a count counts the roots
+  that did exist. The check is now per root and keyed on the roots the walk actually entered, so an
+  **absent** root stays legitimate while an **emptied** one refuses (exit 2, naming the root).
+
+  **An unmerged path was enumerated by nothing.** It has no single staged blob, so
+  `--diff-filter=AMT` deletes the record; measured, `--staged` exited **0** over a conflicted
+  fixture whose both stages carried live-shaped `PID-3` / `PID-5` / `PID-7` values. It refuses now,
+  and reading a stage is refused as the remedy because neither side of a conflict is what a commit
+  would contain. Scoped honestly as **minor**: `git commit` refuses an unmerged index before the
+  hook runs, so this is not a route by which anything reaches a commit, and what it fixes is the
+  gate answering a question it cannot answer.
+
 - **The PHI scanner enumerates a staged rename, reads a blob that replaced a walk root, and
   refuses a root that is not a directory (`PHI-SCAN-RENAME-BLIND-AT-PRECOMMIT`).** Three holes, two
   of them on `--staged`, which is this repo's **pre-commit** gate. All three were reproduced on

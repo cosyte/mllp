@@ -140,6 +140,167 @@ thing a rule guards, or when you are tempted to relax one. Every paragraph here 
   Mode `160000` gitlinks were **already** refused here (`git show` fails `bad object`); only the
   diagnostic changed. **Do not "resync" this to a sibling parser's scope** and do not soften it.
 
+## PHI-SCAN-WALK-ROOT-SCOPE and PHI-SCAN-OBSERVED-NOTHING-IS-GLOBAL
+
+- **A `.ts` source under `test/` reached NEITHER route, and this repo is the extreme case of it.**
+  The walk covered all of `test/`, then the read filter dropped every `.ts` under it. Measured on
+  `3daf2e9`: `test/` tracked **72 `.ts`, 3 `.frame.bin`, 1 `.md`**, so the exclusion removed **72 of
+  76** tracked files and the gate stood on **three framed binaries**; **12** of the 72 carried inline
+  `PID|` literals. **Do not read the old exclusion as merely conservative.** For a transport package
+  whose subject is HL7 v2, a message written into a test source is the ORDINARY fixture shape, and
+  the exclusion removed the majority of the corpus rather than a corner of it.
+
+- **▶ THE WIDENING IS TWO-SIDED, AND THE ENUMERATION HALF FINDS NOTHING ON ITS OWN.** Every detector
+  in the scanner assumes **the file IS the document**: `findHeaderLine` and `splitSegments` work
+  line-by-line and want a segment id at the START of a line. A `.ts` line starts with `const` or with
+  a quote, so it matches nothing. **Measured, and this is the number that settles it:** a probe file
+  carrying a full `PID` in a string literal exited **0** `OK, no hits` even when **named explicitly
+  on argv**, which bypasses the enumeration entirely, while the IDENTICAL payload written to a
+  `.hl7` file reported all five fields. The bytes were always detectable; nothing ever looked at them
+  as HL7. **Never widen the enumeration here without `extractEmbeddedHl7`, and never delete the
+  extractor believing the walk covers it. Removing either half restores the false green.**
+
+- **▶ THE EMBEDDED RECOGNISER ANCHORS ON `|`, AND THAT IS NOT AN ARBITRARY NARROWING.** The
+  file-level rule (`SEGMENT_LINE_RE`) accepts ANY non-alphanumeric delimiter, which is right for a
+  file that IS a message and catastrophic inside source code: measured, it matched `ack-from-hl7`,
+  `not-an-error-object`, `ERR_MODULE_NOT_FOUND` and `net.createConnection`, which would drive the
+  unknown-segment NAME backstop over English words. **A gate that reds on prose is a gate someone
+  turns off.** **NO MATCH COUNT IS WRITTEN DOWN HERE, DELIBERATELY, AND YOU MUST NOT ADD ONE** (see
+  the standing note at the end of this section). Derive the comparison instead, in one command:
+  ```sh
+  node -e '
+  const {readFileSync}=require("fs"), {execFileSync}=require("child_process");
+  const files=execFileSync("git",["ls-files","test","src"],{encoding:"utf8"}).split("\n").filter(f=>f.endsWith(".ts"));
+  for (const [name,re] of [["pipe anchor  ",/(["\x27`]|\\r|\\n|\n)[ \t]*[A-Za-z][A-Za-z0-9]{2}\|/g],
+                           ["any-delimiter",/(["\x27`]|\\r|\\n|\n)[ \t]*[A-Za-z][A-Za-z0-9]{2}[^A-Za-z0-9\s]/g]]) {
+    let runs=0, hits=0;
+    for (const p of files) { const s=readFileSync(p,"utf8"); re.lastIndex=0; let k=0; while(re.exec(s)!==null)k++; if(k)hits++; runs+=k; }
+    console.log(name, runs+" runs /", hits+" files");
+  }'
+  ```
+  Note what it measures: RAW ANCHOR MATCHES, which are an UPPER BOUND on extractor runs and not the
+  same quantity, because `extractEmbeddedHl7` advances `lastIndex` past each consumed run. **But the `|` narrows the ANCHOR, it does not make a recovered run trustworthy, and
+  the difference matters**: the recogniser cannot tell a comment from a literal, and one comment in
+  the tree is already parsed as `MSA-3`. It is harmless only because `MSA` has no field map, and a
+  clean `\rZDS|1|<surname>^<given>` in a comment DOES red. **Never write down that the recogniser
+  only ever sees real segments.** What saves it from redding on documentation is the unknown-segment
+  backstop needing ADJACENT components each holding EXACTLY ONE name token, so an English sentence
+  does not trip it. Both halves are pinned by tests.
+
+- **The anchor set is four spellings, and each is one the corpus uses:** an opening quote, an `\r` /
+  `\n` ESCAPE, and a REAL NEWLINE. The last was missing at first and the refuter caught it: the
+  idiomatic multi-line template
+  ```ts
+  const inbound = `MSH|^~\&|...
+  PID|1||447281^^^HOSP^MR||HALVORSEN^INGRID^M||19620914|F`;
+  ```
+  recovered only the `MSH` run, and `scanHl7` SKIPS header segments, so a full patient identity on
+  the following lines reported **clean, exit 0**. Adding the newline anchor costs nothing measurable:
+  over the tracked `.ts` sources the recovered set is IDENTICAL with and without it, so it closes a
+  shape rather than widening the net. Re-derive that with the command above rather than trusting a
+  number written here.
+
+- **A run ends on the quote that OPENED it, not on any quote.** Ending on any quote truncated a name
+  at an apostrophe: `"PID|1||||O'HALLORAN^SIOBHAN||19620914|F"` cut at the apostrophe, leaving PID-5
+  component 1 as a single letter, which `nameTokens` drops, and silently discarded the DOB and every
+  field after. Both were exit 0 before and are exit 1 now.
+
+- **THE DISCLOSED COST IS THREE THINGS, NOT ONE**, and the first draft named only the first: a
+  CUSTOM field separator is not recovered at all; a run anchored on an ESCAPE does not know which
+  quote opened the enclosing literal, so it still ends at the first quote of any kind; and a segment
+  split across a CONCATENATION (`"PID|1||" + mrn + "^^^HOSP^MR"`) is recovered only as far as the
+  first operand. A FILE that is such a message is unaffected in every case. Each needs a real
+  TypeScript literal parser, never a wider anchor.
+
+- **The violator exemption is PER-PATH and must stay so.** An extension cannot tell a file that
+  carries violator literals ON PURPOSE from one that carries them BY ACCIDENT, which is the whole
+  distinction the gate exists to make. `DELIBERATE_VIOLATOR_SOURCES` names
+  `test/scripts/phi-scan.test.ts` alone, and the exemption is **total**, not just the structured
+  half: that suite also asserts the CONSERVATIVE pass fires, so it holds a non-test-domain email the
+  shape pass reports on sight. **Allow-listing that value instead is refused and must stay refused**,
+  because an `EMAILDOMAIN` entry is global and would switch the email detector off for the whole
+  corpus to green one file. **The residual, stated rather than hidden:** a real SSN or email
+  committed into that ONE path is not reported. It is bounded by the list being explicit and short;
+  widening the list is what would make it unbounded.
+
+- **Five synthetic tokens became visible for the first time** and are now declared: `SYNTH` (the
+  corpus-wide fabrication marker), `ATTEND` (an XCN family-slot ROLE, not a person), and
+  `SECRETLAST` / `SECRETFIRST` / `ID 999888777`, which are a deliberate **leak canary**: the property
+  test builds them into a `PID` and then asserts the ACK does not echo them. None is new content;
+  all were already in the tree, unscanned.
+
+- **▶ A DENOMINATOR DOES NOT DETECT THE OBSERVED-NOTHING HALF.** The refuse-an-empty-sweep guard
+  counted every root TOGETHER, so it could only fire when ALL roots came back empty, and one healthy
+  root masked an empty one indefinitely. Measured on `3daf2e9`: with `test/` emptied and `src/`
+  intact the sweep printed `OK, no hits` and exited **0**, directly under a comment ASSERTING that
+  `all` mode "always reaches the committed fixture corpus under `test/`" that nothing checked.
+  Printing a count would have looked like the fix and changed nothing, **because a count counts the
+  roots that DID exist** (32, a perfectly healthy-looking number). The check is per root now and
+  keyed on the roots the walk actually ENTERED, so an **absent** root stays legitimate (a repo need
+  not have both) while an **emptied** one refuses with exit 2, naming it. **Consequence for
+  fixtures:** a synthetic repo whose `src/` exists but holds nothing scannable is not a shape the
+  real repo can be in, so `srcRoot()` plants one benign source; do not "fix" a future red there by
+  weakening the guard.
+
+- **An unmerged path was enumerated by nothing, and it is a MINOR.** `U` has no single staged blob,
+  so `--diff-filter=AMT` deletes the record: measured, `--staged` exited **0** over a conflicted
+  fixture whose BOTH stages carried live-shaped `PID-3` / `PID-5` / `PID-7`. It refuses now, and
+  **scanning a stage is refused as the remedy**, because neither side of a conflict is what a commit
+  would contain. **Do not inflate this one:** `git commit` refuses an unmerged index BEFORE the
+  pre-commit hook runs, so it is not a route by which PHI reaches a commit. What it fixes is the gate
+  ANSWERING A QUESTION IT CANNOT ANSWER when `--staged` is run directly mid-conflict.
+
+- **▶ THE SCOPE WAS RE-DERIVED FOR THIS REPO AND A RESIDUAL LIST MUST NEVER BE PORTED IN.** Measured
+  here: this repo roots at **`test/` + `src/`** while a sibling roots at `test/fixtures/` + `src/`,
+  so the same item has a different shape in each. And the two refusal defects a sibling still
+  carries are **NOT open here**: a regular-file root, a dangling link at a root and a missing
+  allow-list all already exit **2**, closed by the previous slice. Porting a sibling's exit-1
+  residual into this repo would have been wrong. **Exit codes here are 0 clean / 1 hits / 2 refusal,
+  and every refusal added by this work exits 2.**
+
+- **▶ STANDING NOTE: THE ANCHOR MATCH COUNT IS DELETED, NOT CORRECTED, AND MUST NOT COME BACK.** It
+  was written down as 289, then 297, then 252, then 943-vs-252, and an independent reader could not
+  reproduce the last of them: raw anchor matches are an UPPER BOUND on extractor runs, not the same
+  quantity, because `extractEmbeddedHl7` advances past each consumed run, and the excluding-exempt
+  ceiling for that file set is BELOW the number that was published. Four wrongs is where you stop
+  correcting and start deleting. **Keep the derivation command, never the output.** The one figure
+  worth quoting from that family is directional and survived independent measurement: the
+  any-delimiter anchor lands in a band well above the `|` anchor, which is all the rationale needs.
+
+- **▶ AND NOTE WHICH FIGURES SURVIVED, BECAUSE THE DISTINCTION IS THE LESSON.** These were
+  re-derived by a second party and matched every time: `test/` tracks **72 `.ts`, 3 `.frame.bin`, 1
+  `.md`**; the old exclusion removed **72 of 76** tracked files; **12** of them carry inline `PID|`.
+  A figure that is a COUNT OF TRACKED FILES survives re-derivation because the derivation is
+  unambiguous. A figure that is a COUNT OF REGEX MATCHES does not, because the methodology is a free
+  variable and every measurer picks a different one. Prefer the first kind; delete the second.
+
+- **▶ THE DEFECT CLASS THAT BIT THIS SLICE TWICE, ONCE INSIDE ITS OWN FIX.** Pass 1's headline
+  finding was a STALE SENTENCE SURVIVING UNDER A REWRITTEN ONE: the block above
+  `isScannableTestFile` was updated to say `.ts` is included while three lines below it still said
+  the filter "must EXCLUDE .ts", in this file's imperative trap voice. The fix for the LATER
+  findings then reintroduced exactly that class in this very file: the retraction "never write down
+  that the recogniser only ever sees real segments" was added three sentences BELOW a surviving
+  sentence asserting "every recovered id is a real HL7 segment id", and both shipped in one bullet.
+  **It survived two refutation passes, and the reason is worth knowing: a `grep` for `289 runs`
+  cannot see `**289** runs`, because the markdown bold markers sit inside the phrase.** So when you
+  retract a claim, DELETE THE SENTENCE, never append a correction after it, and when you grep to
+  confirm a figure is gone, grep for the BARE NUMBER, never the number plus its prose.
+
+- **▶ WHAT THIS DELIBERATELY DID NOT DO: `src/` KEEPS THE CONSERVATIVE PASS ONLY.** A draft applied
+  the recogniser to every `.ts` and thereby reversed a standing decision through a change whose
+  subject is a different root. `src/` is refused the structured scan on purpose, because its JSDoc
+  `@example` snippets carry illustrative names and MRNs that are not held to the segment-aware
+  detectors, and `src/` **was never this defect**: it was enumerated and read by both routes all
+  along. Measured, three `src/` files carry six recoverable runs and all six are clean today, so the
+  restriction costs nothing now and is a scope decision rather than a workaround. Widening `src/` is
+  its own slice with its own argument. **The residual, disclosed:** an embedded `PID|` in `src/` is
+  still seen only by the SSN/email floor.
+
+- **No walk ROOT was widened**, which is what keeps the mid-sweep-deletion bound intact: the roots
+  are still `test/` and `src/`, never the repo root. What changed is what `test/` ADMITS. The
+  transients that make this repo able to reach the tolerance are `mkdtemp`'d `.txt` captures, so
+  their exposure class is unchanged.
+
 ## PHI-SCAN-RENAME-BLIND-AT-PRECOMMIT
 
 - **`--staged` enumerates a rename now, and a walk root that is not a directory refuses instead of

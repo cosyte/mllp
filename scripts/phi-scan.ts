@@ -2,10 +2,10 @@
 /**
  * `@cosyte/mllp` PHI scanner, the CI / pre-commit half of the PHI commit-gate.
  *
- * Pure Node. Zero runtime deps. Walks the synthetic HL7/MLLP data fixtures under
- * `test/` (and a conservative text pass over `src/`) and REFUSES anything that
- * looks like real PHI, so a developer cannot commit a real-looking fixture by
- * accident.
+ * Pure Node. Zero runtime deps. Walks the synthetic HL7/MLLP fixtures AND test
+ * sources under `test/` (plus a conservative text pass over `src/`) and REFUSES
+ * anything that looks like real PHI, so a developer cannot commit a real-looking
+ * fixture by accident.
  *
  * mllp is a TRANSPORT / framing library: it wraps HL7 v2 messages in MLLP frames
  * (`VT 0x0B + payload + FS 0x1C + CR 0x0D`). Its data fixtures are therefore
@@ -42,6 +42,35 @@
  * message) is handled safely: it never matches the fixture-like + segment-line
  * gate, so it falls through to the conservative shape pass (dashed-SSN + email)
  * no crash (exit 2), no false positive from binary noise.
+ *
+ * ---------------------------------------------------------------------------
+ * ▶ A `.ts` SOURCE UNDER `test/` IS SCANNED, AND THE FILE IS NOT THE DOCUMENT.
+ *
+ * `test/` was walked in full, but every `.ts` file under it was then dropped by
+ * the read filter, so a tracked test source was scanned by NEITHER route. That
+ * is not a corner of the corpus here: measured on `3daf2e9`, `test/` tracked 72
+ * `.ts` files, 3 `.frame.bin` and 1 `.md`, so the exclusion removed 72 of 76
+ * tracked files and left the gate standing on three fixtures. Twelve of the 72
+ * carried inline `PID|` literals. This is an HL7 TRANSPORT package, so an HL7
+ * message written straight into a test source is its most common fixture shape,
+ * not an exotic one.
+ *
+ * THE REMEDY IS TWO-SIDED AND EITHER HALF ALONE IS WORTH NOTHING:
+ *
+ *   - ENUMERATION. The blanket `.ts` exclusion is replaced by an explicit
+ *     per-path exemption (`DELIBERATE_VIOLATOR_SOURCES`), because an extension
+ *     cannot tell a file that carries violator literals ON PURPOSE from one that
+ *     carries them BY ACCIDENT;
+ *   - RECOGNITION. Every detector below assumes THE FILE IS THE DOCUMENT and
+ *     works line-by-line from a segment id at the START of a line. In a `.ts`
+ *     source the line starts with `const` or with a quote, so widening the
+ *     enumeration on its own would still have found nothing but the conservative
+ *     SSN/email floor. Measured on `3daf2e9`: a probe file carrying a full
+ *     `PID` in a string literal exited 0 "OK, no hits" even when NAMED
+ *     EXPLICITLY on argv, which bypasses the enumeration entirely, while the
+ *     IDENTICAL payload written to a `.hl7` file reported all five fields.
+ *     `extractEmbeddedHl7` is the other half.
+ * ---------------------------------------------------------------------------
  *
  * SECURITY: every subprocess is `git`, invoked via `execFileSync` with array
  * args only. Never shell-form spawn.
@@ -176,19 +205,59 @@ const OVERRIDE_LOG_PATH = join(REPO_ROOT, "phi-scan-overrides.md");
 const TEST_ROOT = join(REPO_ROOT, "test");
 const SRC_ROOT = join(REPO_ROOT, "src");
 
-// Which `test/` files get swept: EVERY data file under `test/` EXCEPT `.ts`
-// sources (and `.md` docs). `.ts` sources are excluded because, like this
-// scanner's own `test/scripts/phi-scan.test.ts`, they carry intentional
-// violator literals for the positive tests, so sweeping them is self-defeating.
+// Sources whose `.ts` bytes are a DELIBERATE VIOLATOR CORPUS: they carry
+// realistic-PHI-shaped literals on purpose, because they are the positive half
+// of this scanner's own tests, and sweeping them would red the gate forever.
+//
+// THIS IS AN EXPLICIT PATH LIST AND MUST STAY ONE. It replaces a blanket
+// `.ts` exclusion that took 72 of the 76 tracked files under `test/` out of
+// every route (measured on `3daf2e9`; the remaining corpus was three
+// `.frame.bin` files). An extension rule cannot tell a file that carries
+// violator literals ON PURPOSE from one that carries them BY ACCIDENT, which is
+// the whole distinction this gate exists to make, so the exemption is per-path
+// and adding to it is a reviewed act, exactly like adding an allow-list token.
+//
+// THE EXEMPTION IS TOTAL, not just the structured half, and that is measured
+// rather than assumed: this suite's positive tests also assert that the
+// CONSERVATIVE pass fires, so they hold a deliberate non-test-domain email (an
+// `OBX-5` free-text case) that the shape pass reports on sight. Keeping the
+// floor here would red the gate on the one file whose job is to carry violators.
+// Allow-listing that value instead is REFUSED and must stay refused: an
+// `EMAILDOMAIN` entry is global, so it would switch the email detector off for
+// the whole corpus to green one file.
+//
+// THE RESIDUAL, stated rather than hidden: a real SSN or email committed into
+// this ONE path is not reported by this gate. It is bounded by the path list
+// being explicit and short, by the file being the scanner's own suite (which is
+// read by anyone changing the scanner), and by the value still having to survive
+// review. Widening the list is what would make it unbounded, which is why the
+// list is per-path and not an extension rule.
+const DELIBERATE_VIOLATOR_SOURCES: ReadonlySet<string> = new Set([
+  // The scanner's own suite. Every positive test here asserts that a REAL-shaped
+  // name / DOB / MRN / address IS reported, so the literals must stay unallowed.
+  "test/scripts/phi-scan.test.ts",
+]);
+
+// Which `test/` files get swept: EVERY file under `test/` except `.md` docs.
+// `.ts` SOURCES ARE INCLUDED HERE, and `scanTarget` then dispatches them to the
+// embedded-HL7 recogniser rather than to the file-is-the-document scan (see
+// `extractEmbeddedHl7`). The deliberate-violator exemption is NOT applied by
+// this predicate: it is applied at the scan, so an exempt file is still
+// enumerated and still counts as OBSERVED for the per-root guard.
 // Everything else (a framed `.frame.bin`, a bare `.hl7`, a `.txt` / `.json` /
 // extensionless live-adapter capture, a byte/buffer fixture) is KEPT and then
 // dispatched by `looksLikeHl7`: an HL7 payload (framed or not) gets the full
 // structured scan, a non-HL7 blob gets the conservative dashed-SSN + email pass.
-// The filter must EXCLUDE .ts, never RESTRICT to a fixed extension allow-list,
-// restricting silently dropped `.txt` / extensionless captures from any scan at
-// all (the directory `test/differential/fixtures/README.md` tells developers to
-// drop real captures into), which is precisely the false negative this gate
-// exists to stop.
+// ▶ THIS FILTER MUST NEVER RESTRICT TO A FIXED EXTENSION ALLOW-LIST. Restricting
+// silently dropped `.txt` / extensionless captures from any scan at all (the
+// directory `test/differential/fixtures/README.md` tells developers to drop real
+// captures into), which is precisely the false negative this gate exists to stop.
+// ▶ AND IT MUST NOT GO BACK TO EXCLUDING `.ts`. An earlier revision of this
+// comment said the filter "must EXCLUDE .ts", which was the rule until
+// `PHI-SCAN-WALK-ROOT-SCOPE` measured what it cost: 72 of the 76 tracked files
+// under `test/` scanned by NEITHER route, 12 of them carrying inline `PID|`.
+// An EXTENSION cannot tell a file that carries violator literals on purpose from
+// one that carries them by accident; only the per-path list above can.
 // The ROOT'S OWN PATH is admitted as well as the prefix, and it is the one entry
 // this filter used to drop while `isUnderScanRoot` below already claimed it. An
 // index entry at exactly `test` is never a directory (git records none), so it is
@@ -197,11 +266,7 @@ const SRC_ROOT = join(REPO_ROOT, "src");
 // exited 0 "OK, no hits" over a staged mode-100644 `test` carrying live PID-5 /
 // PID-7 / PID-3 values that the same bytes report under any other name.
 function isScannableTestFile(relPath: string): boolean {
-  return (
-    (relPath === "test" || relPath.startsWith("test/")) &&
-    !relPath.endsWith(".ts") &&
-    !relPath.endsWith(".md")
-  );
+  return (relPath === "test" || relPath.startsWith("test/")) && !relPath.endsWith(".md");
 }
 
 /** The `src/` half of the same rule, root's own path included for the same reason. */
@@ -606,6 +671,12 @@ interface Target {
   path: string; // forward-slash repo-relative path for reporting
   read: () => Buffer;
   /**
+   * Which scan ROOT this target was enumerated under, set only in `all` mode.
+   * It is what lets the sweep refuse when a root it WALKED contributed no
+   * observed file, instead of only when the whole run observed nothing.
+   */
+  root?: string;
+  /**
    * Absolute path, set only for a target the walk enumerated itself, so a
    * vanished file can be re-checked once the sweep has finished.
    */
@@ -756,7 +827,7 @@ function walkRoot(
   out: string[],
   unscannable: Unscannable[],
   badRoots: Unscannable[],
-): void {
+): boolean {
   let st;
   try {
     // statSync FOLLOWS, which is what keeps a linked directory root behaving as
@@ -773,13 +844,17 @@ function walkRoot(
     // not have both), and a DANGLING link is a root that IS there and stands for
     // nothing. One lstat tells them apart.
     if (isSymbolicLink(root)) badRoots.push({ path: normalizePath(root), kind: pathKind(root) });
-    return;
+    return false;
   }
   if (!st.isDirectory()) {
     badRoots.push({ path: normalizePath(root), kind: pathKind(root) });
-    return;
+    return false;
   }
   walk(root, out, unscannable);
+  // The root WAS a walkable directory, so it is one the sweep must go on to
+  // observe files under. Reporting that is what lets `main` refuse per-root
+  // rather than only when EVERY root came back empty; see the `observed` guard.
+  return true;
 }
 
 /** The refusal block for every scan root that is not a walkable directory. */
@@ -830,10 +905,12 @@ function walk(dir: string, out: string[], unscannable: Unscannable[]): void {
       if (e.name.toLowerCase().endsWith(".md")) continue;
       out.push(full);
     } else {
-      // Deliberately NOT subject to the `.md` exemption above, nor to the `.ts`
-      // exclusion `isScannableTestFile` applies to walked test files. Both are
-      // judgements about a file whose bytes the walk could have read; a link's
-      // name is no evidence at all about what is on the other side.
+      // Deliberately NOT subject to the `.md` exemption above, nor to the
+      // deliberate-violator exemption `scanTarget` applies to a named `.ts`
+      // source. Both are judgements about a file whose bytes the walk could have
+      // read; a link's name is no evidence at all about what is on the other
+      // side. (The blanket `.ts` exclusion this used to name is gone; see
+      // `DELIBERATE_VIOLATOR_SOURCES`.)
       const kind = nonRegularKind(e);
       if (kind !== null) {
         unscannable.push({ path: normalizePath(full), kind });
@@ -941,25 +1018,29 @@ function gitTracked(): Set<string> | null {
   }
 }
 
-function buildTargetsForAll(): Target[] {
+function buildTargetsForAll(walkedRoots: string[]): Target[] {
   const unscannable: Unscannable[] = [];
   const badRoots: Unscannable[] = [];
   const testFiles: string[] = [];
-  walkRoot(TEST_ROOT, testFiles, unscannable, badRoots);
+  if (walkRoot(TEST_ROOT, testFiles, unscannable, badRoots)) walkedRoots.push("test");
   const srcFiles: string[] = [];
-  walkRoot(SRC_ROOT, srcFiles, unscannable, badRoots);
+  if (walkRoot(SRC_ROOT, srcFiles, unscannable, badRoots)) walkedRoots.push("src");
   // From test/, keep every data file except .ts sources (dispatched to
   // structured-or-conservative by looksLikeHl7). From src/, keep everything
   // walk() surfaced (hand-written code → conservative pass).
-  const files = [
-    ...testFiles.filter((abs) => isScannableTestFile(normalizePath(abs))),
-    ...srcFiles,
+  // Each file is tagged with the root it came from, so the sweep can prove it
+  // observed something under EVERY root it walked rather than only in total.
+  const files: { abs: string; root: string }[] = [
+    ...testFiles
+      .filter((abs) => isScannableTestFile(normalizePath(abs)))
+      .map((abs) => ({ abs, root: "test" })),
+    ...srcFiles.map((abs) => ({ abs, root: "src" })),
   ];
   // One `git check-ignore` over both lists. An ignored entry is already out of
   // scope for the file route, so applying the same rule to a non-regular entry
   // keeps a single boundary rather than inventing a second, stricter one for
   // links alone.
-  const ignored = gitIgnored([...files, ...unscannable.map((u) => u.path)]);
+  const ignored = gitIgnored([...files.map((f) => f.abs), ...unscannable.map((u) => u.path)]);
 
   // ONE refusal carrying EVERY offender of BOTH kinds. A bad root and an
   // unscannable entry under the OTHER root are independent findings, and a
@@ -980,10 +1061,11 @@ function buildTargetsForAll(): Target[] {
 
   const tracked = gitTracked();
   return files
-    .map((abs) => ({ abs, rel: normalizePath(abs) }))
+    .map(({ abs, root }) => ({ abs, root, rel: normalizePath(abs) }))
     .filter(({ rel }) => !ignored.has(rel))
-    .map(({ abs, rel }) => ({
+    .map(({ abs, root, rel }) => ({
       path: rel,
+      root,
       read: () => readFileSync(abs),
       absPath: abs,
       tolerateVanish: tracked !== null && !tracked.has(rel),
@@ -997,6 +1079,65 @@ function buildTargetsForPaths(paths: string[]): Target[] {
     if (!statSync(abs).isFile()) throw new InvocationError(`Not a regular file: ${p}`);
     return { path: normalizePath(abs), read: () => readFileSync(abs) };
   });
+}
+
+/**
+ * Refuse (exit 2) when an UNMERGED path sits under a scan root.
+ *
+ * An unmerged path has no stage-0 entry, so `git diff --cached --raw` emits it
+ * as `U` and `--diff-filter=AMT` deletes the record: the route enumerated
+ * NOTHING for it and reported "OK, no hits". Measured on `3daf2e9` with a
+ * conflicted `test/differential/fixtures/*.frame.bin` whose BOTH stages carried
+ * live-shaped PID-3 / PID-5 / PID-7 values, the raw output for that stage is
+ * empty and `--staged` exited 0.
+ *
+ * SCANNING THE STAGES IS REFUSED AS THE REMEDY. Stages 2 and 3 are the two sides
+ * of a conflict, and neither is what a commit would contain, so a hit on one
+ * would be a claim about content that may never exist and a CLEAN on both would
+ * be a claim about content that does not exist yet. The only true thing
+ * available is that there is an entry here the route cannot account for.
+ *
+ * WHAT THIS IS WORTH, stated honestly rather than inflated: `git commit` itself
+ * refuses an index with unmerged paths, and it refuses BEFORE the pre-commit
+ * hook runs, so this is not a route by which PHI reaches a commit. What it fixes
+ * is the gate ANSWERING A QUESTION IT CANNOT ANSWER when a developer or a script
+ * runs `--staged` directly mid-conflict to ask what is about to be committed.
+ * A false green is worse than a refusal even when nothing downstream depends on
+ * it, because it is what teaches someone the gate has looked. Minor, and fixed
+ * because it is three lines, not because it is severe.
+ */
+function refuseUnmergedPaths(): void {
+  let out: Buffer;
+  try {
+    // SECURITY: array-form execFileSync, no shell. `-u -z` lists one record per
+    // unmerged STAGE, NUL-separated, so a path appears two or three times.
+    out = execFileSync("git", ["ls-files", "-u", "-z"], {
+      encoding: "buffer",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch (err) {
+    throw new InvocationError(
+      `git ls-files -u failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const paths = new Set<string>();
+  for (const rec of out.toString("utf8").split("\0")) {
+    if (rec.length === 0) continue;
+    // `<mode> <sha> <stage>\t<path>`. Everything after the first TAB is the path,
+    // which may itself contain spaces.
+    const tab = rec.indexOf("\t");
+    if (tab === -1) continue;
+    const p = rec.slice(tab + 1);
+    if (p.length > 0 && isUnderScanRoot(p)) paths.add(p);
+  }
+  if (paths.size === 0) return;
+  const lines = [...paths].map((p) => `  - ${p} (unmerged)`).join("\n");
+  const noun = paths.size === 1 ? "path is unmerged" : "paths are unmerged";
+  throw new InvocationError(
+    `refusing the scan: ${String(paths.size)} ${noun}:\n${lines}\n` +
+      "An unmerged path has no single staged blob, so there is nothing this route can read " +
+      "that is what a commit would contain. Resolve the conflict and `git add` it.",
+  );
 }
 
 /** git's file modes for a regular blob. Every other mode is not a file to read. */
@@ -1013,6 +1154,8 @@ function gitModeKind(mode: string): string {
 const RAW_RECORD = /^:(?:\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ [A-Z]\d*$/;
 
 function buildTargetsForStaged(): Target[] {
+  // BEFORE the enumeration, because an unmerged path is invisible to it.
+  refuseUnmergedPaths();
   let listBuf: Buffer;
   try {
     // SECURITY: array-form execFileSync, no shell. `--raw` rather than
@@ -1082,10 +1225,11 @@ function buildTargetsForStaged(): Target[] {
   // REFUSES rather than being skipped: a silently shortened list is exactly the
   // shape this scan must never report clean over.
   //
-  // What this route still does NOT enumerate, stated because the boundary is
-  // narrower than the path prefix alone: `--diff-filter=AMT` also drops `D` (a
-  // deletion has no staged blob to scan) and `U` (an unmerged path has no single
-  // one). Both are PRE-EXISTING.
+  // What this route still does NOT enumerate: `--diff-filter=AMT` also drops
+  // `D`, and that one is correct, a deletion has no staged blob to scan.
+  //
+  // `U` IS ALSO DROPPED AND IS NOT CORRECT, so it is refused below rather than
+  // left silent. See `refuseUnmergedPaths`.
   const fields = listBuf.toString("utf8").split("\0");
   const staged: { path: string; mode: string }[] = [];
   let i = 0;
@@ -1214,6 +1358,174 @@ function looksLikeHl7(text: string, path: string): boolean {
   return unwrapMllpFrame(text)
     .split(/\r\n|\r|\n/)
     .some((raw) => SEGMENT_LINE_RE.test(raw.replace(/^[\s]*/, "")));
+}
+
+// ---------------------------------------------------------------------------
+// Embedded HL7 in a TypeScript source
+// ---------------------------------------------------------------------------
+
+/** A `.ts` source under a scan root. Never a document; a container of literals. */
+function isTypeScriptSource(relPath: string): boolean {
+  return relPath.endsWith(".ts");
+}
+
+/**
+ * A segment run inside a string literal. Capture 1 is the ANCHOR, capture 2 the
+ * segment id. The anchor is a literal boundary, then optional spaces/tabs, then
+ * a 3-character segment id and a `|`. Four anchors, and each is a spelling this
+ * corpus actually uses:
+ *
+ *   - an opening QUOTE of any of the three kinds (`"PID|…"`);
+ *   - an `\r` or `\n` ESCAPE, which is how several segments are written into one
+ *     literal (`"MSH|…\rPID|…\r"`);
+ *   - a REAL NEWLINE, which is how a multi-line template literal spells the same
+ *     thing:
+ *     ```
+ *     const inbound = `MSH|^~\&|…
+ *     PID|1||…`;
+ *     ```
+ *     Without it only the `MSH` run is recovered, and `scanHl7` SKIPS header
+ *     segments, so a full patient identity on the following lines reported
+ *     clean. Adding it costs nothing measurable: over the tracked `.ts` sources
+ *     the recovered set is IDENTICAL with and without it, so it closes a shape
+ *     rather than widening the net.
+ *
+ * THE `|` IS LOAD-BEARING AND IS NOT AN ARBITRARY NARROWING. Anchoring on "any
+ * non-alphanumeric delimiter", which is what `SEGMENT_LINE_RE` does for a file
+ * that IS a message, matched ordinary prose and identifiers all over the suite
+ * (`ack-from-hl7`, `not-an-error-object`, `ERR_MODULE_NOT_FOUND`,
+ * `net.createConnection`), which would have driven `checkUnknownSegment`'s name
+ * backstop over English words and made the gate unusable. NO MATCH COUNT IS
+ * WRITTEN HERE, DELIBERATELY: that figure was wrong four times and is not
+ * reproducible by an independent reader, because raw anchor matches are an UPPER
+ * BOUND on extractor runs (this function advances past each consumed run) rather
+ * than the same quantity. The derivation command is in
+ * `documentation/agent-notes.md`; run it rather than trusting a number. A gate that reds on prose is a gate someone
+ * turns off, which is the same failure mode this file names elsewhere.
+ *
+ * ▶ THE `|` NARROWS THE ANCHOR, IT DOES NOT MAKE A RECOVERED RUN TRUSTWORTHY,
+ * AND THE DIFFERENCE MATTERS. On THIS corpus every recovered id happens to be a
+ * real HL7 segment id, but that is an observation about the tree today and NOT a
+ * property of the rule: a `//` comment or a message string containing `\r` and
+ * three word characters before a `|` is recovered exactly like a fixture, and
+ * one already is (`test/client/correlator-controlid.test.ts` has prose parsed as
+ * `MSA-3`). It is harmless only because `MSA` has no field map. A future comment
+ * of the shape `\rZDS|1|<surname>^<given>` WOULD reach `checkUnknownSegment` and
+ * red the gate on a comment. **Do not write down that the recogniser only ever
+ * sees real segments.** The bound that actually holds is narrower: a recovered
+ * run is scanned with the same field map a fixture gets, and a false hit is
+ * answered the same way any other is, by declaring the token or moving the text.
+ *
+ * WHAT THIS COSTS, stated rather than hidden, and the list is not "one thing":
+ *
+ *   - a message written with a CUSTOM field separator (`MSH^~\&^…`, or the
+ *     `_`-substituted delimiter probes in
+ *     `test/ack-from-hl7/control-id-verbatim.test.ts`) is not recovered at all
+ *     and gets the conservative pass only. A FILE that is such a message is
+ *     unaffected, `detectDelimiters` still reads MSH-1 there;
+ *   - a run anchored on an ESCAPE does not know which quote opened the enclosing
+ *     literal, so it still ends at the first quote of ANY kind. An apostrophe in
+ *     a name (`O'HALLORAN`) truncates such a run at the apostrophe and silently
+ *     drops every field after it. A run anchored on a QUOTE does not have this
+ *     problem: it ends only on its OWN quote (see `extractEmbeddedHl7`);
+ *   - a segment split ACROSS a concatenation (`"PID|1||" + mrn + "^^^HOSP^MR"`)
+ *     is recovered only as far as the first operand.
+ *
+ * Each of the three needs a real TypeScript literal parser, not a wider anchor,
+ * and a wider anchor is precisely the prose-matching result above.
+ */
+const EMBEDDED_SEGMENT_RE = /(["'`]|\\r|\\n|\n)[ \t]*([A-Za-z][A-Za-z0-9]{2})\|/g;
+
+/**
+ * Recover the HL7 segments embedded in a TypeScript source, as one reconstructed
+ * message per call (segments joined by `CR`, which is what `splitSegments` wants).
+ *
+ * WHY THIS EXISTS AT ALL, AND WHY WIDENING THE ENUMERATION WITHOUT IT WOULD HAVE
+ * SHIPPED NOTHING. Every detector above assumes THE FILE IS THE DOCUMENT:
+ * `findHeaderLine` and `splitSegments` work line-by-line and require the segment
+ * id at the START of a line. In a `.ts` source the line starts with `const`, or
+ * with the opening quote, so a message written as
+ * `"PID|1||<mrn>^^^HOSP^MR||<family>^<given>||<dob>|F"` matches nothing.
+ * Measured on `3daf2e9` against a probe file carrying exactly that shape: naming
+ * the file EXPLICITLY on argv, which bypasses the enumeration entirely, still
+ * exited 0 "OK, no hits", while the IDENTICAL payload written to a `.hl7` file
+ * reported all five fields (PID-3 / -5 / -7 / -11). The bytes were always
+ * detectable; nothing ever looked at them as HL7.
+ *
+ * So the widening is TWO-SIDED, and the recogniser is "in addition to" the
+ * enumeration rather than "instead of" it. Removing either half restores the
+ * false green.
+ *
+ * TypeScript escapes are resolved because HL7 sees the resolved bytes: `\\`
+ * becomes one backslash (so an `MSH|^~\\&|` literal yields the real `^~\&`
+ * encoding characters and `nameTokens`' escape stripping behaves as it does on a
+ * file), and `\"` / `\'` / `` \` `` / `\t` become their characters. `\r` and `\n`
+ * TERMINATE a run, because in HL7 they are the segment separator.
+ *
+ * A `${...}` interpolation is replaced by `_`, never dropped and never guessed
+ * at. `_` is not a letter, so `nameTokens` splits on it and yields no name, and
+ * it is not a digit, so no identifier or date detector fires on it. That is the
+ * honest answer: the scanner cannot know a runtime value, and inventing one
+ * would produce either a false hit or a false clean.
+ */
+function extractEmbeddedHl7(source: string): string {
+  const segments: string[] = [];
+  EMBEDDED_SEGMENT_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = EMBEDDED_SEGMENT_RE.exec(source)) !== null) {
+    const anchor = m[1];
+    const id = m[2];
+    if (anchor === undefined || id === undefined) continue;
+    // When the anchor IS the opening quote we know which quote closes the
+    // literal, so only THAT one ends the run. Ending on any quote truncates a
+    // name at an apostrophe (`O'HALLORAN`) and silently drops every field after
+    // it. An escape-anchored run has no such knowledge and keeps the older,
+    // wider rule; that residual is disclosed on `EMBEDDED_SEGMENT_RE`.
+    const closer = anchor === '"' || anchor === "'" || anchor === "`" ? anchor : null;
+    // Start at the segment id itself, dropping the anchor and any indentation.
+    let i = m.index + m[0].length - id.length - 1;
+    let out = "";
+    while (i < source.length) {
+      const c = source[i];
+      if (c === undefined) break;
+      // A real line break always ends the run: it is the segment separator, and
+      // the next segment is picked up by the newline anchor on the next pass.
+      if (c === "\n" || c === "\r") break;
+      if (closer === null ? c === '"' || c === "'" || c === "`" : c === closer) break;
+      if (c === "\\") {
+        const n = source[i + 1];
+        // `\r` / `\n` are the HL7 segment separator: end this run, and let the
+        // regex pick the NEXT segment up from the same escape on the next pass.
+        if (n === "r" || n === "n") break;
+        if (n === "\\") {
+          out += "\\";
+          i += 2;
+          continue;
+        }
+        if (n === '"' || n === "'" || n === "`") {
+          out += n;
+          i += 2;
+          continue;
+        }
+        if (n === "t") {
+          out += "\t";
+          i += 2;
+          continue;
+        }
+        // Any other escape is not one HL7 cares about; keep the backslash as-is.
+        out += c;
+        i += 1;
+        continue;
+      }
+      out += c;
+      i += 1;
+    }
+    if (out.length > 0) segments.push(out.replace(/\$\{[^}]*\}/g, "_"));
+    // Never rewind: `lastIndex` only ever moves forward, so a pathological
+    // source cannot make this loop fail to terminate.
+    if (i > EMBEDDED_SEGMENT_RE.lastIndex) EMBEDDED_SEGMENT_RE.lastIndex = i;
+  }
+  return segments.join("\r");
 }
 
 /**
@@ -1531,7 +1843,19 @@ function scanCommonShapes(path: string, content: string, allow: AllowList, hits:
 // HL7 message scanner
 // ---------------------------------------------------------------------------
 
-function scanHl7(target: Target, text: string, allow: AllowList, hits: Hit[]): void {
+/**
+ * `commonShapes` is `false` for the reconstruction handed back by
+ * `extractEmbeddedHl7`: its caller has already run `scanCommonShapes` over the
+ * WHOLE source, which is a superset of the reconstruction, so running it again
+ * here would report the same SSN or email twice for one occurrence.
+ */
+function scanHl7(
+  target: Target,
+  text: string,
+  allow: AllowList,
+  hits: Hit[],
+  commonShapes = true,
+): void {
   const d = detectDelimiters(text);
   for (const elems of splitSegments(text, d)) {
     // Segment ids are matched case-insensitively, the lenient parser accepts a
@@ -1573,7 +1897,7 @@ function scanHl7(target: Target, text: string, allow: AllowList, hits: Hit[]): v
   // Cross-cutting shape checks over the whole payload (catches free-text PHI in
   // OBX-5 / NTE that the field map does not model). Runs on the UNWRAPPED payload
   // so an MLLP FS/VT byte can never mask an adjacent dashed-SSN / email match.
-  scanCommonShapes(target.path, unwrapMllpFrame(text), allow, hits);
+  if (commonShapes) scanCommonShapes(target.path, unwrapMllpFrame(text), allow, hits);
 }
 
 // ---------------------------------------------------------------------------
@@ -1600,6 +1924,42 @@ function scanTarget(target: Target, allow: AllowList, hits: Hit[]): boolean {
     );
   }
   const text = buf.toString("utf8");
+  // A `.ts` SOURCE IS NOT A DOCUMENT, so it is dispatched before `looksLikeHl7`
+  // rather than through it. Two reasons, and the second is the sharp one:
+  //   - its HL7 lives inside string literals, which every line-oriented detector
+  //     above misses (see `extractEmbeddedHl7`);
+  //   - handing raw TypeScript to `scanHl7` would be actively wrong. Any line
+  //     beginning with three word characters and a delimiter reads as a segment
+  //     to `SEGMENT_LINE_RE`, and an unrecognized id falls to
+  //     `checkUnknownSegment`'s name backstop, which would report identifiers
+  //     and prose as person names.
+  if (isTypeScriptSource(target.path)) {
+    // A deliberate-violator corpus is exempt from BOTH passes; see
+    // `DELIBERATE_VIOLATOR_SOURCES` for why the conservative floor cannot be
+    // kept here and why allow-listing its email instead is refused. It is still
+    // enumerated and still read, so it is counted as OBSERVED.
+    if (DELIBERATE_VIOLATOR_SOURCES.has(target.path)) return true;
+    // The conservative floor runs over the WHOLE source, not just the recovered
+    // segments: a dashed SSN or a non-test-domain email in a comment, a variable
+    // name or a fixture path is a hit wherever it sits.
+    scanCommonShapes(target.path, text, allow, hits);
+    // `src/` KEEPS THE CONSERVATIVE PASS ONLY, AND THAT IS A STANDING DECISION
+    // THIS WORK DOES NOT REVERSE. Its JSDoc `@example` snippets carry
+    // illustrative HL7 with synthetic names and MRNs that are deliberately not
+    // held to the segment-aware detectors, which is why `looksLikeHl7` already
+    // refuses `src/` the structured scan. Running the recogniser there would
+    // reverse that decision silently, through a change whose subject is a
+    // DIFFERENT root: `src/` was never the defect here, it was enumerated and
+    // read by both routes all along. Measured, three `src/` files carry six
+    // recoverable runs and all six are clean today, so this costs nothing now
+    // and is a scope decision rather than a workaround. Widening `src/` to the
+    // structured scan is its own slice, with its own argument.
+    if (!isScannableSrcFile(target.path)) {
+      const embedded = extractEmbeddedHl7(text);
+      if (embedded.length > 0) scanHl7(target, embedded, allow, hits, false);
+    }
+    return true;
+  }
   if (looksLikeHl7(text, target.path)) {
     scanHl7(target, text, allow, hits);
   } else {
@@ -1668,10 +2028,11 @@ function main(): number {
   const allowed = new Set<string>(args.allowFixtures.map(normalizePath));
 
   let targets: Target[];
+  const walkedRoots: string[] = [];
   try {
     if (args.mode === "staged") targets = buildTargetsForStaged();
     else if (args.mode === "paths") targets = buildTargetsForPaths(args.paths);
-    else targets = buildTargetsForAll();
+    else targets = buildTargetsForAll(walkedRoots);
   } catch (err) {
     if (err instanceof InvocationError) {
       process.stderr.write(`[phi-scan] ${err.message}\n`);
@@ -1684,11 +2045,12 @@ function main(): number {
 
   const hits: Hit[] = [];
   const vanished: Target[] = [];
-  let observed = 0;
+  const observedByRoot = new Map<string, number>(walkedRoots.map((r) => [r, 0]));
   for (const t of targets) {
     try {
-      if (scanTarget(t, allow, hits)) observed += 1;
-      else vanished.push(t);
+      if (scanTarget(t, allow, hits)) {
+        if (t.root !== undefined) observedByRoot.set(t.root, (observedByRoot.get(t.root) ?? 0) + 1);
+      } else vanished.push(t);
     } catch (err) {
       if (err instanceof InvocationError) {
         process.stderr.write(`[phi-scan] ${err.message}\n`);
@@ -1719,15 +2081,37 @@ function main(): number {
     );
   }
 
-  // Refuse a sweep that observed nothing. `all` mode always reaches the committed
-  // fixture corpus under `test/`, so zero reads means the enumeration or the tree
-  // is wrong, never a clean repo. (`staged` legitimately has nothing to scan when
-  // a commit touches only `.ts`/`.md`, and `paths` is bounded by the caller's argv.)
-  if (args.mode === "all" && observed === 0) {
-    process.stderr.write(
-      "[phi-scan] refusing: the all-mode sweep observed no files, so it proves nothing.\n",
-    );
-    return 2;
+  // Refuse a sweep that observed nothing UNDER ANY ROOT IT WALKED. (`staged`
+  // legitimately has nothing to scan when a commit touches only `.md`, and
+  // `paths` is bounded by the caller's argv, so neither is guarded.)
+  //
+  // THE COUNTER USED TO BE GLOBAL, AND A GLOBAL COUNTER CANNOT SEE THIS. It only
+  // fires when EVERY root comes back empty, so one healthy root masks an empty
+  // one indefinitely. Measured on `3daf2e9`: adding `test/differential/fixtures/`
+  // to `.gitignore` removed the ENTIRE `test/` corpus (after the `.ts` exclusion
+  // of the day, three `.frame.bin` files) from the sweep, and the run printed
+  // "OK, no hits" and exited 0 on the strength of `src/`'s 32 files alone. The
+  // banner above this guard used to ASSERT that "`all` mode always reaches the
+  // committed fixture corpus under `test/`"; nothing checked the assertion.
+  //
+  // A DENOMINATOR IS NOT THE REMEDY, and printing one would have looked like the
+  // fix while changing nothing: the count in that measurement was 32, which is a
+  // perfectly healthy-looking number, because a count counts the roots that DID
+  // exist. What has to be checked is per-root, and it has to be keyed on the
+  // roots the walk actually entered, so an ABSENT root (a repo need not have
+  // both) stays legitimate while an EMPTIED one refuses.
+  if (args.mode === "all") {
+    const empty = [...observedByRoot.entries()].filter(([, n]) => n === 0).map(([r]) => r);
+    if (walkedRoots.length === 0 || empty.length > 0) {
+      const which =
+        walkedRoots.length === 0 ? "no scan root" : `${empty.map((r) => `${r}/`).join(", ")}`;
+      process.stderr.write(
+        `[phi-scan] refusing: the all-mode sweep observed no files under ${which}, so it ` +
+          `proves nothing about that corpus. Check .gitignore, the allow-fixture list, and ` +
+          `that the tree is intact.\n`,
+      );
+      return 2;
+    }
   }
 
   report(hits);
