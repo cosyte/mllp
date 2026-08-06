@@ -710,6 +710,22 @@ seeded as a real tracked path. Git only ever tracks regular files, so the not-a-
 is reached by a path tracked as a regular file and **since replaced** in the working tree, by a
 directory or a FIFO; `git ls-files` still lists it, and that list is the corpus.
 
+**▶ A GATE THAT IS ONLY EVER RUN LOCALLY IS NOT GRADED BY CODEQL AT ALL. PUSHING IS PART OF THE
+GATE, AND THIS IS THE GENERAL LESSON OF THIS SLICE.** The race above sat in the first commit through
+`scripts/verify.sh mllp` green, through a local `pnpm test` green, and through **three** adversarial
+refuter passes, all of which read the code. It was found in seconds by the first CI run the branch
+ever had, because the branch had been built across a session limit and **never pushed**. Local
+verification and adversarial reading are both weaker than the push for this class of defect: the
+static analyser is an instrument neither a human nor a refuter substitutes for. **Push early, even on
+unfinished work, so the scanners see it.** A worker who defers the push to the end has silently
+deferred a required gate to the end with it.
+
+**▶ AND THE `O_NONBLOCK` HALF IS A MEASURED DENIAL OF SERVICE ON A GATE, NOT A TIDY-UP.** Without the
+flag, a tracked path replaced by a FIFO makes the gate **hang forever** rather than refuse: no exit
+code, no output, no finding, and in CI a job that burns its timeout. A hung gate is worse than a red
+one, because a red one reports. **Any sibling copying this gate's shape must copy both flags**, and
+the reason each is present is written above rather than left to be re-derived.
+
 **Exit 1 and exit 2 are different claims** and are split the way `phi-scan.ts` splits them: 1 is
 a finding a human acts on, 2 is "believe nothing I just said". Collapsing them would turn a broken
 scanner into a list of false findings, which reads as actionable and is worse than a crash.
