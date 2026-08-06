@@ -132,12 +132,16 @@
  *        this note claimed the opposite and was wrong: a disclosure that names the wrong
  *        failure mode sends the next reader hunting something that cannot happen.
  *  (vii) [PINNED] THE SLUGGER IS A TRANSCRIPTION OF github-slugger, NOT THE MODULE. It is
- *        pinned by SLUG_CASES and verified against github-slugger@2.0.0 for the four shapes that
- *        diverge from the obvious implementation: a dropped LEADING character, a REPEATED
- *        heading, a NON-ASCII space separator, and a SOFTBREAK. Every one of those was got wrong
- *        by a draft of this file and every one of those was false-green or false-red on a real
- *        link. Combining marks and CJK headings are UNTESTED, not claimed: none exists here. A
- *        heading that needs one is the signal to test it, not to assume.
+ *        verified against github-slugger@2.0.0 for the four shapes that diverge from the obvious
+ *        implementation: a dropped LEADING character, a NON-ASCII space separator and a SOFTBREAK
+ *        (all three in SLUG_CASES), and a REPEATED heading (the dedup block in `selfTest`, NOT
+ *        SLUG_CASES, which holds no repeated-heading row). Each was got wrong by a draft of this
+ *        file and each was false-green or false-red on a fixture link GitHub really resolves.
+ *        TWO SHAPES ARE UNTESTED AND ARE NOT CLAIMED: combining marks and CJK, because none
+ *        exists here; and CONNECTOR PUNCTUATION other than `_`, which `\p{Word}` keeps upstream
+ *        (`a‿b` slugs `a‿b`) and this keep-class deletes. That last one is false-red only, since
+ *        a pointer's anchor class cannot carry it either. A heading that needs any of them is the
+ *        signal to test it, not to assume.
  *  (viii)[SCOPE] A SECTION WITH A BODY IS NOT A SECTION WITH THE RIGHT BODY. This gate proves a
  *        pointer lands somewhere non-empty. It cannot prove the prose there grounds the rule
  *        that cited it. That half stays human, and saying so is the point of writing it down.
@@ -453,9 +457,11 @@ function emptySections(lines: readonly string[], headings: readonly Heading[]): 
  * shape a future one is likely to take. If someone "simplifies" `slugify`, this table reds here
  * rather than turning every working pointer on the tree into a false red.
  *
- * THE LAST THREE ARE THE LEADING-CHARACTER CASES AND THEY ARE THE POINT OF THE TABLE. A dropped
- * leading character leaves the space behind and the slug OPENS WITH A HYPHEN. A draft trimmed it
- * away, which passed a pointer that resolves to nothing on GitHub. Verified against
+ * ▶ DO NOT DESCRIBE THIS TABLE BY POSITION. An earlier version of this comment opened "the last
+ * three are the leading-character cases", and the next commit appended three rows and made it
+ * false without touching it. Each row below carries its own reason where it needs one; a
+ * positional reference is a claim that goes stale on the next append, which is the same defect
+ * class as the renumbered cross-reference two blocks above. Every row is verified against
  * github-slugger@2.0.0.
  */
 const SLUG_CASES: ReadonlyArray<readonly [string, string]> = [

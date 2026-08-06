@@ -29,9 +29,11 @@ Both heading shapes that defeat a naive leading-hash rule are handled and reprod
 heading indented by a space, and one underlined rather than hashed. Both are false-red bypasses,
 because a missed heading is a missing anchor. So is the opposite direction, where a hash line inside
 a code fence, or a YAML front-matter key, must not mint an anchor or a dangling pointer would pass.
-The slug transformation is measured against github-slugger rather than assumed, including the two
+The slug transformation is measured against github-slugger rather than assumed, including four
 shapes that diverge from the obvious implementation: a dropped leading character leaves a leading
-hyphen behind, and a repeated heading is re-suffixed until its slug is free.
+hyphen behind, a repeated heading is re-suffixed until its slug is free, a space separator other
+than the plain one is deleted, and a heading wrapped across two lines has the break deleted rather
+than turned into a hyphen.
 
 Measured against the parent commit by running it there: zero violations. This changes no content and
 exists to stop a regression. `test/scripts/agent-notes.test.ts` runs it against this tree, seeds each
