@@ -1,8 +1,10 @@
 # Changesets
 
 This folder is managed by [Changesets](https://github.com/changesets/changesets). Changesets drives
-the **version bump** and **publish** for `@cosyte/mllp`; the human-readable release notes live in
-`CHANGELOG.md` (`changelog` generation is disabled in `config.json`).
+the **version bump**, the **publish**, and the **release section in `CHANGELOG.md`**: a release
+writes its own version heading there from the changesets it consumed. So **the changeset summary is
+the changelog entry**. Write it there and do not hand-edit `CHANGELOG.md`, whose sections above
+`## Released before this file was generated` are generated output.
 
 Add a changeset for every meaningful change:
 

@@ -24,16 +24,14 @@ New narrative goes there, not here.
   decision lands. **Re-vendoring strips the `peerDependencies` entry: restore it afterwards.** The
   exact command sequence: `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
 - **This package is on the npm registry, and this file names no version, deliberately** (derive it:
-  `npm view @cosyte/mllp version`). **Do not read that as settled: the umbrella backlog item
-  `CHANGELOG-PREAMBLE-FUTURE-TENSE` still lists this file among four repos whose `CLAUDE.md` claims
-  the package is "not yet published to npm".** That sentence is not in this file as of 2026-08-04,
-  so one of the two is stale and this note does not decide which. Re-derive publish state from the
-  registry before acting on it, and never infer repo visibility from it or it from visibility: they
-  are independent. Never quote a version here, and never move a published version backwards.
-  Why the claim keeps going stale: `documentation/agent-notes.md#the-package-rename-and-the-publish-state-claim`
-- **Renamed `@cosyte/hl7-mllp` to `@cosyte/mllp`** and migrated onto the shared `@cosyte/*`
-  engineering standard (Phase E). The rename was free only because it predated the first publish; it
-  would not be free now. Why: `documentation/agent-notes.md#the-package-rename-and-the-publish-state-claim`
+  `npm view @cosyte/mllp version`). The competing "not yet published to npm" claim is **closed,
+  measured stale 2026-08-06**: not in this file, and the registry serves this package. Never infer
+  repo visibility from publish state or the reverse: they are independent.
+  Never quote a version here, and never move a published version backwards. **Renamed
+  `@cosyte/hl7-mllp` to `@cosyte/mllp`** while migrating onto the shared `@cosyte/*` engineering
+  standard (Phase E); that was free only because it predated the first publish, and would not be
+  free now. Why both claims go stale:
+  `documentation/agent-notes.md#the-package-rename-and-the-publish-state-claim`
 - Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).
 
 ### The em-dash brand gate is armed
@@ -277,8 +275,13 @@ These bind every change in this repo (mirrored from the cosyte meta-repo's
 1. **Documentation follows code.** A public-surface / stack / status change isn't done until its
    docs are: this package's own docs (`docs-content/` + JSDoc), and (in the meta-repo) its
    `documentation/repos/<repo>.md` and the `ecosystem-map.md` status table.
-2. **Version + changelog every meaningful change.** Add a Changeset (`pnpm changeset`, `patch`
-   during pre-alpha) and keep `CHANGELOG.md`'s `[Unreleased]` current. Stay on `0.0.x` until first alpha.
+2. **Version + changelog every meaningful change.** Add a Changeset (`pnpm changeset`, `patch`);
+   stay on `0.0.x` until first alpha. **The changeset summary IS the changelog entry**: a generator
+   is on, so the RELEASE writes everything above `## Released before this file was generated`.
+   **Never hand-edit it, never reintroduce `[Unreleased]`, keep only the H1 above the first heading,
+   and never resync `"prettier"` (`false` on purpose).** **An UNCHANGED changelog after release
+   is a swallowed write failure, not a reverted flag.**
+   Why: `documentation/agent-notes.md#changelog-generation`
 3. **Crew + knowledgebase feedback loop.** When a standard, decision, or public surface changes,
    flag whether a `crew` skill or `knowledgebase` doc needs creating/updating. Never silently skip.
 4. **No internal project bookkeeping on a public surface** (founder directive, 2026-07-27). What a
