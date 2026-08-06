@@ -32,9 +32,10 @@
  * commit gate does not run.
  *
  * The throwaway repos are created under the OS temp dir, never under `test/`. `test/` is a
- * `phi-scan` walk root and its emptiness is load-bearing for a different suite; a temp repo
- * appearing and vanishing inside it would couple two gates that have nothing to do with each
- * other.
+ * `phi-scan` walk root, and `test/scripts/phi-scan.test.ts` deliberately writes into it because
+ * the `test/` prefix is what those cases prove. This suite has no such stake, so putting trees
+ * there would couple two gates that have nothing to do with each other and would put unrelated
+ * churn inside a root whose emptiness `phi-scan` refuses on.
  */
 
 import { spawnSync } from "node:child_process";
@@ -302,6 +303,66 @@ describe("check-agent-notes: the bypass classes, reproduced end to end", () => {
     expect(runGate(["--root", dir]).code).toBe(0);
   });
 
+  it("keeps the leading hyphen a dropped leading character leaves behind", () => {
+    // github-slugger does NOT trim: `▶ The section` slugs `-the-section`. A draft trimmed it, so
+    // a pointer at `#the-section` passed this gate and resolved to nothing on GitHub. `▶` is
+    // this repo's own marker for a load-bearing rule, so the shape is reachable, not exotic.
+    const notes = "# notes\n\nP.\n\n## ▶ The section\n\nBody.\n";
+    const green = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("-the-section")}\n`,
+      "documentation/agent-notes.md": notes,
+    });
+    expect(runGate(["--root", green]).code).toBe(0);
+
+    const red = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n`,
+      "documentation/agent-notes.md": notes,
+    });
+    expect(runGate(["--root", red]).code).toBe(1);
+  });
+
+  it("re-suffixes a slug that collides with an already-generated one", () => {
+    // github-slugger loops rather than counting: `Same`, `Same`, `Same-1` yields
+    // `same`, `same-1`, `same-1-1`. A counter yields `same-1` twice and reds `#same-1-1`.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("same-1-1")}\n`,
+      "documentation/agent-notes.md":
+        "# notes\n\nP.\n\n## Same\n\nA.\n\n## Same\n\nB.\n\n## Same-1\n\nC.\n",
+    });
+    expect(runGate(["--root", dir]).code).toBe(0);
+  });
+
+  it("does NOT mint a setext anchor from YAML front matter", () => {
+    // The closing `---` of front matter sits directly under a non-blank line, so a naive setext
+    // reader mints an anchor from `title: phantom`. That is the false-green direction.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("title-phantom")}\n`,
+      "documentation/agent-notes.md":
+        "---\ntitle: phantom\n---\n\n# notes\n\nP.\n\n## Real\n\nBody.\n",
+    });
+    expect(runGate(["--root", dir]).code).toBe(1);
+  });
+
+  it("gives a wrapped setext heading the anchor of the whole paragraph, not its last line", () => {
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-long-section-name")}\n`,
+      "documentation/agent-notes.md":
+        "# notes\n\nP.\n\nThe long\nsection name\n------------\n\nBody.\n",
+    });
+    expect(runGate(["--root", dir]).code).toBe(0);
+  });
+
+  it("does not read a four-space-indented hash line as a heading, matching CommonMark", () => {
+    // Disclosed miss (vi) says the fence tracker does not model indented code blocks. It also
+    // says that is not reachable as a phantom anchor, because ATX indentation is bounded at
+    // three spaces. This pins the second half, which an earlier draft got backwards.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n`,
+      "documentation/agent-notes.md": "# notes\n\nP.\n\n## Real\n\n    ## The section\n\nBody.\n",
+    });
+    expect(runGate(["--root", dir]).code).toBe(1);
+  });
+
   it("keeps an underscore in a slug, which is what makes a real anchor here resolve", () => {
     // `stable-warning-codes-not_verbatim-and-unverifiable` is a live pointer in CLAUDE.md. A
     // slugger that treated `_` as emphasis, or stripped it as punctuation, would red it.
@@ -310,6 +371,68 @@ describe("check-agent-notes: the bypass classes, reproduced end to end", () => {
       "documentation/agent-notes.md": "# notes\n\nP.\n\n## Codes, NOT_VERBATIM and X\n\nBody.\n",
     });
     expect(runGate(["--root", dir]).code).toBe(0);
+  });
+});
+
+/**
+ * One case per DISCLOSED MISS in the script header that is marked [PINNED], each written in the
+ * direction the miss actually fails. A first draft of that header claimed every miss was pinned
+ * while four had no case at all, which is the same overclaim the gate itself exists to catch. If
+ * a miss is added to the header, a case belongs here or the marking must say [SCOPE].
+ */
+describe("check-agent-notes: the disclosed misses, each in the direction it fails", () => {
+  it("(i) passes a wrapped pointer whose head fragment is itself a valid anchor", () => {
+    // The join is attempted only after the unwrapped anchor fails, so a head that resolves ends
+    // the check there and the garbage tail is never seen. This is a MISS, asserted as green so
+    // that closing it later is a deliberate change and not a surprise.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\nzzz-not-an-anchor\n`,
+      "documentation/agent-notes.md": NOTES,
+    });
+    expect(runGate(["--root", dir]).code).toBe(0);
+  });
+
+  it("(ii) does not decode a percent-encoded anchor, so it reds", () => {
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the%20section")}\n`,
+      "documentation/agent-notes.md": NOTES,
+    });
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(1);
+    // Matched only up to the `%`, so it is reported as `#the`, not as `#the section`.
+    expect(r.stderr).toContain("pointer #the does not resolve");
+  });
+
+  it("(iii) ignores an anchor on any other file, including the cursor half", () => {
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n\nAlso CLAUDE.md#no-such-anchor.\n`,
+      "documentation/agent-notes.md": NOTES,
+    });
+    expect(runGate(["--root", dir]).code).toBe(0);
+  });
+
+  it("(iv) checks a pointer inside a fenced code block exactly like prose", () => {
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n\n\`\`\`sh\n# ${ptr("bogus")}\n\`\`\`\n`,
+      "documentation/agent-notes.md": NOTES,
+    });
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("pointer #bogus does not resolve");
+  });
+
+  it("(v) skips a NUL-bearing file whole, so a pointer inside one is never read", () => {
+    // THE MISS THAT CAN PRINT `all resolving` OVER A DANGLING POINTER. Asserted green on
+    // purpose: it is disclosed in the script header and in CLAUDE.md, and the tell is the
+    // skipped count, which is asserted here too so a silent widening of the skip reds.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n`,
+      "documentation/agent-notes.md": NOTES,
+      "blob.bin": `binary \0 payload ${ptr("totally-bogus-anchor")}\n`,
+    });
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("3 tracked path(s) reconciled = 2 opened + 1 skipped as binary");
   });
 });
 

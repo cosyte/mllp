@@ -32,9 +32,9 @@
  * tree does not keep, and the first repo that trips it deletes it instead of fixing anything.
  *
  * So: this gate asserts `mllp`'s contract. `mllp` HAS an `agent-notes.md`, its `CLAUDE.md`
- * points into it eighteen times, and its `CLAUDE.md` sits at its byte budget with the
+ * points into it by anchor throughout, and its `CLAUDE.md` sits at its byte budget with the
  * narrative already relocated, so here the pointer relationship is real and paid for. Whether
- * the OTHER nineteen repos owe the same thing is a question for whoever owns the convention,
+ * every OTHER repo owes the same thing is a question for whoever owns the convention,
  * and it is not answered by a script inside one package. DO NOT WIDEN THIS FILE TO CLAIM IT.
  *
  * The corollary, which is the same rule pointing the other way: this gate lives in `mllp`'s
@@ -49,17 +49,32 @@
  * answer over a corpus it never opened. That is not hypothetical here: this repo's own PHI
  * scanner shipped a walk whose declared root had never existed, and it printed clean on every
  * run it ever made. A DENOMINATOR DOES NOT DETECT THAT, because a count counts the roots that
- * DID exist. The remedy `ncpdp` landed, and the one used here, is RECONCILIATION: enumerate
- * the corpus with `git ls-files`, account for every single path as opened or skipped-with-a-
- * named-reason, and REFUSE if the arithmetic does not balance. The OK line prints the sum so a
- * reader can check it without running anything.
+ * DID exist. The remedy `ncpdp` landed, and the one used here, is RECONCILIATION.
  *
- * Three further refusals exist for the same reason, and each is a case where "no violations"
- * would be a lie rather than a result:
+ * BE PRECISE ABOUT WHICH PART OF THAT DOES THE WORK, because a first draft of this paragraph was
+ * not and a refuter caught it. The property that actually prevents the defect is STRUCTURAL, not
+ * arithmetic: THERE IS NO DECLARED ROOT TO BE WRONG ABOUT. The corpus is whatever `git ls-files`
+ * returns, every path in it is opened or refused, and the ONLY silent skip is a NUL-bearing file,
+ * which is counted and named on the OK line. A walk root that never existed cannot happen here
+ * because there is no walk root.
+ *
+ * THE PRINTED ARITHMETIC IS A WEAKER THING AND IS NOT THE REMEDY. It is reconciled over SETS of
+ * paths rather than a pair of counters, which does buy something a counter cannot: a counter
+ * incremented once per iteration can only ever sum to the number of iterations, so comparing that
+ * sum to the corpus size is a tautology. Sets catch a path enumerated twice and a path no branch
+ * reached. But on a healthy `git ls-files` neither occurs, so treat the printed sum as SOMETHING
+ * A READER CAN CHECK BY EYE -- above all the skip count, which is the tell for disclosed miss (v)
+ * -- and not as evidence the scan was complete. Do not restate it as the central safeguard.
+ *
+ * Further refusals exist for the same reason, and each is a case where "no violations" would be
+ * a lie rather than a result:
  *   * zero tracked paths (not a repo, or a `--root` pointed at an empty tree);
- *   * a tracked path that is missing, unreadable, or not a regular file; and
+ *   * a tracked path that is missing, unreadable, a symlink, or not a regular file;
+ *   * an UNMERGED path, which `git ls-files -s` reports three times and whose working-tree copy
+ *     is conflict markers nobody has yet decided the contents of;
+ *   * two tracked files carrying the contract basename, which makes every pointer ambiguous; and
  *   * ZERO POINTERS FOUND ANYWHERE. In THIS repo that cannot be a clean tree: `CLAUDE.md`'s
- *     opening sentence is a link into `agent-notes.md` and eighteen rules cite an anchor. Zero
+ *     opening sentence is a link into `agent-notes.md` and its rules cite it by anchor. Zero
  *     means the matcher stopped matching, so the pointer half proved nothing. This refusal is
  *     grounded in what THIS repo contains and is one of the things a port must re-derive.
  *
@@ -74,42 +89,58 @@
  * actionable and is worse than a crash.
  *
  * ---------------------------------------------------------------------------
- * DISCLOSED MISSES. Stated here rather than discovered later. Each is pinned by a case in
- * `test/scripts/agent-notes.test.ts`, in the direction it actually fails, so a future widening
- * is a decision rather than an accident.
+ * DISCLOSED MISSES. Stated here rather than discovered later.
  *
- *  (i)   A POINTER SPLIT MID-ANCHOR ACROSS A LINE WRAP is matched only when the head fragment
- *        runs to the end of the line and the join with the next line resolves. The join is
- *        attempted ONLY after the line-pass anchor has already failed to resolve, so it can
- *        turn a false red into a pass but can never turn a real red into a pass -- except in
- *        the one case where the head fragment is ITSELF a valid anchor and the tail is
- *        garbage. That case is a miss. Closing it needs a markdown renderer, not a bigger
- *        regex, and `.prettierignore` lists `*.md` here so nothing reflows these lines behind
- *        a maintainer's back.
- *  (ii)  A PERCENT-ENCODED OR HTML-ENTITY ANCHOR IS NOT DECODED. `#a%20b` is read literally.
- *        No such pointer exists on this tree.
- *  (iii) A POINTER AT ANY OTHER FILE'S ANCHOR IS OUT OF SCOPE, including `CLAUDE.md#...`. This
- *        gate is about the narrative file. A general markdown link checker is a different tool
- *        with a different failure surface, and writing half of one here would be the overclaim
- *        this file's second section refuses.
- *  (iv)  A POINTER INSIDE A FENCED CODE BLOCK IS TREATED EXACTLY LIKE PROSE. Deliberate: a
- *        reader follows it either way. Headings are the opposite, see (v).
- *  (v)   AN ATX HEADING INSIDE A FENCED CODE BLOCK IS NOT AN ANCHOR, and the fence tracker is
- *        why. Without it a `# comment` line in a shell sample would mint a phantom anchor and
- *        mask exactly the dangling pointer this gate exists to catch. The tracker handles
- *        ``` and ~~~ fences of three or more characters; it does NOT handle indented code
- *        blocks, so a four-space-indented `# x` is still read as a heading. CommonMark would
- *        not be, but four-space indentation before a `#` does not occur on this tree and
- *        pretending to a full parser is how the ncpdp heading guard shipped two bypasses.
- *  (vi)  THE SLUGGER IS A TRANSCRIPTION OF github-slugger, NOT THE MODULE. It is pinned by a
- *        self-test table below and verified against every heading and every pointer on this
- *        tree. Emoji, combining marks and CJK headings are untested here because none exists
- *        here. A heading that needs one is the signal to test it, not to assume it works.
- *  (vii) A SECTION WITH A BODY IS NOT A SECTION WITH THE RIGHT BODY. This gate proves a
+ * WHICH OF THESE A TEST PINS IS MARKED PER ITEM, and that marking is itself a rule this change
+ * paid for: a first draft of this block opened "each is pinned by a case in
+ * `test/scripts/agent-notes.test.ts`" while four of them had no case at all. A DISCLOSURE THAT
+ * NAMES A TEST MUST NAME ONE THAT EXISTS, or the disclosure is doing the same work the overclaim
+ * it warns about does. [PINNED] means a case in that file exercises it IN THE DIRECTION IT
+ * FAILS. [SCOPE] means it is a boundary of what this gate is for, with nothing to execute.
+ *
+ *  (i)   [PINNED] A POINTER SPLIT MID-ANCHOR ACROSS A LINE WRAP is matched only when the head
+ *        fragment runs to the end of the line and the join with the next line resolves. The
+ *        join is attempted ONLY after the line-pass anchor has already failed, so it can turn a
+ *        false red into a pass but never a real red into a pass -- EXCEPT where the head
+ *        fragment is ITSELF a valid anchor and the tail is garbage, which passes green. Closing
+ *        that needs a markdown renderer, not a bigger regex, and `.prettierignore` lists `*.md`
+ *        here so nothing reflows these lines behind a maintainer's back.
+ *  (ii)  [PINNED] A PERCENT-ENCODED OR HTML-ENTITY ANCHOR IS NOT DECODED. `#a%20b` matches only
+ *        up to the `%`, so it is checked as `#a` and reds. No such pointer exists on this tree.
+ *  (iii) [PINNED] A POINTER AT ANY OTHER FILE'S ANCHOR IS OUT OF SCOPE, including
+ *        `CLAUDE.md#...`. This gate is about the narrative file. A general markdown link
+ *        checker is a different tool with a different failure surface, and writing half of one
+ *        here would be the overclaim this file's second section refuses.
+ *  (iv)  [PINNED] A POINTER INSIDE A FENCED CODE BLOCK IS TREATED EXACTLY LIKE PROSE.
+ *        Deliberate: a reader follows it either way. Headings are the opposite, see (vi).
+ *  (v)   [PINNED] A NUL-BEARING FILE IS SKIPPED WHOLE, SO ITS POINTERS ARE NEVER READ. This is
+ *        the one that can print `all resolving` over a dangling pointer, and it is a disclosed
+ *        miss rather than a pass. THE TELL IS THE SKIPPED COUNT ON THE OK LINE, exactly as
+ *        `check-no-emdash.sh`'s NUL exclusion works and for the same reason: the one file it
+ *        excludes today is the vendored `@cosyte/hl7` tarball, a compressed stream that cannot
+ *        be read as markdown and cannot be edited to fix a red. If a NUL-bearing TEXT file ever
+ *        lands here, revisit the partition rather than the rule. `CLAUDE.md` requires that
+ *        exclusion be carried as a disclosed miss and says the at-risk class already exists, so
+ *        do not round this off to hypothetical.
+ *  (vi)  [PINNED] AN ATX HEADING INSIDE A FENCED CODE BLOCK IS NOT AN ANCHOR, and the fence
+ *        tracker is why. Without it a `# comment` in a shell sample mints a phantom anchor and
+ *        masks the dangling pointer this gate exists to catch. The tracker handles ``` and ~~~
+ *        fences of three or more characters. It does NOT track an INDENTED code block as a
+ *        block, but that is not reachable as a phantom anchor: `ATX_RE` bounds indentation at
+ *        three spaces, so a four-space-indented `#` line is not a heading here either, which is
+ *        what CommonMark does anyway. Both halves are asserted, because an earlier draft of
+ *        this note claimed the opposite and was wrong: a disclosure that names the wrong
+ *        failure mode sends the next reader hunting something that cannot happen.
+ *  (vii) [PINNED] THE SLUGGER IS A TRANSCRIPTION OF github-slugger, NOT THE MODULE. It is
+ *        pinned by SLUG_CASES, verified against github-slugger@2.0.0 for the leading-dropped-
+ *        character and repeated-heading shapes, and checked against every heading and every
+ *        pointer on this tree. Combining marks and CJK headings are UNTESTED, not claimed: none
+ *        exists here. A heading that needs one is the signal to test it, not to assume.
+ *  (viii)[SCOPE] A SECTION WITH A BODY IS NOT A SECTION WITH THE RIGHT BODY. This gate proves a
  *        pointer lands somewhere non-empty. It cannot prove the prose there grounds the rule
  *        that cited it. That half stays human, and saying so is the point of writing it down.
- *  (viii) IT DOES NOT CHECK ANY BYTE BUDGET. `CLAUDE.md`'s 27,000-byte ceiling is enforced by
- *        the umbrella's `.claude/hooks/doc-budget.mjs`, which holds the budget table; a script
+ *  (ix)  [SCOPE] IT DOES NOT CHECK ANY BYTE BUDGET. `CLAUDE.md`'s ceiling is enforced by the
+ *        umbrella's `.claude/hooks/doc-budget.mjs`, which holds the budget table; a script
  *        inside this package cannot see it and must not keep a second copy of a number.
  *
  * Run it locally with `pnpm check:agent-notes`. `pnpm test` runs it against this tree too
@@ -186,18 +217,56 @@ function stripInline(text: string): string {
 }
 
 /**
- * github-slugger's transformation: lowercase, drop everything that is not a letter, a number,
- * a space separator, a hyphen or an underscore, trim, then replace each remaining space with a
- * hyphen. Per-space, not per-run: `a  b` becomes `a--b` on GitHub and must here too, or a
- * heading with a double space would be reported as a dangling pointer against a slug GitHub
- * never mints.
+ * github-slugger's transformation: lowercase, drop everything that is not a letter, a number, a
+ * space separator, a hyphen or an underscore, then replace each remaining space with a hyphen.
+ *
+ * TWO THINGS HERE ARE NOT COSMETIC.
+ *
+ * PER-SPACE, NOT PER-RUN: `a  b` becomes `a--b` on GitHub and must here too, or a heading with a
+ * double space is reported dangling against a slug GitHub never mints.
+ *
+ * ▶ NO `.trim()`. A draft had one and it was a FALSE-GREEN divergence, not a tidy-up, caught by
+ * the gate on this change. github-slugger does not trim: it deletes the disallowed character and
+ * leaves the space behind, so `▶ The section` slugs as `-the-section` with a LEADING HYPHEN. A
+ * trim here produced `the-section`, which meant a pointer written `#the-section` passed this gate
+ * and resolved to nothing on GitHub. That is the exact shape this file exists to catch, and it is
+ * reachable rather than exotic: `▶` is this repo's own marker for a load-bearing rule and it is
+ * used throughout `CLAUDE.md` and in the narrative file's own sections, so a `▶`-led heading is
+ * the likeliest next one anybody writes. Pinned by SLUG_CASES.
  */
 function slugify(text: string): string {
   return stripInline(text)
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\p{Zs}\-_]/gu, "")
-    .trim()
     .replace(/ /g, "-");
+}
+
+/**
+ * github-slugger's DEDUPLICATION, transcribed as the loop it actually is rather than as the
+ * counter it looks like.
+ *
+ * The obvious implementation (count occurrences of the base slug, suffix `-N`) is wrong on one
+ * input and the difference is a false red: headings `Same`, `Same`, `Same-1` yield `same`,
+ * `same-1`, `same-1-1` upstream, because the third heading's OWN slug collides with the second
+ * heading's GENERATED one and the suffix is applied again. A counter yields `same-1` twice, so a
+ * pointer at `#same-1-1` reds against a link GitHub resolves. Measured against
+ * github-slugger@2.0.0 and pinned by a self-test.
+ *
+ * `occurrences` maps a slug to how many times it has been handed out, exactly as upstream does,
+ * and the returned slug is itself recorded so the next collision sees it.
+ */
+function makeSlugger(): (text: string) => string {
+  const occurrences = new Map<string, number>();
+  return (text: string): string => {
+    const original = slugify(text);
+    let result = original;
+    while (occurrences.has(result)) {
+      occurrences.set(original, (occurrences.get(original) ?? 0) + 1);
+      result = `${original}-${String(occurrences.get(original))}`;
+    }
+    occurrences.set(result, 0);
+    return result;
+  };
 }
 
 /**
@@ -237,24 +306,48 @@ function stripTrailingHashes(text: string): string {
 }
 
 /**
- * Extract every heading GitHub would give an anchor, in document order, with the deduplicating
- * counter github-slugger applies: a repeated slug becomes `slug-1`, `slug-2`, and so on.
+ * Extract every heading GitHub would give an anchor, in document order, deduplicated by
+ * `makeSlugger`.
+ *
+ * THREE BLOCK CONSTRUCTS ARE TRACKED, and each was added because leaving it out was a measured
+ * divergence rather than a theoretical one:
+ *
+ *   * FENCED CODE. An ATX line inside ``` or ~~~ is a comment in a sample, not a heading.
+ *     Without this a shell snippet mints a phantom anchor and a dangling pointer passes, which
+ *     is the one direction this gate must never fail in.
+ *   * YAML FRONT MATTER. A `---` fence at the very start of the file is front matter, and its
+ *     CLOSING `---` sits directly under a non-blank line, so a setext reader mints an anchor
+ *     from `title: x`. Reproduced: it passed a pointer at `#title-x` that GitHub cannot resolve.
+ *   * THE SETEXT PARAGRAPH. An underline belongs to the WHOLE paragraph above it, not to its
+ *     last line. `The long` / `section name` / `------` is one heading, `The long section name`.
+ *     Reading the last line alone slugged it `section-name` and reddened the pointer GitHub
+ *     resolves.
  */
 function extractHeadings(lines: readonly string[]): Heading[] {
   const headings: Heading[] = [];
-  const seen = new Map<string, number>();
+  const slugger = makeSlugger();
   let inFence = false;
   let fenceMarker = "";
 
   const push = (line: number, rawText: string, bodyFrom: number): void => {
     const text = rawText.trim();
-    const base = slugify(text);
-    const n = seen.get(base) ?? 0;
-    seen.set(base, n + 1);
-    headings.push({ line, text, slug: n === 0 ? base : `${base}-${n}`, bodyFrom });
+    headings.push({ line, text, slug: slugger(text), bodyFrom });
   };
 
-  for (let i = 0; i < lines.length; i += 1) {
+  // Front matter, if any: a `---` on the very first line opens it and the next `---` or `...`
+  // closes it. Everything between is metadata, never a heading and never a pointer surface.
+  let start = 0;
+  if ((lines[0] ?? "").trimEnd() === "---") {
+    for (let i = 1; i < lines.length; i += 1) {
+      const t = (lines[i] ?? "").trimEnd();
+      if (t === "---" || t === "...") {
+        start = i + 1;
+        break;
+      }
+    }
+  }
+
+  for (let i = start; i < lines.length; i += 1) {
     const line = lines[i] ?? "";
 
     const fence = FENCE_RE.exec(line);
@@ -277,16 +370,28 @@ function extractHeadings(lines: readonly string[]): Heading[] {
       continue;
     }
 
-    // Setext. The underline is only a heading when it sits directly under a non-blank line
-    // that is not itself a heading and not a list marker. A `---` after a blank line is a
-    // thematic break, and a `---` on line 1 is YAML front matter; neither mints an anchor.
+    // Setext. The underline is only a heading when it sits under a non-blank paragraph that is
+    // not itself a heading and not a list item. A `---` after a blank line is a thematic break.
     const setext = SETEXT_RE.exec(line);
-    if (setext && i > 0) {
+    if (setext && i > start) {
       const prev = lines[i - 1] ?? "";
       const prevIsText = prev.trim() !== "" && !ATX_RE.test(prev) && !/^ {0,3}[-*+>] /.test(prev);
       if (prevIsText) {
-        // The anchor belongs to the text line; the body starts after the underline.
-        push(i, prev.trim(), i + 2);
+        // THE UNDERLINE BELONGS TO THE WHOLE PARAGRAPH, so walk back to its first line and join.
+        // Reading only `lines[i - 1]` slugs a wrapped heading from its last line alone, which is
+        // a false red on the pointer GitHub resolves.
+        let first = i - 1;
+        while (first > start) {
+          const above = lines[first - 1] ?? "";
+          if (above.trim() === "" || ATX_RE.test(above) || /^ {0,3}[-*+>] /.test(above)) break;
+          first -= 1;
+        }
+        const paragraph = lines
+          .slice(first, i)
+          .map((l) => l.trim())
+          .join(" ");
+        // The anchor belongs to the paragraph; the body starts after the underline.
+        push(first + 1, paragraph, i + 2);
       }
     }
   }
@@ -325,8 +430,13 @@ function emptySections(lines: readonly string[], headings: readonly Heading[]): 
 
 /**
  * Slug transcription cases. Every one is a REAL heading from this repo's `agent-notes.md` or a
- * shape a future one is likely to take. If someone "simplifies" `slugify`, this table reds
- * here rather than turning eighteen working pointers into eighteen false reds.
+ * shape a future one is likely to take. If someone "simplifies" `slugify`, this table reds here
+ * rather than turning every working pointer on the tree into a false red.
+ *
+ * THE LAST THREE ARE THE LEADING-CHARACTER CASES AND THEY ARE THE POINT OF THE TABLE. A dropped
+ * leading character leaves the space behind and the slug OPENS WITH A HYPHEN. A draft trimmed it
+ * away, which passed a pointer that resolves to nothing on GitHub. Verified against
+ * github-slugger@2.0.0.
  */
 const SLUG_CASES: ReadonlyArray<readonly [string, string]> = [
   ["The em-dash brand gate", "the-em-dash-brand-gate"],
@@ -340,6 +450,9 @@ const SLUG_CASES: ReadonlyArray<readonly [string, string]> = [
   ["Test timeouts, measured not read", "test-timeouts-measured-not-read"],
   ["A `code` heading with **bold**", "a-code-heading-with-bold"],
   ["A [linked](https://example.test/x) heading", "a-linked-heading"],
+  ["▶ The section", "-the-section"],
+  ["▶ ▶ Doubled marker", "--doubled-marker"],
+  ["A  double  space", "a--double--space"],
 ];
 
 function selfTest(): void {
@@ -355,28 +468,44 @@ function selfTest(): void {
     }
   }
 
-  // The heading detector must still see all four shapes, and must NOT see the two non-headings.
-  // `#hashtag` and a fenced `# x` are the false-anchor direction: a phantom anchor would let a
-  // dangling pointer pass, which is the one outcome this gate exists to prevent.
+  // The heading detector must see every shape that mints an anchor and NONE of the shapes that
+  // do not. The second half is the one that matters most: a phantom anchor lets a dangling
+  // pointer pass, which is the single outcome this gate exists to prevent.
+  // Blank lines separate the blocks, because that is what makes each shape unambiguous markdown.
+  // Without them a `    ###` line is a lazy paragraph continuation rather than an indented code
+  // block, and a setext underline swallows every line above it, which is correct behaviour on
+  // input nobody writes. Keep the blanks.
   const sample = [
+    "---",
+    "title: front matter",
+    "---",
+    "",
     "# Top",
     "body",
+    "",
     "  ## Indented by two",
     "body",
+    "",
+    "    ### Indented by four",
+    "",
     "Setext one",
     "==========",
     "body",
-    "Setext two",
-    "----------",
+    "",
+    "A wrapped setext",
+    "heading over two lines",
+    "----------------------",
     "body",
+    "",
     "#hashtag",
+    "",
     "```sh",
     "# not a heading",
     "```",
     "body",
   ];
   const got = extractHeadings(sample).map((h) => h.slug);
-  const want = ["top", "indented-by-two", "setext-one", "setext-two"];
+  const want = ["top", "indented-by-two", "setext-one", "a-wrapped-setext-heading-over-two-lines"];
   if (got.length !== want.length || got.some((s, i) => s !== want[i])) {
     throw new RefusalError(
       `SELF-TEST FAILED: the heading detector produced [${got.join(", ")}], expected ` +
@@ -385,12 +514,18 @@ function selfTest(): void {
     );
   }
 
-  const dedup = extractHeadings(["## Same", "a", "## Same", "b"]).map((h) => h.slug);
-  if (dedup[0] !== "same" || dedup[1] !== "same-1") {
+  // Deduplication is a LOOP, not a counter: the third heading's own slug collides with the
+  // second heading's GENERATED one, so the suffix applies again. A counter yields `same-1`
+  // twice and reds a pointer at `#same-1-1` that GitHub resolves.
+  const dedup = extractHeadings(["## Same", "a", "## Same", "b", "## Same-1", "c"]).map(
+    (h) => h.slug,
+  );
+  const wantDedup = ["same", "same-1", "same-1-1"];
+  if (dedup.length !== wantDedup.length || dedup.some((s, i) => s !== wantDedup[i])) {
     throw new RefusalError(
       `SELF-TEST FAILED: duplicate headings slugged as [${dedup.join(", ")}], expected ` +
-        `[same, same-1]. GitHub disambiguates with a numeric suffix and a pointer at the ` +
-        `second of two identical headings depends on it.`,
+        `[${wantDedup.join(", ")}]. GitHub disambiguates by re-suffixing until the slug is ` +
+        `free, and a pointer at a repeated heading depends on it.`,
     );
   }
 
@@ -454,6 +589,20 @@ function gitCorpus(root: string): Corpus {
     }
     const mode = record.slice(0, 6);
     const path = record.slice(tab + 1);
+    // AN UNMERGED PATH IS REFUSED, NOT COUNTED. `git ls-files -s` emits stages 1, 2 and 3 for a
+    // conflicted path, so the same path arrives three times. Reading the working-tree copy of a
+    // conflicted file means scanning conflict markers and reporting on a tree nobody has yet
+    // decided the contents of, and counting it three times is what would make the
+    // reconciliation below balance while the SET of paths did not. `scripts/phi-scan.ts`
+    // refuses unmerged paths for the same reason.
+    const stage = record.slice(tab - 1, tab);
+    if (stage !== "0") {
+      throw new RefusalError(
+        `tracked path is unmerged (stage ${stage}): ${path}. Resolve the conflict before ` +
+          `running this gate; a scan of a half-merged tree reports on nothing anyone has ` +
+          `decided yet.`,
+      );
+    }
     // A gitlink (mode 160000) is a submodule pointer with no bytes here to read. Counted and
     // reported, never silently skipped: the OK line's arithmetic has to account for it.
     if (mode === "160000") gitlinks.push(path);
@@ -617,20 +766,28 @@ function main(argv: readonly string[]): number {
   }
 
   // ---- 3. Every pointer resolves ----------------------------------------
-  let opened = 0;
-  let skippedBinary = 0;
+  // THE TWO SETS BELOW ARE SETS, NOT COUNTERS, AND THAT IS THE WHOLE POINT OF THE RECONCILIATION.
+  // A pair of counters incremented one per loop iteration can only ever sum to the number of
+  // iterations, so comparing that sum against the corpus size is a tautology dressed as a check.
+  // Sets of PATHS cannot: they catch a path enumerated twice, a path visited twice, and a path
+  // in the corpus that no branch ever reached. That is what makes the OK line's arithmetic
+  // evidence rather than decoration.
+  const openedPaths = new Set<string>();
+  const skippedPaths = new Set<string>();
   let pointerCount = 0;
   const pointerFiles = new Set<string>();
 
   for (const path of tracked) {
     const buf = readTracked(root, path);
     if (buf.includes(0)) {
-      // A binary blob cannot carry a markdown pointer a human follows. Counted, and named on
-      // the OK line, because a silent skip is how a scan shrinks without anyone noticing.
-      skippedBinary += 1;
+      // A NUL-bearing file is not markdown and cannot be edited to clear a red, so it is
+      // skipped. THIS IS DISCLOSED MISS (v), NOT A PASS: a pointer inside such a file is never
+      // read. The tell is the skipped count on the OK line, which is the same shape
+      // `check-no-emdash.sh` uses for the same exclusion over the same one file.
+      skippedPaths.add(path);
       continue;
     }
-    opened += 1;
+    openedPaths.add(path);
     const text = buf.toString("utf8");
     if (!text.includes(`${CONTRACT_BASENAME}#`)) continue;
 
@@ -667,14 +824,20 @@ function main(argv: readonly string[]): number {
   }
 
   // ---- 4. Reconcile, then report ----------------------------------------
-  const accounted = opened + skippedBinary;
-  if (accounted !== tracked.length) {
+  // Reconciled as SETS against the enumerated corpus, so this can actually fail: a duplicate in
+  // the corpus, a path visited twice, or a path no branch reached all break it. See the note at
+  // the head of step 3 for why a pair of counters could not.
+  const opened = openedPaths.size;
+  const skippedBinary = skippedPaths.size;
+  const unaccounted = tracked.filter((p) => !openedPaths.has(p) && !skippedPaths.has(p));
+  if (opened + skippedBinary !== tracked.length || unaccounted.length > 0) {
     throw new RefusalError(
       `reconciliation failed: ${String(tracked.length)} tracked non-gitlink path(s) ` +
-        `enumerated but ${String(accounted)} accounted for (${String(opened)} opened + ` +
-        `${String(skippedBinary)} skipped as binary). Every path must be opened or skipped ` +
-        `for a named reason. A count that does not balance means the scan is reporting on a ` +
-        `corpus it did not read.`,
+        `enumerated, ${String(opened)} opened and ${String(skippedBinary)} skipped as binary, ` +
+        `${String(unaccounted.length)} reached by no branch` +
+        `${unaccounted.length > 0 ? ` (first: ${String(unaccounted[0])})` : ""}. Every path ` +
+        `must be opened or skipped for a named reason, and no path twice. A corpus that does ` +
+        `not reconcile means the scan is reporting on something it did not read.`,
     );
   }
 
@@ -682,9 +845,9 @@ function main(argv: readonly string[]): number {
     throw new RefusalError(
       `found ZERO pointers at ${CONTRACT_BASENAME} across ${String(opened)} opened file(s). ` +
         `In this repo that is not a clean tree: ${CURSOR_PATH} opens by linking the narrative ` +
-        `file and its rules cite it by anchor throughout. Zero means the matcher stopped ` +
-        `matching, so the pointer half of this gate observed nothing and proved nothing. ` +
-        `EXISTENCE IS NOT OBSERVATION, and a denominator would not have caught this either.`,
+        `file and cites it by anchor throughout. Zero means the matcher stopped matching, so ` +
+        `the pointer half of this gate observed nothing and proved nothing. EXISTENCE IS NOT ` +
+        `OBSERVATION, and a denominator would not have caught this either.`,
     );
   }
 

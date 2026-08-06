@@ -625,9 +625,9 @@ and an overclaiming guard is worse than a narrow one: it invites a reader to tru
 tree does not keep, and the first repo that trips it deletes the gate rather than fixing anything.
 `ncpdp#64` paid for this rule in the other direction, where a `/^#{1,6} /` heading guard claimed
 more than it could see and two bypasses were reproduced against it. So this gate asserts **this**
-repo's promise. `mllp` has the file, `CLAUDE.md` points into it eighteen times, and `CLAUDE.md`
+repo's promise. `mllp` has the file, `CLAUDE.md` points into it by anchor throughout, and it
 sits at its byte budget with the narrative already relocated, so here the pointer relationship is
-real and paid for. Whether the other nineteen repos owe the same thing is a question for whoever
+real and paid for. Whether every other repo owes the same thing is a question for whoever
 owns the convention; it is not answered by a script inside one package.
 
 **It lives in this repo's own CI, which is the point.** The umbrella's automation plane is capped
@@ -636,17 +636,36 @@ costs the cap nothing. Porting it means copying the **shape** into the sibling a
 scan surface, exactly as `check-no-internal-refs.sh` was ported here. It does not mean one shared
 script.
 
-**Existence is not observation, so the OK line reconciles.** The likeliest failure of a checker
-like this is not a wrong answer, it is a right-looking answer over a corpus it never opened. This
-repo has already shipped that exact defect once, in the PHI scanner, whose declared walk root had
-never existed and which therefore printed clean on every run it ever made. **A denominator does
-not detect it**, because a count counts the roots that DID exist. So the gate enumerates with
-`git ls-files`, accounts for every path as opened or skipped for a named reason, prints the
-arithmetic on the OK line, and **refuses (exit 2) if it does not balance**. It refuses on the same
-grounds when nothing is tracked, when a tracked path is missing or is not a regular file, and
-**when it finds zero pointers**: in this repo zero cannot be a clean tree, because `CLAUDE.md`
-opens by linking this file. That last refusal is grounded in what **this** repo contains and is
-one of the things a port has to re-derive rather than copy.
+**Existence is not observation.** The likeliest failure of a checker like this is not a wrong
+answer, it is a right-looking answer over a corpus it never opened. This repo has already shipped
+that exact defect once, in the PHI scanner, whose declared walk root had never existed and which
+therefore printed clean on every run it ever made. **A denominator does not detect it**, because a
+count counts the roots that DID exist.
+
+**Be precise about which part of the remedy does the work**, because the first draft of this
+section was not and the refuter caught it. What actually prevents the defect is STRUCTURAL:
+**there is no declared root to be wrong about.** The corpus is whatever `git ls-files` returns,
+every path in it is opened or refused, and the only silent skip is a NUL-bearing file, which is
+counted and named on the OK line. **The printed arithmetic is a weaker thing and is not the
+remedy.** It reconciles SETS of paths rather than a pair of counters, which does buy what a
+counter cannot (counters incremented once per iteration can only sum to the iteration count, so
+comparing that sum to the corpus size is a tautology; sets catch a path enumerated twice and a
+path no branch reached), but on a healthy `git ls-files` neither occurs. Read the printed sum as
+something a reader can check by eye, above all the skip count. Do not restate it as the central
+safeguard.
+
+The gate **refuses (exit 2)** when nothing is tracked, when a tracked path is missing, unreadable,
+a symlink or not a regular file, when a path is unmerged, when two tracked files carry the
+contract basename, and **when it finds zero pointers**: in this repo zero cannot be a clean tree,
+because `CLAUDE.md` opens by linking this file. That last refusal is grounded in what **this** repo
+contains and is one of the things a port has to re-derive rather than copy.
+
+**The NUL skip is a disclosed miss, not a pass**, and it is the one that can print `all resolving`
+over a dangling pointer: a pointer inside a NUL-bearing file is never read. The tell is the skipped
+count on the OK line, which today reads against the vendored `@cosyte/hl7` tarball, a compressed
+stream that cannot be read as markdown and cannot be edited to clear a red. `CLAUDE.md` already
+requires that exclusion be carried this way for the em-dash gate, and says the at-risk class
+already exists, so it is not rounded off to hypothetical here either.
 
 **Exit 1 and exit 2 are different claims** and are split the way `phi-scan.ts` splits them: 1 is
 a finding a human acts on, 2 is "believe nothing I just said". Collapsing them would turn a broken
@@ -670,8 +689,25 @@ script header gets read once: it does not assert anything about a sibling repo, 
 any byte budget (the umbrella's `.claude/hooks/doc-budget.mjs` holds that table and a second copy
 of a number here would go stale), it does not check pointers at any other file's anchors, and **it
 cannot prove the prose a pointer lands on grounds the rule that cited it.** A section with a body
-is not a section with the right body. That half stays human. The script header carries the full
-list of matcher-level misses, each pinned by a test in the direction it actually fails.
+is not a section with the right body. That half stays human.
+
+**The script header carries the full list of matcher-level misses, each marked `[PINNED]` or
+`[SCOPE]`, and that marking is itself something this change paid for.** The first draft of that
+block opened "each is pinned by a case in `test/scripts/agent-notes.test.ts`" while four of the
+nine had no case at all. **A disclosure that names a test must name one that exists**, or the
+disclosure is doing exactly the work of the overclaim it warns about. `[PINNED]` now means a case
+exercises the miss in the direction it fails, including the two that are asserted GREEN on purpose
+(the wrapped pointer whose head fragment is itself a valid anchor, and the NUL skip).
+
+**The slugger is a transcription of github-slugger and was measured against it, not recalled.**
+Two divergences were caught by the refuter and both were false-green. A `.trim()` in the slug
+step, which upstream does not do: a dropped leading character leaves the space behind, so
+`▶ The section` slugs `-the-section` with a LEADING HYPHEN, and the trim passed a pointer written
+`#the-section` that resolves to nothing on GitHub. That shape is reachable rather than exotic,
+because `▶` is this repo's own marker for a load-bearing rule. And deduplication is a LOOP, not a
+counter: headings `Same`, `Same`, `Same-1` yield `same`, `same-1`, `same-1-1`, because the third
+heading's own slug collides with the second's generated one. A counter yields `same-1` twice and
+reds a pointer GitHub resolves. Both are pinned, in the slug table and end to end.
 
 **The gate scans its own source and its own tests, and there is no exemption for either.** That is
 a decision, and it cost something: written out literally, the sample pointers in
