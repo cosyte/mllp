@@ -7,6 +7,9 @@ Gate this repository's two-file guidance contract, so a dangling pointer or an e
 `scripts/check-agent-notes.ts` (`pnpm check:agent-notes`) checks three things: that
 `documentation/agent-notes.md` is tracked, that every section under a heading has a body, and that
 every pointer at it, in a file the check opened, resolves to an anchor GitHub would actually mint.
+A heading immediately followed by a deeper one is a container whose body is its subsections, so it
+is not reported; the obligation moves down to the deeper heading, which means an emptied leaf is
+still a finding and a trailing heading is never a container.
 Splitting the guidance in two moved the reasoning behind a link, which made the link load-bearing,
 and nothing
 checked it. A rename, an emptied section, or an anchor edited on one side of the pair and not the

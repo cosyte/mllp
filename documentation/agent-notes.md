@@ -607,6 +607,19 @@ resolves to an anchor GitHub would actually mint. **A NUL-bearing file is skippe
 is a disclosed miss rather than a pass, covered below. The enforcement is
 `test/scripts/agent-notes.test.ts`, which runs the real gate against this tree.
 
+**▶ A CONTAINER IS NOT AN EMPTIED SECTION.** A heading immediately followed by a **deeper** one
+(`## Group` then `### Sub`, with no prose between) has no body of its own, but its body *is* its
+subsections: `#group` resolves on GitHub and the reader lands on real content. The first draft
+reported it, which was a **false red against a link that works**, and this file's own structure is
+why it went unnoticed: it is flat, one `#` and nineteen `##`, so nothing here could reach it. It
+was reachable on the next nested heading anyone wrote. Measured on a fixture before the fix,
+`## Group` / `### Sub` / `Real body here.` exited 1 saying `#group` "has no body". The item asks
+for the case where a section is *emptied down to its heading*, and a container was never emptied.
+**The exemption opens no false green**, which is the only direction that would matter: it moves
+the obligation **down** to the deeper heading rather than removing it, so an emptied leaf still
+reds, and a **trailing** heading has no next heading at all and is therefore never a container.
+Both directions, and the leaf case, are pinned. `ccda` shipped the same rule for the same gate.
+
 **Why it needed a gate at all.** The split of 2026-08-04 moved the reasoning behind a link, which
 made the link load-bearing in a way it had never been. A rule in `CLAUDE.md` now reads "never do X.
 Why:" followed by an anchor into this file, and if that anchor does not exist the reader is left

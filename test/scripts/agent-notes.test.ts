@@ -168,6 +168,46 @@ describe("check-agent-notes: the contract it asserts", () => {
     expect(runGate(["--root", dir]).code).toBe(0);
   });
 
+  it("does NOT red a container heading, whose body is its subsections", () => {
+    // A FALSE RED THE FIRST DRAFT SHIPPED. `## Group` immediately followed by `### Sub` has no
+    // prose of its own, but `#group` resolves on GitHub and the reader lands on real content.
+    // The item asks for a section "emptied down to its heading"; a container was never emptied.
+    // Measured before the fix: this exact tree exited 1 saying `#group` "has no body".
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("group")}\n`,
+      "documentation/agent-notes.md":
+        "# notes\n\nPreamble.\n\n## Group\n\n### Sub\n\nReal body here.\n",
+    });
+    const r = runGate(["--root", dir]);
+    expect(r.stderr).toBe("");
+    expect(r.code).toBe(0);
+  });
+
+  it("still reds an emptied LEAF beneath a container, so the exemption opens no false green", () => {
+    // The only direction that would matter. The exemption moves the obligation DOWN to the
+    // deeper heading rather than removing it, so an emptied leaf is still a finding.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("sub")}\n`,
+      "documentation/agent-notes.md":
+        "# notes\n\nPreamble.\n\n## Group\n\n### Sub\n\n## Other\n\nBody.\n",
+    });
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('section "Sub" (#sub) has no body');
+  });
+
+  it("treats a TRAILING heading as a leaf, never a container, since nothing deeper follows it", () => {
+    // A container is only exempt because something deeper carries the body. The last heading in
+    // the file has no `next` at all, so the exemption must not reach it.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n`,
+      "documentation/agent-notes.md": `${NOTES}\n### Trailing\n`,
+    });
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('section "Trailing" (#trailing) has no body');
+  });
+
   it("reds when the narrative half is not tracked at all, and calls it a finding rather than a refusal", () => {
     const dir = repo({ "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n` });
     const r = runGate(["--root", dir]);

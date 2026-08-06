@@ -7,8 +7,8 @@ a rule below looks arbitrary, read its section before relaxing it. New narrative
 here.
 
 **The pair is gated** (`pnpm check:agent-notes`, enforced by `test/scripts/agent-notes.test.ts`):
-that file must be tracked, every section must have a body, and every pointer at it **in a file the
-gate opened** must resolve. **A NUL-bearing file is skipped: a disclosed miss, not a pass**; the
+that file must be tracked, every section must have a body (a container's is its subsections), and
+every pointer at it **in a file the gate opened** must resolve. **A NUL-bearing file is skipped: a disclosed miss, not a pass**; the
 tell is the skipped count. It asserts **this repo's promise, not a universal** (`config`, `hl7` and
 `workflow` carry no `agent-notes.md`), and **refuses (exit 2) rather than reporting green over a
 corpus it never opened**, reconciling paths as sets against `git ls-files`. **Never clear a red by

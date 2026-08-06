@@ -169,6 +169,12 @@ interface Heading {
   readonly slug: string;
   /** 1-based line the section body may start on. */
   readonly bodyFrom: number;
+  /**
+   * Depth: 1-6 for `#`..`######`, and for setext 1 for `===` and 2 for `---`. Carried ONLY so
+   * `emptySections` can tell a CONTAINER from an emptied leaf; nothing else reads it, and it is
+   * deliberately not part of the slug, which depends on the text alone.
+   */
+  readonly level: number;
 }
 
 interface Violation {
@@ -353,9 +359,9 @@ function extractHeadings(lines: readonly string[]): Heading[] {
   let inFence = false;
   let fenceMarker = "";
 
-  const push = (line: number, rawText: string, bodyFrom: number): void => {
+  const push = (line: number, rawText: string, bodyFrom: number, level: number): void => {
     const text = rawText.trim();
-    headings.push({ line, text, slug: slugger(text), bodyFrom });
+    headings.push({ line, text, slug: slugger(text), bodyFrom, level });
   };
 
   // Front matter, if any: a `---` on the very first line opens it and the next `---` or `...`
@@ -390,7 +396,7 @@ function extractHeadings(lines: readonly string[]): Heading[] {
 
     const atx = ATX_RE.exec(line);
     if (atx) {
-      push(i + 1, stripTrailingHashes(atx[2] ?? ""), i + 2);
+      push(i + 1, stripTrailingHashes(atx[2] ?? ""), i + 2, (atx[1] ?? "#").length);
       continue;
     }
 
@@ -415,7 +421,8 @@ function extractHeadings(lines: readonly string[]): Heading[] {
           .map((l) => l.trim())
           .join("\n");
         // The anchor belongs to the paragraph; the body starts after the underline.
-        push(first + 1, paragraph, i + 2);
+        // `===` is a level-1 heading and `---` a level-2 one, exactly as CommonMark reads them.
+        push(first + 1, paragraph, i + 2, (setext[1] ?? "-").startsWith("=") ? 1 : 2);
       }
     }
   }
@@ -428,6 +435,26 @@ function extractHeadings(lines: readonly string[]): Heading[] {
  * or from the end of the file. That is the check the item asks for and it is deliberately the
  * weak form: see disclosed miss (viii). A heading whose only body is a fence or a single word
  * counts as non-empty, because judging sufficiency is not something a script can do honestly.
+ *
+ * ▶ A CONTAINER IS NOT AN EMPTIED SECTION, AND CONFLATING THEM IS A FALSE RED. A heading
+ * immediately followed by a DEEPER one (`## Group` then `### Sub` with no prose between) is a
+ * container whose body IS its subsections. A pointer at `#group` resolves on GitHub and the
+ * reader lands on real content, so reporting it is a red against a link that works. Measured on
+ * a fixture before the fix: `## Group` / `### Sub` / `real body here` exited 1 saying `#group`
+ * "has no body".
+ *
+ * This is the item's own criterion read literally. The item asks for the case where a section is
+ * "emptied down to its heading"; a container has not been emptied, it never held prose of its
+ * own. It also matches the rule `ccda` shipped for the same gate ("no section is empty unless it
+ * is a container for subsections"), and it is the direction of care this whole file is built
+ * around: an overclaiming guard invites a reader to trust a promise the tree does not keep, and
+ * the first false red is what gets a gate deleted rather than fixed.
+ *
+ * IT OPENS NO FALSE-GREEN HOLE, which is the only direction that would matter. The exemption
+ * moves the obligation DOWN rather than removing it: the deeper heading is still checked, so an
+ * emptied leaf still reds, and a container can only be exempt when something deeper exists to
+ * carry the body. A trailing heading has no `next` at all and is therefore never a container.
+ * Both directions are pinned in `test/scripts/agent-notes.test.ts`.
  */
 function emptySections(lines: readonly string[], headings: readonly Heading[]): Heading[] {
   const empty: Heading[] = [];
@@ -435,6 +462,8 @@ function emptySections(lines: readonly string[], headings: readonly Heading[]): 
     const here = headings[h];
     if (!here) continue;
     const next = headings[h + 1];
+    // A container: its body is the subsections beneath it, and the obligation moves to them.
+    if (next && next.level > here.level) continue;
     const end = next ? next.line - 1 : lines.length;
     let hasBody = false;
     for (let i = here.bodyFrom; i <= end; i += 1) {
