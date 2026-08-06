@@ -611,10 +611,14 @@ is a disclosed miss rather than a pass, covered below. The enforcement is
 (`## Group` then `### Sub`, with no prose between) has no body of its own, but its body *is* its
 subsections: `#group` resolves on GitHub and the reader lands on real content. The first draft
 reported it, which was a **false red against a link that works**, and this file's own structure is
-why it went unnoticed: **nothing in it was nested below `##`**, so no heading here could reach the
-branch. It was reachable on the next nested heading anyone wrote. (**No count is written down
-here on purpose.** The gate prints the section count on every run, and a second copy in prose can
-only go stale, which is the defect `92b5fab` was spent on.) Measured on a fixture before the fix,
+why it went unnoticed. **Be exact about that, because a first draft of this paragraph was not and
+the OK line contradicted it within the minute:** the exemption **does** fire here, on this file's
+top-level title, whose body is the `##` sections beneath it. What no heading here was is **both a
+container and empty of its own prose**, and that conjunction is what the false red needed. The
+title carries a preamble, so it was green before the fix and is green after it, for different
+reasons. The defect was reachable on the next nested heading anyone wrote. (**No count is written
+down here on purpose.** The gate prints the section and container counts on every successful run,
+and a second copy in prose can only go stale, which is the defect `92b5fab` was spent on.) Measured on a fixture before the fix,
 `## Group` / `### Sub` / `Real body here.` exited 1 saying `#group` "has no body". The item asks
 for the case where a section is *emptied down to its heading*, and a container was never emptied.
 **The exemption opens no false green**, which is the only direction that would matter: it moves
@@ -682,6 +686,29 @@ count on the OK line, which today reads against the vendored `@cosyte/hl7` tarba
 stream that cannot be read as markdown and cannot be edited to clear a red. `CLAUDE.md` already
 requires that exclusion be carried this way for the em-dash gate, and says the at-risk class
 already exists, so it is not rounded off to hypothetical here either.
+
+**▶ ONE OPEN, THEN `fstat` AND READ THROUGH THAT DESCRIPTOR. NEVER `lstat`-then-read-by-path.**
+The first draft checked a path with `lstatSync` and then read it again with `readFileSync`, which
+is a **time-of-check/time-of-use race**: the two calls resolve the path independently, so what was
+checked and what was read need not be the same object. **CodeQL flagged it `js/file-system-race`
+at high severity on the first CI run this branch ever had**, which it only had because the branch
+had never been pushed. The refusal that mattered is the **symlink** one, since defeating it is how
+bytes from outside the tree get scanned and reported as tracked content. The remedy is structural
+rather than a re-check, because a re-check is the same race again: the path is resolved **exactly
+once** by `openSync`, and every question after that is asked of the descriptor, which is bound to
+one inode for its lifetime. `O_NOFOLLOW` makes the symlink refusal **part of the open** (`ELOOP`,
+no window at all). `O_NONBLOCK` is **not decoration**: opening a FIFO for reading blocks until a
+writer appears, and measured without the flag the gate **hung indefinitely** on a tracked path
+replaced by a FIFO rather than refusing it. **Stated limit:** `O_NOFOLLOW` only refuses a symlink
+as the **final** path component, so a symlinked parent directory is still traversed. That boundary
+is unchanged from the `lstat` version and closing it needs `openat2(RESOLVE_BENEATH)`, which Node
+does not expose; `check-no-emdash.sh` walks the same corpus with the same boundary.
+
+**All three of those refusals were entirely untested until that fix**, which is the `transform`
+shape landing here: a guard documented as protection that nobody had watched fire. Each is now
+seeded as a real tracked path. Git only ever tracks regular files, so the not-a-regular-file branch
+is reached by a path tracked as a regular file and **since replaced** in the working tree, by a
+directory or a FIFO; `git ls-files` still lists it, and that list is the corpus.
 
 **Exit 1 and exit 2 are different claims** and are split the way `phi-scan.ts` splits them: 1 is
 a finding a human acts on, 2 is "believe nothing I just said". Collapsing them would turn a broken

@@ -137,11 +137,16 @@
  *        (all three in SLUG_CASES), and a REPEATED heading (the dedup block in `selfTest`, NOT
  *        SLUG_CASES, which holds no repeated-heading row). Each was got wrong by a draft of this
  *        file and each was false-green or false-red on a fixture link GitHub really resolves.
- *        TWO SHAPES ARE UNTESTED AND ARE NOT CLAIMED: combining marks and CJK, because none
- *        exists here; and CONNECTOR PUNCTUATION other than `_`, which `\p{Word}` keeps upstream
- *        (`a‿b` slugs `a‿b`) and this keep-class deletes. That last one is false-red only, since
- *        a pointer's anchor class cannot carry it either. A heading that needs any of them is the
- *        signal to test it, not to assume.
+ *        THE SHAPES BELOW ARE UNTESTED AND ARE NOT CLAIMED (no count here on purpose; a count of
+ *        a list that gets appended to is the defect two entries of this very block were spent on).
+ *        Combining marks and CJK, because none exists here. And CONNECTOR PUNCTUATION other than
+ *        `_`, which `\p{Word}` keeps upstream (`a‿b` slugs `a‿b`) and this keep-class deletes.
+ *        ▶ THAT LAST ONE IS NOT FALSE-RED ONLY, WHICH AN EARLIER DRAFT OF THIS LINE CLAIMED. The
+ *        direct direction is false-red, since a pointer's anchor class cannot carry the character
+ *        either. But the DELETION SHIFTS THE DEDUP, and that is false-GREEN: headings `## a‿b`
+ *        then `## ab` give this gate `{ab, ab-1}` while GitHub mints `{a‿b, ab}`, so a pointer at
+ *        `#ab-1` PASSES here and dangles there. Reproduced against github-slugger@2.0.0. A
+ *        heading that needs any of these is the signal to test it, not to assume.
  *  (viii)[SCOPE] A SECTION WITH A BODY IS NOT A SECTION WITH THE RIGHT BODY. This gate proves a
  *        pointer lands somewhere non-empty. It cannot prove the prose there grounds the rule
  *        that cited it. That half stays human, and saying so is the point of writing it down.
@@ -155,7 +160,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { lstatSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -456,14 +461,24 @@ function extractHeadings(lines: readonly string[]): Heading[] {
  * carry the body. A trailing heading has no `next` at all and is therefore never a container.
  * Both directions are pinned in `test/scripts/agent-notes.test.ts`.
  */
-function emptySections(lines: readonly string[], headings: readonly Heading[]): Heading[] {
+function emptySections(
+  lines: readonly string[],
+  headings: readonly Heading[],
+): { readonly empty: Heading[]; readonly containers: number } {
   const empty: Heading[] = [];
+  let containers = 0;
   for (let h = 0; h < headings.length; h += 1) {
     const here = headings[h];
     if (!here) continue;
     const next = headings[h + 1];
     // A container: its body is the subsections beneath it, and the obligation moves to them.
-    if (next && next.level > here.level) continue;
+    // COUNTED, NOT SILENTLY SKIPPED, because the OK line must not claim every section has a
+    // body when a container was never asked. That claim is what the exemption made false, and
+    // the count is the reader's tell in exactly the way the binary-skip count is.
+    if (next && next.level > here.level) {
+      containers += 1;
+      continue;
+    }
     const end = next ? next.line - 1 : lines.length;
     let hasBody = false;
     for (let i = here.bodyFrom; i <= end; i += 1) {
@@ -474,7 +489,7 @@ function emptySections(lines: readonly string[], headings: readonly Heading[]): 
     }
     if (!hasBody) empty.push(here);
   }
-  return empty;
+  return { empty, containers };
 }
 
 // ---------------------------------------------------------------------------
@@ -490,8 +505,10 @@ function emptySections(lines: readonly string[], headings: readonly Heading[]): 
  * three are the leading-character cases", and the next commit appended three rows and made it
  * false without touching it. Each row below carries its own reason where it needs one; a
  * positional reference is a claim that goes stale on the next append, which is the same defect
- * class as the renumbered cross-reference two blocks above. Every row is verified against
- * github-slugger@2.0.0.
+ * class as the renumbered disclosed-miss cross-reference in `emptySections`'s doc comment. (That
+ * referent is NAMED rather than located: "two blocks above" was itself a positional claim an
+ * inserted comment would falsify, inside the comment that forbids them.) Every row is verified
+ * against github-slugger@2.0.0.
  */
 const SLUG_CASES: ReadonlyArray<readonly [string, string]> = [
   ["The em-dash brand gate", "the-em-dash-brand-gate"],
@@ -590,11 +607,31 @@ function selfTest(): void {
     );
   }
 
-  const empty = emptySections(["## A", "## B", "body"], extractHeadings(["## A", "## B", "body"]));
+  const flat = ["## A", "## B", "body"];
+  const { empty } = emptySections(flat, extractHeadings(flat));
   if (empty.length !== 1 || empty[0]?.slug !== "a") {
     throw new RefusalError(
       `SELF-TEST FAILED: the empty-section detector found ${String(empty.length)} empty ` +
         `section(s) in a sample with exactly one. Refusing to report on the tree.`,
+    );
+  }
+
+  // THE CONTAINER EXEMPTION, SELF-TESTED IN BOTH DIRECTIONS, because it is the one rule here
+  // that makes the gate report LESS. `## A` is a container (its body is `### B`), so it is
+  // exempt and counted; `### B` is an emptied leaf and must still be found.
+  const nested = ["## A", "### B"];
+  const nestedResult = emptySections(nested, extractHeadings(nested));
+  if (
+    nestedResult.containers !== 1 ||
+    nestedResult.empty.length !== 1 ||
+    nestedResult.empty[0]?.slug !== "b"
+  ) {
+    throw new RefusalError(
+      `SELF-TEST FAILED: the container exemption found ${String(nestedResult.containers)} ` +
+        `container(s) and ${String(nestedResult.empty.length)} empty section(s) in a sample ` +
+        `holding exactly one of each. Either a container is being reported as emptied, which ` +
+        `is a false red, or an emptied leaf beneath one is being skipped, which is a false ` +
+        `green. Refusing to report on the tree.`,
     );
   }
 
@@ -710,38 +747,92 @@ function parseArgs(argv: readonly string[]): Args {
   return { root };
 }
 
+/**
+ * ▶ ONE OPEN, THEN `fstat` AND READ THROUGH THAT SAME DESCRIPTOR. NOT `lstat`-then-read-by-path.
+ *
+ * The first draft did `lstatSync(abs)`, checked the result, then `readFileSync(abs)`. That is a
+ * TIME-OF-CHECK/TIME-OF-USE RACE and CodeQL flagged it `js/file-system-race` at high severity on
+ * the first run this branch ever had in CI. The two calls resolve the path INDEPENDENTLY, so what
+ * was checked and what was read need not be the same object: anything that can replace the path
+ * between them (a concurrent `git checkout`, a rebase, an editor's atomic save, a hostile symlink
+ * swap) gets its bytes read under a path this gate already decided was a safe regular file. The
+ * symlink refusal below is the one that matters, because defeating it is how bytes from OUTSIDE
+ * the tree get scanned and reported on as though they were tracked content.
+ *
+ * The fix is structural rather than a re-check, because a re-check is the same race again. The
+ * path is resolved EXACTLY ONCE, by `openSync`, and every question after that is asked of the
+ * resulting descriptor, which is bound to one inode for its lifetime:
+ *
+ *   * `O_NOFOLLOW` makes the SYMLINK REFUSAL PART OF THE OPEN. The kernel fails with `ELOOP`
+ *     rather than handing back a descriptor on the target, so there is no window between
+ *     "is it a link" and "read it". This is the half the race actually threatened.
+ *   * `O_NONBLOCK` is not decoration: opening a FIFO for reading BLOCKS until a writer appears,
+ *     so a tracked FIFO would hang the gate forever instead of refusing it. With it, the open
+ *     returns and `fstat` classifies it.
+ *   * `fstatSync(fd)` asks about the OPENED OBJECT, not about a path that may since have moved,
+ *     which is what makes the regular-file check meaningful rather than advisory.
+ *
+ * STATED LIMIT: `O_NOFOLLOW` only refuses a symlink as the FINAL path component. A symlinked
+ * PARENT DIRECTORY is still traversed. That is unchanged from the `lstat` version, which had the
+ * same boundary, and closing it needs `openat2(RESOLVE_BENEATH)`, which Node does not expose.
+ * `check-no-emdash.sh` walks the same corpus with the same boundary.
+ *
+ * If `O_NOFOLLOW` is unavailable (it is not defined on Windows), the gate REFUSES rather than
+ * quietly dropping the symlink guarantee. A gate that cannot keep a promise says so.
+ */
 function readTracked(root: string, path: string): Buffer {
   const abs = join(root, path);
-  let st;
+
+  if (typeof constants.O_NOFOLLOW !== "number") {
+    throw new RefusalError(
+      `this platform does not provide O_NOFOLLOW, so a tracked path cannot be opened with the ` +
+        `symlink refusal applied atomically. Refusing rather than scanning with the guarantee ` +
+        `silently dropped.`,
+    );
+  }
+
+  let fd: number;
   try {
-    st = lstatSync(abs);
+    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (err) {
-    throw new RefusalError(
-      `tracked path is missing from the working tree: ${path} ` +
-        `(${err instanceof Error ? err.message : String(err)}). A scan that could not open ` +
-        `one of its inputs has not observed the corpus it is about to report on.`,
-    );
-  }
-  if (st.isSymbolicLink()) {
-    throw new RefusalError(
-      `tracked path is a symbolic link: ${path}. Reading through it would scan bytes from ` +
-        `somewhere else under this path's name. Refused by name rather than skipped, so the ` +
-        `reconciliation below stays honest. The link target is deliberately not printed.`,
-    );
-  }
-  if (!st.isFile()) {
-    throw new RefusalError(
-      `tracked path is not a regular file: ${path}. Refusing to report green from a scan ` +
-        `that skipped one of its inputs.`,
-    );
-  }
-  try {
-    return readFileSync(abs);
-  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // ELOOP is Linux's answer to O_NOFOLLOW on a symlink; some BSDs answer EMLINK.
+    if (code === "ELOOP" || code === "EMLINK") {
+      throw new RefusalError(
+        `tracked path is a symbolic link: ${path}. Reading through it would scan bytes from ` +
+          `somewhere else under this path's name. Refused by name rather than skipped, so the ` +
+          `reconciliation below stays honest. The link target is deliberately not printed.`,
+      );
+    }
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      throw new RefusalError(
+        `tracked path is missing from the working tree: ${path} ` +
+          `(${err instanceof Error ? err.message : String(err)}). A scan that could not open ` +
+          `one of its inputs has not observed the corpus it is about to report on.`,
+      );
+    }
     throw new RefusalError(
       `tracked path is not readable: ${path} ` +
         `(${err instanceof Error ? err.message : String(err)}).`,
     );
+  }
+
+  try {
+    if (!fstatSync(fd).isFile()) {
+      throw new RefusalError(
+        `tracked path is not a regular file: ${path}. Refusing to report green from a scan ` +
+          `that skipped one of its inputs.`,
+      );
+    }
+    return readFileSync(fd);
+  } catch (err) {
+    if (err instanceof RefusalError) throw err;
+    throw new RefusalError(
+      `tracked path is not readable: ${path} ` +
+        `(${err instanceof Error ? err.message : String(err)}).`,
+    );
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -787,6 +878,7 @@ function main(argv: readonly string[]): number {
   // ---- 2. Anchors and sections ------------------------------------------
   let anchors = new Set<string>();
   let sectionCount = 0;
+  let containerCount = 0;
   if (contractPath !== undefined) {
     const buf = readTracked(root, contractPath);
     if (buf.includes(0)) {
@@ -815,7 +907,9 @@ function main(argv: readonly string[]): number {
       );
     }
 
-    for (const h of emptySections(lines, headings)) {
+    const sections = emptySections(lines, headings);
+    containerCount = sections.containers;
+    for (const h of sections.empty) {
       violations.push({
         where: `${contractPath}:${String(h.line)}`,
         what:
@@ -928,8 +1022,11 @@ function main(argv: readonly string[]): number {
   }
 
   process.stdout.write(
+    // NOT "all with a body". A container is exempt and is never asked, so that phrasing became
+    // false the moment the exemption landed, and it was the last prose copy of the old rule.
     `check-agent-notes: OK (${contractPath ?? "?"}: ${String(sectionCount)} section(s), ` +
-      `all with a body; ${String(pointerCount)} pointer(s) from ${String(pointerFiles.size)} ` +
+      `${String(containerCount)} of them container(s) whose body is their subsections and the ` +
+      `rest with a body of their own; ${String(pointerCount)} pointer(s) from ${String(pointerFiles.size)} ` +
       `file(s), all resolving; ${String(tracked.length)} tracked path(s) reconciled = ` +
       `${String(opened)} opened + ${String(skippedBinary)} skipped as binary, plus ` +
       `${String(gitlinks.length)} gitlink(s) with no bytes here)\n`,

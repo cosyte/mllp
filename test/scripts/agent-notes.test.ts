@@ -39,7 +39,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -285,6 +285,78 @@ describe("check-agent-notes: the control, and every other refusal", () => {
   it("REFUSES an unknown flag rather than scanning with it ignored", () => {
     expect(runGate(["--everything"]).code).toBe(2);
   });
+
+  // THE THREE `readTracked` REFUSALS, WHICH WERE ENTIRELY UNTESTED UNTIL THE TOCTOU FIX. A
+  // refusal nothing exercises is the `transform` shape: a guard documented as protection that
+  // nobody has watched fire. Each is seeded as a real tracked path, not asserted in the abstract.
+
+  it("REFUSES a tracked path that is a SYMLINK, rather than scanning bytes from outside the tree", () => {
+    // The refusal the TOCTOU actually threatened: defeating it is how untracked bytes get read
+    // under a tracked path's name. It is now enforced by O_NOFOLLOW on the open itself, so there
+    // is no window between the check and the read.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n`,
+      "documentation/agent-notes.md": NOTES,
+    });
+    writeFileSync(join(dir, "outside.txt"), "secret\n");
+    symlinkSync(join(dir, "outside.txt"), join(dir, "link.md"));
+    git(dir, ["add", "-A"]);
+
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("tracked path is a symbolic link");
+    // The target is deliberately not printed.
+    expect(r.stderr).not.toContain("outside.txt");
+  });
+
+  it("REFUSES a tracked path that is missing from the working tree", () => {
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n`,
+      "documentation/agent-notes.md": NOTES,
+      "gone.md": "here for now\n",
+    });
+    rmSync(join(dir, "gone.md"));
+
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("tracked path is missing from the working tree");
+  });
+
+  it("REFUSES a tracked path replaced on disk by a DIRECTORY", () => {
+    // Git only ever tracks regular files (and symlinks and gitlinks), so this branch is reached
+    // by a path that IS tracked as a regular file and has since been replaced in the working
+    // tree. `git ls-files` still lists it, which is exactly the corpus this gate reads.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n`,
+      "documentation/agent-notes.md": NOTES,
+      "swapped.md": "a regular file, for now\n",
+    });
+    rmSync(join(dir, "swapped.md"));
+    mkdirSync(join(dir, "swapped.md"));
+
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("tracked path is not a regular file");
+  });
+
+  it("REFUSES a tracked path replaced by a FIFO instead of hanging on it forever", () => {
+    // THIS IS WHAT MAKES O_NONBLOCK LOAD-BEARING RATHER THAN DECORATION. Opening a FIFO for
+    // reading blocks until a writer appears, so without the flag the gate would hang here
+    // indefinitely rather than refuse, and a hung gate reports nothing at all.
+    const dir = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-section")}\n`,
+      "documentation/agent-notes.md": NOTES,
+      "pipe.md": "a regular file, for now\n",
+    });
+    const fifo = join(dir, "pipe.md");
+    rmSync(fifo);
+    const mk = spawnSync("mkfifo", [fifo], { encoding: "utf8", shell: false });
+    if ((mk.status ?? -1) !== 0) return; // no mkfifo here; the directory case still covers the class
+
+    const r = runGate(["--root", dir]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("tracked path is not a regular file");
+  }, 15_000);
 });
 
 describe("check-agent-notes: the bypass classes, reproduced end to end", () => {

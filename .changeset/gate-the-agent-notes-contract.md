@@ -28,6 +28,14 @@ path is missing, unreadable, a symlink or not a regular file, when a path is unm
 finds no pointers at all. A finding exits 1 and a refusal exits 2, so a broken checker can never be
 read as a list of real findings.
 
+Each tracked path is resolved exactly once, by a single open, and the symlink and regular-file
+questions are asked of the resulting descriptor rather than of the path a second time. Checking a
+path and then reading it again is a time-of-check/time-of-use race, and the refusal it threatens is
+the symlink one, which is what stops bytes from outside the tree being scanned under a tracked
+path's name. Opening with the no-follow flag makes that refusal part of the open itself, and the
+non-blocking flag is what keeps a tracked path replaced by a FIFO from hanging the check instead of
+refusing it.
+
 Both heading shapes that defeat a naive leading-hash rule are handled and reproduced end to end: a
 heading indented by a space, and one underlined rather than hashed. Both are false-red bypasses,
 because a missed heading is a missing anchor. So is the opposite direction, where a hash line inside
@@ -40,8 +48,10 @@ than turned into a hyphen.
 
 Measured against the parent commit by running it there: zero violations. This changes no content and
 exists to stop a regression. `test/scripts/agent-notes.test.ts` runs it against this tree, seeds each
-violation class into throwaway repositories, pins every disclosed miss in the direction it actually
-fails, and includes the control that a check pointed at nothing must refuse rather than report clean.
+violation class into throwaway repositories, pins each disclosed miss that has anything to execute in
+the direction it actually fails, and includes the control that a check pointed at nothing must refuse
+rather than report clean. Two of the disclosed misses are statements of scope rather than behaviour,
+so there is nothing to run for them and none is claimed.
 
 Repository tooling and guidance only. No runtime code, no public API, no warning code, and no
 framing or transport behaviour changed.
