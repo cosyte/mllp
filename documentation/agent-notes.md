@@ -611,8 +611,10 @@ is a disclosed miss rather than a pass, covered below. The enforcement is
 (`## Group` then `### Sub`, with no prose between) has no body of its own, but its body *is* its
 subsections: `#group` resolves on GitHub and the reader lands on real content. The first draft
 reported it, which was a **false red against a link that works**, and this file's own structure is
-why it went unnoticed: it is flat, one `#` and nineteen `##`, so nothing here could reach it. It
-was reachable on the next nested heading anyone wrote. Measured on a fixture before the fix,
+why it went unnoticed: **nothing in it was nested below `##`**, so no heading here could reach the
+branch. It was reachable on the next nested heading anyone wrote. (**No count is written down
+here on purpose.** The gate prints the section count on every run, and a second copy in prose can
+only go stale, which is the defect `92b5fab` was spent on.) Measured on a fixture before the fix,
 `## Group` / `### Sub` / `Real body here.` exited 1 saying `#group` "has no body". The item asks
 for the case where a section is *emptied down to its heading*, and a container was never emptied.
 **The exemption opens no false green**, which is the only direction that would matter: it moves
