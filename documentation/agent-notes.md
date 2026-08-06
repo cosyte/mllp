@@ -336,6 +336,100 @@ thing a rule guards, or when you are tempted to relax one. Every paragraph here 
   @cosyte/mllp version`). The sentence that stood here read "Not yet published", which had been
   false for as long as the package has been on the registry, and it is the same defect class the
   CHANGELOG preamble carried.
+- **Closed 2026-08-06, re-measured rather than recalled.** The umbrella carried a competing report
+  that this repo's `CLAUDE.md` still claimed the package was "not yet published to npm". Checked:
+  that sentence is in neither `CLAUDE.md` nor any other live text here, and the registry serves this
+  package across a run of `0.0.x` versions. The report was stale, and the only surviving hits in
+  this repo are archival entries (this one, and the CHANGELOG's) describing the correction rather
+  than making the claim. **Publish state and repo visibility are still independent facts, and
+  neither is derivable from the other.**
+
+## Changelog generation
+
+**`CHANGELOG.md` is written by the release, and the changeset summary is the entry.** This section
+is the reasoning behind the one-line rule in `CLAUDE.md`; the enforcement is
+`test/scripts/changelog-generation.test.ts`, which runs the **real** `changeset version` against the
+real changelog and the real config in a throwaway package.
+
+**The defect it replaced.** `.changeset/config.json` set `"changelog": false`, which is a legal
+value that makes Changesets bump the version and write no changelog at all. So no release ever wrote
+a version heading here, and nothing ever rolled `[Unreleased]` over: the whole published history of
+this package carried a changelog with **zero version headings**, one `[Unreleased]` heading spanning
+everything, and a preamble in the future tense about a release that had already gone out.
+`CHANGELOG.md` is in `package.json` `files`, so that text was on the disk of everyone who installed
+the package. **The fix was the flag, not the prose.** Correcting the sentence by hand leaves the
+mechanism that wrote it and it drifts again on the next release.
+
+**Five mechanism traps, each of which costs a wedged or corrupted release to rediscover.**
+
+- **Exactly ONE line may sit above generated output.** Changesets prepends a release by replacing
+  the FIRST newline in the document. The old preamble sat on line 3, so turning the flag on alone
+  would have spliced every release between the H1 and the preamble and cut the header in half. The
+  hand-written history therefore moved under `## Released before this file was generated`.
+- **State the rule as "nothing but the H1 above the first heading", never as "the archive heading
+  comes second".** The first real release puts `## <version>` exactly there, so the narrower phrasing
+  reds the first Version PR this configuration ever opens, and `prepublishOnly` runs the same suite
+  under `changeset publish`: a Version PR merged without a green run fails the publish **after** the
+  changeset is consumed on `main`. Assert it on the released document too, not only the committed one.
+- **`## 0.0.1` is a PREFIX of `## 0.0.10`, and this package is on that ladder.** Any `indexOf` or
+  substring `toContain` over a version heading reports a heading the document does not have. Compare
+  whole headings against the heading list. Relatedly, a changeset summary may QUOTE the archive
+  heading and the quoted copy lands *above* the real one; anchor on a whole line, which is safe
+  because `getReleaseLine` indents every continuation line of a summary by two spaces. **State that
+  reason precisely: it is NOT "no line in a release section starts at column 0"**, which is plainly
+  false (the version heading, `### Patch Changes` and the entry's own `- ` bullet all do). What holds
+  is narrower and is the only thing the anchor needs: no line a SUMMARY contributes, other than its
+  first, reaches column 0, and the generator's own lines are headings and bullets that never spell
+  the archive heading.
+- **🔴 THE RELEASE'S PRETTIER PASS IS OFF, AND THAT IS THIS PACKAGE'S OWN ANSWER, NOT A PORTED ONE.**
+  Changesets runs the document it writes through Prettier unless `.changeset/config.json` sets
+  `"prettier": false`. **This repo's markdown is deliberately NOT Prettier-managed: `.prettierignore`
+  lists `*.md`**, so despite `format:check`'s glob naming root `*.md` it reads **none** of them
+  (`npx prettier --file-info CHANGELOG.md` reports `"ignored": true`), and the archived history has
+  never been Prettier-canonical. Leaving the pass on therefore does not tidy the file, it **rewrites
+  already-published text on every release**: measured on this archive, emphasis markers, list bullets
+  and continuation indents all move, and the paragraph whose bold span contains
+  `` `test/tls/**` `` comes back with the spaces around that literal **eaten**, which is corruption
+  inside a shipped tarball. **Neither obvious remedy is available.** Turning the pass back on is
+  refuted by the measurement above. Deleting `*.md` from `.prettierignore` to make the coverage real
+  reds `format:check` on the archived history immediately (measured:
+  `npx prettier --check CHANGELOG.md --ignore-path /dev/null` warns). **`hl7` does Prettier-manage
+  its markdown and needs the OPPOSITE setting, so do not resync this value to a sibling.**
+- **🔴 Changesets SWALLOWS a changelog-write failure with `console.warn`.** A tree whose declared
+  Prettier config cannot be resolved bumps the version, consumes the changeset, and writes **no
+  changelog at all**. Reproduced on this repo's own inputs. **So a release that publishes with an
+  unchanged changelog is THAT failure and not a flag that reverted.** Say why, because the bare
+  claim is not self-evident and a reverted flag produces the identical symptom: the flag is already
+  ruled out by the time you are looking, since the suite reds on `changelog: false` and
+  `prepublishOnly` runs that suite under `changeset publish`. So read the run's warnings, not
+  `config.json`. `"prettier": false` happens to close that particular route by removing the
+  resolution, which is a side benefit and **not** why the setting is there. The test's throwaway
+  trees still link this repo's Prettier and `@cosyte/prettier-config` in, because the control that
+  runs a release with the pass back ON has to exercise the formatter and config a release would
+  really have used, not the copy Changesets bundles as a fallback.
+
+**The entry line is `- <short-sha>: <summary>`, not the summary alone.** The default generator calls
+`getCommitThatAddsFile` and prefixes each entry with the sha of the commit that added the changeset,
+so "the changeset summary IS the changelog entry" is exactly true of the **text** and one prefix
+short of the **line**. That sha ships in the tarball, which is fine here (`CHANGELOG.md` is out of
+scope for `check-no-internal-refs`, deliberately). **The consequence for the test is not cosmetic:**
+the lookup returns nothing in a tree with no git history, so a throwaway package that was not a git
+repo would quietly exercise a line shape no release produces. The harness therefore `git init`s and
+commits each temp tree, and pins the line shape, so a generator swap that drops or changes the
+prefix is caught here rather than in a published tarball.
+
+**What was dropped from the archived half, and what was not.** Four pieces of hand-workflow
+scaffolding: the `[Unreleased]` heading, its link definition at the foot of the file, and the two
+empty section stubs (`### Deprecated`, and the final `### Security`). **No entry was reworded or
+re-sorted.** The history is not split into version sections because the file never recorded which
+release any entry went out in, and because that text is already on disk in published copies. The
+repeated `### Added` / `### Fixed` headings in the archived half are a fossil of that: entries were
+appended in waves the file never separated.
+
+**Temp trees go in the OS temp directory here.** `test/scripts/phi-scan.test.ts` `mkdtemp`s inside
+`test/` because the walk root is exactly what that file proves; the changelog test has nothing to say
+to the PHI walk roots, and planting trees under `test/` for it would only widen what the sweep has to
+tolerate.
 
 ## Test timeouts, measured not read
 

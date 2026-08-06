@@ -1,20 +1,34 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## Released before this file was generated
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-Versions and publishing are managed with [Changesets](https://github.com/changesets/changesets);
-this file is maintained by hand (Changesets handles the version bump and publish only).
+Every release section above this heading is written by
+[Changesets](https://github.com/changesets/changesets) from the changesets in `.changeset/`, newest
+release first. The release writes its own version heading, so nothing above this line is maintained
+by hand, and a change is recorded by adding a changeset rather than by editing this file.
 
-## [Unreleased]
+Everything below this heading was maintained by hand. It sat under a single `[Unreleased]` heading
+that no release ever rolled over, which is why a published tarball went on describing its own
+already-shipped contents as unreleased. That is also why the sections below repeat: entries were
+appended in waves under a fresh set of `### Added` / `### Fixed` headings, and the file never
+recorded which release any wave went out in. The history is therefore left exactly as it was
+written rather than re-sorted into version sections, because there is nothing in it to sort by, and
+because this is the text that installed copies already carry on disk.
 
-`@cosyte/mllp` is published on npm and stays on the `0.0.x`-until-first-alpha ladder, so the API can
-change with no deprecation cycle. The sentence this replaces said the first pre-alpha release "will
-ship" the surface below, which stopped being true the day the package first published and had been
-false ever since. **No version literal is written here, on purpose**: what is published is a fact
-about the registry (`npm view @cosyte/mllp version`) and about `package.json`, and a number copied
-into prose here is a claim that goes stale on its own.
+Only four things were dropped, all of them scaffolding for the hand-written workflow that no longer
+runs: the `[Unreleased]` heading itself, its link definition at the foot of the file, and the two
+empty section stubs (`### Deprecated` and the final `### Security`) that were waiting to receive the
+next hand-written entry. A note that used to sit under `[Unreleased]`, explaining that an earlier
+future-tense sentence had been corrected in place, is replaced by this heading and these
+paragraphs. No entry was reworded.
+
+The entries below follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the generated
+sections above use the format Changesets writes, which is a version heading and a list of the
+changes that release consumed. Versions follow the cosyte pre-alpha ladder, `0.0.x` until first
+alpha, rather than [Semantic Versioning](https://semver.org/spec/v2.0.0.html) alone, so the API can
+change with no deprecation cycle. **No version literal is written in this preamble, on purpose**:
+what is published is a fact about the registry (`npm view @cosyte/mllp version`) and about
+`package.json`, and a number copied into prose here is a claim that goes stale on its own.
 
 ### Added
 
@@ -1229,8 +1243,6 @@ into prose here is a claim that goes stale on its own.
 
 - **`mitata` benchmark dependency and the `bench` script**: the script had no benchmark files.
 
-### Deprecated
-
 ### Fixed
 
 - **Bind errors no longer crash a server with no `'error'` listener (Phase 8 residuals, MLLP-8.1).**
@@ -1260,7 +1272,3 @@ into prose here is a claim that goes stale on its own.
   `'listening'`/`'securityWarning'` handler is deliberately **too late**: the bind wins and
   `listen()` resolves (use `close()` to shut down), so aborted-mid-emit can never strand
   `listening: true` on a closed socket.
-
-### Security
-
-[Unreleased]: https://github.com/cosyte/mllp/commits/main
