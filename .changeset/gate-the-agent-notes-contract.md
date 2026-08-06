@@ -6,8 +6,9 @@ Gate this repository's two-file guidance contract, so a dangling pointer or an e
 
 `scripts/check-agent-notes.ts` (`pnpm check:agent-notes`) checks three things: that
 `documentation/agent-notes.md` is tracked, that every section under a heading has a body, and that
-every pointer at it from any tracked file resolves to an anchor GitHub would actually mint. Splitting
-the guidance in two moved the reasoning behind a link, which made the link load-bearing, and nothing
+every pointer at it, in a file the check opened, resolves to an anchor GitHub would actually mint.
+Splitting the guidance in two moved the reasoning behind a link, which made the link load-bearing,
+and nothing
 checked it. A rename, an emptied section, or an anchor edited on one side of the pair and not the
 other would all have been silent.
 

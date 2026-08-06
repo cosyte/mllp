@@ -602,8 +602,9 @@ tolerate.
 
 **`scripts/check-agent-notes.ts` (`pnpm check:agent-notes`) checks the pair this file is half
 of.** Three things, and nothing else: that `documentation/agent-notes.md` is tracked, that every
-section under a heading has a body, and that every pointer at it from any tracked file resolves
-to an anchor GitHub would actually mint. The enforcement is
+section under a heading has a body, and that every pointer at it **in a file the gate opened**
+resolves to an anchor GitHub would actually mint. **A NUL-bearing file is skipped whole**, which
+is a disclosed miss rather than a pass, covered below. The enforcement is
 `test/scripts/agent-notes.test.ts`, which runs the real gate against this tree.
 
 **Why it needed a gate at all.** The split of 2026-08-04 moved the reasoning behind a link, which

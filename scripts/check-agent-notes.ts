@@ -132,10 +132,12 @@
  *        this note claimed the opposite and was wrong: a disclosure that names the wrong
  *        failure mode sends the next reader hunting something that cannot happen.
  *  (vii) [PINNED] THE SLUGGER IS A TRANSCRIPTION OF github-slugger, NOT THE MODULE. It is
- *        pinned by SLUG_CASES, verified against github-slugger@2.0.0 for the leading-dropped-
- *        character and repeated-heading shapes, and checked against every heading and every
- *        pointer on this tree. Combining marks and CJK headings are UNTESTED, not claimed: none
- *        exists here. A heading that needs one is the signal to test it, not to assume.
+ *        pinned by SLUG_CASES and verified against github-slugger@2.0.0 for the four shapes that
+ *        diverge from the obvious implementation: a dropped LEADING character, a REPEATED
+ *        heading, a NON-ASCII space separator, and a SOFTBREAK. Every one of those was got wrong
+ *        by a draft of this file and every one of those was false-green or false-red on a real
+ *        link. Combining marks and CJK headings are UNTESTED, not claimed: none exists here. A
+ *        heading that needs one is the signal to test it, not to assume.
  *  (viii)[SCOPE] A SECTION WITH A BODY IS NOT A SECTION WITH THE RIGHT BODY. This gate proves a
  *        pointer lands somewhere non-empty. It cannot prove the prose there grounds the rule
  *        that cited it. That half stays human, and saying so is the point of writing it down.
@@ -233,11 +235,27 @@ function stripInline(text: string): string {
  * reachable rather than exotic: `▶` is this repo's own marker for a load-bearing rule and it is
  * used throughout `CLAUDE.md` and in the narrative file's own sections, so a `▶`-led heading is
  * the likeliest next one anybody writes. Pinned by SLUG_CASES.
+ *
+ * ▶ THE KEPT SPACE IS THE ASCII SPACE ALONE, NOT `\p{Zs}`. Same rule, same direction of care: a
+ * disallowed character is DELETED, and every space separator other than U+0020 is disallowed.
+ * Measured, a heading holding U+00A0 or U+2009 between two letters slugs them together upstream.
+ * A `\p{Zs}` keep-class left the
+ * separator in the slug, which reds a pointer that works (nothing can match it, since a pointer's
+ * anchor class cannot contain a space separator either). Caught alongside the softbreak below.
+ *
+ * ▶ A SOFTBREAK IS DELETED, NOT HYPHENATED, WHICH IS WHY THE SETEXT JOIN USES `\n`. A wrapped
+ * setext heading is ONE heading whose text contains a newline, and `\n` is not a space separator,
+ * so upstream removes it and the two halves RUN TOGETHER: `The long` / `section name` slugs
+ * `the-longsection-name`, not `the-long-section-name`. A first remedy for the wrapped-heading case
+ * joined the paragraph with a space and asserted the hyphenated form in the self-test, a vitest
+ * case and three documents, which is the same false-green class as the `.trim()` above arriving
+ * through its own fix. Derived twice: from github-slugger, and from GitHub's own
+ * `[^\p{Word}\- ]` deletion rule. Pinned by SLUG_CASES and end to end in both directions.
  */
 function slugify(text: string): string {
   return stripInline(text)
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\p{Zs}\-_]/gu, "")
+    .replace(/[^\p{L}\p{N} \-_]/gu, "")
     .replace(/ /g, "-");
 }
 
@@ -319,9 +337,11 @@ function stripTrailingHashes(text: string): string {
  *     CLOSING `---` sits directly under a non-blank line, so a setext reader mints an anchor
  *     from `title: x`. Reproduced: it passed a pointer at `#title-x` that GitHub cannot resolve.
  *   * THE SETEXT PARAGRAPH. An underline belongs to the WHOLE paragraph above it, not to its
- *     last line. `The long` / `section name` / `------` is one heading, `The long section name`.
- *     Reading the last line alone slugged it `section-name` and reddened the pointer GitHub
- *     resolves.
+ *     last line. `The long` / `section name` / `------` is ONE heading whose text carries a
+ *     softbreak. Reading the last line alone slugged it `section-name` and reddened the pointer
+ *     GitHub resolves. The lines are joined with `\n`, NOT a space, because a softbreak is
+ *     DELETED by the slug rule rather than hyphenated: the anchor is `the-longsection-name`. See
+ *     `slugify` for the measurement; joining with a space was itself a false-green defect.
  */
 function extractHeadings(lines: readonly string[]): Heading[] {
   const headings: Heading[] = [];
@@ -389,7 +409,7 @@ function extractHeadings(lines: readonly string[]): Heading[] {
         const paragraph = lines
           .slice(first, i)
           .map((l) => l.trim())
-          .join(" ");
+          .join("\n");
         // The anchor belongs to the paragraph; the body starts after the underline.
         push(first + 1, paragraph, i + 2);
       }
@@ -402,7 +422,7 @@ function extractHeadings(lines: readonly string[]): Heading[] {
 /**
  * A section is EMPTY when nothing but blank lines separates its heading from the next heading
  * or from the end of the file. That is the check the item asks for and it is deliberately the
- * weak form: see disclosed miss (vii). A heading whose only body is a fence or a single word
+ * weak form: see disclosed miss (viii). A heading whose only body is a fence or a single word
  * counts as non-empty, because judging sufficiency is not something a script can do honestly.
  */
 function emptySections(lines: readonly string[], headings: readonly Heading[]): Heading[] {
@@ -453,6 +473,12 @@ const SLUG_CASES: ReadonlyArray<readonly [string, string]> = [
   ["▶ The section", "-the-section"],
   ["▶ ▶ Doubled marker", "--doubled-marker"],
   ["A  double  space", "a--double--space"],
+  // A SOFTBREAK IS DELETED, NOT HYPHENATED. The two halves run together. This is the wrapped
+  // setext heading, and getting it wrong was a false green on a link that resolves to nothing.
+  ["The long\nsection name", "the-longsection-name"],
+  // Every space separator other than U+0020 is deleted too, for the same reason.
+  ["a\u00a0b", "ab"],
+  ["a\u2009b", "ab"],
 ];
 
 function selfTest(): void {
@@ -505,7 +531,7 @@ function selfTest(): void {
     "body",
   ];
   const got = extractHeadings(sample).map((h) => h.slug);
-  const want = ["top", "indented-by-two", "setext-one", "a-wrapped-setext-heading-over-two-lines"];
+  const want = ["top", "indented-by-two", "setext-one", "a-wrapped-setextheading-over-two-lines"];
   if (got.length !== want.length || got.some((s, i) => s !== want[i])) {
     throw new RefusalError(
       `SELF-TEST FAILED: the heading detector produced [${got.join(", ")}], expected ` +

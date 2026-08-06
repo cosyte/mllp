@@ -343,13 +343,37 @@ describe("check-agent-notes: the bypass classes, reproduced end to end", () => {
     expect(runGate(["--root", dir]).code).toBe(1);
   });
 
-  it("gives a wrapped setext heading the anchor of the whole paragraph, not its last line", () => {
-    const dir = repo({
-      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-long-section-name")}\n`,
-      "documentation/agent-notes.md":
-        "# notes\n\nP.\n\nThe long\nsection name\n------------\n\nBody.\n",
+  it("gives a wrapped setext heading the anchor of the whole paragraph, with the softbreak DELETED", () => {
+    // A wrapped setext heading is ONE heading whose text carries a newline, and the slug rule
+    // DELETES a newline rather than hyphenating it, so the two halves run together:
+    // `the-longsection-name`. Both directions are asserted, because a first remedy for the
+    // wrapped-heading case joined with a space and asserted the hyphenated form here, which is
+    // a test pinning a slug GitHub does not mint. Derived from github-slugger and from GitHub's
+    // own `[^\p{Word}\- ]` deletion rule.
+    const notes = "# notes\n\nP.\n\nThe long\nsection name\n------------\n\nBody.\n";
+
+    const green = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-longsection-name")}\n`,
+      "documentation/agent-notes.md": notes,
     });
-    expect(runGate(["--root", dir]).code).toBe(0);
+    expect(runGate(["--root", green]).code).toBe(0);
+
+    const red = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("the-long-section-name")}\n`,
+      "documentation/agent-notes.md": notes,
+    });
+    expect(runGate(["--root", red]).code).toBe(1);
+  });
+
+  it("deletes a non-ASCII space separator from a slug, as the upstream rule does", () => {
+    // The separator is written as an escape, not a literal: a bare U+00A0 in a fixture is
+    // invisible to a reader and to a diff.
+    const notes = "# notes\n\nP.\n\n## A\u00a0B\n\nBody.\n";
+    const green = repo({
+      "CLAUDE.md": `# cursor\n\nWhy: ${ptr("ab")}\n`,
+      "documentation/agent-notes.md": notes,
+    });
+    expect(runGate(["--root", green]).code).toBe(0);
   });
 
   it("does not read a four-space-indented hash line as a heading, matching CommonMark", () => {
