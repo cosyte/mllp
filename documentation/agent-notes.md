@@ -597,3 +597,99 @@ tolerate.
    honours `.gitignore`, where `dist/` lives. A behavioural self-test seeds a violation in a
    NUL-bearing file and refuses on silence. Verified red under an `-I`-forcing grep and green
    under GNU grep 3.8.
+
+## The two-file contract, and why this gate is not universal
+
+**`scripts/check-agent-notes.ts` (`pnpm check:agent-notes`) checks the pair this file is half
+of.** Three things, and nothing else: that `documentation/agent-notes.md` is tracked, that every
+section under a heading has a body, and that every pointer at it from any tracked file resolves
+to an anchor GitHub would actually mint. The enforcement is
+`test/scripts/agent-notes.test.ts`, which runs the real gate against this tree.
+
+**Why it needed a gate at all.** The split of 2026-08-04 moved the reasoning behind a link, which
+made the link load-bearing in a way it had never been. A rule in `CLAUDE.md` now reads "never do X.
+Why:" followed by an anchor into this file, and if that anchor does not exist the reader is left
+with an imperative and no grounding. That is the same "prose no test can check" shape this repo's
+own text keeps warning
+about, and it can break three ways with no red anywhere: the file is renamed or removed, a
+section is emptied to its heading, or an anchor is edited on one side of the pair and not the
+other. Twenty repos took the same split. None of them had a check for any of it.
+
+**▶ IT IS NAMED FOR WHAT IT CHECKS AND IT IS NOT A UNIVERSAL, AND THAT IS THE DECISION IN THIS
+SECTION.** The tempting framing is "every cosyte repo has a `CLAUDE.md` plus an
+`agent-notes.md`, so gate the contract". **Measured 2026-08-06 on the umbrella's own checkout:
+`config`, `hl7` and `workflow` have no `documentation/agent-notes.md` at all.** So the
+ecosystem-wide contract is either not universal or is broken in three places, and a gate written
+as though it were universal would assert something three repos disprove. That is an **overclaim**,
+and an overclaiming guard is worse than a narrow one: it invites a reader to trust a promise the
+tree does not keep, and the first repo that trips it deletes the gate rather than fixing anything.
+`ncpdp#64` paid for this rule in the other direction, where a `/^#{1,6} /` heading guard claimed
+more than it could see and two bypasses were reproduced against it. So this gate asserts **this**
+repo's promise. `mllp` has the file, `CLAUDE.md` points into it eighteen times, and `CLAUDE.md`
+sits at its byte budget with the narrative already relocated, so here the pointer relationship is
+real and paid for. Whether the other nineteen repos owe the same thing is a question for whoever
+owns the convention; it is not answered by a script inside one package.
+
+**It lives in this repo's own CI, which is the point.** The umbrella's automation plane is capped
+and a cross-repo checker would have to live there and grow with every repo added. A per-repo gate
+costs the cap nothing. Porting it means copying the **shape** into the sibling and re-deriving its
+scan surface, exactly as `check-no-internal-refs.sh` was ported here. It does not mean one shared
+script.
+
+**Existence is not observation, so the OK line reconciles.** The likeliest failure of a checker
+like this is not a wrong answer, it is a right-looking answer over a corpus it never opened. This
+repo has already shipped that exact defect once, in the PHI scanner, whose declared walk root had
+never existed and which therefore printed clean on every run it ever made. **A denominator does
+not detect it**, because a count counts the roots that DID exist. So the gate enumerates with
+`git ls-files`, accounts for every path as opened or skipped for a named reason, prints the
+arithmetic on the OK line, and **refuses (exit 2) if it does not balance**. It refuses on the same
+grounds when nothing is tracked, when a tracked path is missing or is not a regular file, and
+**when it finds zero pointers**: in this repo zero cannot be a clean tree, because `CLAUDE.md`
+opens by linking this file. That last refusal is grounded in what **this** repo contains and is
+one of the things a port has to re-derive rather than copy.
+
+**Exit 1 and exit 2 are different claims** and are split the way `phi-scan.ts` splits them: 1 is
+a finding a human acts on, 2 is "believe nothing I just said". Collapsing them would turn a broken
+scanner into a list of false findings, which reads as actionable and is worse than a crash.
+
+**Why no dedicated workflow.** `no-emdash.yml` and `no-internal-refs.yml` each exist because their
+gate is a bash script that the test suite cannot reach. This one is reachable, so it is enforced
+by a vitest case exactly as the `attw` wrapper and the changelog generator are, and it runs under
+`pnpm test` on the shared CI ladder with no new CI surface. `check-no-internal-refs.sh`'s residual
+(iv) is the reason stated positively: putting the same red in two places with two wordings is a
+cost, not a belt and braces.
+
+**Measured on the base commit (`ae5cd85`), by running the gate against a worktree of it: ZERO
+violations.** All 18 pointers resolved, all 19 sections had a body, 155 tracked paths reconciled
+as 154 opened plus 1 skipped as binary. This gate changed no content and exists purely to stop a
+regression, which is the same thing the em-dash gate could say when it landed. The figure is
+quoted with the tree it was taken on, per `check-no-internal-refs.sh` residual (xii).
+
+**What it deliberately does not do**, restated here because a disclosure that lives only in a
+script header gets read once: it does not assert anything about a sibling repo, it does not check
+any byte budget (the umbrella's `.claude/hooks/doc-budget.mjs` holds that table and a second copy
+of a number here would go stale), it does not check pointers at any other file's anchors, and **it
+cannot prove the prose a pointer lands on grounds the rule that cited it.** A section with a body
+is not a section with the right body. That half stays human. The script header carries the full
+list of matcher-level misses, each pinned by a test in the direction it actually fails.
+
+**The gate scans its own source and its own tests, and there is no exemption for either.** That is
+a decision, and it cost something: written out literally, the sample pointers in
+`test/scripts/agent-notes.test.ts` are pointers into THIS file, naming sections that exist only
+inside a throwaway repo. Measured, the first staged run of the finished gate produced **16
+findings against its own test file and three against its own header**, all real by its own rules.
+The remedy was the FIXTURE, not an exemption: the samples are assembled from a constant so they
+are not pointers, and both files stay in scope. `scripts/phi-scan.ts` is why. Its blanket `.ts`
+exemption, drawn one notch wider than a path, removed 72 of 76 tracked files under `test/` from
+both scan routes and left the gate running on three binaries. **A gate's own tests are exactly
+where a broken pointer would hide.** If you add a case here, assemble the pointer.
+
+The same run caught a real one: the paragraph in this section explaining WHY the gate exists used
+an illustrative anchor, and the gate reported it as dangling on the first run over the changed
+tree. The prose describing the gate was the first thing the gate found. That is the "remediation
+prose is itself a defect surface" note from `check-no-internal-refs.sh` trap (5), arriving in a
+new place.
+
+**Never clear a red here by deleting the pointer or the heading.** The remedy is to fix the anchor
+or restore the narrative. Deleting the pointer removes the grounding for the rule that cited it,
+which is the trap-deletion move `ADR 0023` exists to refuse, arriving through a different door.
