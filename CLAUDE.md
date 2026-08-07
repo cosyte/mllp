@@ -1,11 +1,19 @@
 # @cosyte/mllp: Project Guide for Claude
 
 **The narrative lives in [`documentation/agent-notes.md`](documentation/agent-notes.md).** This file
-is the cursor, the rules and the traps: one imperative line each, with a pointer into that file for
-the incident, the measurement and the reasoning that produced it. The two were split on 2026-08-04
-(`CLAUDE-MD-AUDIT`) and **nothing was deleted**; every paragraph that left is there verbatim, under a
-heading this file links to. If a rule below looks arbitrary, read its section before relaxing it.
-New narrative goes there, not here.
+is the cursor, the rules and the traps: one imperative line each, pointing into that file for the
+incident, the measurement and the reasoning behind it. Split 2026-08-04; **nothing was deleted**. If
+a rule below looks arbitrary, read its section before relaxing it. New narrative goes there, not
+here.
+
+**The pair is gated** (`pnpm check:agent-notes`, enforced by `test/scripts/agent-notes.test.ts`):
+that file must be tracked, every section must have a body (a container's is its subsections), and
+every pointer at it **in a file the gate opened** must resolve. **A NUL-bearing file is skipped: a disclosed miss, not a pass**; the
+tell is the skipped count. It asserts **this repo's promise, not a universal** (`config`, `hl7` and
+`workflow` carry no `agent-notes.md`), and **refuses (exit 2) rather than reporting green over a
+corpus it never opened**, reconciling paths as sets against `git ls-files`. **Never clear a red by
+deleting the pointer or the heading.** Why, and every disclosed miss:
+`documentation/agent-notes.md#the-two-file-contract-and-why-this-gate-is-not-universal`
 
 ## Project
 
@@ -15,24 +23,20 @@ New narrative goes there, not here.
 
 ## Status
 
-- **Phase 9 of 11.** Client / server / framing / connection / transport shipped; Phases 6 (fail-safe
-  ACK commit contract), 7 (`ack-from-hl7`), 8 (TLS/MLLPS + bind-safety) and 9 (real-world interop,
-  the §3 quirk corpus, the PHI/observability audit) are done. Next: `operations/roadmaps/mllp.md`.
-  What each phase actually shipped: `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
+- **Phase 9 of 11.** Client / server / framing / connection / transport shipped; Phases 6, 7, 8
+  and 9 are done. Next: `operations/roadmaps/mllp.md`. What each phase actually shipped:
+  `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
 - **For dev/test the `@cosyte/hl7` peer is a vendored packed tarball**
   (`vendor/cosyte-hl7-0.0.0.tgz`, a devDependency), interim until the cross-repo consumption
   decision lands. **Re-vendoring strips the `peerDependencies` entry: restore it afterwards.** The
   exact command sequence: `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
 - **This package is on the npm registry, and this file names no version, deliberately** (derive it:
-  `npm view @cosyte/mllp version`). The competing "not yet published to npm" claim is **closed,
-  measured stale 2026-08-06**: not in this file, and the registry serves this package. Never infer
-  repo visibility from publish state or the reverse: they are independent.
-  Never quote a version here, and never move a published version backwards. **Renamed
-  `@cosyte/hl7-mllp` to `@cosyte/mllp`** while migrating onto the shared `@cosyte/*` engineering
-  standard (Phase E); that was free only because it predated the first publish, and would not be
-  free now. Why both claims go stale:
+  `npm view @cosyte/mllp version`). Never quote a version here, never move a published version
+  backwards, and never infer repo visibility from publish state or the reverse: they are
+  independent. The competing "not yet published to npm" claim is **closed, measured stale
+  2026-08-06**, and the rename from `@cosyte/hl7-mllp` was free only because it predated the first
+  publish; it would not be free now. Why both claims go stale:
   `documentation/agent-notes.md#the-package-rename-and-the-publish-state-claim`
-- Sibling package: `@cosyte/hl7` (optional peer dep, not a runtime dep).
 
 ### The em-dash brand gate is armed
 
@@ -114,9 +118,8 @@ in `phi-scan-overrides.md`. The rules that came out of them:
 
 ## Tech Stack (the shared `@cosyte/*` standard)
 
-mllp inherits the canonical toolchain by depending on the published `@cosyte/*` config packages, not
-by copying files. The source of truth is the meta-repo's `documentation/conventions.md`. This is a
-summary.
+Inherited by depending on the published `@cosyte/*` config packages, never by copying files. Source
+of truth: the meta-repo's `documentation/conventions.md`. This is a summary.
 
 - **Language:** TypeScript (strict, full rigor set incl. `noUncheckedIndexedAccess`) via
   `@cosyte/tsconfig`. **Target ES2023**, `NodeNext`.
@@ -318,7 +321,3 @@ These bind every change in this repo (mirrored from the cosyte meta-repo's
      in a NUL-bearing file and refuses on silence.
    - **`CHANGELOG.md` is deliberately out of scope**, a recorded ecosystem-wide contradiction, not for
      one repo to settle.
-
-Build, lint, format, and TypeScript settings come from the shared `@cosyte/*` config packages
-(`@cosyte/tsconfig` · `@cosyte/eslint-config` · `@cosyte/prettier-config`; see
-`documentation/conventions.md` → "Canonical toolchain (enforced)"). Node ≥ 22.
