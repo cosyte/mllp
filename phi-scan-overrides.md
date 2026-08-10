@@ -418,6 +418,68 @@ index BEFORE the pre-commit hook runs, so this is not a route by which PHI reach
 a commit. What it fixes is the gate answering a question it cannot answer when
 `--staged` is run directly mid-conflict.
 
+## What the INDEX corpus reads, and what it still does not
+
+`all` mode reads the bytes git carries at every path in the index, as a **union** with the walk over
+`test/` and `src/`. Before this, the walk was the only thing the sweep asked, so every state in
+which the working tree stopped standing for the committed corpus reported `OK, no hits` at exit 0.
+**Eight were measured on `6eb1615` and all eight are now caught or refused**; the list, the controls,
+the mutants that kill each control and the full reasoning live at
+`documentation/agent-notes.md#phi-scan-index-corpus-the-bytes-git-carries`.
+
+**The contract, stated once here so a reader does not have to infer it from the code:**
+
+- **A union, never a replacement.** No walk root was narrowed and no clause was dropped. A file the
+  walk reads is still read off disk and still earns exactly the tiers it had.
+- **The skip is a BYTE comparison** (`Buffer.equals`), never a stat, an mtime or a hash. Those are
+  what a decoy defeats. A path whose committed bytes differ from the file on disk is scanned **both**
+  ways and reported under two headings, because they are two different findings about one path.
+- **Markdown is excluded**, which is `walk()`'s own rule copied rather than invented.
+- **Gitignore is NOT consulted** on this route: an entry in the index is commit-eligible content by
+  construction, whatever a pattern says about it.
+- **A non-regular index entry refuses the whole sweep (exit 2)** and is named by KIND only. For a
+  mode-`120000` link git carries the target PATH and for a mode-`160000` gitlink it carries another
+  repository's commit id; neither is content. The target is never printed, because a link target is
+  working-tree text that can itself carry PHI.
+- **An unmerged entry refuses (exit 2).** Neither side of a conflict is what a commit would contain.
+  **This now includes an unmerged `*.md`**, because the refusals deliberately run before the name
+  filter. Named because it has a local cost: a conflict on `CHANGELOG.md` makes `pnpm phi-scan` exit
+  2 until it is resolved. `--staged` (the pre-commit hook) is unaffected, and CI never has an
+  unmerged index.
+- **An EMPTY index refuses (exit 2)** rather than passing vacuously.
+- **`--staged` is unchanged.** It is the pre-commit gate, so what it enumerates decides what a commit
+  is BLOCKED on, which makes widening it a hook decision with its own argument. **The red-lock reason
+  a sibling records for this class does NOT apply here**: `DELIBERATE_VIOLATOR_SOURCES` is applied in
+  `scanTarget`, keyed on path and blind to mode, so this repo's suite is already in `--staged`'s
+  scope and already exempt there.
+- **The per-root observation rule is unchanged** and remains a statement about the WALK: a root
+  emptied on disk still refuses even though the index holds every file under it.
+
+**Residuals, stated rather than hidden:**
+
+- **🛑 READING IS NOT TIERING, AND THIS ROUTE ONLY BUYS THE FIRST.** Every index entry is now READ,
+  but WHICH detectors it earns is still `looksLikeHl7`'s decision, untouched here. Outside `test/`
+  that gate wants a `.hl7` or `.bin` name, so a tracked capture at `examples/data/capture.txt`, or an
+  extensionless one, gets the conservative SSN/email floor and nothing else. **Measured: the same
+  bytes carrying PID-3 / PID-5 / PID-7 / PID-11 exit 1 at `capture.hl7` and 0 at `capture.txt`.**
+  Pinned as a characterization case so the boundary is visible rather than surprising. **Do not close
+  it by giving every index entry the structured scan**: handing `package.json`, `pnpm-lock.yaml` or a
+  workflow YAML to `scanHl7` reports identifiers and prose as person names through
+  `checkUnknownSegment`'s backstop, and it would silently reverse the standing `src/` decision.
+  Enumeration alone buys the floor and nothing more; widening the TIER rule is its own slice.
+- **Working-tree bytes at a path OUTSIDE every walk root are read by neither route**, tracked or not.
+  A tracked file out there with unstaged edits is judged on its **staged** bytes. Closing it needs a
+  third enumeration.
+- **Markdown is swept by nothing.** Measured: dropping the `.md` exclusion reds nothing on this
+  corpus today, so the exclusion costs no detection at present.
+- **EOL normalization would double every count** under `eol=crlf` or `core.autocrlf` (neither is set
+  here). **It must NOT be fixed by normalizing before comparing**: that compares a derived form, and
+  a decoy differing only in what the normalizer erases would be skipped. Fail-safe, not fail-open.
+
+**This is a DETECTIVE control, not a preventive one.** It runs after the write has landed in the
+index. It is not a hook, it does not stop a `git add`, and it must not be described as preventing a
+leak.
+
 ## Format
 
 Each entry is a markdown subsection:

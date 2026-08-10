@@ -328,6 +328,151 @@ thing a rule guards, or when you are tempted to relax one. Every paragraph here 
   dangling one. **`walk()` no longer lets any `readdir` failure leave the process**: every one
   other than `ENOENT` is an InvocationError, so the exit code says refusal and not finding.
 
+## PHI-SCAN-INDEX-CORPUS, the bytes git carries
+
+**`all` mode now reads the bytes git carries at every path in the index, as a UNION with the walk**
+(`scripts/phi-scan.ts`, `buildTargetsForIndex`). Before this, the walk over `test/` and `src/` was
+the only thing the sweep ever asked, and nothing reconciled it against what git actually holds, so
+every state in which the working tree stopped standing for the committed corpus printed
+`[phi-scan] OK, no hits` and exited **0**.
+
+**Red at base: 8 of 8**, each measured on `6eb1615` over a payload carrying a live-shaped
+PID-3 / PID-5 / PID-7 / PID-11, each now pinned by a case in `test/scripts/phi-scan.test.ts`:
+
+1. `test/` swapped for a directory **mirroring the tracked names** over clean contents;
+2. one tracked fixture replaced on disk by a clean decoy;
+3. a tracked message under an **undeclared top-level directory**;
+4. a tracked file **absent** from the working tree;
+5. `test/` replaced by a **symlink** to a directory of decoys;
+6. a tracked **symlink outside every walk root**;
+7. an **unmerged index entry outside every walk root** (`refuseUnmergedPaths` is scoped to
+   `isUnderScanRoot`, so the pre-commit route never saw it);
+8. an **empty index**, against which every check passes vacuously.
+
+**▶ A PATH-SET RECONCILIATION WOULD NOT HAVE CLOSED THESE.** State 1 mirrors the tracked names
+exactly and differs only in content: every root still yields and every path still matches.
+**The skip is therefore a BYTE comparison, never a stat, an mtime or a hash**: those are precisely
+what a decoy defeats. The blob is fetched either way, so the comparison costs one `Buffer.equals`.
+
+**▶ IT FOUND REAL UNSCANNED CORPUS, not a hypothetical.** 32 tracked non-markdown files sat outside
+both walk roots and had never been read by either route. Derived, because a first draft of this
+decomposition was wrong twice: `scripts/` 9, `.github/` 8, **11** root files, `docs-content/` 1
+(`sidebars.json`, its 8 pages being markdown), `.changeset/` 1, `.claude/` 1, `vendor/` 1, and
+`documentation/` **0** (its only tracked file is this one, which is markdown). Two carried a reported
+token, both already committed, neither PHI: the published `author` address in `package.json`, and
+the metavariable placeholders `<family>` / `<given>` in this scanner's own docblock. Both are
+declared in `scripts/phi-allow-list.txt` **with their cost written beside them**: the
+`EMAILDOMAIN` entry is global and route-blind, and that is stated rather than glossed.
+
+**▶ CONTROLS, AND EACH IS PROVED ABLE TO FAIL BY MUTATING THE ROUTE.** A control nobody has watched
+go red is indistinguishable from one that cannot.
+
+| control | killed by |
+|---|---|
+| clean repo, tree and index agree, exits 0 | never-skip **composed with** fire-on-presence |
+| a clean tree/index divergence is not a finding | treating divergence itself as a finding |
+| a violator in both at identical bytes is reported ONCE (4 hits) | never-skip (4 hits becomes 8) |
+| an EMPTIED walk root still refuses though the index holds its files | crediting index targets to the per-root rule |
+| an ABSENT walk root stays legitimate | treating an `ENOENT` root as starved |
+
+**The first row is the one worth reading.** No single mutation kills it, and that is a property of
+the design rather than a weak test: in a healthy repo the byte comparison removes **every** index
+target, so there is nothing left for a per-target mutation to corrupt. It takes the composition.
+
+**▶ WHAT DOES NOT TRANSFER FROM `hl7`, RE-DERIVED HERE RATHER THAN PORTED.**
+
+- **Exit codes are this repo's own.** 2 for a refusal, 1 for hits, measured on `6eb1615`, not read
+  off a sibling. A regular-file walk root exits **2** here (it exits **1** in `terminology`).
+- **`--staged` IS DELIBERATELY UNCHANGED.** `hl7` has no `DELIBERATE_VIOLATOR_SOURCES` at all, so
+  the sibling trap does not exist there, and **its absence must not read as "safe to widen" here.**
+  It is a HOOK decision, it changes what a commit is BLOCKED on, and it has been declined three
+  times. **🛑 BUT THE RED-LOCK REASON THE ORG-LEVEL NOTE GIVES IS FALSE FOR THIS REPO, and it was
+  repeated here before being checked.** That note says `DELIBERATE_VIOLATOR_SOURCES` is `all`-mode
+  only, so widening the predicate red-locks every commit touching the scanner's own suite. Measured
+  in this repo: the exemption is applied once, in `scanTarget`, keyed on the path and **blind to the
+  mode**, and `buildTargetsForStaged` already admits `test/**`, so the suite is in `--staged`'s scope
+  today and already exempt there. `paths` mode over the suite exits 0, which the committed suite
+  pins. **The decision stands; the stated reason was a sibling's and does not survive re-derivation
+  here.** This is the item's own trap landing on this slice: a census by text search is not a
+  census.
+- **EOL normalization does not fire here** (no `.gitattributes`, `core.autocrlf` unset, measured).
+  Under `eol=crlf` every blob diverges, the skip stops firing and every count doubles: fail-safe but
+  wrong-looking. **🛑 It MUST NOT be fixed by normalizing before comparing**: normalizing compares a
+  DERIVED form, and a decoy differing only in what the normalizer erases would then be skipped.
+- **Gitlinks.** A mode-`160000` entry refuses the sweep permanently. This repo tracks none today and
+  has no `.gitmodules`, so the arm costs nothing; it would be fatal in a repo with a real submodule,
+  and an orphan agent-worktree gitlink is the live way to acquire one.
+  **🛑 AND THE MODE CENSUS IS NOT UNIFORM, WHICH A DRAFT OF THIS LINE GOT WRONG.** It read "every one
+  of its 157 index entries is `100644`". Measured at `6eb1615`: **155 are `100644` and 2 are
+  `100755`** (`scripts/check-no-emdash.sh`, `scripts/check-no-internal-refs.sh`). The conclusion
+  survives only because `REGULAR_BLOB_MODES` admits **both**. Anyone who trusts the retracted
+  sentence and narrows that set to `{100644}` red-locks the repo permanently on those two files.
+- **🛑 THE TIER-BOUNDARY CHARACTERIZATION CASE MUST NOT BE COPIED.** It asserts exit 0 and
+  `OK, no hits` over live-shaped PID-3 / PID-5 / PID-7 / PID-11 bytes, which is only correct where
+  the tier rule is **this** repo's `looksLikeHl7`. The backlog names `mllp` as a copy source for this
+  class, so the risk is concrete: ported into a repo whose gate admits more, that assertion pins a
+  FALSE CLEAN. Copy the union route if you like; re-derive the tier case from the target repo.
+- **Repo-specific either way:** the walk roots are `test/` and `src/` (two, not three); the `.md`
+  exclusion is `walk()`'s own rule, copied rather than invented; the index route does **not** consult
+  gitignore, because an entry in the index is commit-eligible content by construction; and the
+  allow-list additions are this repo's.
+
+**▶ RESIDUALS, MEASURED AND NOT CLOSED.**
+
+- **🛑 READING IS NOT TIERING, AND THIS ROUTE ONLY BUYS THE FIRST.** Every index entry is now READ,
+  but WHICH detectors it earns is still `looksLikeHl7`'s decision, untouched here. Outside `test/`
+  that gate wants a `.hl7` or `.bin` name, so a tracked capture at `examples/data/capture.txt`, or an
+  extensionless one, gets the conservative SSN/email floor and nothing else. **Measured: the same
+  bytes carrying PID-3 / PID-5 / PID-7 / PID-11 exit 1 at `capture.hl7` and 0 at `capture.txt`.**
+  Pinned as a characterization case so the boundary is visible rather than surprising. **Do not close
+  it by giving every index entry the structured scan**: handing `package.json`, `pnpm-lock.yaml` or a
+  workflow YAML to `scanHl7` reports identifiers and prose as person names through
+  `checkUnknownSegment`'s backstop, and it would silently reverse the standing `src/` decision.
+  Enumeration alone buys the floor and nothing more; widening the TIER rule is its own slice.
+- **Working-tree bytes at a path OUTSIDE every walk root are read by neither route**, tracked or
+  not. A tracked file out there with unstaged edits is judged on its **staged** bytes, and an
+  untracked file out there is not read at all. Closing it needs a third enumeration.
+- **Markdown stays out of the index corpus**, so `docs-content/*.md`, `CHANGELOG.md` and this file
+  are not swept. Measured: dropping the `.md` exclusion reds **nothing** on this corpus today, so
+  the exclusion currently costs no detection. Widening it is its own slice.
+- **The tolerated-vanish window is WIDER than at base, by one phase.** Base computed the tracked set
+  inside `buildTargetsForAll`, AFTER the walk enumerated; head snapshots it from the index BEFORE the
+  walk. A path staged between that snapshot and its read now reads as untracked, so it is tolerated
+  where base refused, and it is invisible to the index route as well (staged after the snapshot). It
+  needs a concurrent `git add` during a sweep and it is never silent (the file is named on stderr),
+  so it is disclosed rather than closed. **The vanish RE-CHECK window is unchanged**, because that
+  block still runs before the index route. "No clause was dropped" is a statement about the
+  enumeration, and it does not cover this.
+- **The clean stdout line is not qualified when files were skipped.** The skip is always named on
+  stderr, so it is loud rather than silent, but a reader watching stdout alone sees an unqualified
+  `OK, no hits`. Pre-existing; deliberately not changed here.
+
+**▶ WHAT IS MEASURED AND WHAT IS PINNED ARE NOT THE SAME LIST, so both are named.** The real repo's
+`OK, no hits` was pinned beside a POSITIVE CONTROL: a violator blob injected into a COPY of the real
+157-entry index (through `GIT_INDEX_FILE`, the real index untouched) is reported at exit 1, so the
+clean result is a clearance and not a detector zero. **That was a hand measurement, not a committed
+case**: nothing in the suite runs the scanner against this repo's own index. What regression-locks
+it is CI running `pnpm phi-scan` on the real tree, which is the same thing `verify.sh` now does.
+**That last clause is UNVERIFIED FROM INSIDE THIS REPO and is stated as such**: `.github/workflows/ci.yml`
+is a thin caller of the `cosyte/.github` reusable workflows, which cannot be read from here, so the
+`run-phi-scan: true` input is trusted rather than confirmed. `verify.sh` running it locally IS
+confirmed.
+**Also unpinned, and fail-safe rather than silent:** the blob-budget ceiling, the `--batch-check`
+short-answer guard, the three unrecognized-record refusals, the short-content guard and the
+object-count reconciliation. Each exits 2; none has a case, because reaching them needs a malformed
+object store.
+
+**▶ `phi-scan` IS DETECTIVE, NOT PREVENTIVE, ON EVERY ROUTE.** It runs after the write has landed in
+the index. It is not a hook and it does not stop a `git add`. Do not describe it as preventing a
+leak.
+
+**▶ THE TEST HARNESS'S `gitShim` NOW FILTERS BY SUBCOMMAND, AND THAT IS LOAD-BEARING.** The TOCTOU
+cases need a hook in one gap: after the walk enumerates, before the first read. An unconditional
+shim used to land there only because `git check-ignore` happened to be the first git call `all` mode
+made. It no longer is (the index is read BEFORE the walk), so an unconditional shim fires a whole
+phase early, removes the decoy before the walk can enumerate it, and every one of those cases
+quietly starts proving something else while still passing on the exit code alone.
+
 ## The package rename and the publish-state claim
 
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed

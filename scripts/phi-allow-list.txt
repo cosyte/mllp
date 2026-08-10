@@ -166,3 +166,37 @@ EMAILDOMAIN example.com
 EMAILDOMAIN example.org
 EMAILDOMAIN example.net
 EMAILDOMAIN example.test
+
+# --- Tokens the INDEX corpus reached first ----------------------------------
+# `all` mode now also reads the bytes git carries at every path in the index, not
+# only the files under `test/` and `src/`. That opened 32 tracked non-markdown
+# files that NEITHER route had ever read, and two of them carried a token this
+# scanner reports. Both were already committed; neither is new content and
+# neither is PHI.
+#
+# `package.json` : the published `author` field, `Cosyte <hello@cosyte.com>`.
+# COST, STATED BECAUSE IT IS GLOBAL AND ROUTE-BLIND: this allow-list has no
+# exact-address tag, only EMAILDOMAIN, so declaring this one address switches the
+# email detector off for EVERY address at this domain, in every file, on every
+# route. That is accepted deliberately: `cosyte.com` is the company's own domain
+# and a patient's contact address is never at it, so the detection actually given
+# up is a corporate address the gate should not be reporting anyway. It is NOT a
+# licence to add a domain a patient could plausibly be reached at. Narrowing this
+# would mean adding an exact-address tag to the format, which every sibling's
+# allow-list parser would then diverge on: its own slice, not this one.
+EMAILDOMAIN cosyte.com
+#
+# `scripts/phi-scan.ts` : `<family>` and `<given>`, the METAVARIABLE PLACEHOLDERS
+# in this scanner's own docblock for `extractEmbeddedHl7`, which documents the
+# shape `"PID|1||<mrn>^^^HOSP^MR||<family>^<given>||<dob>|F"`. The recogniser
+# recovers that run and reads the two placeholders as PID-5 name components,
+# which is the detector working correctly on text that only looks like a message.
+# COST: these two words are now allowed as name tokens corpus-wide, so a patient
+# whose actual name is "Family" or "Given" is not reported. Accepted as
+# negligible against the alternatives, both of which are worse: exempting
+# `scripts/phi-scan.ts` wholesale via DELIBERATE_VIOLATOR_SOURCES would drop the
+# SSN / email floor on the scanner's own source (the gate excusing itself), and
+# teaching the detector to ignore `<...>`-wrapped tokens would weaken it for
+# every real fixture, since `<` is not special in HL7 v2.
+NAME FAMILY
+NAME GIVEN

@@ -80,14 +80,13 @@ in `phi-scan-overrides.md`. The rules that came out of them:
   deliberately `test/` and `src/` and not the repo root. **What `test/` ADMITS is a separate
   question from what the ROOTS are, and the two must not be conflated.**
 - **▶ A `.ts` SOURCE UNDER `test/` IS SCANNED, AND WIDENING IS TWO-SIDED**
-  (`PHI-SCAN-WALK-ROOT-SCOPE`). The old blanket `.ts` exclusion removed **72 of 76** tracked files
-  under `test/` from BOTH routes and left the gate on three framed binaries. **The enumeration half
-  alone finds nothing**: every detector assumes the file IS the document and wants a segment id at
-  the START of a line, so a `PID` in a string literal exited 0 even when NAMED EXPLICITLY on argv.
-  `extractEmbeddedHl7` is the other half. **Never widen one without the other, and never delete the
-  extractor believing the walk covers it.** Its `|` anchor is load-bearing: any-delimiter matched
-  prose. **No match count is recorded, on purpose; derive it (`documentation/agent-notes.md`).** The violator exemption is **per-path and total**
-  (`DELIBERATE_VIOLATOR_SOURCES`), never per-extension.
+  (`PHI-SCAN-WALK-ROOT-SCOPE`). **The enumeration half alone finds nothing**: every detector wants a
+  segment id at the START of a line, so a `PID` in a string literal exited 0 even when NAMED
+  EXPLICITLY on argv. `extractEmbeddedHl7` is the other half, its `|` anchor is load-bearing, and
+  the violator exemption is **per-path and total** (`DELIBERATE_VIOLATOR_SOURCES`), never
+  per-extension. **Never widen one half without the other, and never delete the extractor believing
+  the walk covers it.** Figures, and why no match count is recorded:
+  `documentation/agent-notes.md#phi-scan-walk-root-scope-and-phi-scan-observed-nothing-is-global`
 - **`src/` KEEPS THE CONSERVATIVE PASS ONLY, and that is a decision, not an oversight.** Its JSDoc
   `@example` snippets are deliberately not held to the segment-aware detectors. Do not reverse it as
   a side effect of a change about `test/`.
@@ -100,20 +99,22 @@ in `phi-scan-overrides.md`. The rules that came out of them:
   `.md` and per-path violator exemptions deliberately do NOT carry over to a non-regular entry**,
   because they judge bytes the route could read. (A `.ts` exemption is named here in no other form:
   the blanket one is gone.)
-- **▶ `--diff-filter` MUST KEEP `T`.** Replacing a tracked file with a link is neither add nor
-  modify; measured on git 2.39.5, `AM` yields an empty raw stage and passed mode `120000` green.
-- **`--no-renames` stays.** With rename detection on, `R`/`C` carry two paths and the two-field
-  stride drops the record; with it off the destination arrives as a single-path `A` and the
-  enumeration is a strict superset. **The "admitting them needs a two-path record shape" framing was
-  FALSE and ported in from a sibling: do not restore it.**
+- **▶ `--diff-filter` MUST KEEP `T`, AND `--no-renames` STAYS.** Each was forced by a measurement at
+  pre-commit, and the "admitting them needs a two-path record shape" framing was **FALSE and ported
+  in from a sibling: do not restore it.** Both measurements:
+  `documentation/agent-notes.md#phi-scan-rename-blind-at-precommit`
 - **A refusal never reports the link target** (working-tree text that can itself carry PHI).
 - **A refusal exits 2, never 1.** Exit 1 is reserved for "hits found", so an uncaught throw is a
   false finding, which reads as actionable and is worse than a crash. **`walk()` no longer lets any
   `readdir` failure leave the process**: `ENOENT` narrows the enumeration and every other code
-  becomes an `InvocationError`. **Two documents disagree about the leftovers and neither is
-  authoritative**: `phi-scan-overrides.md` still records the `existsSync`->`readdirSync` race as
-  exiting 1 and unpinned, which reads stale against `scripts/phi-scan.ts` as it stands. Re-measure
-  before relying on either, and do not restate "no failure can exit 1" as settled.
+  becomes an `InvocationError`. **Two documents disagree about the leftovers, neither is
+  authoritative, and `phi-scan-overrides.md` is the stale one.** Re-measure before relying on
+  either, and never restate "no failure can exit 1" as settled.
+- **▶ ALL MODE ALSO READS THE BYTES GIT CARRIES, AS A UNION WITH THE WALK.** Decoys at the tracked
+  names satisfy the walk alone: 8 states printed `OK, no hits` at exit 0. **The skip is a BYTE
+  comparison, so never normalize EOL before comparing.** A tracked link/gitlink in the index
+  refuses; **`--staged` stays UNCHANGED** (it decides what a commit is BLOCKED on).
+  `documentation/agent-notes.md#phi-scan-index-corpus-the-bytes-git-carries`
 - **Do not "resync" any of this to a sibling parser's scope, and do not soften it.**
 
 ## Tech Stack (the shared `@cosyte/*` standard)
