@@ -1,0 +1,21 @@
+---
+"@cosyte/mllp": patch
+---
+
+Internal PHI-scan tooling: the all-mode sweep now reads the bytes git carries, not only the working tree. No runtime, API or published behaviour change.
+
+`all` mode walked `test/` and `src/` on disk and reported what it found there, and nothing reconciled that against what git actually carries. A directory of decoys at the tracked names satisfied it completely: every root still yielded, every path still matched, and the committed corpus went unopened while the gate printed `[phi-scan] OK, no hits` and exited 0.
+
+The sweep now also reads the bytes git carries at every path in the index, as a union with the walk. No walk root was narrowed and no clause was dropped: a file the walk reads is still read off disk with exactly the tiers it had. An index blob whose bytes the walk already read is skipped by byte comparison, never by stat, mtime or hash, which is what a decoy defeats.
+
+Eight states that printed a clean result at exit 0 are closed, each measured against the base commit `6eb1615` and each pinned by a case: a walk root swapped for a directory mirroring the tracked names; one fixture replaced by a clean decoy; a message under an undeclared top-level directory; a tracked file absent from the working tree; PHI behind a walk root that is itself a symlink; a tracked symbolic link outside every walk root; an unmerged index entry outside every walk root; and an empty index, whose every check passed vacuously.
+
+Five controls, each proved able to fail by mutating the route: a clean repo exits 0; a clean working-tree divergence exits 0; a violator in both the tree and the index is reported once; an emptied walk root still refuses though the index holds its files; and an absent walk root stays legitimate. The first is killed only by a composition of two mutations, because in a healthy repo the byte comparison leaves no index target for a single mutation to corrupt.
+
+It found real unscanned corpus. Thirty-two tracked non-markdown files sat outside both walk roots and had been read by neither route. Two carried a reported token, both already committed and neither PHI: the published author address in `package.json`, and the metavariable placeholders in this scanner's own docblock. Both are declared in the allow-list with their cost written beside them, including the fact that an email-domain entry is global and route-blind.
+
+Deliberately unchanged: the pre-commit route keeps its own scope, because what it enumerates decides what a commit is blocked on, which makes widening it a hook decision with its own argument; and the per-root observation rule stays a statement about the walk, so a root emptied on disk still refuses. Detective, not preventive, on every route.
+
+One behaviour change worth naming rather than burying: because the refusals deliberately run before the name filter, an unmerged `*.md` now refuses the all-mode sweep at exit 2 where it was previously skipped. It is fail-safe and consistent, but it has a local cost, since a conflict on `CHANGELOG.md` makes `pnpm phi-scan` exit 2 until it is resolved. The pre-commit route is unaffected and CI never has an unmerged index.
+
+Residual, measured. Reading an index entry is not the same act as tiering it: outside `test/` the detector gate still wants a `.hl7` or `.bin` name, so the same bytes exit 1 at `examples/data/capture.hl7` and 0 at `examples/data/capture.txt`. That is disclosed and pinned as a characterization case rather than closed, because handing a manifest or a lockfile to the segment parser would report identifiers and prose as person names. Working-tree bytes at a path outside every walk root are read by neither route, tracked or not, so a tracked file out there with unstaged edits is judged on its staged bytes. The tolerated-vanish window is one phase wider than at base, because the index is read before the walk; it is never silent, and the vanish re-check window is unchanged. Two conditions that do not fire here and will fire in a sibling are recorded in the scanner: end-of-line normalization makes every blob diverge and must not be answered by normalizing before comparing, and a gitlink refuses the sweep permanently. Exit codes are this repo's own and were derived rather than ported.

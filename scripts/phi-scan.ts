@@ -475,6 +475,17 @@ interface Hit {
   segment: string; // segment id + field (e.g. "PID-5") or "(text)"
   value: string;
   reason: string;
+  /**
+   * WHERE the bytes came from, set only when they are NOT the working-tree file
+   * at `path`. `undefined` means the walk read the file on disk, which is what
+   * every hit meant before the index corpus existed.
+   *
+   * It is stamped by the caller after a target is scanned, not passed down
+   * through every detector: the detectors take a path and know nothing about
+   * enumeration, and threading an origin through all nine of them would be a
+   * wide change for a reporting concern.
+   */
+  origin?: string;
 }
 
 interface AllowList {
@@ -720,6 +731,12 @@ interface Target {
    * a content-addressed sweep, which is a different design, not a wider bound.
    */
   tolerateVanish?: boolean;
+  /**
+   * Set only on a target whose bytes came out of the git index rather than off
+   * disk. It is stamped onto every hit that target produces, so a report can
+   * say which of the two the finding is about; see `report`.
+   */
+  origin?: string;
 }
 
 /**
@@ -991,34 +1008,18 @@ function gitIgnored(paths: string[]): Set<string> {
 }
 
 /**
- * Every path git tracks, or `null` when git could not answer. `null` means the
- * tolerance above is switched off entirely (fail closed): without the tracked
- * set we cannot tell a transient from committed content.
+ * THE TRACKED SET IS NOW THE INDEX'S OWN PATHS, read once by `readIndex` and
+ * handed in, and that replaces a `gitTracked()` that swallowed its own failure.
  *
- * An EMPTY answer counts as no answer for the same reason. `git ls-files` exits
- * 0 with no output for a repo whose index is empty (or removed, which does not
- * raise), and an empty set would make EVERY file untracked, which is the one
- * state in which the tracked-file bound silently stops existing. This repo
- * always tracks files, so there is no legitimate empty case here.
+ * The old shape returned `null` when git could not answer or answered empty,
+ * which switched the vanish tolerance off (fail closed for THAT bound) and then
+ * let the sweep go on to publish a verdict over the working tree alone. The
+ * bound it protected was never the problem; the verdict was. `all` mode now
+ * reads the bytes git carries as part of the sweep, so a git that cannot answer
+ * REFUSES (exit 2) instead, at `readIndex`, and this function is only ever
+ * called with a populated set.
  */
-function gitTracked(): Set<string> | null {
-  try {
-    // SECURITY: array-form execFileSync, no shell. `-z` is NUL-separated and
-    // unquoted, so it matches the walk's forward-slash relative paths exactly.
-    const out = execFileSync("git", ["ls-files", "-z"], {
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const tracked = new Set<string>();
-    for (const p of out.toString("utf8").split("\0")) {
-      if (p.length > 0) tracked.add(p);
-    }
-    return tracked.size > 0 ? tracked : null;
-  } catch {
-    return null;
-  }
-}
-
-function buildTargetsForAll(walkedRoots: string[]): Target[] {
+function buildTargetsForAll(walkedRoots: string[], tracked: ReadonlySet<string>): Target[] {
   const unscannable: Unscannable[] = [];
   const badRoots: Unscannable[] = [];
   const testFiles: string[] = [];
@@ -1059,7 +1060,6 @@ function buildTargetsForAll(walkedRoots: string[]): Target[] {
     throw new InvocationError(`refusing the scan: ${blocks.join("\n")}`);
   }
 
-  const tracked = gitTracked();
   return files
     .map(({ abs, root }) => ({ abs, root, rel: normalizePath(abs) }))
     .filter(({ rel }) => !ignored.has(rel))
@@ -1068,7 +1068,7 @@ function buildTargetsForAll(walkedRoots: string[]): Target[] {
       root,
       read: () => readFileSync(abs),
       absPath: abs,
-      tolerateVanish: tracked !== null && !tracked.has(rel),
+      tolerateVanish: !tracked.has(rel),
     }));
 }
 
@@ -1281,6 +1281,400 @@ function buildTargetsForStaged(): Target[] {
           }),
       }))
   );
+}
+
+// ---------------------------------------------------------------------------
+// The index corpus: the bytes git carries
+// ---------------------------------------------------------------------------
+
+/**
+ * ▶ THE WALK WAS THE ONLY THING ALL MODE EVER ASKED, AND A DIRECTORY OF DECOYS
+ * ANSWERS IT.
+ *
+ * `all` mode walked `test/` and `src/` on disk and reported what it found there.
+ * Nothing reconciled that against what git actually carries, so every state in
+ * which the working tree stopped standing for the committed corpus printed
+ * `[phi-scan] OK, no hits` and exited 0. Eight were measured on `6eb1615`,
+ * each over a payload with a live-shaped PID-3 / PID-5 / PID-7 / PID-11:
+ *
+ *   - `test/` swapped for a directory MIRRORING the tracked names over clean
+ *     contents (the sharp one: every root still yields, so no count and no
+ *     path-set reconciliation can see it);
+ *   - one tracked fixture replaced on disk by a clean decoy;
+ *   - a tracked message under an UNDECLARED top-level directory, which is
+ *     invisible to the walk (not under a root) and to `--staged` (not under
+ *     `isUnderScanRoot`) alike;
+ *   - a tracked file simply ABSENT from the working tree;
+ *   - `test/` replaced by a SYMLINK to a directory of decoys (`readdirSync`
+ *     follows, so the walk reads the decoys and calls the root healthy);
+ *   - a tracked SYMLINK outside every walk root;
+ *   - an UNMERGED index entry outside every walk root (`refuseUnmergedPaths` is
+ *     scoped to `isUnderScanRoot`, so it never saw it);
+ *   - an EMPTY index, against which any reconciliation passes vacuously.
+ *
+ * THE REMEDY IS A UNION, NOT A REPLACEMENT, AND THAT IS LOAD-BEARING. No walk
+ * root was narrowed and no clause was dropped: a file the walk reads is still
+ * read off disk and still earns exactly the tiers it had. What is added is a
+ * second enumeration that reads the bytes git carries at every path in the
+ * index, so the two routes together are a strict superset of the walk alone.
+ *
+ * THE SKIP IS A BYTE COMPARISON, NEVER A STAT, AN MTIME OR A HASH. `git
+ * diff-files` and every timestamp test are precisely what a decoy defeats, and
+ * a hash would bind this to the repository's object format. The blob is fetched
+ * either way, so comparing it against what the walk already read costs one
+ * `Buffer.equals` and skips only a path whose committed bytes have provably
+ * been scanned already.
+ *
+ * ▶ IT IS DETECTIVE, NOT PREVENTIVE, ON EVERY ROUTE. This runs after the write
+ * has landed in the index. It is not a hook and it does not stop a `git add`.
+ *
+ * ▶ WHAT THIS DELIBERATELY DOES NOT DO, so a later reader does not "finish" it:
+ *   - it does not touch `--staged`. That route is the PRE-COMMIT gate, so what
+ *     it enumerates decides what a commit is BLOCKED on. That is a hook decision
+ *     with its own argument, and it has been declined three times on its own
+ *     merits; it is not a side effect of this one.
+ *     🛑 AND THE REASON IS NOT THE ONE A SIBLING RECORDS. The org-level note for
+ *     this class says widening the predicate red-locks every commit touching the
+ *     scanner's own suite, because `DELIBERATE_VIOLATOR_SOURCES` is `all`-mode
+ *     only there. THAT IS FALSE HERE, measured: this repo applies the exemption
+ *     in `scanTarget`, keyed on the path and blind to the mode, and
+ *     `buildTargetsForStaged` already admits `test/**`, so the suite is in
+ *     `--staged`'s scope today AND already exempt there. Do not repeat the
+ *     red-lock sentence in this repo; the reason to leave `--staged` alone is
+ *     that it decides what a commit is blocked on, and nothing more;
+ *   - it does not credit the per-root observation rule. That rule is a statement
+ *     about the WALK, so a root emptied on disk still refuses (exit 2) even
+ *     though every file under it was just read out of the index;
+ *   - it does not consult `.gitignore`. An entry in the index IS commit-eligible
+ *     content by construction, whatever a pattern says about it.
+ *
+ * ▶ RESIDUAL, MEASURED AND NOT CLOSED: working-tree bytes at a path OUTSIDE
+ * every walk root are read by neither route, tracked or not. A tracked file out
+ * there with unstaged edits is judged on its staged bytes, and an untracked file
+ * out there is not read at all. Closing it needs a third enumeration.
+ *
+ * ▶ 🛑 READING IS NOT THE SAME ACT AS TIERING, AND THIS ROUTE ONLY BUYS THE
+ * FIRST. Every index entry is now READ, but WHICH detectors it earns is still
+ * `looksLikeHl7`'s decision, unchanged by this work. Outside `test/` that gate
+ * wants a `.hl7` or `.bin` name, so a tracked capture at
+ * `examples/data/capture.txt`, or an extensionless one, gets the conservative
+ * SSN/email floor and nothing else. Measured: the same bytes carrying PID-3 /
+ * PID-5 / PID-7 / PID-11 exit **1** at `examples/data/capture.hl7` and **0** at
+ * `examples/data/capture.txt`. Pinned as a characterization case, so the
+ * boundary is visible rather than surprising.
+ *
+ * DO NOT "FIX" THAT BY GIVING EVERY INDEX ENTRY THE STRUCTURED SCAN. Handing
+ * `package.json`, `pnpm-lock.yaml` or a workflow YAML to `scanHl7` is actively
+ * wrong: any line of three word characters and a delimiter reads as a segment to
+ * `SEGMENT_LINE_RE`, and an unrecognized id falls to `checkUnknownSegment`'s
+ * name backstop, which would report identifiers and prose as person names. It
+ * would also silently reverse the standing decision that `src/` keeps the
+ * conservative pass. Widening the TIER rule is its own slice, with its own
+ * argument, and this one deliberately does not take it: the enumeration was the
+ * defect, and enumeration alone buys the SSN/email floor and nothing more.
+ */
+const INDEX_ORIGIN = "git index";
+
+/**
+ * The label for a path the walk DID read, whose committed bytes are not the
+ * bytes on disk. Kept apart from `INDEX_ORIGIN` because the remedy differs: a
+ * divergent path needs the corrected file re-staged, while a path the walk never
+ * reached is fixed like any other file.
+ */
+const INDEX_DIVERGENT_ORIGIN = "git index; the working tree differs";
+
+/** `maxBuffer` for the two LISTING calls, which return records and not content. */
+const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Ceiling on the bytes one sweep will pull out of the object store. A repo past
+ * this refuses BY NAME rather than dying in the allocator, which would surface
+ * as an uncaught failure and exit 1: the code this contract reserves for "hits
+ * found". This package vendors a packed `@cosyte/hl7` tarball, so its index is
+ * not all text and the ceiling is not theoretical.
+ */
+const INDEX_BLOB_BUDGET_BYTES = 512 * 1024 * 1024;
+
+interface IndexEntry {
+  mode: string;
+  oid: string;
+  stage: string;
+  path: string;
+}
+
+/** `<mode> SP <oid> SP <stage> TAB <path>`: one `git ls-files -s -z` record. */
+const INDEX_RECORD = /^(\d{6}) ([0-9a-f]+) ([0-3])\t([\s\S]+)$/;
+
+/**
+ * Every entry the index holds, at every stage. `-z` is NUL-separated and
+ * unquoted, so a path matches the walk's forward-slash relative paths exactly.
+ *
+ * A FAILURE HERE REFUSES rather than falling back to the working tree. That is
+ * the whole difference from the `gitTracked()` this replaces: that one returned
+ * `null` on failure, switched one tolerance off, and let the sweep publish a
+ * verdict anyway.
+ */
+function readIndex(): IndexEntry[] {
+  let out: Buffer;
+  try {
+    // SECURITY: array-form execFileSync, no shell.
+    out = execFileSync("git", ["ls-files", "-s", "-z"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: INDEX_LIST_MAX_BYTES,
+    });
+  } catch (err) {
+    throw new InvocationError(
+      `could not read the git index: ${err instanceof Error ? err.message : String(err)}. ` +
+        "All mode reads the bytes git carries as well as the working tree, so it refuses " +
+        "rather than reporting a verdict over the working tree alone.",
+    );
+  }
+  const entries: IndexEntry[] = [];
+  for (const rec of out.toString("utf8").split("\0")) {
+    if (rec.length === 0) continue;
+    const m = INDEX_RECORD.exec(rec);
+    const mode = m?.[1];
+    const oid = m?.[2];
+    const stage = m?.[3];
+    const path = m?.[4];
+    if (mode === undefined || oid === undefined || stage === undefined || path === undefined) {
+      // The raw record is NOT echoed. Every other refusal here names the paths
+      // it refuses over, because a refusal nobody can act on is worse; but a
+      // record this regex did not match has no known structure, so there is no
+      // path in it to name, and printing unparsed bytes off the index is not
+      // the same act as naming a path the code understood.
+      throw new InvocationError(
+        "could not read the output of `git ls-files -s -z`: unrecognized record. " +
+          "Refusing rather than scanning a list that may be short.",
+      );
+    }
+    entries.push({ mode, oid, stage, path });
+  }
+  return entries;
+}
+
+/**
+ * The bytes behind each object id, in ONE `git cat-file --batch` call.
+ *
+ * `--batch-check` runs first for two reasons, neither of them caution for its
+ * own sake: it is where a MISSING or non-blob object is refused by name before
+ * anything is read, and its sizes are what `maxBuffer` is derived from. Node's
+ * default `maxBuffer` is 1 MiB and this repo's tracked corpus is already past
+ * that, so a guessed constant would be a gate that starts refusing as the
+ * package grows.
+ */
+function readBlobs(oids: string[]): Map<string, Buffer> {
+  const blobs = new Map<string, Buffer>();
+  if (oids.length === 0) return blobs;
+  const input = `${oids.join("\n")}\n`;
+
+  let checkBuf: Buffer;
+  try {
+    // SECURITY: array-form execFileSync, no shell. The input is object ids this
+    // process read out of the index, never a path.
+    checkBuf = execFileSync("git", ["cat-file", "--batch-check"], {
+      input,
+      stdio: ["pipe", "pipe", "ignore"],
+      maxBuffer: INDEX_LIST_MAX_BYTES,
+    });
+  } catch (err) {
+    throw new InvocationError(
+      `could not query the git object store: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const lines = checkBuf
+    .toString("utf8")
+    .split("\n")
+    .filter((l) => l.length > 0);
+  if (lines.length !== oids.length) {
+    throw new InvocationError(
+      `git cat-file --batch-check answered for ${String(lines.length)} of ` +
+        `${String(oids.length)} index objects. Refusing rather than scanning a list that may ` +
+        "be short.",
+    );
+  }
+  let total = 0;
+  for (const line of lines) {
+    // `<oid> blob <size>` for an object that is there, `<oid> missing` for one
+    // that is not. An object id is a hash and carries no content, so it is safe
+    // to name in a diagnostic; nothing else from the line is printed.
+    const m = /^([0-9a-f]+) (\S+)(?: (\d+))?$/.exec(line);
+    const oid = m?.[1];
+    const type = m?.[2];
+    const size = m?.[3];
+    if (oid === undefined || type === undefined) {
+      throw new InvocationError(
+        "could not read the output of `git cat-file --batch-check`: unrecognized record.",
+      );
+    }
+    if (type !== "blob" || size === undefined) {
+      throw new InvocationError(
+        `the git object store cannot hand back the content the index records at ${oid} ` +
+          `(reported as: ${type}). The sweep cannot read what git carries, so it refuses ` +
+          "rather than reporting on the working tree alone.",
+      );
+    }
+    total += Number(size);
+  }
+  if (total > INDEX_BLOB_BUDGET_BYTES) {
+    throw new InvocationError(
+      `the index holds ${String(total)} bytes of scannable content, past this scanner's ` +
+        `${String(INDEX_BLOB_BUDGET_BYTES)}-byte sweep budget. Refusing by name rather than ` +
+        "failing in the allocator, which would not read as a scanner refusal.",
+    );
+  }
+
+  let buf: Buffer;
+  try {
+    // SECURITY: array-form execFileSync, no shell. `maxBuffer` is the measured
+    // total plus a header allowance (one `<oid> blob <size>` line and one
+    // trailing newline per object), never a guess.
+    buf = execFileSync("git", ["cat-file", "--batch"], {
+      input,
+      stdio: ["pipe", "pipe", "ignore"],
+      maxBuffer: total + oids.length * 128 + 64 * 1024,
+    });
+  } catch (err) {
+    throw new InvocationError(
+      `could not read the git object store: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // `<oid> SP blob SP <size> LF <content> LF` per record. Sizes are BYTE counts
+  // and the content is binary-safe (this repo tracks framed `.frame.bin`
+  // fixtures and a packed tarball), so the walk is done on the Buffer and never
+  // on a decoded string: decoding first would move every offset after the first
+  // multi-byte character.
+  let i = 0;
+  while (i < buf.length) {
+    const nl = buf.indexOf(0x0a, i);
+    if (nl < 0) {
+      throw new InvocationError("`git cat-file --batch` output ended mid-record.");
+    }
+    const header = buf.toString("utf8", i, nl);
+    const m = /^([0-9a-f]+) blob (\d+)$/.exec(header);
+    const oid = m?.[1];
+    const size = m?.[2];
+    if (oid === undefined || size === undefined) {
+      throw new InvocationError(
+        "could not read the output of `git cat-file --batch`: unrecognized record.",
+      );
+    }
+    const start = nl + 1;
+    const end = start + Number(size);
+    if (end > buf.length) {
+      throw new InvocationError(
+        `\`git cat-file --batch\` returned less content than it declared for ${oid}.`,
+      );
+    }
+    blobs.set(oid, buf.subarray(start, end));
+    i = end + 1;
+  }
+  const wanted = new Set(oids);
+  if (blobs.size !== wanted.size) {
+    throw new InvocationError(
+      `read ${String(blobs.size)} of ${String(wanted.size)} index objects. Refusing rather ` +
+        "than scanning a corpus that may be short.",
+    );
+  }
+  return blobs;
+}
+
+/**
+ * One target per index entry whose bytes the walk has not already read.
+ *
+ * ▶ THE `.md` RULE IS `walk()`'s, COPIED RATHER THAN INVENTED, and it is the one
+ * reason an index entry is not read here. Markdown may legitimately describe
+ * violator values; that judgement does not change with the route that reaches
+ * the file. It is also why `documentation/agent-notes.md`, `phi-scan-overrides.md`
+ * and `docs-content/*.md` stay out of this corpus. Widening it is a separate
+ * question with its own argument, and it is NOT this slice's.
+ *
+ * ▶ THE MODE REFUSAL IS PERMANENT, NOT TRANSIENT, AND THAT MATTERS HERE. A
+ * mode-`120000` (symlink) or mode-`160000` (gitlink) entry anywhere in the index
+ * refuses the whole sweep until it is removed. This repo tracks NEITHER today
+ * (measured on `6eb1615`: every one of its 157 index entries is `100644`, and it
+ * has no `.gitmodules`), so the arm costs nothing now. It would be fatal in a
+ * repo with a real submodule, and the live way to acquire one here is an orphan
+ * agent-worktree gitlink, which is exactly why the arm names its kind instead of
+ * failing as an incidental read error.
+ */
+function buildTargetsForIndex(
+  entries: readonly IndexEntry[],
+  observed: ReadonlyMap<string, Buffer>,
+): Target[] {
+  // ▶ THE REFUSALS BELOW SEE EVERY ENTRY, WHATEVER IT IS NAMED. The `.md`
+  // exemption is applied LAST, to the readable set only, and putting it first
+  // was a real hole rather than a style point: it is a NAME exemption, and this
+  // file already states (see the banner) that a name exemption must never be
+  // carried over to an entry whose bytes the route cannot read, because a name
+  // is no evidence at all about what is on the other side of a link. `walk()`
+  // has always honoured that. Measured on the first draft of this route: a
+  // tracked symlink at `hidden/<surname>-<given>-<dob>.md`, whose TARGET PATH is
+  // the PHI surface git actually carries, exited 0 "OK, no hits", while the same
+  // link named `.hl7` refused at exit 2. Ordering the filter after the refusals
+  // is the whole fix; the guard did not need to grow.
+  const unmerged = [...new Set(entries.filter((e) => e.stage !== "0").map((e) => e.path))];
+  if (unmerged.length > 0) {
+    const lines = unmerged.map((p) => `  - ${p} (unmerged)`).join("\n");
+    const noun = unmerged.length === 1 ? "path is unmerged" : "paths are unmerged";
+    throw new InvocationError(
+      `refusing the scan: ${String(unmerged.length)} ${noun}:\n${lines}\n` +
+        "The index carries no stage-0 entry for it, so there is no one object id for this " +
+        "route to read. Resolve the conflict and `git add` it.",
+    );
+  }
+
+  refuseUnscannable(
+    entries
+      .filter((e) => !REGULAR_BLOB_MODES.has(e.mode))
+      .map((e) => ({ path: e.path, kind: gitModeKind(e.mode) })),
+    // Covers BOTH kinds this can be, because they are not the same thing: for a
+    // link git carries the target PATH, and for a gitlink it carries a commit id
+    // in another repository. Neither is content, so scanning what git hands back
+    // would prove nothing about what the entry refers to.
+    "git carries a link target or another repository's commit id for such an entry, never " +
+      "content, so scanning it would prove nothing about what it refers to.",
+    "Remove it from the index, or replace it with a regular file.",
+  );
+
+  // NOW the `.md` name rule, and only over entries whose bytes this route can
+  // actually read. It is `walk()`'s own rule, copied rather than invented:
+  // markdown may legitimately describe violator values, and that judgement does
+  // not change with the route that reaches the file.
+  const readable = entries.filter(
+    (e) => REGULAR_BLOB_MODES.has(e.mode) && !e.path.toLowerCase().endsWith(".md"),
+  );
+  const blobs = readBlobs([...new Set(readable.map((e) => e.oid))]);
+
+  const targets: Target[] = [];
+  for (const e of readable) {
+    const bytes = blobs.get(e.oid);
+    if (bytes === undefined) {
+      throw new InvocationError(
+        "the git object store did not hand back one of the objects the index records. " +
+          "Refusing rather than reporting over a corpus that was not read.",
+      );
+    }
+    const seen = observed.get(e.path);
+    // ▶ THE COMPARISON MUST NOT NORMALIZE LINE ENDINGS FIRST, and this is the
+    // one edit that would quietly reopen the escape. Under `eol=crlf` or
+    // `core.autocrlf` every blob diverges from its working-tree file, so the
+    // skip stops firing and every count doubles: fail-safe, but wrong-looking
+    // enough that someone will want to "fix" it by normalizing before comparing.
+    // Normalizing compares a DERIVED form of the two byte strings, and a decoy
+    // that differs only in what the normalizer erases would then be skipped.
+    // Neither condition is live here (this repo has no `.gitattributes` and
+    // `core.autocrlf` is unset, measured on `6eb1615`), so the doubling is a
+    // sibling's problem and the rule is written down before it is anyone's.
+    if (seen !== undefined && seen.equals(bytes)) continue;
+    targets.push({
+      path: e.path,
+      read: () => bytes,
+      origin: seen === undefined ? INDEX_ORIGIN : INDEX_DIVERGENT_ORIGIN,
+    });
+  }
+  return targets;
 }
 
 // ---------------------------------------------------------------------------
@@ -1905,11 +2299,16 @@ function scanHl7(
 // ---------------------------------------------------------------------------
 
 /**
- * Scan one target. Returns whether the target's bytes were OBSERVED: `false`
- * means the file was tolerated as gone (see `Target.tolerateVanish`), which the
- * caller reports and counts, never silently discards.
+ * Scan one target and hand back THE BYTES IT OBSERVED, or `null` when the file
+ * was tolerated as gone (see `Target.tolerateVanish`), which the caller reports
+ * and counts, never silently discards.
+ *
+ * It returns the buffer rather than a boolean because the index corpus skips a
+ * blob whose bytes the walk has already read, and that skip is a BYTE
+ * comparison. Handing back the bytes is what makes the comparison possible
+ * without reading any file twice.
  */
-function scanTarget(target: Target, allow: AllowList, hits: Hit[]): boolean {
+function scanTarget(target: Target, allow: AllowList, hits: Hit[]): Buffer | null {
   let buf: Buffer;
   try {
     buf = target.read();
@@ -1918,7 +2317,7 @@ function scanTarget(target: Target, allow: AllowList, hits: Hit[]): boolean {
     // itself may be a transient that was removed before we reached it. Report it
     // as unobserved instead of refusing; every other failure, and any tracked
     // file, still refuses the whole scan.
-    if (target.tolerateVanish === true && errorCode(err) === "ENOENT") return false;
+    if (target.tolerateVanish === true && errorCode(err) === "ENOENT") return null;
     throw new InvocationError(
       `could not read ${target.path}: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -1938,7 +2337,7 @@ function scanTarget(target: Target, allow: AllowList, hits: Hit[]): boolean {
     // `DELIBERATE_VIOLATOR_SOURCES` for why the conservative floor cannot be
     // kept here and why allow-listing its email instead is refused. It is still
     // enumerated and still read, so it is counted as OBSERVED.
-    if (DELIBERATE_VIOLATOR_SOURCES.has(target.path)) return true;
+    if (DELIBERATE_VIOLATOR_SOURCES.has(target.path)) return buf;
     // The conservative floor runs over the WHOLE source, not just the recovered
     // segments: a dashed SSN or a non-test-domain email in a comment, a variable
     // name or a fixture path is a hit wherever it sits.
@@ -1958,7 +2357,7 @@ function scanTarget(target: Target, allow: AllowList, hits: Hit[]): boolean {
       const embedded = extractEmbeddedHl7(text);
       if (embedded.length > 0) scanHl7(target, embedded, allow, hits, false);
     }
-    return true;
+    return buf;
   }
   if (looksLikeHl7(text, target.path)) {
     scanHl7(target, text, allow, hits);
@@ -1969,7 +2368,28 @@ function scanTarget(target: Target, allow: AllowList, hits: Hit[]): boolean {
     // no hits.
     scanCommonShapes(target.path, text, allow, hits);
   }
-  return true;
+  return buf;
+}
+
+/**
+ * `scanTarget`, with the target's ORIGIN stamped onto whatever hits it produced.
+ *
+ * The stamp happens here rather than inside the detectors because they take a
+ * path and know nothing about enumeration: threading an origin through all nine
+ * of them would be a wide change for what is purely a reporting concern. Only
+ * hits appended by THIS call are stamped, so an earlier target's findings are
+ * never relabelled.
+ */
+function scanAndAttribute(target: Target, allow: AllowList, hits: Hit[]): Buffer | null {
+  const before = hits.length;
+  const bytes = scanTarget(target, allow, hits);
+  if (target.origin !== undefined) {
+    for (let i = before; i < hits.length; i += 1) {
+      const h = hits[i];
+      if (h !== undefined) h.origin = target.origin;
+    }
+  }
+  return bytes;
 }
 
 // ---------------------------------------------------------------------------
@@ -1981,14 +2401,31 @@ function report(hits: Hit[]): void {
     process.stdout.write("[phi-scan] OK, no hits\n");
     return;
   }
-  const byPath = new Map<string, Hit[]>();
+  // Grouped by path AND origin, never by path alone: bytes read off the working
+  // tree and bytes read out of the index are two different findings about one
+  // path, and merging them under one heading would say the file on disk carries
+  // something it does not. The file COUNT stays a count of paths, so a path
+  // found both ways is one file.
+  const byLocus = new Map<string, Hit[]>();
   for (const h of hits) {
-    const arr = byPath.get(h.path);
+    const key = `${h.path}\0${h.origin ?? ""}`;
+    const arr = byLocus.get(key);
     if (arr) arr.push(h);
-    else byPath.set(h.path, [h]);
+    else byLocus.set(key, [h]);
   }
-  for (const [path, group] of byPath) {
-    process.stderr.write(`[phi-scan] HIT: ${path}\n`);
+  const paths = new Set<string>();
+  let fromIndex = 0;
+  for (const group of byLocus.values()) {
+    const first = group[0];
+    if (first === undefined) continue;
+    paths.add(first.path);
+    // ONLY the divergent ones. A pure `INDEX_ORIGIN` hit is a path the walk
+    // never reached (outside every root, or absent from the tree), and there the
+    // working-tree file is fixed exactly like any other, so telling the reader
+    // to re-stage would send them looking for a difference that is not there.
+    if (first.origin === INDEX_DIVERGENT_ORIGIN) fromIndex += group.length;
+    const where = first.origin === undefined ? "" : ` (${first.origin})`;
+    process.stderr.write(`[phi-scan] HIT: ${first.path}${where}\n`);
     for (const h of group) {
       process.stderr.write(
         `  segment=${h.segment} value=${JSON.stringify(h.value)} (${h.reason})\n`,
@@ -1996,10 +2433,19 @@ function report(hits: Hit[]): void {
     }
   }
   process.stderr.write(
-    `[phi-scan] ${String(hits.length)} hit(s) across ${String(byPath.size)} file(s). ` +
+    `[phi-scan] ${String(hits.length)} hit(s) across ${String(paths.size)} file(s). ` +
       `If a value is genuinely synthetic, declare it in scripts/phi-allow-list.txt OR ` +
       `run with --allow-fixture <path> AND log it in phi-scan-overrides.md.\n`,
   );
+  if (fromIndex > 0) {
+    // Named explicitly, because the remedy differs: these bytes are the ones git
+    // carries, and they are not the bytes on disk. Editing the file alone does
+    // not clear them.
+    process.stderr.write(
+      `[phi-scan] ${String(fromIndex)} of those are in bytes git carries at that path rather ` +
+        `than in the working-tree file, so re-staging the corrected file is part of the fix.\n`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2029,10 +2475,33 @@ function main(): number {
 
   let targets: Target[];
   const walkedRoots: string[] = [];
+  // Only `all` mode reads the index corpus, so only `all` mode holds one here.
+  let index: IndexEntry[] | null = null;
   try {
     if (args.mode === "staged") targets = buildTargetsForStaged();
     else if (args.mode === "paths") targets = buildTargetsForPaths(args.paths);
-    else targets = buildTargetsForAll(walkedRoots);
+    else {
+      index = readIndex();
+      if (index.length === 0) {
+        // AN EMPTY INDEX IS NOT A CLEAN CORPUS, IT IS NO CORPUS. `git ls-files`
+        // exits 0 with NO output for a removed `.git/index` (a corrupt one exits
+        // non-zero and lands in the catch above), and this route's whole promise
+        // is to read what git carries. With nothing there it would contribute
+        // nothing and the sweep would silently decay to the walk-only shape this
+        // change exists to replace, while still printing a clean verdict.
+        //
+        // It also replaces the old `gitTracked()` empty-answer rule, which fixed
+        // the narrower half of this: an empty tracked set made EVERY file
+        // untracked, the one state in which the tracked-file bound stops
+        // existing. That bound is still protected, now by refusing outright.
+        throw new InvocationError(
+          "refusing the scan: the git index holds no entries, so there is no committed " +
+            "corpus to read and every check against it would pass vacuously. Run this from " +
+            "a repository with a populated index.",
+        );
+      }
+      targets = buildTargetsForAll(walkedRoots, new Set(index.map((e) => e.path)));
+    }
   } catch (err) {
     if (err instanceof InvocationError) {
       process.stderr.write(`[phi-scan] ${err.message}\n`);
@@ -2046,9 +2515,15 @@ function main(): number {
   const hits: Hit[] = [];
   const vanished: Target[] = [];
   const observedByRoot = new Map<string, number>(walkedRoots.map((r) => [r, 0]));
+  // What the walk actually READ, keyed by path. The index corpus below skips a
+  // blob whose bytes are already in here, so nothing is read or reported twice,
+  // and a path whose working-tree bytes DIFFER is scanned both ways.
+  const observed = new Map<string, Buffer>();
   for (const t of targets) {
     try {
-      if (scanTarget(t, allow, hits)) {
+      const bytes = scanAndAttribute(t, allow, hits);
+      if (bytes !== null) {
+        observed.set(t.path, bytes);
         if (t.root !== undefined) observedByRoot.set(t.root, (observedByRoot.get(t.root) ?? 0) + 1);
       } else vanished.push(t);
     } catch (err) {
@@ -2081,6 +2556,55 @@ function main(): number {
     );
   }
 
+  // THE INDEX CORPUS, `all` mode only: the bytes git carries, at every path it
+  // carries them, whether or not that path sits under a walk root and whether or
+  // not the working tree still agrees with it. The mechanism, everything it
+  // closes and everything it deliberately does not do are written down once, at
+  // `buildTargetsForIndex` and the section above it.
+  //
+  // IT RUNS AFTER THE VANISH ACCOUNTING ABOVE, deliberately: that block can
+  // refuse, and this route can refuse, and a tolerated skip must be disclosed on
+  // the paths where THIS route is the one that returns. Nothing in the block
+  // above has a data dependency on the index route, so its disclosure stays
+  // unconditional.
+  //
+  // ITS TARGETS ARE NOT CREDITED TO `observedByRoot`, deliberately. The per-root
+  // rule below is a statement about the WALK: a root emptied on disk still
+  // refuses even though every file under it was just read out of the index.
+  if (index !== null) {
+    let indexTargets: Target[];
+    try {
+      indexTargets = buildTargetsForIndex(index, observed);
+    } catch (err) {
+      if (err instanceof InvocationError) {
+        // A REFUSAL MUST NOT SWALLOW A REAL HIT. An unmerged path or a tracked
+        // link ANYWHERE in the index refuses the sweep, and the walk may already
+        // have found PHI under a root that yielded perfectly well. Printing the
+        // refusal alone would make this route's output strictly worse than the
+        // base commit's for that input. The exit code is still 2, because an
+        // incomplete sweep is not a verdict whatever it found on the way.
+        if (hits.length > 0) report(hits);
+        process.stderr.write(`[phi-scan] ${err.message}\n`);
+        return 2;
+      }
+      throw err;
+    }
+    for (const t of indexTargets.filter((it) => !allowed.has(it.path))) {
+      try {
+        // The bytes are already in memory, so this cannot fail the way a
+        // working-tree read can, and it can never be tolerated as vanished.
+        scanAndAttribute(t, allow, hits);
+      } catch (err) {
+        if (err instanceof InvocationError) {
+          if (hits.length > 0) report(hits);
+          process.stderr.write(`[phi-scan] ${err.message}\n`);
+          return 2;
+        }
+        throw err;
+      }
+    }
+  }
+
   // Refuse a sweep that observed nothing UNDER ANY ROOT IT WALKED. (`staged`
   // legitimately has nothing to scan when a commit touches only `.md`, and
   // `paths` is bounded by the caller's argv, so neither is guarded.)
@@ -2105,6 +2629,12 @@ function main(): number {
     if (walkedRoots.length === 0 || empty.length > 0) {
       const which =
         walkedRoots.length === 0 ? "no scan root" : `${empty.map((r) => `${r}/`).join(", ")}`;
+      // A REFUSAL MUST NOT SWALLOW A REAL HIT, the same rule the index route's
+      // refusal above carries. This mattered less before, because a starved root
+      // and a hit could only co-occur across two walk roots; now the index
+      // corpus can have found PHI at a path no root covers at all. Exit stays 2:
+      // an incomplete sweep is not a verdict, whatever it found on the way.
+      if (hits.length > 0) report(hits);
       process.stderr.write(
         `[phi-scan] refusing: the all-mode sweep observed no files under ${which}, so it ` +
           `proves nothing about that corpus. Check .gitignore, the allow-fixture list, and ` +
