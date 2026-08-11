@@ -706,15 +706,22 @@ describe("PHI: the ack-from-hl7 subpath forwards no inbound bytes", () => {
   });
 
   it("holds when the emitted MSA-2 provably differs from the inbound MSH-10", () => {
-    // A control ID holding the escape character is re-escaped on the way into
-    // MSA-2, so the byte-level verbatim check fails and the warning fires. The
-    // slot exists because that warning is the one place this subpath has an
-    // inbound and an outbound control ID in hand at the same moment, which is
-    // exactly the shape that once put a patient identifier in a log in hex.
-    // Invariance is off: the warning reports both byte lengths, and those grow.
+    // A control ID the parser cannot re-emit byte-for-byte fails the byte-level
+    // verbatim check, so the warning fires. The slot exists because that warning
+    // is the one place this subpath has an inbound and an outbound control ID in
+    // hand at the same moment, which is exactly the shape that once put a patient
+    // identifier in a log in hex.
+    // Invariance is off: the warning reports both byte lengths, and those differ.
+    //
+    // The plant is TRAILING WHITESPACE, which canonicalizes away. It used to be
+    // `\X` (the escape character), which stopped working the moment @cosyte/hl7
+    // made the MSA-2 echo byte-verbatim across the escape alphabet: the echo then
+    // matched, no warning fired, and this gate proved nothing about the branch it
+    // names. It failed LOUDLY rather than passing vacuously, which is the whole
+    // point of `runAckGate` asserting the code it expects actually appeared.
     runAckGate(
       "ack-from-hl7/inbound MSH-10 (echo provably not verbatim)",
-      (m) => message(`${m}\\X`),
+      (m) => message(`${m} `),
       "MLLP_ACK_CONTROL_ID_NOT_VERBATIM",
       false,
     );

@@ -26,10 +26,10 @@ deleting the pointer or the heading.** Why, and every disclosed miss:
 - **Phase 9 of 11.** Client / server / framing / connection / transport shipped; Phases 6, 7, 8
   and 9 are done. Next: `operations/roadmaps/mllp.md`. What each phase actually shipped:
   `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
-- **For dev/test the `@cosyte/hl7` peer is a vendored packed tarball**
-  (`vendor/cosyte-hl7-0.0.0.tgz`, a devDependency), interim until the cross-repo consumption
-  decision lands. **Re-vendoring strips the `peerDependencies` entry: restore it afterwards.** The
-  exact command sequence: `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
+- **The `@cosyte/hl7` peer installs from npm**, like every other `@cosyte/*` dep. The vendored
+  tarball is GONE: it pinned dev/test to a `0.0.0` snapshot and hid a FIXED MSA-2 correlation bug
+  for ten releases. **Never re-vendor one:**
+  `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
 - **This package is on the npm registry, and this file names no version, deliberately** (derive it:
   `npm view @cosyte/mllp version`). Never quote a version here, never move a published version
   backwards, and never infer repo visibility from publish state or the reverse: they are
@@ -48,12 +48,12 @@ Full rationale, measurements and residuals: `documentation/agent-notes.md#the-em
   parentheses.
 - **Never add `grep -I`.** Measured on GNU grep 3.8: it skips a text file whose bad byte shares a
   line with the em dash, in total silence, and the gate prints OK.
-- **Never switch this copy to the text-only shape the other parsers run.** The vendored tarball is a
-  compressed stream that can carry `E2 80 94` by coincidence, and a red with no possible fix is a
-  gate someone disables.
+- **Never switch this copy to the text-only shape the other parsers run.** The tarball that forced
+  it is gone; the shape stays. A binary carrying `E2 80 94` by coincidence is a red with no possible
+  fix, which is a gate someone disables.
 - **The NUL exclusion is a disclosed miss, not a pass**, and the tell is the excluded count on the OK
-  line: **it reads 1 today**. If a NUL-bearing text fixture ever lands, revisit the partition, never
-  the ban. The at-risk fixture class already exists, so do not round this off to hypothetical.
+  line: **it reads 0 today**, 1 until the tarball left. If a NUL-bearing text fixture ever lands,
+  revisit the partition, never the ban. The at-risk class exists, so do not call this hypothetical.
 - **Never count over markdown alone.** A markdown-only count is what wrongly cleared `dicom`.
 - **The script is composed from three sibling copies; understand the composition before editing it**,
   and fix shared limits in the script header, not here.

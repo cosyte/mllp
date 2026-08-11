@@ -308,8 +308,10 @@ describe("ack-from-hl7, the parser RE-SERIALIZES MSH-10; every case it cannot co
   // than copying its bytes. Four things that form does not preserve. Each is a DIFFERENT
   // control id on the wire, so each is an ACK the sender cannot match, and each must warn.
   // buildRawAck (parser-free, a byte copy) holds all four; the last assertion proves it.
+  // An escape sequence ("ID\\X" -> "ID\\E\\X") was a fifth case until @cosyte/hl7 made the
+  // MSA-2 echo byte-verbatim across the escape alphabet. It moved rather than vanished: it is
+  // pinned below as a round-trip. Check which behaviour hl7 has before re-adding it here.
   const cases: ReadonlyArray<readonly [string, string, string]> = [
-    ["an escape sequence", "ID\\X", "ID\\E\\X"],
     ["trailing whitespace", "MSG42 ", "MSG42"],
     ["leading whitespace", " MSG42", "MSG42"],
     ["a trailing empty component", "ID^", "ID"],
@@ -328,6 +330,20 @@ describe("ack-from-hl7, the parser RE-SERIALIZES MSH-10; every case it cannot co
   it.each(cases)("buildRawAck copies the bytes instead, so %s round-trips", (_name, id) => {
     const inbound = inboundWithControlId(Buffer.from(id, "latin1"));
     expect(extractMsaControlId(buildRawAck(inbound, "AA"))).toBe(id);
+  });
+
+  // The inverted case. This used to come back `ID\E\X`: a different control id on the wire, so
+  // an ACK the sender cannot match, so a resend, so a duplicate clinical message. If it reds,
+  // the parser path has regressed to canonicalizing an escape and the entry belongs back in
+  // `cases` above. It is not a test to relax.
+  it("an escape sequence in MSH-10 now round-trips through the parser path, with no warning", () => {
+    const id = "ID\\X";
+    const inbound = inboundWithControlId(Buffer.from(id, "latin1"));
+    const ack = buildAckAA(inbound);
+
+    expect(extractMsaControlId(ack.payload)).toBe(id);
+    expect(extractMsaControlId(ack.payload)).toBe(extractMsaControlId(buildRawAck(inbound, "AA")));
+    expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
   });
 });
 

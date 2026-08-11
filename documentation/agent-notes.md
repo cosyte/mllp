@@ -20,14 +20,15 @@ thing a rule guards, or when you are tempted to relax one. Every paragraph here 
   Mirth/NextGen (`test/differential/`, `MLLP_DIFF_ADAPTER`-gated live tier), the §3 quirk corpus
   (`test/conformance/`), and a PHI/observability audit that closed the `MLLP_FRAME_TOO_LARGE`
   `snippet` payload-slice leak) done. Next: see `operations/roadmaps/mllp.md` for what follows Phase 9.
-  For dev/test the
-  `@cosyte/hl7` peer is consumed as a **vendored packed
-  tarball** (`vendor/cosyte-hl7-0.0.0.tgz`, a devDependency): an interim mechanism until the
-  cross-repo consumption decision (umbrella `PW-5` gate) lands; refresh it by re-running
-  `pnpm -C ../hl7 build && pnpm -C ../hl7 pack --out ../mllp/vendor/cosyte-hl7-0.0.0.tgz`
-  (`--out` resolves relative to the `-C` directory) then `pnpm remove @cosyte/hl7 &&
-  pnpm add -D @cosyte/hl7@file:vendor/cosyte-hl7-0.0.0.tgz`. Note `pnpm remove` also
-  strips the `peerDependencies` entry; restore it (`"@cosyte/hl7": ">=0.0.0"`) after.
+- **The vendored tarball is GONE. The `@cosyte/hl7` peer installs from npm** at `^0.0.N` (ADR 0032,
+  which superseded the interim ADR 0008 five weeks after its own `PUB-FLIP` trigger fired).
+  **Why you never re-vendor one.** The tarball pinned dev/test to `0.0.0` while `@cosyte/hl7`
+  shipped ten releases. One made the MSA-2 echo byte-verbatim across the escape alphabet, naming
+  THIS package's correlation as the reason. The fix never arrived, so
+  `test/ack-from-hl7/control-id-verbatim.test.ts` asserted the DEFECT as a guarantee: `ID\X` echoed
+  back `ID\E\X`, a different control id on the wire, so an unmatched ACK, a resend, a duplicate
+  clinical message. **A pinned blob does not read as stale, it reads as the contract** -- which is
+  what makes it worse than an out-of-date range, since a range announces its age.
 
 ## The em-dash brand gate
 
@@ -53,11 +54,13 @@ thing a rule guards, or when you are tempted to relax one. Every paragraph here 
   applies the `./` prefix in the list-building loop instead of through `sed -z`, so the scan is a
   single command with the stderr capture bound to all of it, which closes a residual the `ncpdp`
   and `dicom` copies still carry.
-  **Why not the text-only shape the other parsers run, since `vendor/cosyte-hl7-0.0.0.tgz` has no
-  em dash in it today:** the reason is durability, not a present-day red. That tarball is a
-  compressed stream, it is re-vendored by hand (see the Phase 9 note above), and a compressed
-  stream can contain `E2 80 94` by coincidence. Measured both ways against the real file: `dicom`'s
-  copy is green on today's bytes and **red, unremediably, on a copy seeded with those three bytes**.
+  **Why not the text-only shape the other parsers run:** durability, not a present-day red, and the
+  reason OUTLIVED the file that prompted it. The argument was about `vendor/cosyte-hl7-0.0.0.tgz`, a
+  hand-refreshed compressed stream that can contain `E2 80 94` by coincidence. Measured both ways
+  against the real file at the time: `dicom`'s copy was green on those bytes and **red, unremediably,
+  on a copy seeded with those three bytes**. **The tarball is gone and the shape stays**, because the
+  property belongs to binaries in general, not to that one file. Read the live excluded count off the
+  gate's OK line.
   You cannot rewrite a compressed byte stream with a period, and a red with no fix is a gate
   someone disables.
   **The disclosed cost, said plainly: a tracked TEXT file holding a NUL byte is silently exempt,

@@ -25,11 +25,13 @@
 #   * ZERO tracked files carry U+2014, as the literal character or in any encoded form.
 #     So this gate changed no content in this repo. It exists purely to stop a regression,
 #     which is the only reason to add a gate to a clean tree.
-#   * ONE file holds a NUL byte: `vendor/cosyte-hl7-0.0.0.tgz` (472,097 bytes, 1,774 NULs),
-#     a real gzip stream and the only binary this repo tracks. See BINARY EXCLUSION.
-#   * FOUR files are what GIT calls binary (`git ls-files --eol` reports `i/-text`), which is
+#     ZERO files hold a NUL byte. This read ONE until ADR 0032 deleted
+#     `vendor/cosyte-hl7-0.0.0.tgz`, a real gzip stream and the only binary this repo tracked.
+#     THE BINARY EXCLUSION STAYS; its section explains why the specimen leaving does not
+#     retire the shape. The live count is on the OK line, not here.
+#   * THREE files are what GIT calls binary (`git ls-files --eol` reports `i/-text`), which is
 #     a WIDER set than the NUL rule and is the one worth naming, because it is where the
-#     exclusion could start biting without anyone noticing. The other three are
+#     exclusion could start biting without anyone noticing. They are
 #     `test/differential/fixtures/r1-ack-aa.frame.bin`, `r1-adt-a01.frame.bin` and
 #     `r1-oru-r01.frame.bin`: git classifies them binary on its LONE-CR branch, since an
 #     HL7 v2 segment terminator is CR with no LF. They hold ZERO NUL bytes, so `has_nul`
@@ -37,7 +39,7 @@
 #     ncpdp proved its `.xml` fixtures are read: each of the three was seeded with a live em
 #     dash in turn and the gate went RED on each, naming the file.
 #   * ZERO tracked gitlinks (no mode 160000 entry) and ZERO tracked symlinks.
-#   * Every tracked file except that tarball decodes as UTF-8.
+#   * Every tracked file decodes as UTF-8 (the one exception was that tarball).
 #
 # The fix is never to re-encode the character: rewrite the sentence with a
 # period, a colon, a comma, or parentheses.
@@ -62,19 +64,25 @@
 # stderr capture instead of being skipped. That is fail-closed and it is the better shape
 # where it applies.
 #
-# It does not apply here, and the reason is DURABILITY, not a present-day red. Measured:
-# `vendor/cosyte-hl7-0.0.0.tgz` does NOT currently contain the byte sequence `E2 80 94`,
-# so a knowledgebase-shape script would pass over it today, and dicom's copy was run
-# against this exact tree to confirm that rather than to assume it (it printed OK, exit 0).
-# But that tarball is a compressed byte stream, and a compressed stream contains any given
-# three-byte sequence by coincidence with real probability. The tarball is re-vendored by
-# hand whenever `@cosyte/hl7` is rebuilt (see this repo's CLAUDE.md), and the next re-vendor
-# could land a copy that happens to contain those bytes. Measured, not argued: appending
-# those three bytes to the real tarball and re-running dicom's copy makes it exit 1 with
-# `binary file matches` against `vendor/cosyte-hl7-0.0.0.tgz`. That red has NO REMEDIATION
-# AVAILABLE: you cannot rewrite a compressed byte stream with a period, and the tarball's
-# contents are not prose anyone wrote. A gate whose red state has no defined fix is a gate
-# someone disables, which is strictly worse than the hole it closed.
+# It does not apply here, and the reason is DURABILITY, not a present-day red. The argument was
+# made against a specimen that has since left the repo, and it OUTLIVES it; read to the end
+# before concluding the shape can now be relaxed.
+#
+# Measured at the time: `vendor/cosyte-hl7-0.0.0.tgz` did NOT contain the byte sequence
+# `E2 80 94`, so a knowledgebase-shape script would have passed over it, and dicom's copy was
+# run against that exact tree to confirm it rather than assume it (it printed OK, exit 0).
+# But that tarball was a compressed byte stream, and a compressed stream contains any given
+# three-byte sequence by coincidence with real probability. It was re-vendored by hand
+# whenever `@cosyte/hl7` was rebuilt, and the next re-vendor could have landed a copy holding
+# those bytes. Measured, not argued: appending those three bytes to the real tarball and
+# re-running dicom's copy made it exit 1 with `binary file matches` against the tarball. That
+# red has NO REMEDIATION AVAILABLE: you cannot rewrite a compressed byte stream with a period,
+# and the tarball's contents are not prose anyone wrote. A gate whose red state has no defined
+# fix is a gate someone disables, which is strictly worse than the hole it closed.
+#
+# THE TARBALL IS GONE (ADR 0032) AND THIS SHAPE STAYS. The property that forced it, an
+# unremediable red on bytes nobody authored, belongs to tracked binaries as a class, not to
+# that one file. Revisit the PARTITION if you must, never the ban.
 #
 # Do not read website's stated reason across to here. website regenerates 7 PNGs on every
 # PR, so it quoted a per-PR probability. mllp has exactly one binary, it is static, and it
@@ -105,13 +113,14 @@
 # THE COST, stated rather than left implicit, because it is a real hole in a ban whose own
 # wording has no exceptions: a tracked TEXT file that happens to hold a NUL byte (a UTF-16
 # document, a fixture carrying framing bytes) is excluded here and its em dash would be
-# missed. Say what that means for the tarball without softening it: seed the real
-# `vendor/cosyte-hl7-0.0.0.tgz` with a live em dash and THIS GATE PRINTS OK AND EXITS 0.
-# That is a MISS, not a pass. It is the deliberate price of the durability argument above,
-# and it was checked rather than reasoned, along with the control that proves the NUL rule
-# is what causes it: the same tarball bytes with every NUL replaced, carrying the same em
-# dash, goes RED. mllp has NO tracked text file with a NUL today, so the exclusion currently
-# exempts exactly one file and that file is a genuine binary.
+# missed. It was said for the tarball without softening, and the measurement stands as the
+# demonstration even though the file is gone: seeding the real `vendor/cosyte-hl7-0.0.0.tgz`
+# with a live em dash made THIS GATE PRINT OK AND EXIT 0. That is a MISS, not a pass. It is
+# the deliberate price of the durability argument above, and it was checked rather than
+# reasoned, along with the control that proves the NUL rule is what causes it: the same
+# tarball bytes with every NUL replaced, carrying the same em dash, went RED.
+# mllp has NO tracked file with a NUL today, so the exclusion currently exempts nothing.
+# Read the count off the OK line rather than from here.
 #
 # Do NOT round that off to "the hole is hypothetical here", which an earlier draft of this
 # header did. The at-risk fixture class ALREADY EXISTS: the three `.frame.bin` captures under
