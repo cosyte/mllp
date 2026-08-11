@@ -2196,7 +2196,17 @@ describe("phi-scan: the completeness rule", () => {
       [mutantPath, VIOLATOR_REL, DECOY_REL, "--allow-fixture", DECOY_REL],
       { cwd: repo, encoding: "utf8", shell: false },
     );
+    // ▶ EXIT 1 ALONE IS NOT EVIDENCE THE MUTANT RAN, and this file's own
+    // `run()` docblock is why: node exits 1 on an UNCAUGHT THROW, so a mutant
+    // that failed to parse would satisfy both a bare `status === 1` and a
+    // "no refusal text" assertion while proving nothing. Measured: replacing
+    // the same line with a syntax error exits 1 with a `SyntaxError`. So the
+    // control asserts the mutant reached the VERDICT, by naming the hit the
+    // graded run is supposed to have found.
     expect(r.status, `stderr: ${r.stderr ?? ""}`).toBe(1);
+    expect(r.stderr ?? "").toContain(`HIT: ${VIOLATOR_REL}`);
+    expect(r.stderr ?? "").toContain("PID-5");
     expect(r.stderr ?? "").not.toMatch(/enumerated and never read/);
+    expect(r.stderr ?? "").not.toMatch(/SyntaxError/);
   });
 });

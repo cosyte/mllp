@@ -13,12 +13,23 @@ then refused for incompleteness instead. **A scan that did not open a file has
 no clean verdict to give about it.** So this log is an audit trail of attempts,
 never a mechanism for reaching a clean run.
 
-**`scripts/phi-allow-list.txt` IS THE ONLY MECHANISM THAT REACHES A CLEAN RUN.**
-It is a token-level, reviewed declaration that a fixture's identifiers are fake,
-and it is what the scanner's own hit footer now points at. Do not restore a
-footer, a doc line or a habit that offers the whole-file bypass as the remedy:
-following it walks a developer out of exit 1 and into exit 2, which is the same
-defect as following one into a false green, with the sign flipped.
+**`scripts/phi-allow-list.txt` IS WHAT THE HIT FOOTER NOW POINTS AT.** It is a
+token-level, reviewed declaration that a fixture's identifiers are fake. Do not
+restore a footer, a doc line or a habit that offers the whole-file bypass as the
+remedy: following it walks a developer out of exit 1 and into exit 2, which is
+the same defect as following one into a false green, with the sign flipped.
+
+**BUT IT IS NOT A UNIVERSAL REMEDY, AND "THE ONLY MECHANISM THAT REACHES A CLEAN
+RUN" IS AN OVERCLAIM THAT MUST NOT COME BACK.** It covers a value one of its five
+tags names (`NAME`, `DOB`, `ADDR`, `ID`, `EMAILDOMAIN`). **Two detector classes
+have no tag at all** and are keyed on a CONVENTION: `checkPhoneField` takes no
+allow-list parameter and is satisfied only by the `555` fake-exchange convention,
+and the dashed-SSN branch of `scanCommonShapes` pushes unconditionally, so
+nothing declares it away. **A logged `--allow-fixture` was the only audited
+remedy those two had, and the completeness rule removes it: their fixture bytes
+have to change.** That is legitimate for a genuinely synthetic fixture, and it is
+recorded here so it is read rather than discovered with a red gate and printed
+advice that does not work.
 
 ## How the scanner detects PHI
 
@@ -509,8 +520,8 @@ shapes and the mutation control:
 - **The comparison is a SET DIFFERENCE, never a size.** A count counts the targets that DID get
   read, so `n read of n targets` hides precisely the paths that did not. The refusal names them.
 - **`--allow-fixture` cannot reach exit 0 in ANY mode.** It is recorded here and then refused.
-  `scripts/phi-allow-list.txt` is the only remedy that reaches a clean run, and the scanner's hit
-  footer says so.
+  `scripts/phi-allow-list.txt` is the remedy the hit footer points at, **for a value one of its five
+  tags covers**; the phone and dashed-SSN classes have no tag and now have no declaration at all.
 - **A bypass naming a path the run does not ENUMERATE refuses too**, as a separate claim: such a
   flag subtracts nothing, and honoring it silently is how a stale entry in this log drifts unnoticed.
 - **The bypass is unioned into the target list unconditionally** in `paths` mode, deduped by

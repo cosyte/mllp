@@ -161,11 +161,22 @@
  * WHAT THIS COSTS, STATED RATHER THAN LEFT TO BE DISCOVERED: `--allow-fixture`
  * CAN NO LONGER REACH EXIT 0 IN ANY MODE. The flag, the override log and the
  * rejection gate are all kept, so an attempt is RECORDED AND REFUSED rather than
- * silently honoured, and `scripts/phi-allow-list.txt` (a token-level, reviewed
- * declaration) is the only mechanism that reaches a clean run. THE HIT FOOTER
- * THEREFORE NO LONGER ADVERTISES `--allow-fixture` AS A REMEDY: a printed remedy
- * that leads to exit 2 is the same defect as one that leads to a false green,
- * with the sign flipped.
+ * silently honoured. THE HIT FOOTER THEREFORE NO LONGER ADVERTISES
+ * `--allow-fixture` AS A REMEDY: a printed remedy that leads to exit 2 is the
+ * same defect as one that leads to a false green, with the sign flipped.
+ *
+ * ▶ AND "THE ALLOW-LIST IS THE ONLY REMEDY" IS AN OVERCLAIM THIS FILE MUST NOT
+ * MAKE. `scripts/phi-allow-list.txt` reaches a clean run only for a value one of
+ * its five tags covers (`NAME`, `DOB`, `ADDR`, `ID`, `EMAILDOMAIN`). TWO
+ * DETECTOR CLASSES HAVE NO TAG AT ALL, keyed on a CONVENTION instead:
+ * `checkPhoneField` takes no allow-list parameter and is satisfied only by the
+ * `555` fake-exchange convention, and the dashed-SSN branch of
+ * `scanCommonShapes` pushes unconditionally, so nothing declares it away. FOR
+ * THOSE TWO, `--allow-fixture` WAS THE ONLY AUDITED REMEDY AND THIS RULE REMOVES
+ * IT: the fixture bytes have to change. That is a real cost, it is disclosed in
+ * the footer where a developer meets it, and giving either class an allow-list
+ * tag is a detector-semantics decision with its own argument, not a side effect
+ * of this one. Do not restore the flat sentence.
  *
  * ITS ONE EXCEPTION IS THE TOLERATED-VANISH CLASS, and no other. That class is
  * already bounded hard (self-enumerated + untracked + `ENOENT`), announced on
@@ -180,11 +191,20 @@
  * and printed together AFTER the hits, so a run that is both incomplete and
  * carrying hits prints everything once. The code is 2: an incomplete sweep is
  * not a verdict, whatever it found on the way. THAT IS A GUARANTEE ABOUT THOSE
- * THREE AND NOT ABOUT REFUSALS IN GENERAL: a refusal raised from INSIDE the read
- * loop (a target whose bytes cannot be read) still discards the hits found
- * before it, which is pre-existing, loud rather than green, and left alone
- * deliberately, because re-ordering to salvage a partial hit list would be a
- * claim about a corpus the scan just said it could not account for.
+ * THREE AND NOT ABOUT REFUSALS IN GENERAL, and the leftovers are named here
+ * rather than left to be inferred, BECAUSE THE TWO READ LOOPS DO NOT AGREE AND
+ * "ALIGNING" THEM WOULD DELETE A DELIBERATE CALL:
+ *   - the WORKING-TREE loop's catch (a target whose bytes cannot be read)
+ *     discards the hits found before it. Pre-existing, loud rather than green,
+ *     and left alone deliberately: re-ordering to salvage a partial hit list
+ *     would be a claim about a corpus the scan just said it could not account
+ *     for;
+ *   - the INDEX loop's catch, and the refusal raised while BUILDING the index
+ *     targets, both call `reportHits` first, because the walk may already have
+ *     found PHI under a root that yielded perfectly well;
+ *   - the came-back-vanish refusal discards them too, and that one is NOT
+ *     disclosed anywhere else. It is pre-existing and this slice does not change
+ *     it.
  * ---------------------------------------------------------------------------
  *
  * ---------------------------------------------------------------------------
@@ -2561,13 +2581,29 @@ function reportHits(hits: Hit[]): void {
   // of exit 1 and into exit 2. A printed remedy that cannot reach the state it
   // promises is the same defect as one that reaches a false green, with the sign
   // flipped.
+  //
+  // ▶ AND THE ALLOW-LIST IS NOT A UNIVERSAL REPLACEMENT FOR IT, SO THIS FOOTER
+  // MUST NOT SAY IT IS. It reaches a clean run only for a value one of its five
+  // tags covers. TWO DETECTOR CLASSES HAVE NO TAG AT ALL and are keyed on a
+  // CONVENTION instead: `checkPhoneField` takes no allow-list parameter and is
+  // satisfied only by the `555` fake-exchange convention, and the dashed-SSN
+  // branch of `scanCommonShapes` pushes unconditionally, so no declaration of
+  // any kind silences it. Both of those had `--allow-fixture` as their only
+  // audited remedy before the completeness rule, and now have none: the fixture
+  // itself has to change. That is a real cost of this rule, it is named here
+  // because the footer is where a developer meets it, and the general sentence
+  // ("the allow-list is the only remedy") is REFUSED as an overclaim.
   process.stderr.write(
     `[phi-scan] ${String(hits.length)} hit(s) across ${String(paths.size)} file(s). ` +
-      `If a value is genuinely synthetic, declare it in scripts/phi-allow-list.txt: a ` +
-      `token-level, reviewed declaration is the only remedy that reaches a clean run. A ` +
-      `whole-file --allow-fixture bypass is recorded in phi-scan-overrides.md and then ` +
-      `REFUSED (exit 2), because a scan that never opened a file has no clean verdict to ` +
-      `give about it.\n`,
+      `If a value is genuinely synthetic, declare it in scripts/phi-allow-list.txt ` +
+      `(tags: NAME, DOB, ADDR, ID, EMAILDOMAIN): a token-level, reviewed declaration is ` +
+      `the only remedy that reaches a clean run for a value one of those tags covers. ` +
+      `TWO CLASSES HAVE NO TAG and are keyed on a convention instead, so the fixture has ` +
+      `to change: a phone number needs the 555 fake-exchange convention, and a dashed-SSN ` +
+      `shape is reported wherever it appears and cannot be declared at all. A whole-file ` +
+      `--allow-fixture bypass is recorded in phi-scan-overrides.md and then REFUSED ` +
+      `(exit 2), because a scan that never opened a file has no clean verdict to give ` +
+      `about it.\n`,
   );
   if (fromIndex > 0) {
     // Named explicitly, because the remedy differs: these bytes are the ones git

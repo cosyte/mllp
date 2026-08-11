@@ -5,9 +5,9 @@ is the cursor, the rules and the traps: one imperative line each, pointing into 
 incident, the measurement and the reasoning. Split 2026-08-04; **nothing was deleted**. If a rule
 below looks arbitrary, read its section first. New narrative goes there, not here.
 
-**The pair is gated** (`pnpm check:agent-notes`, via `test/scripts/agent-notes.test.ts`): that file
-must be tracked, every section must have a body (a container's is its subsections), and every
-pointer at it **in a file the gate opened** must resolve. **A NUL-bearing file is skipped: a
+**The pair is gated** (`pnpm check:agent-notes`, via `test/scripts/agent-notes.test.ts`): it must be
+tracked, every section must have a body (a container's is its subsections), and every pointer at it
+**in a file the gate opened** must resolve. **A NUL-bearing file is skipped: a
 disclosed miss, not a pass**; the tell is the skipped count. It asserts **this repo's promise, not a
 universal** (`config`, `hl7`, `workflow` carry none), and **refuses (exit 2) rather than reporting
 green over a corpus it never opened**, reconciling paths as sets against `git ls-files`. **Never clear a red by
@@ -45,14 +45,14 @@ Full rationale, measurements and residuals: `documentation/agent-notes.md#the-em
 
 - **When it goes red, never re-encode the character.** Rewrite with a period, colon or comma.
 - **Never add `grep -I`.** Measured on GNU grep 3.8: it skips a text file whose bad byte shares a
-  line with the em dash, in total silence, and the gate prints OK.
+  line with the em dash, in silence, and the gate prints OK.
 - **Never switch this copy to the text-only shape the other parsers run.** The tarball that forced
-  it is gone; the shape stays. A binary carrying `E2 80 94` by coincidence is a red with no fix,
-  which is a gate someone disables.
+  it is gone; the shape stays. A binary carrying `E2 80 94` by chance is a red with no fix, which is
+  a gate someone disables.
 - **The NUL exclusion is a disclosed miss, not a pass**, and the tell is the excluded count on the OK
   line: **it reads 0 today**. If a NUL-bearing text fixture ever lands, revisit the partition, never
   the ban. The at-risk class exists, so do not call this hypothetical.
-- **Never count over markdown alone.** That is what wrongly cleared `dicom`.
+- **Never count over markdown alone.** That wrongly cleared `dicom`.
 - **The script is composed from three sibling copies; understand it before editing**, and fix
   shared limits in the script header, not here.
 
@@ -64,59 +64,60 @@ Defects are recorded in full at
 `documentation/agent-notes.md#phi-scan-rename-blind-at-precommit` and
 `documentation/agent-notes.md#phi-scan-completeness-rule-a-target-enumerated-and-never-read`.
 **This line names no count, deliberately: it read "three" while a fourth landed.** Contract and
-residuals: `phi-scan-overrides.md`. The rules that came out of them:
+residuals: `phi-scan-overrides.md`. The rules:
 
 - **▶ NEVER soften the refuse-a-scan-that-observed-nothing rule**, and never widen the ENOENT
-  tolerance. Narrow the enumeration instead. **This repo is the one that can actually reach it**:
+  tolerance. Narrow the enumeration instead. **This repo can actually reach it**:
   `test/scripts/phi-scan.test.ts` `mkdtemp`s inside `test/`, a walk root, twice per run. **Those
   tests must keep writing there: the `test/` prefix IS what they prove.**
 - **▶ THE OBSERVED-NOTHING CHECK IS PER WALK ROOT, AND A GLOBAL COUNT CANNOT REPLACE IT**
   (`PHI-SCAN-OBSERVED-NOTHING-IS-GLOBAL`). One healthy root masks an empty one, and **a denominator
-  is not the remedy**, because a count counts the roots that DID exist. An **absent** root stays
-  legitimate; an **EMPTIED** one refuses (exit 2). A synthetic-repo fixture must plant something
-  scannable under any root it creates.
+  is not the remedy**: a count counts the roots that DID exist. An **absent** root stays legitimate;
+  an **EMPTIED** one refuses (exit 2). A synthetic-repo fixture must plant something scannable under
+  any root it creates.
 - **Widening a walk root reintroduces the mid-sweep-deletion defect verbatim.** The roots are
   deliberately `test/` and `src/`, not the repo root. **What `test/` ADMITS is a separate question
-  from what the ROOTS are; never conflate them.**
+  from what the ROOTS are; never conflate.**
 - **▶ A `.ts` SOURCE UNDER `test/` IS SCANNED, AND WIDENING IS TWO-SIDED**
   (`PHI-SCAN-WALK-ROOT-SCOPE`). **The enumeration half alone finds nothing**: every detector wants a
   segment id at the START of a line. `extractEmbeddedHl7` is the other half, its `|` anchor is
   load-bearing, and the violator exemption is **per-path and total** (`DELIBERATE_VIOLATOR_SOURCES`),
-  never per-extension. **Never widen one half without the other, and never delete the extractor
-  believing the walk covers it.** Figures:
+  never per-extension. **Never widen one half without the other, nor delete the extractor believing
+  the walk covers it.** Figures:
   `documentation/agent-notes.md#phi-scan-walk-root-scope-and-phi-scan-observed-nothing-is-global`
-- **`src/` KEEPS THE CONSERVATIVE PASS ONLY, and that is a decision, not an oversight** (its JSDoc
+- **`src/` KEEPS THE CONSERVATIVE PASS ONLY, a decision, not an oversight** (its JSDoc
   `@example` snippets). Do not reverse it as a side effect of a change about `test/`.
 - **▶ NEVER WRITE "NEITHER ROUTE FOLLOWS A LINK" FLAT.** `walk()` opens the ROOTS with `existsSync`
   + `readdirSync`, which both follow, so a link AT `test/` or `src/` is read straight through.
-  Disclosed, not closed; never restate it as a promise.
+  Disclosed, not closed; never restate as a promise.
 - **An entry that REPLACES a root is judged with THAT ROOT'S OWN LIMITS** (`test` earns the
   structured scan, `src` the conservative pass), and both read predicates must admit the root's own
-  path. That is only half the remedy: `looksLikeHl7` decides what scan it earns. **The `.md` and
-  per-path violator exemptions deliberately do NOT carry over to a non-regular entry**, because they
-  judge bytes the route could read.
-- **▶ `--diff-filter` MUST KEEP `T`, AND `--no-renames` STAYS.** Each was forced by a measurement at
-  pre-commit, and the "admitting them needs a two-path record shape" framing was **FALSE and ported
+  path. That is half the remedy: `looksLikeHl7` decides what scan it earns. **The `.md` and per-path
+  violator exemptions deliberately do NOT carry over to a non-regular entry**, because they judge
+  bytes the route could read.
+- **▶ `--diff-filter` MUST KEEP `T`, AND `--no-renames` STAYS.** Each was forced by a pre-commit
+  measurement, and the "admitting them needs a two-path record shape" framing was **FALSE and ported
   in from a sibling: do not restore it.** Measurements:
   `documentation/agent-notes.md#phi-scan-rename-blind-at-precommit`
 - **A refusal never reports the link target** (working-tree text that can carry PHI).
 - **A refusal exits 2, never 1.** Exit 1 is reserved for "hits found", so an uncaught throw is a
   false finding, worse than a crash because it reads as actionable. **`walk()` no longer lets a
   `readdir` failure leave the process.** **Two documents disagree about the leftovers, neither is
-  authoritative, and `phi-scan-overrides.md` is the stale one.** Re-measure first, and never restate
-  "no failure can exit 1" as settled. **Never port an exit code in or out: siblings disagree.**
-- **▶ ALL MODE ALSO READS THE BYTES GIT CARRIES, AS A UNION WITH THE WALK.** Decoys at the tracked
-  names satisfy the walk alone: 8 states printed `OK, no hits` at exit 0. **The skip is a BYTE
-  comparison, so never normalize EOL before comparing.** A tracked link/gitlink in the index
-  refuses; **`--staged` stays UNCHANGED** (it decides what a commit is BLOCKED on).
+  authoritative, and `phi-scan-overrides.md` is the stale one.** Re-measure first; never restate "no
+  failure can exit 1" as settled. **Never port an exit code in or out: siblings disagree.**
+- **▶ ALL MODE ALSO READS THE BYTES GIT CARRIES, AS A UNION WITH THE WALK.** 8 states printed
+  `OK, no hits` at exit 0. **The skip is a BYTE comparison, so never normalize EOL before
+  comparing.** A tracked link/gitlink in the index refuses; **`--staged` stays UNCHANGED**.
   `documentation/agent-notes.md#phi-scan-index-corpus-the-bytes-git-carries`
 - **▶ A TARGET ENUMERATED AND NEVER READ REFUSES (exit 2), NAMING THE PATHS**
   (`PHI-SCAN-COMPLETENESS-RULE`). A corpus whose ONLY violator was withdrawn printed `OK, no hits`
   at exit 0. **A SET DIFFERENCE, never a size.** **`--allow-fixture` cannot reach exit 0 in ANY
   mode**, so **the footer must never advertise it again**; a bypass naming a path the run does not
   ENUMERATE refuses too. **Its one exception is the tolerated-vanish class.** **"In every mode"
-  describes the RULE, not what reaches it**, so all mode's skip is a guard, not dead code. **The
-  mutation control is not optional**, and `config`'s drift check RUNS this scanner.
+  describes the RULE, not what reaches it**, so all mode's skip is a guard, not dead code. **NEVER
+  WRITE "the allow-list is the only remedy": the phone and dashed-SSN checks have no tag, so this
+  rule left them no declaration at all.** **The mutation control is not optional, and exit 1 alone
+  does not prove the mutant ran** (node exits 1 on a throw). `config`'s drift check RUNS this.
   `documentation/agent-notes.md#phi-scan-completeness-rule-a-target-enumerated-and-never-read`
 - **Do not "resync" any of this to a sibling parser's scope, and do not soften it.**
 

@@ -515,11 +515,31 @@ route. The refusal names the paths because no number can.
 
 **▶ WHAT IT COSTS, and it is a real cost rather than a footnote: `--allow-fixture` CAN NO LONGER
 REACH EXIT 0 IN ANY MODE.** The flag, the override log and `validateAllowFixtures` are all kept, so
-an attempt is **recorded and then refused** instead of silently honoured. `scripts/phi-allow-list.txt`
-(a token-level, reviewed declaration) is the only mechanism that reaches a clean run, and **the hit
-footer no longer advertises the flag as a remedy**: a printed remedy that walks a developer from
-exit 1 into exit 2 is the same defect as one that walks them into a false green, with the sign
-flipped.
+an attempt is **recorded and then refused** instead of silently honoured, and **the hit footer no
+longer advertises the flag as a remedy**: a printed remedy that walks a developer from exit 1 into
+exit 2 is the same defect as one that walks them into a false green, with the sign flipped.
+
+**▶ "THE ALLOW-LIST IS THE ONLY REMEDY" IS AN OVERCLAIM, AND A DRAFT OF THIS SECTION MADE IT IN FIVE
+PLACES AT ONCE.** The gate that graded this slice refuted it and measured the hole.
+`scripts/phi-allow-list.txt` reaches a clean run only for a value one of its **five** tags covers
+(`NAME`, `DOB`, `ADDR`, `ID`, `EMAILDOMAIN`; `loadAllowList` parses no others). **Two detector
+classes have no tag at all** and are keyed on a CONVENTION instead:
+
+- `checkPhoneField` **takes no allow-list parameter**, so no declaration reaches it. It is satisfied
+  only by the `555` fake-exchange convention;
+- the dashed-SSN branch of `scanCommonShapes` **pushes unconditionally**, so nothing declares it
+  away anywhere in the corpus.
+
+**Measured on this slice's branch:** a fixture whose `PID-13` carries a non-555 number stays exit 1
+through `PHONE`, `ID`, `NAME` and `ADDR` entries alike, and an `OBX-5` free-text dashed SSN stays
+exit 1 through `ID` and `SSN` entries alike. **On the base commit both were reachable by a logged
+`--allow-fixture` at exit 0. This rule removes that, and leaves those two classes with no
+declaration of any kind: the fixture bytes have to change.** That is legitimate for a genuinely
+synthetic fixture and it is the honest remedy, but it must be written down rather than discovered by
+someone whose gate has gone red with the printed advice not working. It is in the hit footer for
+that reason. **Giving either class an allow-list tag is a detector-semantics decision with its own
+argument** (an `EMAILDOMAIN`-shaped global switch-off is exactly the failure mode already refused
+for the violator corpus), not a side effect of this one.
 
 **▶ "IN EVERY MODE" IS A STATEMENT ABOUT THE RULE, NOT A CLAIM THAT EVERY MODE REACHES IT.** The
 check is not mode-gated (the per-root guard *is*, and that is the contrast), but the only live way
@@ -539,9 +559,16 @@ than folded into the completeness rule, because the two say different things abo
 walk root, an unenumerated bypass and an unread target all fire after the LAST read, so their hit
 list is complete for the corpus that was actually opened and suppressing it would throw away work a
 human still has to act on. Exit stays 2: an incomplete sweep is not a verdict, whatever it found on
-the way. **That guarantee is about those three and no others** -- a refusal raised from INSIDE the
-read loop still discards the hits found before it, which is pre-existing, loud rather than green,
-and left alone deliberately.
+the way.
+
+**That guarantee is about those three and no others, and THE TWO READ LOOPS DO NOT AGREE ABOUT THE
+REST**, which is written out because a later editor "aligning" them would delete a deliberate call.
+The **working-tree** loop's catch discards the hits found before it: pre-existing, loud rather than
+green, and left alone deliberately, because re-ordering to salvage a partial hit list would be a
+claim about a corpus the scan just said it could not account for. The **index** loop's catch, and
+the refusal raised while BUILDING the index targets, both report hits first, because the walk may
+already have found PHI under a root that yielded perfectly well. **The came-back-vanish refusal
+discards them too and is disclosed nowhere else; it is pre-existing and untouched here.**
 
 **▶ THE ONE EXCEPTION IS THE TOLERATED-VANISH CLASS, and it is built from what ACTUALLY vanished.**
 `vanished` holds only targets whose read threw `ENOENT` under `tolerateVanish`, and it has already
@@ -554,6 +581,13 @@ class of defect. `test/scripts/phi-scan.test.ts` copies the scanner, replaces th
 is with an empty list, **asserts that the substitution landed** (so the control cannot go vacuous if
 the line is reworded), and proves the graded run falls back to exit **1** -- exactly the state the
 drift probe reports as drift. Measured: rule present, exit 2; rule removed, exit 1.
+
+**▶ EXIT 1 ALONE IS NOT EVIDENCE THE MUTANT RAN, and the first draft of the control rested on it.**
+Node exits **1** on an uncaught throw, which is the whole reason this scanner has a process-level
+guard, so a mutant that failed to PARSE would satisfy both `status === 1` and "no refusal text"
+while proving nothing. Measured: the same line replaced by a syntax error exits 1 with a
+`SyntaxError`. The control therefore asserts the mutant reached the VERDICT, by naming the hit the
+graded run is supposed to have found.
 
 **▶ RESIDUAL, DISCLOSED AND NOT CLOSED BY THIS SLICE: reading an index entry is still not TIERING
 it.** `main` carries a gate that reads `examples/data/capture.txt` and prints `OK, no hits` over a
