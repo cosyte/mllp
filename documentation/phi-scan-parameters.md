@@ -35,8 +35,9 @@ A separate hand-written `isUnderScanRoot` carries the union of the two roots. �
 STAGED ROUTE'S TWO REFUSALS ONLY** (`scripts/phi-scan.ts:1131` unmerged, `:1259` non-regular), **and
 a draft of this file said it bounded "the non-regular refusals" flat, which is false in the direction
 that erases a measured fix.** The INDEX route's twin refusals are deliberately repo-wide with no root
-bound at all (`:1618` unmerged, `:1629` non-blob modes), and the scanner's own banner at `:1310-1312`
-names the root-scoped version as the CAUSE of two of the eight escapes the index union closed. A
+bound at all (`:1618` unmerged, `:1629` non-blob modes), and the scanner's own banner at `:1304-1312`
+names the root-scoped version as the CAUSE of escapes the index union closed (no count here: a draft
+wrote one and undercounted). A
 tracked mode-120000 entry at `examples/link` refuses here today and would report clean under a
 scanner built to the draft's sentence. What is true of every one of the four: they key on a ROOT
 boundary or on none, never on a read filter, because a link's name is no evidence about the other
@@ -229,8 +230,13 @@ Two consequences that would make it more than tidiness, each scoped to what is m
 ### 3.4 BLOCKING: a detector cannot recover the undecorated path
 
 `DetectContext.path` is the reported LOCUS, and a target from the index union carries an origin
-label appended to it (`test/foo.ts (as git carries it)`). Every prefix test still works; every
-**extension** test silently stops working, and the failure is live in both directions:
+label appended to it (`test/foo.ts (as git carries it)`). The label is a SUFFIX, so a path test that
+inspects anything other than the START of the string can silently stop matching. **No enumeration of
+which tests survive is written here**: a draft said "every prefix test still works; every extension
+test silently stops working", which reads as the whole space and is not, because an EQUALITY test
+breaks too and this repo has one (`isScannableTestFile`'s `relPath === "test"` arm at
+`scripts/phi-scan.ts:268`, which exists because a staged mode-100644 blob at exactly `test` carrying
+live PID values exited 0, measured on `2252d33`). The failure is live in both directions:
 
 - a `.ts` source arriving through the union is no longer recognised as TypeScript, so it falls
   through to the message scan, where any line of three word characters and a delimiter reads as a
@@ -265,7 +271,11 @@ already standard-agnostic and belongs in the engine:
 mllp's vocabulary, which is what the repo should be left declaring. ⚖️ **This is AT LEAST what the
 declaration must carry, and it is not offered as exhaustive.** A first draft omitted two entries and
 both were fail-safe misses (case-insensitive record ids, and the recognisable-record gate), so read
-`scripts/phi-scan.ts` beside it rather than treating the list as complete:
+`scripts/phi-scan.ts` beside it rather than treating the list as complete. **One further omission is
+filed rather than declared, because growing this block is what produced the last two defects in this
+file:** the embedded recogniser's RUN-TERMINATION rule (`:1874-1913`), where a run anchored on an
+opening quote ends only on THAT quote, because ending on any quote truncates a name at an apostrophe
+and silently drops every field after it. Read that span before implementing `embeddedInSource`.
 
 ```yaml
 documentModel:
@@ -352,10 +362,14 @@ third. They are recorded so nobody reads them as regressions found later.
 
 - **The per-root observed-nothing refusal goes away.** An EMPTIED walked root refuses today
   (`main`'s `observedByRoot` block); the engine has no such rule at any arity. Accepted here only
-  because `["."]` leaves one root, so there is no second root left to mask an emptied one, and the
-  union plus the completeness rule still require every tracked path to have been read. **That is an
-  argument about arity, not about coverage, and it does not transfer to a repo that declares several
-  roots.**
+  because `["."]` leaves one root, so there is no second root left to mask an emptied one. **That is
+  an argument about arity, not about coverage, and it does not transfer to a repo that declares
+  several roots.** 🛑 **A pass-2 remedy added "and the union plus the completeness rule still require
+  every tracked path to have been read" here, and it was FALSE**: the engine builds `enumerated` from
+  `unionCandidatePaths`, which filters the index by `isWalkReadable` and `excludedPaths`
+  (`phi-scan.js:924-933`), so at HEAD 20 of 159 tracked paths (19 tracked `.md` plus the one declared
+  exclusion) are outside that requirement. The clause is cut rather than narrowed, because the arity
+  argument above already carries the conclusion without it.
 
 - **The vanish tolerance goes away, and this is the repo that can actually reach it.**
   `Target.tolerateVanish` reports an `ENOENT` on an untracked file the walk enumerated itself as
