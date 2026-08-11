@@ -22,8 +22,8 @@ importers:
         specifier: ^0.0.3
         version: 0.0.3(eslint@10.5.0)(typescript@5.9.3)
       '@cosyte/hl7':
-        specifier: file:vendor/cosyte-hl7-0.0.0.tgz
-        version: file:vendor/cosyte-hl7-0.0.0.tgz
+        specifier: ^0.0.10
+        version: 0.0.10
       '@cosyte/prettier-config':
         specifier: ^0.0.2
         version: 0.0.2
@@ -201,9 +201,8 @@ packages:
       eslint: ^9.0.0 || ^10.0.0
       typescript: '>=5.0.0'
 
-  '@cosyte/hl7@file:vendor/cosyte-hl7-0.0.0.tgz':
-    resolution: {integrity: sha512-OJb81l1++MvVk/3dI7CLbozNoJ5TLrtzI6rfN113wKi7G7LZCrprM1dzP0KM4olT50JG371Roz3/5E/tQ7/k2A==, tarball: file:vendor/cosyte-hl7-0.0.0.tgz}
-    version: 0.0.0
+  '@cosyte/hl7@0.0.10':
+    resolution: {integrity: sha512-bUVmjMvtqlNw5yv0ozwo+BRQ9Ej141t6wmpzbeN9anrEJhmZCuVJV+OBBznKqdpbDz8vqqvpT5DFEA8+v9F1rA==}
     engines: {node: '>=22.0.0'}
 
   '@cosyte/prettier-config@0.0.2':
@@ -2044,7 +2043,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@cosyte/hl7@file:vendor/cosyte-hl7-0.0.0.tgz': {}
+  '@cosyte/hl7@0.0.10': {}
 
   '@cosyte/prettier-config@0.0.2': {}
 

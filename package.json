@@ -91,7 +91,7 @@
     "@arethetypeswrong/cli": "0.18.4",
     "@changesets/cli": "2.31.0",
     "@cosyte/eslint-config": "^0.0.3",
-    "@cosyte/hl7": "file:vendor/cosyte-hl7-0.0.0.tgz",
+    "@cosyte/hl7": "^0.0.10",
     "@cosyte/prettier-config": "^0.0.2",
     "@cosyte/test-utils": "^0.0.2",
     "@cosyte/tsconfig": "^0.0.2",

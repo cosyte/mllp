@@ -116,10 +116,11 @@
  *  (v)   [PINNED] A NUL-BEARING FILE IS SKIPPED WHOLE, SO ITS POINTERS ARE NEVER READ. This is
  *        the one that can print `all resolving` over a dangling pointer, and it is a disclosed
  *        miss rather than a pass. THE TELL IS THE SKIPPED COUNT ON THE OK LINE, exactly as
- *        `check-no-emdash.sh`'s NUL exclusion works and for the same reason: the one file it
- *        excludes today is the vendored `@cosyte/hl7` tarball, a compressed stream that cannot
- *        be read as markdown and cannot be edited to fix a red. If a NUL-bearing TEXT file ever
- *        lands here, revisit the partition rather than the rule. `CLAUDE.md` requires that
+ *        `check-no-emdash.sh`'s NUL exclusion works and for the same reason. It excludes NO file
+ *        today: the one it used to exclude was the vendored `@cosyte/hl7` tarball, a compressed
+ *        stream that could not be read as markdown and could not be edited to fix a red, and that
+ *        tarball is gone (the peer installs from npm). The rule stays. If a NUL-bearing TEXT file
+ *        ever lands here, revisit the partition rather than the rule. `CLAUDE.md` requires that
  *        exclusion be carried as a disclosed miss and says the at-risk class already exists, so
  *        do not round this off to hypothetical.
  *  (vi)  [PINNED] AN ATX HEADING INSIDE A FENCED CODE BLOCK IS NOT AN ANCHOR, and the fence

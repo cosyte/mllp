@@ -1390,8 +1390,9 @@ const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
  * Ceiling on the bytes one sweep will pull out of the object store. A repo past
  * this refuses BY NAME rather than dying in the allocator, which would surface
  * as an uncaught failure and exit 1: the code this contract reserves for "hits
- * found". This package vendors a packed `@cosyte/hl7` tarball, so its index is
- * not all text and the ceiling is not theoretical.
+ * found". This package used to vendor a packed `@cosyte/hl7` tarball, which is
+ * what made the ceiling concrete rather than theoretical; the index is history,
+ * so those blobs are still reachable and the ceiling still applies.
  */
 const INDEX_BLOB_BUDGET_BYTES = 512 * 1024 * 1024;
 

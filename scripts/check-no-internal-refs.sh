@@ -136,8 +136,9 @@
 #                          the audit log for fixture-level PHI-scan bypasses. Internal
 #                          compliance bookkeeping, not consumer documentation, and not in
 #                          package.json `files`.
-#   * CLAUDE.md, .github/, .changeset/, scripts/, test/, vendor/
-#                          internal by definition, or code rather than prose.
+#   * CLAUDE.md, .github/, .changeset/, scripts/, test/
+#                          internal by definition, or code rather than prose. (`vendor/` was
+#                          in this list until it was deleted with the hl7 tarball.)
 #   * src/ DOC COMMENTS    IN SCOPE, as a THIRD PASS at the bottom of this file, with its
 #                          own rule array (SRC_RULE_PATTERN), its own self-tests, and its
 #                          own extractor. `src/` JSDoc IS public: it is compiled into the
@@ -1047,8 +1048,8 @@ fi
 # heuristic calls binary, which includes a genuine TEXT file with a broken encoding, so a
 # violation inside one would be skipped in silence. This gate's surface is markdown, JSON and
 # TypeScript with no binaries (CHECKED ON THIS TREE: no tracked file under any scanned path
-# holds a NUL byte; the repo's one vendored tarball lives under `vendor/`, which this gate
-# does not scan), so losing `-I` makes a future binary a loud red instead of a silent miss.
+# holds a NUL byte, and since the hl7 tarball was deleted no tracked file anywhere in the repo
+# does), so losing `-I` makes a future binary a loud red instead of a silent miss.
 # Fail closed, not open. `-H` is set so every hit carries its filename: grep omits the name
 # when handed exactly one file, which an xargs batch boundary can produce.
 : > "$SCANLIST"

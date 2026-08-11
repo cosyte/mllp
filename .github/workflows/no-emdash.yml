@@ -17,13 +17,15 @@ name: Em-dash gate
 # the script it calls refuses to print OK from a scan that did not read everything it
 # was handed, and why every one of those refusals was checked red before this landed.
 #
-# mllp tracks ONE binary, `vendor/cosyte-hl7-0.0.0.tgz` (the packed `@cosyte/hl7`
+# mllp used to track ONE binary, `vendor/cosyte-hl7-0.0.0.tgz` (the packed `@cosyte/hl7`
 # devDependency, 472,097 bytes, 1,774 NUL bytes). It is why this repo runs website's
 # NUL-exclusion variant of the script rather than the text-only one hl7, fhir,
 # knowledgebase, pathways, x12, ncpdp and dicom run. The reasoning, the cost, and the
 # measurements behind that choice are in the script header; the short version is that
 # a compressed stream can contain the em dash bytes by coincidence, and that red would
-# have no fix.
+# have no fix. The tarball left on 2026-08-10 (`@cosyte/hl7` installs from npm) and the
+# VARIANT STAYS: the argument is about tracked binaries as a class, and the script header
+# says why the specimen's departure does not retire it.
 #
 # WHY A SEPARATE WORKFLOW, and not a job in ci.yml:
 #
