@@ -35,7 +35,9 @@ They were filed together as one unclassified spelling. They are two.
 
 - **`ccda`** had **no root declaration at all**: its walk was called once on `process.cwd()`, so the
   repository root was the root, spelled as an absolute path rather than as a declaration. Arity 1,
-  zero attachments.
+  zero attachments. ⚖️ **That half is READ OFF `ccda`'s OWN DERIVATION, not measured here**, because
+  one worker per submodule is absolute and this one owns `mllp`. The mllp half below is measured.
+  If the two derivations disagree, `ccda`'s wins for `ccda`.
 - **`mllp`** is arity 2 with three attachments per root.
 
 Both land on `scanRoots: ["."]` in a 0.0.2-shaped adoption, but for **opposite** reasons: for `ccda`
