@@ -14,20 +14,29 @@ against `@cosyte/script-utils@0.0.2` (1,543 lines; the published tarball is byte
 
 **mllp does not have a root list.** It has TWO module-level absolute-path constants,
 `TEST_ROOT` and `SRC_ROOT` (`join(REPO_ROOT, "test" | "src")`), each hand-threaded through a
-separate `walkRoot(...)` call, and each carrying **three** distinct attachments:
+separate `walkRoot(...)` call. **Two** attachments are measured per root:
 
-| attachment | `test` | `src` | what it is |
+| attachment | `test` | `src` | measured at |
 |---|---|---|---|
-| READ filter | `isScannableTestFile` | `isScannableSrcFile` | per-root, both "under the root (its own path included), not `.md`" |
-| observed-nothing IDENTITY | tag `"test"` | tag `"src"` | stamped onto `Target.root`; an EMPTIED walked root refuses, an ABSENT one is legitimate |
-| DETECTOR TIER | structured HL7 scan | cross-cutting floor only | `looksLikeHl7` reads `isScannableTestFile` directly so the set that EARNS the scan cannot drift from the set that is READ |
+| observed-nothing IDENTITY | tag `"test"` | tag `"src"` | `buildTargetsForAll:1034-1039` stamps `Target.root`; `main`'s `observedByRoot` block refuses on an EMPTIED walked root and leaves an ABSENT one legitimate |
+| DETECTOR TIER | structured HL7 scan | cross-cutting floor only | `looksLikeHl7:1750` and `scanTarget:2357` |
 
-A fourth, hand-written `isUnderScanRoot` carries the union of the two, and it is the boundary the
-non-regular refusals key on (never the read filter, because a link's name is no evidence about the
+🛑 **A READ FILTER IS NOT A THIRD ATTACHMENT ON THE WALK, AND A DRAFT OF THIS FILE SAID IT WAS.**
+There are two root-named predicates, `isScannableTestFile` and `isScannableSrcFile`, but on the walk
+route `buildTargetsForAll` applies only the first, and it removes nothing: `walk()` already drops
+`.md` globally (`:922`, `:959`) and every entry it produced already carries the `test/` prefix.
+`srcFiles` is passed through unfiltered. `isScannableSrcFile` is reached only by the staged route
+(`:1273`, which is AXIS 3 and counted separately) and by the tier decision (`:2357`, which is row 2
+above). So the two predicates differ **only by root prefix**, which means the engine's single global
+`isWalkReadable` default expresses mllp's walk read filter exactly, with no loss. Do not build a
+per-root read parameter on mllp's account.
+
+A separate hand-written `isUnderScanRoot` carries the union of the two roots, and it is the boundary
+the non-regular refusals key on (never a read filter, because a link's name is no evidence about the
 other side of it).
 
-So the spelling is: **N named roots, each carrying a read filter, an identity, and a detector tier.**
-It is not a rename of `string[]`, and it is not a flatten of `{abs, rel}[]`.
+So the spelling is: **N named roots, each carrying an identity and a detector tier.** It is not a
+rename of `string[]`, and it is not a flatten of `{abs, rel}[]`.
 
 ### mllp and `ccda` are NOT the same shape
 
@@ -37,21 +46,38 @@ They were filed together as one unclassified spelling. They are two.
   repository root was the root, spelled as an absolute path rather than as a declaration. Arity 1,
   zero attachments. ⚖️ **That half is READ OFF `ccda`'s OWN DERIVATION, not measured here**, because
   one worker per submodule is absolute and this one owns `mllp`. The mllp half below is measured.
-  If the two derivations disagree, `ccda`'s wins for `ccda`.
-- **`mllp`** is arity 2 with three attachments per root.
+  If the two derivations disagree, `ccda`'s wins for `ccda`. `ncpdp` checked both halves of the pair
+  independently and reports the same, so the evidence doc's pairing of the two is wrong.
+- **`mllp`** is arity 2 with two attachments per root.
+
+What actually unites them is narrower than the pairing claimed: **both express roots as absolute
+paths built from `REPO_ROOT` rather than as declarations**, which is why neither carries the
+`./`-prefix defect. Both collapse to `readonly string[]`.
 
 Both land on `scanRoots: ["."]` in a 0.0.2-shaped adoption, but for **opposite** reasons: for `ccda`
 that is a re-spelling of what it already did, and for `mllp` it is a **widening**, forced by an
 engine limit rather than chosen (see §3.2). Treating them as one shape would hide that.
 
-### Scope measurements taken on this tree (2026-08-11)
+### Scope measurements, anchored to the ref they were taken on
 
-- `git ls-files -s` reports **158** stage-0 entries.
-- **110** of them are under `test/` + `src/`. Keeping the two narrow roots under 0.0.2 therefore
-  drops **48** tracked paths out of every route, because the engine bounds its index union by
-  `isUnderScanRoot`. Two of the 48 are `package.json` and `scripts/phi-scan.ts`, which are exactly
-  the two that this repo's own `scripts/phi-allow-list.txt` records finding real tokens in when the
-  union half landed. That is the escape the union was built to close.
+Command, so an independent reader gets the same numbers:
+`git ls-tree -r --name-only <ref>` piped through `grep -cE '^(test|src)/'`. Counts cross-checked with
+a second tool (`wc -l` against `node`, `grep -c` against `rg -c`), because `grep -c` has returned NO
+MATCH in this lineage on a file `rg` read fine.
+
+| ref | tracked | under `test/`+`src/` | outside | outside and `.md` | **outside and NOT `.md`** |
+|---|---|---|---|---|---|
+| `origin/main` (`fd04f57`) | 158 | 110 | 48 | 17 | **31** |
+| this branch HEAD | 159 | 110 | 49 | 18 | **31** |
+
+**31 is the load-bearing figure and 48 is not.** The engine bounds its index union by
+`isUnderScanRoot`, so keeping the two narrow roots under 0.0.2 puts 48 tracked paths outside every
+route, but 17 of those are `.md`, which no sweeping route reads on either side (`scripts/phi-scan.ts`
+`:1646-1648`; the engine's default `isWalkReadable` is `exemptsMarkdown`). The paths that actually
+lose coverage number 31, and the figure is stable across both refs because the file this branch adds
+is itself `.md`. Two of the 31 are `package.json` and `scripts/phi-scan.ts`, which are the two that
+this repo's own `scripts/phi-allow-list.txt` records finding real tokens in when the union half
+landed. That is the escape the union was built to close.
 
 ---
 
@@ -84,12 +110,20 @@ Two axis notes that are decisions, not defaults:
 - **`stagedScope` must not widen when the roots widen.** `--staged` decides what a COMMIT is
   BLOCKED on, which is a hook decision this repo has taken separately and declined three times. The
   two keys are independent and nothing relates them.
-- **`excludedPaths` is a narrower mechanism than the `DELIBERATE_VIOLATOR_SOURCES` it would
-  replace, and the difference is accounting rather than coverage.** That set is applied at the SCAN:
-  the file is still enumerated, still read, and still counted as observed, with every detector
-  skipped. The engine's `excludedPaths` drops it from every route, so it is not enumerated and the
-  completeness rule has nothing to say about it. The verdict on the corpus is unchanged; what
-  changes is that the run no longer claims to have opened that file.
+- **`excludedPaths` is not the same mechanism as the `DELIBERATE_VIOLATOR_SOURCES` it would
+  replace, and it differs on BOTH accounting and coverage.** That set is applied at the SCAN
+  (`scripts/phi-scan.ts:2341`): the file is still enumerated, still read, and still counted as
+  observed, with every detector skipped, **on every route including argv**. The engine consults
+  `excludedPaths` on the two sweeping routes and on `--staged`, and **`buildTargetsForPaths` consults
+  it nowhere** (`node_modules/@cosyte/script-utils/phi-scan.js:978-985`), after which
+  `scanCommonShapes` runs unconditionally at `:1239`.
+  **Measured argv delta:** `test/scripts/phi-scan.test.ts` carries an `@realhospital.org` address
+  that no `EMAILDOMAIN` line allows. Today
+  `npx tsx scripts/phi-scan.ts test/scripts/phi-scan.test.ts` prints `OK, no hits` at **exit 0**
+  (run on this tree). Under adoption the same argv reports the hit. Do not ask `config` to "finish
+  the job" by making the exclusion total: `ccda`'s derivation records that turning a sweeping-route
+  exclusion into a total one is a real hole rather than a tidy-up. What this repo owes is a decision
+  about whether that argv should red, not an engine change.
 
 ### Both pre-checks, run rather than asserted
 
@@ -100,9 +134,13 @@ Two axis notes that are decisions, not defaults:
 2. **`isStagedReadable` admits nothing outside `scanRoots`.** The predicate is
    `(p === "test" || p.startsWith("test/") || p === "src" || p.startsWith("src/")) && !p.endsWith(".md")`,
    which is a strict subset of the two roots by construction. Probed over all 158 tracked paths plus
-   11 adversarial spellings (`testicle/x.ts`, `srcs/x.ts`, `docs/test/x.ts`, the bare root names,
-   `.md` under each root): **zero** admitted outside. The mode-120000 escape this check exists to
-   catch is therefore not reachable here through configuration.
+   these 11 adversarial spellings, named rather than counted: `test`, `src`, `testicle/x.ts`,
+   `srcs/x.ts`, `docs/test/x.ts`, `test/a.md`, `src/a.md`, `package.json`, `scripts/phi-scan.ts`,
+   `documentation/agent-notes.md`, `test/fixtures/link`. 166 distinct paths probed, **zero** admitted
+   outside. The mode-120000 escape this check exists to catch is therefore not reachable here through
+   configuration. Reproduce by applying the predicate above and
+   `["test","src"].some((r) => p === r || p.startsWith(r + "/"))` to
+   `git ls-tree -r --name-only origin/main` plus that list.
 
 ---
 
@@ -136,9 +174,18 @@ combination the engine cannot express: **walk two narrow roots, union over the W
   per-root reasoning along with it. That is a scope decision being made by a coupling rather than by
   an author.
 
-### 3.3 BLOCKING under the "all process is parameterized" directive: the root type
+### 3.3 NOT BLOCKING for mllp: a general root type, offered rather than required
 
-The seven observed spellings are one type with optional fields. Proposed:
+🛑 **A DRAFT OF THIS SECTION WAS LABELLED BLOCKING AND IT IS NOT.** mllp's roots are expressible with
+`scanRoots: readonly string[]` exactly as shipped. What forces `["."]` here is §3.2, not the root
+type, and the "per-root read filter" argument the draft leaned on was false (see the tripwire in §1).
+This section is therefore a **proposal a `config` worker may take or leave**, and it must not be
+counted as a thing mllp is waiting on.
+
+⚖️ **NO COUNT OF SPELLINGS IS WRITTEN HERE AND THE REPOS COLUMN IS GONE.** A draft said "seven",
+which was inherited from the evidence doc and was already stale: repos have been adopting during
+this run, so a repo's spelling now depends on which ref you read. Read each repo's own derivation.
+What is offered is a type, with the shapes it must be able to express:
 
 ```ts
 type ScanRoot =
@@ -151,25 +198,23 @@ type ScanRoot =
     };
 ```
 
-| spelling | repos | expressed as |
-|---|---|---|
-| plain `string[]` | template | unchanged (sugar) |
-| renamed `string[]` | `astm`, `transform`, `deid`, `fhir` | unchanged (sugar) |
-| `{ abs, rel }[]` | `x12`, `cli` | `{ path }`; `abs` is derivable and is dropped |
-| `{ rel, shape }[]` | `dicom` | `{ path, shape }` |
-| implicit `process.cwd()` | `ccda` | `["."]` |
-| named constants + attachments | `mllp` | `{ path, exclude, tier }` |
+| shape | expressed as |
+|---|---|
+| plain or renamed `string[]` | unchanged (sugar) |
+| a pair carrying an absolute path beside the relative one | `{ path }`; the absolute half is derivable and is dropped |
+| a declared `{ rel, shape }` | `{ path, shape }` |
+| an implicit root from `process.cwd()` | `["."]` |
+| mllp's named constants plus a per-root tier | `{ path, tier }` |
 
-Three consequences that make this more than tidiness:
+Two consequences that would make it more than tidiness, each scoped to what is measured:
 
-- the **per-root read filter** stops being a single global `isWalkReadable`, which is what forced
-  mllp's two filters to be flattened into one and its two roots into one;
-- the **per-root observed-nothing refusal** becomes engine process keyed on declared roots. Today it
-  has no engine equivalent at any arity. mllp only stops needing it because widening to `["."]`
-  leaves one root, and that is arithmetic, not coverage: a repo that declares several roots does not
-  get the guard back by adopting;
-- `dicom`'s measured `README.md` file-root problem (a `.md` file root reads nothing under the
-  default read filter) is answered by `exclude` being per-root instead of global.
+- the **per-root observed-nothing refusal** could become engine process keyed on declared roots.
+  Today it has no engine equivalent at any arity. mllp stops needing it only because widening to
+  `["."]` leaves one root, and that is arithmetic, not coverage: a repo that declares several roots
+  does not get the guard back by adopting;
+- a per-root `exclude` answers `dicom`'s measured `README.md` file-root problem (a `.md` file root
+  reads nothing under the default read filter, which the engine's own docblock names at
+  `phi-scan.js:744-748`). **That justification is `dicom`'s, not mllp's.**
 
 ### 3.4 BLOCKING: a detector cannot recover the undecorated path
 
@@ -207,13 +252,23 @@ already standard-agnostic and belongs in the engine:
 | address | street-line shape `^\d+\s+\p{L}` | `addresses` (§3.1) |
 | phone | 10-or-more digits, `555` fake-exchange convention | `ids` |
 
-mllp's vocabulary, which is what the repo should be left declaring:
+mllp's vocabulary, which is what the repo should be left declaring. ⚖️ **This is AT LEAST what the
+declaration must carry, and it is not offered as exhaustive.** A first draft omitted two entries and
+both were fail-safe misses (case-insensitive record ids, and the recognisable-record gate), so read
+`scripts/phi-scan.ts` beside it rather than treating the list as complete:
 
 ```yaml
 documentModel:
   kind: delimited-records
   recordSeparators: ["\r\n", "\r", "\n"]
   recordIdLength: 3
+  recordIdMatching: case-insensitive        # 🛑 LOAD-BEARING, AND A DRAFT OMITTED IT. The parser is
+                                            # lenient about segment case, so the scanner normalizes
+                                            # before every lookup (scripts/phi-scan.ts:1708, :2256).
+                                            # An engine built with case-SENSITIVE lookups reports
+                                            # clean on a `pid|...` feed carrying live PID-3/-5/-7.
+                                            # Every id below is written uppercase; that is the
+                                            # canonical form, never the match rule.
   delimiterDiscovery:                       # HL7 v2 declares its own delimiters in the header
     headerRecordIds: [MSH, FHS, BHS]
     fieldSeparatorAt: 3                     # MSH-1
@@ -250,6 +305,14 @@ nameNoiseTokens: [MD, DO, DR, MR, MRS, MS, JR, SR, II, III, IV, RN, NP, PA, PHD,
 documentRecognition:                        # which targets earn the structured scan
   tiers: [fixtures]
   extensions: [".hl7", ".bin"]
+  requiresRecognisableRecord: true          # 🛑 ALSO LOAD-BEARING AND ALSO OMITTED BY A DRAFT.
+                                            # `looksLikeHl7:1750-1755` admits a target only when a
+                                            # recognisable record line survives the framing strip.
+                                            # Without it a fixture-like target that is not a message
+                                            # is handed to the record scan, where three word
+                                            # characters and a delimiter read as a record id and the
+                                            # unknown-record backstop reports prose as person names.
+                                            # A gate that reds on prose is a gate someone turns off.
 
 embeddedInSource:                           # HL7 written into a `.ts` literal
   appliesToExtensions: [".ts"]
@@ -289,8 +352,9 @@ later.
 
 Graded NOT REFUTED at pass 2, then stopped for arithmetic. It was read; **nothing was
 cherry-picked and nothing is proposed for this repo.** Under the "all process is parameterized"
-directive every structural thing in it is engine process, and **all of it is already in
-`@cosyte/script-utils@0.0.2`**:
+directive every structural thing in it is engine process. **Three of its mechanisms are already in
+`@cosyte/script-utils@0.0.2`. A draft said "all of it", which is a closure word over a list of
+three:**
 
 - the completeness rule itself (a target enumerated and never read refuses, in every mode, as a SET
   DIFFERENCE and never a size comparison, naming every offender);
@@ -299,12 +363,23 @@ directive every structural thing in it is engine process, and **all of it is alr
 - splitting the hit report from the clean line so a run that is both incomplete and carrying hits
   prints both, with the refusal still winning the exit code.
 
-What is worth carrying forward is one **claim**, not code: the branch found that
+**One property of that branch is NOT in the engine**, and it is a repo value stated at
+`scripts/phi-scan.ts:1046-1049` ("a developer who has to re-run the gate to be told the second
+offender learns to distrust it"): the branch accumulates every end-of-run refusal and prints them
+together, while the engine returns at the first tier (`phi-scan.js:1394-1401` returns before any
+target is read, so the unmatched-bypass refusal can never print beside the unread refusal at
+`:1465`). Whether that matters enough to be an engine change is a `config` call, not mllp's.
+
+What is worth carrying forward besides is one **claim**, not code: the branch found that
 `checkPhoneField` took no allow-list parameter at all and the dashed-SSN branch pushed
 unconditionally, so those two classes had **no declaration of any kind** and `--allow-fixture` had
 been their only audited remedy. The engine has since fixed half of it (its SSN floor consults
 `allow.ids`). The other half is a reason to prefer the kinds-plus-vocabulary design in §3.5: **every
 kind gets a dimension by construction**, so a detector with no remedy stops being expressible.
 
-The branch's arithmetic is not relied on anywhere above. Every figure in this file was measured on
-this tree, and each is stated beside the members or the command that produces it.
+The branch's arithmetic is not relied on anywhere above. Every figure in this file is anchored to the
+ref it was taken on and stated beside the members or the command that produces it. A first draft was
+not: it wrote a segment-id count two tools disagreed on, dated its scope figures to "this tree" while
+they held only at `origin/main`, and reported 48 where the coverage-relevant figure is 31. Those were
+caught by an adversarial review of this file rather than by its author, which is the argument for
+grading a specification the same way a slice is graded.
