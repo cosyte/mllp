@@ -2,10 +2,23 @@
 
 This file logs every `--allow-fixture <path>` bypass invocation of
 `scripts/phi-scan.ts`. The scanner refuses to honor a `--allow-fixture <path>`
-flag UNLESS this file contains an entry referencing the same path. The committed
-log is intentionally annoying. It discourages bypass and creates an audit
-trail. Prefer extending `scripts/phi-allow-list.txt` (a token-level, reviewed
-declaration) over a whole-file bypass.
+flag UNLESS this file contains an entry referencing the same path.
+
+**A LOGGED BYPASS IS NOW RECORDED AND THEN REFUSED, NOT HONORED, AND THAT
+CHANGES WHAT THIS FILE IS FOR.** The scanner REFUSES (exit 2) over a target it
+enumerated and never read, so `--allow-fixture` cannot reach exit 0 in any mode.
+An entry here still gets a flag PAST the rejection gate above (an unlogged flag
+is refused with a different message, before anything is read), and the run is
+then refused for incompleteness instead. **A scan that did not open a file has
+no clean verdict to give about it.** So this log is an audit trail of attempts,
+never a mechanism for reaching a clean run.
+
+**`scripts/phi-allow-list.txt` IS THE ONLY MECHANISM THAT REACHES A CLEAN RUN.**
+It is a token-level, reviewed declaration that a fixture's identifiers are fake,
+and it is what the scanner's own hit footer now points at. Do not restore a
+footer, a doc line or a habit that offers the whole-file bypass as the remedy:
+following it walks a developer out of exit 1 and into exit 2, which is the same
+defect as following one into a false green, with the sign flipped.
 
 ## How the scanner detects PHI
 
@@ -479,6 +492,42 @@ the mutants that kill each control and the full reasoning live at
 **This is a DETECTIVE control, not a preventive one.** It runs after the write has landed in the
 index. It is not a hook, it does not stop a `git add`, and it must not be described as preventing a
 leak.
+
+## What a target enumerated and never read may do
+
+**A target this run ENUMERATED and never READ refuses (exit 2), naming the paths.** Before it, the
+withdrawal happened at enumeration time, so a file READ AND FOUND CLEAN and a file NEVER OPENED were
+the same state by the time anything counted. `cosyte/config`'s drift check is a CAPABILITY PROBE
+that RUNS this scanner rather than reading it, and it measured the consequence on `fd04f57`: the
+graded run reported only the hits code, which means **the same argv over a corpus whose ONLY
+violator is withdrawn printed `OK, no hits` at exit 0**. Full measurements, both false-green argv
+shapes and the mutation control:
+`documentation/agent-notes.md#phi-scan-completeness-rule-a-target-enumerated-and-never-read`
+
+**The contract, stated once here:**
+
+- **The comparison is a SET DIFFERENCE, never a size.** A count counts the targets that DID get
+  read, so `n read of n targets` hides precisely the paths that did not. The refusal names them.
+- **`--allow-fixture` cannot reach exit 0 in ANY mode.** It is recorded here and then refused.
+  `scripts/phi-allow-list.txt` is the only remedy that reaches a clean run, and the scanner's hit
+  footer says so.
+- **A bypass naming a path the run does not ENUMERATE refuses too**, as a separate claim: such a
+  flag subtracts nothing, and honoring it silently is how a stale entry in this log drifts unnoticed.
+- **The bypass is unioned into the target list unconditionally** in `paths` mode, deduped by
+  repo-relative path. The old conditional seed made the flag a **silent no-op** whenever a positional
+  path was also given.
+- **The one exception is the tolerated-vanish class**, built from targets that ACTUALLY vanished
+  (self-enumerated, untracked, `ENOENT`) and only after the came-back re-check, which refuses.
+- **Hits are printed first.** The three end-of-run refusals (an emptied walk root, an unenumerated
+  bypass, an unread target) fire after the LAST read and are accumulated into one report, so a run
+  that is both incomplete and carrying hits prints everything once, at exit 2.
+
+**Residual, stated rather than hidden:** `"in every mode"` describes the RULE, which is not
+mode-gated, and **not** a claim that every mode reaches it. The only live way to withdraw a target is
+`--allow-fixture`, and a bypass always resolves to `paths` or `--staged`, so `all` mode's `allowed`
+set is empty in every argv today. The skip in its read loop is a **guard, not a route**; do not
+delete it as dead code, and do not upgrade this paragraph into a claim that an all-mode sweep
+exercises the rule.
 
 ## Format
 

@@ -2,40 +2,39 @@
 
 **The narrative lives in [`documentation/agent-notes.md`](documentation/agent-notes.md).** This file
 is the cursor, the rules and the traps: one imperative line each, pointing into that file for the
-incident, the measurement and the reasoning behind it. Split 2026-08-04; **nothing was deleted**. If
-a rule below looks arbitrary, read its section before relaxing it. New narrative goes there, not
-here.
+incident, the measurement and the reasoning. Split 2026-08-04; **nothing was deleted**. If a rule
+below looks arbitrary, read its section first. New narrative goes there, not here.
 
-**The pair is gated** (`pnpm check:agent-notes`, enforced by `test/scripts/agent-notes.test.ts`):
-that file must be tracked, every section must have a body (a container's is its subsections), and
-every pointer at it **in a file the gate opened** must resolve. **A NUL-bearing file is skipped: a disclosed miss, not a pass**; the
-tell is the skipped count. It asserts **this repo's promise, not a universal** (`config`, `hl7` and
-`workflow` carry no `agent-notes.md`), and **refuses (exit 2) rather than reporting green over a
-corpus it never opened**, reconciling paths as sets against `git ls-files`. **Never clear a red by
+**The pair is gated** (`pnpm check:agent-notes`, via `test/scripts/agent-notes.test.ts`): that file
+must be tracked, every section must have a body (a container's is its subsections), and every
+pointer at it **in a file the gate opened** must resolve. **A NUL-bearing file is skipped: a
+disclosed miss, not a pass**; the tell is the skipped count. It asserts **this repo's promise, not a
+universal** (`config`, `hl7`, `workflow` carry none), and **refuses (exit 2) rather than reporting
+green over a corpus it never opened**, reconciling paths as sets against `git ls-files`. **Never clear a red by
 deleting the pointer or the heading.** Why, and every disclosed miss:
 `documentation/agent-notes.md#the-two-file-contract-and-why-this-gate-is-not-universal`
 
 ## Project
 
-**`@cosyte/mllp`**: a developer-focused MLLP (Minimal Lower Layer Protocol) client + server for Node.js/TypeScript, published under the Cosyte brand. Open-source (MIT). Transport-only sibling to `@cosyte/hl7` (the parser).
+**`@cosyte/mllp`**: a developer-focused MLLP (Minimal Lower Layer Protocol) client + server for Node.js/TypeScript, published under the Cosyte brand. Open-source (MIT). Transport-only sibling to `@cosyte/hl7`.
 
-**North star:** A developer can send and receive HL7 v2 messages over a production-grade MLLP connection with three lines of code, and trust framing, ACKs, reconnects, and backpressure under load and on flaky networks, without reading the MLLP spec.
+**North star:** A developer can send and receive HL7 v2 messages over a production-grade MLLP connection with three lines of code, and trust framing, ACKs, reconnects and backpressure under load and on flaky networks, without reading the MLLP spec.
 
 ## Status
 
-- **Phase 9 of 11.** Client / server / framing / connection / transport shipped; Phases 6, 7, 8
-  and 9 are done. Next: `operations/roadmaps/mllp.md`. What each phase actually shipped:
+- **Phase 9 of 11.** Client / server / framing / connection / transport shipped. Next:
+  `operations/roadmaps/mllp.md`. What each phase actually shipped:
   `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
 - **The `@cosyte/hl7` peer installs from npm**, like every other `@cosyte/*` dep. The vendored
-  tarball is GONE: it pinned dev/test to a `0.0.0` snapshot and hid a FIXED MSA-2 correlation bug
-  for ten releases. **Never re-vendor one:**
+  tarball is GONE: it pinned dev/test to a `0.0.0` snapshot and hid a FIXED MSA-2 correlation bug.
+  **Never re-vendor one:**
   `documentation/agent-notes.md#shipped-phases-and-the-vendored-hl7-peer-tarball`
 - **This package is on the npm registry, and this file names no version, deliberately** (derive it:
   `npm view @cosyte/mllp version`). Never quote a version here, never move a published version
   backwards, and never infer repo visibility from publish state or the reverse: they are
   independent. The competing "not yet published to npm" claim is **closed, measured stale
-  2026-08-06**, and the rename from `@cosyte/hl7-mllp` was free only because it predated the first
-  publish; it would not be free now. Why both claims go stale:
+  2026-08-06**. Why both claims go stale, and why the `@cosyte/hl7-mllp` rename was free only
+  because it predated the first publish:
   `documentation/agent-notes.md#the-package-rename-and-the-publish-state-claim`
 
 ### The em-dash brand gate is armed
@@ -44,77 +43,81 @@ deleting the pointer or the heading.** Why, and every disclosed miss:
 founder ban on `U+2014` over **every tracked file AND the PR title, body and commit messages**.
 Full rationale, measurements and residuals: `documentation/agent-notes.md#the-em-dash-brand-gate`
 
-- **When it goes red, never re-encode the character.** Rewrite with a period, colon, comma or
-  parentheses.
+- **When it goes red, never re-encode the character.** Rewrite with a period, colon or comma.
 - **Never add `grep -I`.** Measured on GNU grep 3.8: it skips a text file whose bad byte shares a
   line with the em dash, in total silence, and the gate prints OK.
 - **Never switch this copy to the text-only shape the other parsers run.** The tarball that forced
-  it is gone; the shape stays. A binary carrying `E2 80 94` by coincidence is a red with no possible
-  fix, which is a gate someone disables.
+  it is gone; the shape stays. A binary carrying `E2 80 94` by coincidence is a red with no fix,
+  which is a gate someone disables.
 - **The NUL exclusion is a disclosed miss, not a pass**, and the tell is the excluded count on the OK
-  line: **it reads 0 today**, 1 until the tarball left. If a NUL-bearing text fixture ever lands,
-  revisit the partition, never the ban. The at-risk class exists, so do not call this hypothetical.
-- **Never count over markdown alone.** A markdown-only count is what wrongly cleared `dicom`.
-- **The script is composed from three sibling copies; understand the composition before editing it**,
-  and fix shared limits in the script header, not here.
+  line: **it reads 0 today**. If a NUL-bearing text fixture ever lands, revisit the partition, never
+  the ban. The at-risk class exists, so do not call this hypothetical.
+- **Never count over markdown alone.** That is what wrongly cleared `dicom`.
+- **The script is composed from three sibling copies; understand it before editing**, and fix
+  shared limits in the script header, not here.
 
 ### The PHI scanner (`pnpm phi-scan`)
 
-Three defects are recorded in full at
+Defects are recorded in full at
 `documentation/agent-notes.md#the-phi-scanner-enumeration-and-its-refusals`,
-`documentation/agent-notes.md#phi-scan-symlink-blind-on-both-routes` and
-`documentation/agent-notes.md#phi-scan-rename-blind-at-precommit`. Contract and residuals also live
-in `phi-scan-overrides.md`. The rules that came out of them:
+`documentation/agent-notes.md#phi-scan-symlink-blind-on-both-routes`,
+`documentation/agent-notes.md#phi-scan-rename-blind-at-precommit` and
+`documentation/agent-notes.md#phi-scan-completeness-rule-a-target-enumerated-and-never-read`.
+**This line names no count, deliberately: it read "three" while a fourth landed.** Contract and
+residuals: `phi-scan-overrides.md`. The rules that came out of them:
 
 - **▶ NEVER soften the refuse-a-scan-that-observed-nothing rule**, and never widen the ENOENT
-  tolerance. Narrow the enumeration instead. **This repo is the one that can actually reach it**,
-  because `test/scripts/phi-scan.test.ts` `mkdtemp`s inside `test/`, a walk root, twice per run.
-  **Those tests must keep writing there: the `test/` prefix IS what they prove.**
+  tolerance. Narrow the enumeration instead. **This repo is the one that can actually reach it**:
+  `test/scripts/phi-scan.test.ts` `mkdtemp`s inside `test/`, a walk root, twice per run. **Those
+  tests must keep writing there: the `test/` prefix IS what they prove.**
 - **▶ THE OBSERVED-NOTHING CHECK IS PER WALK ROOT, AND A GLOBAL COUNT CANNOT REPLACE IT**
-  (`PHI-SCAN-OBSERVED-NOTHING-IS-GLOBAL`). Counting every root together only fires when ALL come
-  back empty, so one healthy root masks an empty one: measured, `test/` emptied and `src/` intact
-  printed `OK, no hits` at exit 0. **A denominator is not the remedy**, because a count counts the
-  roots that DID exist. An **absent** root stays legitimate; an **EMPTIED** one refuses (exit 2).
-  A synthetic-repo fixture must therefore plant something scannable under any root it creates.
+  (`PHI-SCAN-OBSERVED-NOTHING-IS-GLOBAL`). One healthy root masks an empty one, and **a denominator
+  is not the remedy**, because a count counts the roots that DID exist. An **absent** root stays
+  legitimate; an **EMPTIED** one refuses (exit 2). A synthetic-repo fixture must plant something
+  scannable under any root it creates.
 - **Widening a walk root reintroduces the mid-sweep-deletion defect verbatim.** The roots are
-  deliberately `test/` and `src/` and not the repo root. **What `test/` ADMITS is a separate
-  question from what the ROOTS are, and the two must not be conflated.**
+  deliberately `test/` and `src/`, not the repo root. **What `test/` ADMITS is a separate question
+  from what the ROOTS are; never conflate them.**
 - **▶ A `.ts` SOURCE UNDER `test/` IS SCANNED, AND WIDENING IS TWO-SIDED**
   (`PHI-SCAN-WALK-ROOT-SCOPE`). **The enumeration half alone finds nothing**: every detector wants a
-  segment id at the START of a line, so a `PID` in a string literal exited 0 even when NAMED
-  EXPLICITLY on argv. `extractEmbeddedHl7` is the other half, its `|` anchor is load-bearing, and
-  the violator exemption is **per-path and total** (`DELIBERATE_VIOLATOR_SOURCES`), never
-  per-extension. **Never widen one half without the other, and never delete the extractor believing
-  the walk covers it.** Figures, and why no match count is recorded:
+  segment id at the START of a line. `extractEmbeddedHl7` is the other half, its `|` anchor is
+  load-bearing, and the violator exemption is **per-path and total** (`DELIBERATE_VIOLATOR_SOURCES`),
+  never per-extension. **Never widen one half without the other, and never delete the extractor
+  believing the walk covers it.** Figures:
   `documentation/agent-notes.md#phi-scan-walk-root-scope-and-phi-scan-observed-nothing-is-global`
-- **`src/` KEEPS THE CONSERVATIVE PASS ONLY, and that is a decision, not an oversight.** Its JSDoc
-  `@example` snippets are deliberately not held to the segment-aware detectors. Do not reverse it as
-  a side effect of a change about `test/`.
-- **▶ NEVER WRITE "NEITHER ROUTE FOLLOWS A LINK" FLAT.** `walk()` opens the ROOTS with `existsSync` +
-  `readdirSync`, which both follow, so replacing `test/` or `src/` itself with a link is read
-  straight through. Disclosed, not closed; never restate it as a promise.
+- **`src/` KEEPS THE CONSERVATIVE PASS ONLY, and that is a decision, not an oversight** (its JSDoc
+  `@example` snippets). Do not reverse it as a side effect of a change about `test/`.
+- **▶ NEVER WRITE "NEITHER ROUTE FOLLOWS A LINK" FLAT.** `walk()` opens the ROOTS with `existsSync`
+  + `readdirSync`, which both follow, so a link AT `test/` or `src/` is read straight through.
+  Disclosed, not closed; never restate it as a promise.
 - **An entry that REPLACES a root is judged with THAT ROOT'S OWN LIMITS** (`test` earns the
   structured scan, `src` the conservative pass), and both read predicates must admit the root's own
-  path. Admitting the path is only half the remedy: `looksLikeHl7` decides what scan it earns. **The
-  `.md` and per-path violator exemptions deliberately do NOT carry over to a non-regular entry**,
-  because they judge bytes the route could read. (A `.ts` exemption is named here in no other form:
-  the blanket one is gone.)
+  path. That is only half the remedy: `looksLikeHl7` decides what scan it earns. **The `.md` and
+  per-path violator exemptions deliberately do NOT carry over to a non-regular entry**, because they
+  judge bytes the route could read.
 - **▶ `--diff-filter` MUST KEEP `T`, AND `--no-renames` STAYS.** Each was forced by a measurement at
   pre-commit, and the "admitting them needs a two-path record shape" framing was **FALSE and ported
-  in from a sibling: do not restore it.** Both measurements:
+  in from a sibling: do not restore it.** Measurements:
   `documentation/agent-notes.md#phi-scan-rename-blind-at-precommit`
-- **A refusal never reports the link target** (working-tree text that can itself carry PHI).
+- **A refusal never reports the link target** (working-tree text that can carry PHI).
 - **A refusal exits 2, never 1.** Exit 1 is reserved for "hits found", so an uncaught throw is a
-  false finding, which reads as actionable and is worse than a crash. **`walk()` no longer lets any
-  `readdir` failure leave the process**: `ENOENT` narrows the enumeration and every other code
-  becomes an `InvocationError`. **Two documents disagree about the leftovers, neither is
-  authoritative, and `phi-scan-overrides.md` is the stale one.** Re-measure before relying on
-  either, and never restate "no failure can exit 1" as settled.
+  false finding, worse than a crash because it reads as actionable. **`walk()` no longer lets a
+  `readdir` failure leave the process.** **Two documents disagree about the leftovers, neither is
+  authoritative, and `phi-scan-overrides.md` is the stale one.** Re-measure first, and never restate
+  "no failure can exit 1" as settled. **Never port an exit code in or out: siblings disagree.**
 - **▶ ALL MODE ALSO READS THE BYTES GIT CARRIES, AS A UNION WITH THE WALK.** Decoys at the tracked
   names satisfy the walk alone: 8 states printed `OK, no hits` at exit 0. **The skip is a BYTE
   comparison, so never normalize EOL before comparing.** A tracked link/gitlink in the index
   refuses; **`--staged` stays UNCHANGED** (it decides what a commit is BLOCKED on).
   `documentation/agent-notes.md#phi-scan-index-corpus-the-bytes-git-carries`
+- **▶ A TARGET ENUMERATED AND NEVER READ REFUSES (exit 2), NAMING THE PATHS**
+  (`PHI-SCAN-COMPLETENESS-RULE`). A corpus whose ONLY violator was withdrawn printed `OK, no hits`
+  at exit 0. **A SET DIFFERENCE, never a size.** **`--allow-fixture` cannot reach exit 0 in ANY
+  mode**, so **the footer must never advertise it again**; a bypass naming a path the run does not
+  ENUMERATE refuses too. **Its one exception is the tolerated-vanish class.** **"In every mode"
+  describes the RULE, not what reaches it**, so all mode's skip is a guard, not dead code. **The
+  mutation control is not optional**, and `config`'s drift check RUNS this scanner.
+  `documentation/agent-notes.md#phi-scan-completeness-rule-a-target-enumerated-and-never-read`
 - **Do not "resync" any of this to a sibling parser's scope, and do not soften it.**
 
 ## Tech Stack (the shared `@cosyte/*` standard)
@@ -255,15 +258,13 @@ of truth: the meta-repo's `documentation/conventions.md`. This is a summary.
 - **In-memory transport is a first-class deliverable** (`@cosyte/mllp/testing`). Every test that can run over it must run over it; sockets are reserved for integration smoke tests.
 - **▶ `attw` SAYS "does not contain types" AND EXITS 0, SO THE `attw` SCRIPT IS A WRAPPER, NOT THE
   BARE CLI.** `getExitCode.js` in `@arethetypeswrong/cli@0.18.4` opens with `if (!analysis.types)
-  return 0`, so the problem list is never consulted and no flag or config reaches it: a broken
-  publish reported as a pass. **The race only supplies the condition**, so the answer is **not** a
-  lock, a lease or a build queue: the gate must be able to say its own inputs were missing, whatever
-  removed them.
+  return 0`, so no flag or config reaches the problem list: a broken publish reported as a pass.
+  **The race only supplies the condition**, so the answer is **not** a lock, a lease or a build
+  queue: the gate must be able to say its own inputs were missing, whatever removed them.
   **▶ NEVER RESTATE THE BOUNDARY AS "MISSING DECLARATIONS EXIT 0".** It needs the tarball to carry
   **no declaration at all**, shared `tsup` type chunk included; removing only the six entry
-  declarations reds honestly at exit 1. A draft claimed otherwise and was wrong, and
-  `test/scripts/attw-gate.test.ts` reds if the promise is restored. **Do not write a single figure
-  down as the build window**: the stable claim is seconds, not milliseconds.
+  declarations reds honestly at exit 1, and `test/scripts/attw-gate.test.ts` reds if the promise is
+  restored. **Do not write a single figure down as the build window**: seconds, not milliseconds.
   `scripts/attw.mjs` carries **two nets that catch different things** (a `package.json` path
   preflight over this package's **twelve** artifact paths, and a post-check on the untyped sentence);
   **keep both**, keep `--profile node16` forwarded, and keep refusing by option name and wholesale

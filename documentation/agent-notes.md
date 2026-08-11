@@ -476,6 +476,96 @@ made. It no longer is (the index is read BEFORE the walk), so an unconditional s
 phase early, removes the decoy before the walk can enumerate it, and every one of those cases
 quietly starts proving something else while still passing on the exit code alone.
 
+## PHI-SCAN-COMPLETENESS-RULE, a target enumerated and never read
+
+**A target this run ENUMERATED and never READ refuses (exit 2), naming the paths**
+(`scripts/phi-scan.ts`, the `unread` set difference at the end of `main`). Before it, the withdrawal
+happened at enumeration time (`targets.filter((t) => !allowed.has(t.path))`), so by the time
+anything counted **a file that was READ AND FOUND CLEAN and a file that was NEVER OPENED were the
+same state**.
+
+**Measured on `fd04f57`, and not inherited as a story.** `cosyte/config`'s drift check is a
+CAPABILITY PROBE rather than a matcher: it builds a throwaway git repository, plants a violator and
+a clean decoy, withdraws the decoy with a logged `--allow-fixture`, and asks whether the scanner
+refuses over a target it enumerated and never read. It reported for this repo:
+
+> phi-scan reported only its HITS code (1) over a run that withdrew
+> `test/fixtures/phi-scan-probe-decoy.txt` after enumerating it: the unread target is not refused,
+> so the same argv over a corpus whose ONLY violator is withdrawn reports clean.
+
+That last clause is the defect, and it was reproduced directly: **the same argv with the VIOLATOR
+withdrawn instead printed `[phi-scan] OK, no hits` and exited 0** over a tracked file carrying
+live-shaped PID-3 / PID-5 / PID-7 / PID-11. CI could print a clean verdict over a corpus it never
+opened.
+
+**Two argv shapes changed, and both were false-green routes:**
+
+1. `phi-scan <clean> --allow-fixture <violator>` never ADMITTED the violator rather than withdrawing
+   it. The seed read `paths.length > 0 ? paths : [...allowFixtures]`, so the flag seeded the target
+   list **only when no positional path was given** and was a **silent no-op** the moment one was.
+   The seed is now an **unconditional union**, deduped by repo-relative path;
+2. `phi-scan <violator> --allow-fixture <violator>` (and the lone-flag form) withdrew the run's
+   entire target list and reported the empty result clean.
+
+**▶ THE COMPARISON IS A SET DIFFERENCE, NEVER A SIZE.** A count counts the targets that DID get
+read, so `n read of n targets` is exactly the arithmetic that hides which ones did not. This
+scanner has now had to write that sentence twice: the per-root observation guard learned it first
+(a global counter cannot see one emptied root), and this rule learned it again by a different
+route. The refusal names the paths because no number can.
+
+**▶ WHAT IT COSTS, and it is a real cost rather than a footnote: `--allow-fixture` CAN NO LONGER
+REACH EXIT 0 IN ANY MODE.** The flag, the override log and `validateAllowFixtures` are all kept, so
+an attempt is **recorded and then refused** instead of silently honoured. `scripts/phi-allow-list.txt`
+(a token-level, reviewed declaration) is the only mechanism that reaches a clean run, and **the hit
+footer no longer advertises the flag as a remedy**: a printed remedy that walks a developer from
+exit 1 into exit 2 is the same defect as one that walks them into a false green, with the sign
+flipped.
+
+**▶ "IN EVERY MODE" IS A STATEMENT ABOUT THE RULE, NOT A CLAIM THAT EVERY MODE REACHES IT.** The
+check is not mode-gated (the per-root guard *is*, and that is the contrast), but the only live way
+to withdraw a target is `--allow-fixture`, and a bypass always resolves to `paths` or `--staged`:
+with `--staged` absent, the union puts it in the positional set, which selects `paths`. So `all`
+mode's `allowed` set is empty in every argv today, and the skip in its read loop is a **guard, not a
+route**. Do not delete that skip as dead code, and do not upgrade this paragraph into a claim that
+an all-mode sweep exercises the rule.
+
+**▶ A SECOND, DIFFERENT CLAIM SHIPS BESIDE IT: a bypass naming a path this run does not ENUMERATE
+also refuses.** Such a flag subtracts nothing, so honouring it silently lets a developer believe a
+file was acknowledged when the run never had it in scope. Before this slice that was a silent no-op
+in every mode, and it is what a stale override log decays into. It is kept as its own refusal rather
+than folded into the completeness rule, because the two say different things about the same flag.
+
+**▶ THE THREE END-OF-RUN REFUSALS ARE ACCUMULATED AND PRINTED TOGETHER, AFTER THE HITS.** An emptied
+walk root, an unenumerated bypass and an unread target all fire after the LAST read, so their hit
+list is complete for the corpus that was actually opened and suppressing it would throw away work a
+human still has to act on. Exit stays 2: an incomplete sweep is not a verdict, whatever it found on
+the way. **That guarantee is about those three and no others** -- a refusal raised from INSIDE the
+read loop still discards the hits found before it, which is pre-existing, loud rather than green,
+and left alone deliberately.
+
+**▶ THE ONE EXCEPTION IS THE TOLERATED-VANISH CLASS, and it is built from what ACTUALLY vanished.**
+`vanished` holds only targets whose read threw `ENOENT` under `tolerateVanish`, and it has already
+survived the came-back re-check, which refuses. A target withdrawn by `--allow-fixture` can never
+join it, because the read loop skips such a target before `scanTarget` is called.
+
+**▶ THE MUTATION CONTROL IS NOT OPTIONAL, AND IT IS THE REASON THIS SECTION CAN BE BELIEVED.** An
+assertion nobody has seen fail is indistinguishable from one that cannot, which is this entire
+class of defect. `test/scripts/phi-scan.test.ts` copies the scanner, replaces the ONE line the rule
+is with an empty list, **asserts that the substitution landed** (so the control cannot go vacuous if
+the line is reworded), and proves the graded run falls back to exit **1** -- exactly the state the
+drift probe reports as drift. Measured: rule present, exit 2; rule removed, exit 1.
+
+**▶ RESIDUAL, DISCLOSED AND NOT CLOSED BY THIS SLICE: reading an index entry is still not TIERING
+it.** `main` carries a gate that reads `examples/data/capture.txt` and prints `OK, no hits` over a
+full patient identity, because outside `test/` `looksLikeHl7` wants a `.hl7` or `.bin` name. The
+SAME bytes exit 1 at `capture.hl7`. It is pinned as a characterization case, and the base commit was
+equally blind, so it is a disclosure rather than a regression. **Widening the TIER rule is its own
+slice with its own argument**, and the file says so at `INDEX_ORIGIN`: handing `package.json` or a
+workflow YAML to `scanHl7` would report identifiers and prose as person names, and would silently
+reverse the standing decision that `src/` keeps the conservative pass. **The characterization case
+asserts exit 0 over live-shaped PID bytes and MUST NOT be copied into a sibling** whose tier rule
+admits more, where it would pin a false clean.
+
 ## The package rename and the publish-state claim
 
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed
