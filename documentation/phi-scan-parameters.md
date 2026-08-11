@@ -237,7 +237,11 @@ fieldMap:                                   # kind -> record -> field positions
     codedList: { PID: [3,18] }              # CX: component 1 is the id, component 5 the type code
     plain:     { PID: [19] }                # ST: a bare number
 
-knownRecords: [ ... 101 HL7 v2 segment ids ... ]
+knownRecords: [ the standard HL7 v2 segment ids, verbatim from `KNOWN_SEGMENTS` in scripts/phi-scan.ts ]
+                                            # NO COUNT IS WRITTEN HERE. A draft of this file said
+                                            # 101; two tools reading the same constant answered 91
+                                            # and 81, which is the trap this lineage keeps paying
+                                            # for. Copy the members, never a number.
 unknownRecordBackstop: adjacent-single-token-name-pair
 nameNoiseTokens: [MD, DO, DR, MR, MRS, MS, JR, SR, II, III, IV, RN, NP, PA, PHD, DDS, DMD, ESQ, PROF, FNP, APRN]
 
