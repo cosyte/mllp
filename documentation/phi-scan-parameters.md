@@ -31,9 +31,16 @@ above). So the two predicates differ **only by root prefix**, which means the en
 `isWalkReadable` default expresses mllp's walk read filter exactly, with no loss. Do not build a
 per-root read parameter on mllp's account.
 
-A separate hand-written `isUnderScanRoot` carries the union of the two roots, and it is the boundary
-the non-regular refusals key on (never a read filter, because a link's name is no evidence about the
-other side of it).
+A separate hand-written `isUnderScanRoot` carries the union of the two roots. 🛑 **IT BOUNDS THE
+STAGED ROUTE'S TWO REFUSALS ONLY** (`scripts/phi-scan.ts:1131` unmerged, `:1259` non-regular), **and
+a draft of this file said it bounded "the non-regular refusals" flat, which is false in the direction
+that erases a measured fix.** The INDEX route's twin refusals are deliberately repo-wide with no root
+bound at all (`:1618` unmerged, `:1629` non-blob modes), and the scanner's own banner at `:1310-1312`
+names the root-scoped version as the CAUSE of two of the eight escapes the index union closed. A
+tracked mode-120000 entry at `examples/link` refuses here today and would report clean under a
+scanner built to the draft's sentence. What is true of every one of the four: they key on a ROOT
+boundary or on none, never on a read filter, because a link's name is no evidence about the other
+side of it.
 
 So the spelling is: **N named roots, each carrying an identity and a detector tier.** It is not a
 rename of `string[]`, and it is not a flatten of `{abs, rel}[]`.
@@ -176,11 +183,14 @@ combination the engine cannot express: **walk two narrow roots, union over the W
 
 ### 3.3 NOT BLOCKING for mllp: a general root type, offered rather than required
 
-🛑 **A DRAFT OF THIS SECTION WAS LABELLED BLOCKING AND IT IS NOT.** mllp's roots are expressible with
-`scanRoots: readonly string[]` exactly as shipped. What forces `["."]` here is §3.2, not the root
-type, and the "per-root read filter" argument the draft leaned on was false (see the tripwire in §1).
-This section is therefore a **proposal a `config` worker may take or leave**, and it must not be
-counted as a thing mllp is waiting on.
+🛑 **A DRAFT OF THIS SECTION WAS LABELLED BLOCKING AND IT IS NOT.** The reason is narrower than the
+draft's, which said mllp's roots were expressible with `scanRoots: readonly string[]` "exactly as
+shipped": their PATHS are, and one of the two measured attachments is not, because the engine has no
+observed-nothing rule at any arity. The conclusion survives anyway, and by a different route:
+**§3.2 forces `["."]` here, which leaves ONE root, and a per-root guard on one root has nothing to
+say.** So this section is a **proposal a `config` worker may take or leave**, and it must not be
+counted as a thing mllp is waiting on. The "per-root read filter" argument the draft also leaned on
+was separately false (see the tripwire in §1).
 
 ⚖️ **NO COUNT OF SPELLINGS IS WRITTEN HERE AND THE REPOS COLUMN IS GONE.** A draft said "seven",
 which was inherited from the evidence doc and was already stale: repos have been adopting during
@@ -246,11 +256,11 @@ already standard-agnostic and belongs in the engine:
 
 | kind | recogniser to hoist | allow dimension |
 |---|---|---|
-| name | unicode-letter tokenizer, drop tokens under 2 characters unless CJK, strip escape sequences | `names` |
+| name | unicode-letter tokenizer, drop tokens under 2 characters unless CJK, strip escape sequences; inspect the family component AND THE TWO AFTER IT (family, given, middle: `scripts/phi-scan.ts:2006`), never the family component alone | `names` |
 | dob | normalize to `YYYYMMDD` / `YYYYMM` / `YYYY`, month 1..12, day 1..31 | `dobs` |
 | id | 9-digit SSN shape; bare 6..9-digit MRN / account shape | `ids` |
 | address | street-line shape `^\d+\s+\p{L}` | `addresses` (§3.1) |
-| phone | 10-or-more digits, `555` fake-exchange convention | `ids` |
+| phone | 10-or-more digits, `555` fake-exchange convention | **none today; `ids` PROPOSED.** Unlike the other four rows this one is not descriptive: `checkPhoneField` (`scripts/phi-scan.ts:2090`) takes no allow-list parameter and `:2283` passes none, so the class has no declaration of any kind. See §4. |
 
 mllp's vocabulary, which is what the repo should be left declaring. ⚖️ **This is AT LEAST what the
 declaration must carry, and it is not offered as exhaustive.** A first draft omitted two entries and
@@ -316,6 +326,12 @@ documentRecognition:                        # which targets earn the structured 
 
 embeddedInSource:                           # HL7 written into a `.ts` literal
   appliesToExtensions: [".ts"]
+  excludeTiers: [code]                      # `src/` is deliberately NOT run through the recogniser
+                                            # (scripts/phi-scan.ts:2357). Its JSDoc @example snippets
+                                            # carry illustrative HL7 that is not held to the
+                                            # segment-aware detectors, and reversing that as a side
+                                            # effect of a change about `test/` is a standing
+                                            # prohibition in this repo's CLAUDE.md.
   anchor: quote-or-escape-or-newline, then optional space, then a 3-character id, then "|"
   interpolationPlaceholder: "_"
 ```
@@ -329,10 +345,17 @@ Two claims that must survive into whatever the engine ships, because each was pa
   START of a line, so a `PID` in a string literal reported clean even when the file was named
   EXPLICITLY on argv. Widening enumeration without the recogniser ships a false green.
 
-### 3.6 Two behaviour changes adoption causes here, both accepted
+### 3.6 Behaviour changes adoption causes here, all accepted
 
-Neither is a request for a parameter. Both are recorded so nobody reads them as regressions found
-later.
+None is a request for a parameter. **No count is written here**: a draft said "two" and omitted the
+third. They are recorded so nobody reads them as regressions found later.
+
+- **The per-root observed-nothing refusal goes away.** An EMPTIED walked root refuses today
+  (`main`'s `observedByRoot` block); the engine has no such rule at any arity. Accepted here only
+  because `["."]` leaves one root, so there is no second root left to mask an emptied one, and the
+  union plus the completeness rule still require every tracked path to have been read. **That is an
+  argument about arity, not about coverage, and it does not transfer to a repo that declares several
+  roots.**
 
 - **The vanish tolerance goes away, and this is the repo that can actually reach it.**
   `Target.tolerateVanish` reports an `ENOENT` on an untracked file the walk enumerated itself as
@@ -364,8 +387,8 @@ three:**
   prints both, with the refusal still winning the exit code.
 
 **One property of that branch is NOT in the engine**, and it is a repo value stated at
-`scripts/phi-scan.ts:1046-1049` ("a developer who has to re-run the gate to be told the second
-offender learns to distrust it"): the branch accumulates every end-of-run refusal and prints them
+`scripts/phi-scan.ts:1046-1049` ("a developer who has to re-run the gate to be told the second one
+learns to distrust it"): the branch accumulates every end-of-run refusal and prints them
 together, while the engine returns at the first tier (`phi-scan.js:1394-1401` returns before any
 target is read, so the unmatched-bypass refusal can never print beside the unread refusal at
 `:1465`). Whether that matters enough to be an engine change is a `config` call, not mllp's.
