@@ -580,7 +580,14 @@ describe("phi-scan: --allow-fixture override gate", () => {
     expect(r2.stderr).toMatch(/phi-scan-overrides\.md/);
   });
 
-  it("honors --allow-fixture WITH an override-log entry (exit 0)", () => {
+  it("RECORDS then REFUSES --allow-fixture WITH an override-log entry (exit 2)", () => {
+    // ▶ THIS CASE ASSERTED exit 0 UNTIL THE COMPLETENESS RULE LANDED, and the
+    // flip is the whole point of that rule rather than a regression: the run
+    // enumerated the file, declined to open it, and a scan that did not open a
+    // file has no clean verdict to give about it. The override gate itself is
+    // UNCHANGED and still the thing being tested here: the path gets past
+    // `validateAllowFixtures` (the unlogged case above is refused with a
+    // different message), and is then refused for incompleteness instead.
     const path = join(dir, "override-me.hl7");
     writeFileSync(path, msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M"));
     const rel = relative(REPO_ROOT, path).split(sep).join("/");
@@ -593,7 +600,11 @@ describe("phi-scan: --allow-fixture override gate", () => {
         `\n### ${rel}\n\n- **Date:** 2026-07-18\n- **Reason:** unit test\n- **Approved by:** vitest\n- **Expires:** permanent\n`,
       );
       const r = runScanner(["--allow-fixture", path]);
-      expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+      expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+      expect(r.stderr).toMatch(/enumerated and never read/);
+      expect(r.stderr).toContain(rel);
+      // It got PAST the override gate: the unlogged refusal has other wording.
+      expect(r.stderr).not.toMatch(/--allow-fixture rejected/);
     } finally {
       writeFileSync(OVERRIDES_PATH, original);
     }
@@ -2006,5 +2017,186 @@ describe("phi-scan: the index corpus (the bytes git carries)", () => {
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(2);
     expect(r.stderr).toMatch(/observed no files under src\//);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE COMPLETENESS RULE
+// ---------------------------------------------------------------------------
+
+/**
+ * A target this run ENUMERATED and never READ refuses (exit 2), in every mode,
+ * naming the paths.
+ *
+ * WHAT THESE CASES REPRODUCE, and it is a measurement rather than a story:
+ * `cosyte/config`'s drift probe invokes each sibling's scanner as
+ * `phi-scan <violator> <decoy> --allow-fixture <decoy>` over a throwaway repo.
+ * Both paths are ENUMERATED and the decoy is then withdrawn by a LOGGED bypass.
+ * On `fd04f57` this scanner answered with its HITS code alone, which means the
+ * SAME argv over a corpus whose only violator is the withdrawn file reported
+ * `OK, no hits` at exit 0: a withdrawn target and a target read clean were the
+ * same state by the time anything counted.
+ *
+ * ▶ THE MUTATION CONTROL AT THE BOTTOM IS NOT OPTIONAL. An assertion nobody has
+ * seen fail is indistinguishable from one that cannot, and this whole class of
+ * defect is gates that could not go red. It removes the ONE line the rule is,
+ * asserts the removal landed (so it cannot go vacuous if the line is reworded),
+ * and proves the graded run falls back to exit 1.
+ */
+
+/** The override-log shape `loadOverrideLog` honours, for paths in a temp repo. */
+function overrideLog(rels: string[]): string {
+  const entries = rels
+    .map(
+      (p) =>
+        `\n### ${p}\n\n- **Date:** 2026-08-11\n- **Reason:** unit test\n` +
+        `- **Approved by:** vitest\n- **Expires:** permanent\n`,
+    )
+    .join("");
+  return `# PHI scan overrides\n\n## Entries\n${entries}`;
+}
+
+const VIOLATOR_REL = "test/probe-violator.hl7";
+const DECOY_REL = "test/probe-decoy.hl7";
+
+/**
+ * `makeScanRepo`, plus a violator and a clean decoy under `test/`, and an
+ * override log that logs both. Everything is TRACKED, so no case here can be
+ * answered by the tolerated-vanish exemption by accident.
+ */
+function makeCompletenessRepo(): string {
+  const repo = makeScanRepo({ git: true });
+  stage(repo, VIOLATOR_REL, INDEX_PHI);
+  stage(repo, DECOY_REL, INDEX_CLEAN);
+  writeFileSync(join(repo, "phi-scan-overrides.md"), overrideLog([VIOLATOR_REL, DECOY_REL]));
+  return repo;
+}
+
+describe("phi-scan: the completeness rule", () => {
+  it("REFUSES the drift probe's graded run, and still prints the violator's hits", () => {
+    const repo = makeCompletenessRepo();
+    const r = runScannerIn(repo, null, undefined, [
+      VIOLATOR_REL,
+      DECOY_REL,
+      "--allow-fixture",
+      DECOY_REL,
+    ]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/1 target was enumerated and never read/);
+    expect(r.stderr).toContain(DECOY_REL);
+    // A REFUSAL MUST NOT SWALLOW A REAL HIT: the violator WAS read, and what it
+    // carried is work a human still has to act on.
+    expect(r.stderr).toContain("PID-5");
+    // ...and the clean line can never appear beside a refusal.
+    expect(r.stdout).not.toMatch(/OK, no hits/);
+  });
+
+  it("REFUSES the corpus whose ONLY violator is withdrawn (was exit 0)", () => {
+    // The headline defect. Under the old shape this argv printed `OK, no hits`
+    // and exited 0 over a tracked file carrying live-shaped PID values.
+    const repo = makeCompletenessRepo();
+    const r = runScannerIn(repo, null, undefined, [
+      DECOY_REL,
+      VIOLATOR_REL,
+      "--allow-fixture",
+      VIOLATOR_REL,
+    ]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/enumerated and never read/);
+    expect(r.stderr).toContain(VIOLATOR_REL);
+    expect(r.stdout).not.toMatch(/OK, no hits/);
+  });
+
+  it("ADMITS a bypass named beside a positional path, which used to be a silent no-op", () => {
+    // The seed read `paths.length > 0 ? paths : [...allowFixtures]`, so the flag
+    // became a target ONLY when no positional was given. With one present the
+    // violator was neither read nor mentioned and the run exited 0 on the decoy
+    // alone. The union admits it, and the rule then refuses over it.
+    const repo = makeCompletenessRepo();
+    const r = runScannerIn(repo, null, undefined, [DECOY_REL, "--allow-fixture", VIOLATOR_REL]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toContain(VIOLATOR_REL);
+    // The decoy was genuinely READ, so it is not in the unread list.
+    expect(r.stderr).not.toContain(DECOY_REL);
+  });
+
+  it("REFUSES a lone bypass, which reads to a caller like a full-corpus sweep", () => {
+    const repo = makeCompletenessRepo();
+    const r = runScannerIn(repo, null, undefined, ["--allow-fixture", VIOLATOR_REL]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/enumerated and never read/);
+    expect(r.stderr).toContain(VIOLATOR_REL);
+  });
+
+  it("NAMES EVERY withdrawn target in one refusal, never just the first", () => {
+    // A developer who has to re-run a gate to be told the second finding learns
+    // to distrust it, which is the same reason `unscannableBlock` names them
+    // all. It is also what a SIZE comparison could not do.
+    const repo = makeCompletenessRepo();
+    const r = runScannerIn(repo, null, undefined, [
+      "test/corpus.hl7",
+      "--allow-fixture",
+      VIOLATOR_REL,
+      "--allow-fixture",
+      DECOY_REL,
+    ]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/2 targets were enumerated and never read/);
+    expect(r.stderr).toContain(VIOLATOR_REL);
+    expect(r.stderr).toContain(DECOY_REL);
+  });
+
+  it("REFUSES a bypass naming a path this run does not enumerate", () => {
+    // The other half of the same claim, and a DIFFERENT one: such a flag
+    // subtracts nothing, so honouring it silently lets a developer believe a
+    // file was acknowledged when the run never had it in scope. `--staged` is
+    // the sharp mode for it, because a committed file is not staged.
+    const repo = makeCompletenessRepo();
+    gitIn(repo, ["-c", "user.email=t@e.com", "-c", "user.name=t", "commit", "-qm", "corpus"]);
+    const r = runScannerIn(repo, null, undefined, ["--staged", "--allow-fixture", VIOLATOR_REL]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+    expect(r.stderr).toMatch(/does not enumerate, so the flag subtracts nothing/);
+    expect(r.stderr).toContain(VIOLATOR_REL);
+  });
+
+  it("CONTROL: the same corpus with no bypass at all reports honestly", () => {
+    // Anti-vacuity. Without the flag nothing is withdrawn, so the run reaches a
+    // verdict rather than a refusal, and the verdict is the violator's hits.
+    const repo = makeCompletenessRepo();
+    const r = runScannerIn(repo, null, undefined, [VIOLATOR_REL, DECOY_REL]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).not.toMatch(/enumerated and never read/);
+    const clean = runScannerIn(repo, null, undefined, [DECOY_REL]);
+    expect(clean.code, `stderr: ${clean.stderr}`).toBe(0);
+    expect(clean.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("MUTATION CONTROL: removing the rule's one line drops the graded run back to exit 1", () => {
+    // AN ASSERTION NOBODY HAS SEEN FAIL IS INDISTINGUISHABLE FROM ONE THAT
+    // CANNOT. This is the positive control for every case above: with the set
+    // difference replaced by an empty list, the graded run answers with the
+    // HITS code, which is exactly the state `cosyte/config`'s drift probe
+    // reports as drift.
+    const RULE_LINE =
+      "const unread = [...enumerated].filter((p) => !read.has(p) && !tolerated.has(p)).sort();";
+    const source = readFileSync(SCANNER_PATH, "utf8");
+    // The control cannot go vacuous if the line is reworded: assert it is there,
+    // and assert the substitution landed, before trusting the run below.
+    expect(source).toContain(RULE_LINE);
+    const mutated = source.replace(RULE_LINE, "const unread: string[] = [];");
+    expect(mutated).not.toContain(RULE_LINE);
+
+    const mutantDir = tempDir("mllp-phi-mutant-");
+    const mutantPath = join(mutantDir, "phi-scan.ts");
+    writeFileSync(mutantPath, mutated);
+
+    const repo = makeCompletenessRepo();
+    const r = spawnSync(
+      NODE_BIN,
+      [mutantPath, VIOLATOR_REL, DECOY_REL, "--allow-fixture", DECOY_REL],
+      { cwd: repo, encoding: "utf8", shell: false },
+    );
+    expect(r.status, `stderr: ${r.stderr ?? ""}`).toBe(1);
+    expect(r.stderr ?? "").not.toMatch(/enumerated and never read/);
   });
 });

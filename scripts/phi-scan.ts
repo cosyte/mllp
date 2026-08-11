@@ -130,6 +130,17 @@
  * set. What the rule catches is a path that BECAME a target and then did not get
  * opened.
  *
+ * ▶ "IN EVERY MODE" IS A STATEMENT ABOUT THE RULE, NOT A CLAIM THAT EVERY MODE
+ * CAN REACH IT TODAY, and the difference is written down because this lineage
+ * keeps paying for prose that outran the code. The check is NOT mode-gated (the
+ * per-root guard below is, and that is the contrast), but the only live way to
+ * withdraw a target is `--allow-fixture`, and a bypass always resolves to
+ * `paths` or `--staged`: with `--staged` absent the union below puts it in the
+ * positional set, which selects `paths`. So `all` mode's `allowed` set is empty
+ * in every argv, and the skip in its read loop is a guard rather than a route.
+ * DO NOT DELETE THAT SKIP AS DEAD CODE: it is what keeps the two loops agreeing
+ * on what a withdrawal means if the mode rule is ever revisited.
+ *
  * A BYPASS NAMING A PATH THIS RUN DOES NOT ENUMERATE ALSO REFUSES, and it is a
  * DIFFERENT claim kept alongside rather than a restatement: that flag subtracts
  * nothing, so honouring it silently lets a developer believe a file was
