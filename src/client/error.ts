@@ -78,6 +78,161 @@ export class MllpTimeoutError extends Error {
 }
 
 /**
+ * Why a send waiting on its application acknowledgement was failed.
+ *
+ * - `'timeout'`, the wait that started at the accept acknowledgement expired.
+ * - `'connection-lost'`, the link failed or was closed while the send was still pending on
+ *   it. The send is failed rather than left pending or reported as successful, because
+ *   nobody can say what the receiving application did with a message whose second
+ *   acknowledgement never arrived.
+ *
+ * @example
+ * ```typescript
+ * import { MllpApplicationAckError } from '@cosyte/mllp';
+ * if (err instanceof MllpApplicationAckError && err.reason === 'timeout') {
+ *   // committed by the peer, application disposition unknown
+ * }
+ * ```
+ */
+export type ApplicationAckFailure = "timeout" | "connection-lost";
+
+/**
+ * Rejects a `send()` whose peer **committed** the message and then never reported what its
+ * application did with it.
+ *
+ * This is the enhanced-mode outcome that has no original-mode counterpart, and it is
+ * deliberately a distinct type from {@link MllpTimeoutError}: that one means "no
+ * acknowledgement at all arrived", and this one means "the accept acknowledgement arrived,
+ * the peer took custody, and the application acknowledgement did not follow". Confusing the
+ * two would tell an operator a message may never have been received when the peer has said
+ * in writing that it was.
+ *
+ * `commitCode` is the Table 0008 code already received, so a caller can act on the custody
+ * transfer even though the application disposition is unknown. It is a member of a closed
+ * six-code set, never wire content.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.send(payload);
+ * } catch (err) {
+ *   if (err instanceof MllpApplicationAckError) {
+ *     logger.warn({ commit: err.commitCode, reason: err.reason, elapsedMs: err.elapsedMs });
+ *   }
+ * }
+ * ```
+ */
+export class MllpApplicationAckError extends Error {
+  override readonly name = "MllpApplicationAckError" as const;
+
+  /** Why the wait ended. See {@link ApplicationAckFailure}. */
+  readonly reason: ApplicationAckFailure;
+
+  /** The commit disposition already received. Always the positive accept-mode code. */
+  readonly commitCode: "CA";
+
+  /**
+   * Byte length of the send's MSH-10 control ID, or `undefined` when there was none to
+   * read. The control ID itself is deliberately not here, for the reason given on
+   * {@link MllpTimeoutError.messageControlIdBytes}.
+   */
+  readonly messageControlIdBytes: number | undefined;
+
+  /** Milliseconds between the accept acknowledgement and this failure. */
+  readonly elapsedMs: number;
+
+  /** Epoch ms at which the accept acknowledgement was received. */
+  readonly commitReceivedAt: number;
+
+  /**
+   * Construct an application-acknowledgement failure.
+   *
+   * @param message - Human-readable error message. Structural facts only, never field content.
+   * @param opts - Failure context (why, the commit code, control-id byte length, timings).
+   */
+  constructor(
+    message: string,
+    opts: {
+      reason: ApplicationAckFailure;
+      commitCode: "CA";
+      messageControlIdBytes: number | undefined;
+      elapsedMs: number;
+      commitReceivedAt: number;
+    },
+  ) {
+    super(message);
+    this.reason = opts.reason;
+    this.commitCode = opts.commitCode;
+    this.messageControlIdBytes = opts.messageControlIdBytes;
+    this.elapsedMs = opts.elapsedMs;
+    this.commitReceivedAt = opts.commitReceivedAt;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, MllpApplicationAckError);
+    }
+  }
+}
+
+/**
+ * Rejects a `send()` whose peer answered with a **negative commit**: HL7 Table 0008 `CE`
+ * (commit error) or `CR` (commit reject).
+ *
+ * Either says the peer did not take custody of the bytes, so no application acknowledgement
+ * is coming and there is nothing to wait for. The send fails immediately rather than sitting
+ * out a window that would report the same failure later and less precisely.
+ *
+ * `commitCode` is a member of a closed six-code set, never wire content.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.send(payload);
+ * } catch (err) {
+ *   if (err instanceof MllpCommitRejectedError && err.commitCode === 'CR') {
+ *     // the peer will not take this message; do not resend it unchanged
+ *   }
+ * }
+ * ```
+ */
+export class MllpCommitRejectedError extends Error {
+  override readonly name = "MllpCommitRejectedError" as const;
+
+  /** The negative accept-mode code the peer sent. */
+  readonly commitCode: "CE" | "CR";
+
+  /**
+   * Byte length of the send's MSH-10 control ID, or `undefined` when there was none to
+   * read. The control ID itself is deliberately not here.
+   */
+  readonly messageControlIdBytes: number | undefined;
+
+  /** Milliseconds between the send's write-flush and this acknowledgement. */
+  readonly elapsedMs: number;
+
+  /**
+   * Construct a negative-commit error.
+   *
+   * @param message - Human-readable error message. Structural facts only, never field content.
+   * @param opts - Failure context (the commit code, control-id byte length, elapsed time).
+   */
+  constructor(
+    message: string,
+    opts: {
+      commitCode: "CE" | "CR";
+      messageControlIdBytes: number | undefined;
+      elapsedMs: number;
+    },
+  ) {
+    super(message);
+    this.commitCode = opts.commitCode;
+    this.messageControlIdBytes = opts.messageControlIdBytes;
+    this.elapsedMs = opts.elapsedMs;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, MllpCommitRejectedError);
+    }
+  }
+}
+
+/**
  * Set of Node/OpenSSL error codes that indicate a **certificate-verification**
  * failure (as opposed to some other TLS handshake failure), untrusted chain,
  * expired/not-yet-valid certificate, hostname mismatch, revocation, etc.

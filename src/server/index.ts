@@ -14,6 +14,8 @@ export {
   type MessageMeta,
   type NackEvent,
   type NackReason,
+  type NackAckCode,
+  type AckModeWarningEvent,
 } from "./server.js";
 
 export {

@@ -38,13 +38,22 @@ import { MLLP_TLS_VERIFY_DISABLED, type SecurityWarning } from "../transport/sec
 import { encodeFrame } from "../framing/index.js";
 import { MllpFramingError } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning, WarningCode } from "../framing/index.js";
-import { Correlator, extractMshControlId, extractMsaControlId } from "./correlator.js";
-import type { PendingAck } from "./correlator.js";
+import { Correlator, extractMsaControlId } from "./correlator.js";
+import type { AckModeWarningContext, PendingAck, TwoPhaseState } from "./correlator.js";
 import { ackDiagnosticMessage } from "./ack-diagnostics.js";
 import type { AckCorrelationCode } from "./ack-diagnostics.js";
+import { controlIdFromMsh, readMshSegment } from "../internal/control-id.js";
+import {
+  classifyOutboundAckMode,
+  type CommitAckReport,
+  type OutboundAckMode,
+} from "../internal/ack-mode.js";
+import { ackModeDiagnosticMessage, type AckModeCode } from "../internal/ack-mode-diagnostics.js";
 import {
   MllpTimeoutError,
   MllpBackpressureError,
+  MllpApplicationAckError,
+  MllpCommitRejectedError,
   isTransientConnectionError,
   isTlsVerificationErrorCode,
   isTlsProtocolError,
@@ -62,6 +71,21 @@ import {
  * never exposed; hostile callers cannot abort the sentinel.
  */
 const NEVER_ABORTING_SIGNAL: AbortSignal = new AbortController().signal;
+
+/**
+ * Warning context for a diagnostic raised on an **outbound** send, where there is no
+ * inbound frame to take an offset from and nothing to count.
+ *
+ * Every field is a fixed zero or `null` on purpose: the caller already holds the payload it
+ * passed to `send()`, so a diagnostic about it has nothing to add beyond the code.
+ */
+const OUTBOUND_WARNING_CONTEXT: AckModeWarningContext = Object.freeze({
+  msa1Bytes: null,
+  ackCode: null,
+  controlIdBytes: null,
+  byteOffset: 0,
+  elapsedSinceSendMs: 0,
+});
 
 /**
  * The `'warning'` payload the client emits for an ACK-correlation deviation
@@ -93,6 +117,53 @@ export interface AckCorrelationWarning extends MllpWarning {
    * ACK) and this warning.
    */
   readonly elapsedSinceSendMs: number;
+}
+
+/**
+ * The `'warning'` payload the client emits for an **acknowledgement-mode** deviation: an
+ * enhanced-mode send on a client that cannot correlate two acknowledgements, a Table 0155
+ * value it did not recognise, an acknowledgement it could not classify into a mode, and a
+ * further acknowledgement for a send that is already settled or failed.
+ *
+ * It arrives on the same `'warning'` event as a framing warning and an
+ * {@link AckCorrelationWarning}, so narrow on `code` before reading its fields. It is
+ * **not** an `MllpWarning`: its `code` is an {@link AckModeCode}, deliberately a family of
+ * its own rather than an addition to the decoder's registry, and it is not counted in
+ * `getStats().warningsByCode`, whose keys are the decoder's codes.
+ *
+ * Everything input-derived on it is a number or a member of the closed six-code Table 0008
+ * set. `message` is a **frozen registry entry**, byte-for-byte identical for a given code
+ * no matter what arrived on the wire. A warning is a log line, so it carries no field
+ * content: an MSA-1 nobody could classify is reported by its byte length alone.
+ *
+ * @example
+ * ```typescript
+ * client.on('warning', (w: AckModeWarning) => {
+ *   if (w.code === 'MLLP_ACK_MSA1_UNCLASSIFIABLE') {
+ *     logger.warn({ code: w.code, msa1Bytes: w.msa1Bytes, at: w.byteOffset });
+ *   }
+ * });
+ * ```
+ */
+export interface AckModeWarning {
+  /** The acknowledgement-mode code this warning reports. */
+  readonly code: AckModeCode;
+  /** Frozen registry text for `code`. Never interpolated. */
+  readonly message: string;
+  /** Inbound frame's stream byte offset; `0` for a warning raised on an outbound send. */
+  readonly byteOffset: number;
+  /** Byte length of the MSA-1 field involved, or `null` when the code reports none. */
+  readonly msa1Bytes: number | null;
+  /** Table 0008 code involved, or `null` when the code reports none. */
+  readonly ackCode: "AA" | "AE" | "AR" | "CA" | "CE" | "CR" | null;
+  /** Byte length of the control ID involved, or `null` when there was none to read. */
+  readonly controlIdBytes: number | null;
+  /** Milliseconds since the send's write-flush, or since its disposal for a late ACK. */
+  readonly elapsedSinceSendMs: number;
+  /** Connection identifier, `undefined` before a connection is attached. */
+  readonly connectionId: string | undefined;
+  /** Wall-clock time at point of emission. */
+  readonly timestamp: Date;
 }
 
 /**
@@ -176,6 +247,20 @@ export interface ClientOptions {
    * pre-flush queue time is not charged to the peer. Default: `30_000`.
    */
   readonly ackTimeoutMs?: number;
+  /**
+   * Bound, in milliseconds, on the **second** wait an enhanced-mode send can enter: the
+   * one that starts when an accept acknowledgement (`CA`) reports that the peer has
+   * committed the message, and ends when the application acknowledgement arrives.
+   *
+   * Measured from the moment that accept acknowledgement was received, not from the send,
+   * so a peer that commits at 9 s and applies at 12 s settles the send successfully at
+   * 12 s. Defaults to whatever `ackTimeoutMs` is in force for the send, and can be
+   * overridden per send. It only ever applies to a send whose MSH-16 asks for an
+   * application acknowledgement, so it changes nothing for an original-mode interface.
+   *
+   * @default the send's own `ackTimeoutMs`
+   */
+  readonly applicationAckTimeoutMs?: number;
   /**
    * If `true`, ACKs are matched against outgoing sends by MSH-10 → MSA-2.
    * Default `false` (FIFO mode).
@@ -381,6 +466,11 @@ export class MllpClient extends EventEmitter {
 
   /** Per-message ACK timeout in ms. Resolved at construction. */
   private readonly _ackTimeoutMs: number;
+  /**
+   * Default bound on the second (application-acknowledgement) wait, in ms.
+   * `undefined` means "whatever ACK timeout is in force for that send".
+   */
+  private readonly _applicationAckTimeoutMs: number | undefined;
   /** controlId-mode flag. `false` → FIFO. */
   private readonly _correlateByControlId: boolean;
   /** Unified ACK correlator. Built during `_attachConnection`. */
@@ -474,6 +564,7 @@ export class MllpClient extends EventEmitter {
     super();
     this._opts = opts;
     this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
+    this._applicationAckTimeoutMs = opts.applicationAckTimeoutMs;
     this._correlateByControlId = opts.correlateByControlId === true;
     this._autoReconnect = opts.autoReconnect === true;
     this._initialDelayMs = opts.initialDelayMs ?? 100;
@@ -741,6 +832,83 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
+   * Emit a frozen {@link AckModeWarning} on the `'warning'` event.
+   *
+   * The message is a **registry lookup**, not an interpolation, and everything
+   * input-derived on the payload is a number or a closed-set code. This holds in every
+   * mode: an original-mode send emits nothing new, but when it does reach one of these
+   * codes the same discipline applies.
+   */
+  private _emitAckModeWarning(
+    code: AckModeCode,
+    ctx: AckModeWarningContext,
+    conn?: Connection,
+  ): void {
+    const warning: AckModeWarning = Object.freeze({
+      code,
+      message: ackModeDiagnosticMessage(code),
+      byteOffset: ctx.byteOffset,
+      msa1Bytes: ctx.msa1Bytes,
+      ackCode: ctx.ackCode,
+      controlIdBytes: ctx.controlIdBytes,
+      elapsedSinceSendMs: ctx.elapsedSinceSendMs,
+      connectionId: this._connection?.connectionId ?? conn?.connectionId,
+      timestamp: new Date(),
+    });
+    this._emitContained("warning", warning);
+  }
+
+  /**
+   * Build the typed error for a send that was left waiting on its application
+   * acknowledgement: the peer committed the message and then either fell silent past the
+   * second window or lost the link.
+   */
+  private _applicationAckError(
+    entry: PendingAck,
+    reason: "timeout" | "connection-lost",
+    elapsedMs: number,
+    detail: string,
+  ): MllpApplicationAckError {
+    const commitReceivedAt = entry.twoPhase?.commitReceivedAt ?? 0;
+    return new MllpApplicationAckError(
+      `commit accepted (CA); no application acknowledgement ${detail}`,
+      {
+        reason,
+        commitCode: "CA",
+        messageControlIdBytes: entry.controlId?.length,
+        elapsedMs,
+        commitReceivedAt,
+      },
+    );
+  }
+
+  /**
+   * Fail every pending send that is waiting on its application acknowledgement, with an
+   * error naming the commit disposition already received. Used on the paths where the link
+   * goes away: such a send must not be held for a resend (the peer already has the
+   * message), nor left pending, nor reported as successful.
+   *
+   * Returns the entries it removed. Sends without a reported commit are untouched.
+   */
+  private _failCommitPendingSends(cause: string): PendingAck[] {
+    const corr = this._correlator;
+    if (corr === null) return [];
+    const stranded: PendingAck[] = [];
+    for (const entry of corr.liveEntries()) {
+      if ((entry.twoPhase?.commitReceivedAt ?? null) !== null) stranded.push(entry);
+    }
+    const now = Date.now();
+    for (const entry of stranded) {
+      corr.dispose(entry.key);
+      const commitReceivedAt = entry.twoPhase?.commitReceivedAt ?? now;
+      entry.reject(
+        this._applicationAckError(entry, "connection-lost", now - commitReceivedAt, cause),
+      );
+    }
+    return stranded;
+  }
+
+  /**
    * Emit the per-connection insecure-TLS warning when
    * `tls.allowUnverified === true`, fires on EVERY successful
    * `secureConnect`, initial connect and every reconnect. Emits both a frozen
@@ -850,13 +1018,57 @@ export class MllpClient extends EventEmitter {
           // the in-flight slot so the next send can flush.
           this._maybeEmitDrain();
         },
+        onApplicationAckTimeout: (entry, elapsedMs) => {
+          this._timedOutTotal += 1;
+          entry.reject(
+            this._applicationAckError(entry, "timeout", elapsedMs, `after ${elapsedMs}ms`),
+          );
+          this._maybeEmitDrain();
+        },
+        onCommitRejected: (entry, code) => {
+          entry.reject(
+            new MllpCommitRejectedError(`peer answered a negative commit (${code})`, {
+              commitCode: code,
+              messageControlIdBytes: entry.controlId?.length,
+              elapsedMs: entry.sentAt === null ? 0 : Date.now() - entry.sentAt,
+            }),
+          );
+          this._maybeEmitDrain();
+        },
+        onCommitReported: (entry, ack, latencyMs) => {
+          const report = entry.twoPhase?.onCommitReport ?? null;
+          if (report === null) return;
+          // Contained: this is the caller's own per-send hook, reached from the socket's
+          // 'data' listener. A throwing hook must not unwind into the transport nor stop
+          // the send from settling later on its application acknowledgement.
+          try {
+            report(Object.freeze({ code: "CA", payload: ack, latencyMs }));
+          } catch (err) {
+            safeEmitError(
+              this,
+              Object.freeze({
+                connectionId: this._connection?.connectionId ?? conn.connectionId,
+                error: err instanceof Error ? err : new Error(String(err)),
+              }),
+            );
+          }
+        },
+        onAckModeWarning: (code, ctx) => {
+          this._emitAckModeWarning(code, ctx, conn);
+        },
       });
     }
 
     // Periodic sweep: smaller of (ackTimeoutMs / 4) and 1000 ms; floor 50 ms.
-    // .unref() so this timer never keeps the process alive.
+    // A shorter application-acknowledgement window tightens the same cadence, so the
+    // second wait is swept at the resolution it was configured with rather than the first
+    // wait's. .unref() so this timer never keeps the process alive.
     if (this._ackSweepTimer === null) {
-      const sweepIntervalMs = Math.max(50, Math.min(1000, Math.floor(this._ackTimeoutMs / 4)));
+      const shortestWindowMs = Math.min(
+        this._ackTimeoutMs,
+        this._applicationAckTimeoutMs ?? this._ackTimeoutMs,
+      );
+      const sweepIntervalMs = Math.max(50, Math.min(1000, Math.floor(shortestWindowMs / 4)));
       this._ackSweepTimer = setInterval(() => {
         this._correlator?.expireDue();
       }, sweepIntervalMs);
@@ -997,6 +1209,13 @@ export class MllpClient extends EventEmitter {
         // The correlator's live store survives the FSM transition; the
         // entries are re-transmitted in `_beginReconnectAttempt` once the
         // new Connection enters CONNECTED.
+        //
+        // With ONE exception, and it is the whole point of the accept acknowledgement: a
+        // send whose commit disposition has already been reported must not be re-sent. The
+        // peer has said in writing that it holds the message, so putting it back on the
+        // wire is how one clinical message becomes two. Such a send is failed here, with an
+        // error naming the commit it did receive.
+        this._failCommitPendingSends("before the link dropped");
       } else {
         // FIFO: split between in-flight (sentAt set) and queued (sentAt null).
         // In-flight sends → 'in-flight-orphan'; queued sends → 'fifo-unsafe'.
@@ -1416,6 +1635,21 @@ export class MllpClient extends EventEmitter {
    *
    * Emits a frozen `'ack'` event on every successful match.
    *
+   * ## Enhanced acknowledgement mode
+   *
+   * A message whose MSH-15 or MSH-16 is not null asks for the two-part protocol of HL7
+   * v2.5.1 §2.9, and on a client correlating by control ID this method delivers it: the
+   * accept acknowledgement (`CA`) is reported through `onCommitAck` **without** settling
+   * the send, and the later application acknowledgement (`AA`/`AE`/`AR`) is what resolves
+   * it. All three application-mode codes resolve, because which of them the receiving
+   * application chose is its clinical verdict and not this transport's to judge; read MSA-1
+   * off the acknowledgement you are handed. A negative commit (`CE`/`CR`) rejects with
+   * {@link MllpCommitRejectedError} at once, since no application acknowledgement follows a
+   * refusal to take custody.
+   *
+   * A message with both fields empty is an original-mode send and behaves exactly as it
+   * always has, one acknowledgement, settled by the first match.
+   *
    * @example
    * ```typescript
    * const ack = await client.send(payloadBuffer);
@@ -1424,8 +1658,20 @@ export class MllpClient extends EventEmitter {
    *
    * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.
    * @param opts.signal AbortSignal, aborting cancels the ACK wait.
+   * @param opts.ackTimeoutMs Per-send override of the backpressure wait budget.
+   * @param opts.applicationAckTimeoutMs Per-send override of the second wait's bound.
+   * @param opts.onCommitAck Called with the commit disposition when the peer commits the
+   *   message ahead of its application acknowledgement. See {@link CommitAckReport}.
    */
-  send(payload: Buffer, opts?: { signal?: AbortSignal; ackTimeoutMs?: number }): Promise<Buffer> {
+  send(
+    payload: Buffer,
+    opts?: {
+      signal?: AbortSignal;
+      ackTimeoutMs?: number;
+      applicationAckTimeoutMs?: number;
+      onCommitAck?: (report: CommitAckReport) => void;
+    },
+  ): Promise<Buffer> {
     const signal = opts?.signal;
     if (signal?.aborted === true) {
       return Promise.reject(new DOMException("Aborted", "AbortError"));
@@ -1442,11 +1688,15 @@ export class MllpClient extends EventEmitter {
         }),
       );
     }
+    // One header scan feeds both reads: the correlation key the peer will echo back as
+    // MSA-2, and what this message asks its peer for. Both are derived BEFORE the message
+    // reaches the transport, so nothing about a send is decided after it is on the wire.
+    const msh = readMshSegment(payload);
     // controlId mode: extract MSH-10 BEFORE enqueue so the live-store key
     // is the same string the peer will echo back as MSA-2.
-    const controlId: string | null = this._correlateByControlId
-      ? extractMshControlId(payload)
-      : null;
+    const controlId: string | null = this._correlateByControlId ? controlIdFromMsh(msh) : null;
+    const ackMode = classifyOutboundAckMode(msh);
+    const twoPhase = this._twoPhaseStateFor(ackMode, opts);
     const correlator = this._correlator;
     const conn = this._connection;
     // Frame once at enqueue time, same bytes go to the wire AND get held
@@ -1500,7 +1750,7 @@ export class MllpClient extends EventEmitter {
         }
         reject(err);
       };
-      const key = correlator.enqueue(frame, controlId, wrappedResolve, wrappedReject);
+      const key = correlator.enqueue(frame, controlId, wrappedResolve, wrappedReject, twoPhase);
       if (key === null) {
         // pipeline:false (Plan 05, D-06). Correlator's maxInFlight=1 is
         // saturated. Wait for the next 'drain' event (the prior ACK
@@ -1540,6 +1790,59 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
+   * Decide what a send's own MSH-15 and MSH-16 buy it, and report anything worth reporting
+   * about them. Runs before the message reaches the transport.
+   *
+   * Three answers:
+   *
+   *   * an **original-mode** message (both fields null, or a header this package cannot
+   *     scan) gets `null`, which is the state every send had before enhanced mode existed;
+   *   * an **enhanced-mode** message on a client that correlates in order rather than by
+   *     control ID also gets `null`, plus a warning saying so. MSA-2 is the only thing that
+   *     can attribute a second acknowledgement to a send, so without control-ID correlation
+   *     a two-acknowledgement conversation cannot be delivered. The alternative, leaving
+   *     such a send pending on an acknowledgement this client would otherwise have settled
+   *     it with, would break a working interface to signal a configuration gap;
+   *   * an **enhanced-mode** message on a control-ID client gets its two-phase state.
+   *
+   * An unrecognised Table 0155 value is warned and defaulted, never fatal: this is a
+   * transport, and refusing to transmit a clinical message over a vendor value in MSH-15
+   * would be HL7 content validation with the worst failure mode available. The message goes
+   * out unaltered either way.
+   */
+  private _twoPhaseStateFor(
+    ackMode: OutboundAckMode,
+    opts?: {
+      ackTimeoutMs?: number;
+      applicationAckTimeoutMs?: number;
+      onCommitAck?: (report: CommitAckReport) => void;
+    },
+  ): TwoPhaseState | null {
+    if (!ackMode.enhanced) return null;
+    if (ackMode.acceptFieldUnrecognised) {
+      this._emitAckModeWarning("MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED", OUTBOUND_WARNING_CONTEXT);
+    }
+    if (ackMode.applicationFieldUnrecognised) {
+      this._emitAckModeWarning("MLLP_ACK_APPLICATION_TYPE_UNRECOGNISED", OUTBOUND_WARNING_CONTEXT);
+    }
+    if (!this._correlateByControlId) {
+      this._emitAckModeWarning("MLLP_ACK_TWO_PHASE_UNAVAILABLE", OUTBOUND_WARNING_CONTEXT);
+      return null;
+    }
+    return {
+      awaitsApplicationAck: ackMode.awaitsApplicationAck,
+      applicationAckTimeoutMs:
+        opts?.applicationAckTimeoutMs ??
+        this._applicationAckTimeoutMs ??
+        opts?.ackTimeoutMs ??
+        this._ackTimeoutMs,
+      onCommitReport: opts?.onCommitAck ?? null,
+      commitCode: null,
+      commitReceivedAt: null,
+    };
+  }
+
+  /**
    * 'wait'-mode backpressure handler.
    *
    * Awaits one of three terminating signals, in order:
@@ -1551,7 +1854,12 @@ export class MllpClient extends EventEmitter {
    */
   private _waitThenSend(
     payload: Buffer,
-    opts?: { signal?: AbortSignal; ackTimeoutMs?: number },
+    opts?: {
+      signal?: AbortSignal;
+      ackTimeoutMs?: number;
+      applicationAckTimeoutMs?: number;
+      onCommitAck?: (report: CommitAckReport) => void;
+    },
   ): Promise<Buffer> {
     const signal = opts?.signal;
     return new Promise<Buffer>((resolve, reject) => {
@@ -1599,6 +1907,12 @@ export class MllpClient extends EventEmitter {
   /**
    * Tear down per-connection state (sweep timer + correlator) when the
    * client is closing or destroying. Safe to call multiple times.
+   *
+   * A send that is waiting on its application acknowledgement is failed with an error
+   * naming the commit disposition it did receive, rather than with the generic
+   * connection error every other pending send gets. The two are genuinely different
+   * outcomes: one send may never have reached the peer, the other is known to be in its
+   * custody with only its application disposition unknown.
    */
   private _teardownCorrelator(reason: Error): void {
     if (this._ackSweepTimer !== null) {
@@ -1606,7 +1920,16 @@ export class MllpClient extends EventEmitter {
       this._ackSweepTimer = null;
     }
     if (this._correlator !== null) {
-      this._correlator.clear(reason);
+      this._correlator.clear(reason, (entry, fallback) => {
+        const commitReceivedAt = entry.twoPhase?.commitReceivedAt ?? null;
+        if (commitReceivedAt === null) return fallback;
+        return this._applicationAckError(
+          entry,
+          "connection-lost",
+          Date.now() - commitReceivedAt,
+          "before the connection closed",
+        );
+      });
       // Drop the reference so subsequent send() calls reject via the
       // _connection / _correlator null check.
       this._correlator = null;
