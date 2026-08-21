@@ -72,6 +72,7 @@ export {
   type MessageMeta,
   type NackEvent,
   type NackReason,
+  type NackAckCode,
 } from "./server/index.js";
 
 // Phase 6: fail-safe ACK semantics & the commit contract
@@ -103,3 +104,16 @@ export {
   type AckCorrelationCode,
   type AckCorrelationWarning,
 } from "./client/index.js";
+
+// Enhanced acknowledgement mode: two-phase correlation on the client, mode-correct code
+// selection on the server's auto-ACK path.
+export {
+  MllpApplicationAckError,
+  MllpCommitRejectedError,
+  ackModeDiagnosticMessage,
+  type ApplicationAckFailure,
+  type AckModeCode,
+  type AckModeWarning,
+  type CommitAckReport,
+} from "./client/index.js";
+export type { AckModeWarningEvent } from "./server/index.js";

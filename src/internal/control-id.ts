@@ -376,7 +376,29 @@ export function stripLeadingSegmentTerminators(buf: Buffer): Buffer {
  * @internal
  */
 export function extractMshControlId(buf: Buffer): string | null {
-  const msh = readMshSegment(buf);
+  return controlIdFromMsh(readMshSegment(buf));
+}
+
+/**
+ * MSH-10 read off an already-scanned {@link MshSegment}, the half of
+ * {@link extractMshControlId} that does not repeat the scan.
+ *
+ * A caller that needs MSH-10 **and** another MSH field off the same message reads the
+ * segment once through {@link readMshSegment} and then asks this for the control ID,
+ * rather than scanning the header twice. `null` when the segment is absent, too short to
+ * reach MSH-10, or carries an empty MSH-10, byte-identical to {@link extractMshControlId},
+ * which is defined as this composed with the scan.
+ *
+ * @example
+ * ```typescript
+ * const msh = readMshSegment(payloadBuffer);
+ * const id = controlIdFromMsh(msh);
+ * // id === 'MSG00001' | null
+ * ```
+ *
+ * @internal
+ */
+export function controlIdFromMsh(msh: MshSegment | null): string | null {
   if (msh === null) return null;
   const id = msh.fields[9];
   return id === undefined || id === "" ? null : id;
@@ -405,6 +427,49 @@ export function extractMshControlId(buf: Buffer): string | null {
  * @internal
  */
 export function extractMsaControlId(buf: Buffer): string | null {
+  const msa = readMsaSegment(buf);
+  if (msa === null) return null;
+  const id = msa.fields[2];
+  return id === undefined || id === "" ? null : id;
+}
+
+/**
+ * Read the `MSA` segment of an HL7 v2 acknowledgement, decoded and split into its fields.
+ *
+ * **The** MSA scan, and the segment rule every reader of an acknowledgement shares:
+ * {@link extractMsaControlId} is defined as `fields[2]` off this, and the MSA-1
+ * acknowledgement-code read is defined as `fields[1]` off the same call. That is not
+ * tidiness, it is the reason a classification can never disagree with a correlation.
+ * If one reader split segments on `CR` alone while the other split on `CR`/`LF`, a peer
+ * whose interface engine terminates segments with `CRLF` would have its MSA-2 found (so
+ * the acknowledgement matches a send) and its MSA-1 missed (so the send is not settled by
+ * it): a correctly answered message left pending to its timeout. One scan, one answer.
+ *
+ * Pure byte-level, never throws, returns `null` for anything it cannot read:
+ *
+ *   * the field separator comes from the acknowledgement's **own** MSH-1, read through
+ *     {@link readMshSegment}, so an `MSH` that is not at byte 0 is still read rather than
+ *     silently discarded, and a payload with no readable `MSH` at all yields `null`;
+ *   * the `MSA` is the first `CR`/`LF`-delimited segment whose first three bytes are `MSA`
+ *     **and** whose fourth byte is that field separator, so a segment that merely starts
+ *     with those letters cannot be mistaken for one;
+ *   * the field split is bounded at that segment's terminator and decoded as `latin1`
+ *     (see {@link CONTROL_ID_ENCODING}), so a high-bit byte survives.
+ *
+ * Fields are indexed by position after the segment name: `[0]` is the literal `"MSA"`,
+ * `[1]` is MSA-1 (the acknowledgement code) and `[2]` is MSA-2 (the acknowledged control
+ * ID). Unlike the MSH there is no off-by-one here, because MSA-1 is an ordinary field and
+ * MSH-1 is the field separator itself.
+ *
+ * @example
+ * ```typescript
+ * const msa = readMsaSegment(ackPayloadBuffer);
+ * // msa?.fields[1] === 'AA'; msa?.fields[2] === 'MSG00001'
+ * ```
+ *
+ * @internal
+ */
+export function readMsaSegment(buf: Buffer): MshSegment | null {
   // MSH-1 establishes the separator for the whole message, including its MSA.
   const msh = readMshSegment(buf);
   if (msh === null) return null;
@@ -427,25 +492,12 @@ export function extractMsaControlId(buf: Buffer): string | null {
       buf[segStart + 2] === ASCII_A &&
       buf[segStart + 3] === fieldSep
     ) {
-      // MSA fields: [0]'MSA' [1]MSA-1 [2]MSA-2 ...
-      // Iterate from the first separator (segStart+3) up to and including
-      // segEnd. Treat `segEnd` as a synthetic separator so the final field
-      // closes cleanly even without a trailing CR.
-      let fieldIndex = 0;
-      let fieldStart = 0;
-      for (let i = segStart + 3; i <= segEnd; i++) {
-        const b = i < segEnd ? (buf[i] as number) : fieldSep;
-        if (b === fieldSep || b === SEGMENT_SEPARATOR_CR || b === SEGMENT_SEPARATOR_LF) {
-          fieldIndex++;
-          if (fieldIndex === 2) {
-            fieldStart = i + 1;
-          } else if (fieldIndex === 3) {
-            if (fieldStart >= i) return null; // empty MSA-2
-            return buf.subarray(fieldStart, i).toString(CONTROL_ID_ENCODING);
-          }
-        }
-      }
-      return null;
+      // The split is bounded at `segEnd`, so no later segment's bytes can be reached.
+      const fields = buf
+        .subarray(segStart, segEnd)
+        .toString(CONTROL_ID_ENCODING)
+        .split(msh.fieldSep);
+      return { fieldSep: msh.fieldSep, fields };
     }
     // Skip segment terminator bytes to advance to the next segment.
     while (

@@ -34,6 +34,13 @@ import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
 import { buildRawAck, rawAckUncorrelatable, resolveNackCode } from "./ack.js";
 import type { AckCode, NegativeAckCode } from "./ack.js";
+import { containsBatchOrExtraMessage, readMshSegment } from "../internal/control-id.js";
+import {
+  acceptAckRequested,
+  acceptModeCounterpart,
+  readAcceptCondition,
+} from "../internal/ack-mode.js";
+import { ackModeDiagnosticMessage, type AckModeCode } from "../internal/ack-mode-diagnostics.js";
 import { safeEmit, safeEmitError } from "../internal/safe-emit.js";
 
 /**
@@ -175,10 +182,59 @@ export type NackReason = "handler-rejected" | "uncorrelatable-inbound" | "discar
 export interface NackEvent {
   /** Connection that produced the negative acknowledgement. */
   readonly connectionId: string;
-  /** The negative acknowledgement code sent to the peer (`AE` or `AR`). */
-  readonly ackCode: NegativeAckCode;
+  /**
+   * The negative acknowledgement code actually sent to the peer.
+   *
+   * `AE` or `AR` for a message acknowledged in the original mode, and the accept-mode
+   * counterparts `CE` or `CR` where the inbound MSH-15 asked for an accept acknowledgement
+   * for this disposition. It is always the code that went on the wire, so an observer
+   * counting negative acknowledgements sees what the peer saw.
+   */
+  readonly ackCode: NackAckCode;
   /** Why the negative acknowledgement was sent (PHI-free). */
   readonly reason: NackReason;
+}
+
+/**
+ * The negative acknowledgement codes a {@link NackEvent} can carry: both halves of the
+ * negative side of HL7 Table 0008.
+ *
+ * @example
+ * ```typescript
+ * import type { NackAckCode } from '@cosyte/mllp';
+ * const code: NackAckCode = 'CR';
+ * ```
+ */
+export type NackAckCode = "AE" | "AR" | "CE" | "CR";
+
+/**
+ * Payload of the server `'ackModeWarning'` event: something about an inbound message's
+ * acknowledgement-mode request was read and reported, and the acknowledgement went out
+ * anyway.
+ *
+ * Emitted when MSH-15 carries a value outside HL7 Table 0155. The acknowledgement is **not**
+ * downgraded, negated or otherwise changed for that reason: reading a field is not
+ * validating it, and answering a message the handler committed with anything but a positive
+ * code would make a sender resend a message that is already stored.
+ *
+ * **PHI-safe by construction:** a connection ID, a stable code and a frozen registry
+ * message, never the payload and never the field's value. The object is `Object.freeze()`'d
+ * before emission.
+ *
+ * @example
+ * ```typescript
+ * server.on('ackModeWarning', ({ code }) => metrics.increment('mllp.ack_mode', { code }));
+ * ```
+ */
+export interface AckModeWarningEvent {
+  /** Connection the inbound message arrived on. */
+  readonly connectionId: string;
+  /** The acknowledgement-mode code being reported. */
+  readonly code: AckModeCode;
+  /** Frozen registry text for `code`. Never interpolated. */
+  readonly message: string;
+  /** Wall-clock time at point of emission. */
+  readonly timestamp: Date;
 }
 
 /**
@@ -1264,13 +1320,16 @@ export class MllpServer extends EventEmitter {
     conn: Connection,
   ): Promise<void> {
     const handler = this._opts.onMessage;
+    // Read MSH-15 ONCE per message, before any disposition is reached, so the same reading
+    // decides every branch below and any report about it is made exactly once.
+    const selectCode = this._ackModeSelector(payload, conn);
 
     // No commit handler: 'AA' is a transport-accept (received+framed only), but still
     // fail-safe-downgraded if the message cannot carry a correlatable positive ACK.
     if (handler === undefined) {
       this._dispatchAck(
         conn,
-        buildRawAck(payload, this._resolveAutoAckPositive(payload, meta, conn)),
+        buildRawAck(payload, this._resolveAutoAckPositive(payload, meta, conn, selectCode)),
       );
       return;
     }
@@ -1279,10 +1338,10 @@ export class MllpServer extends EventEmitter {
     try {
       await handler(payload, meta, conn); // durable-commit step
       // Commit succeeded, but only answer `AA` if the message is one we could correlate.
-      code = this._resolveAutoAckPositive(payload, meta, conn);
+      code = this._resolveAutoAckPositive(payload, meta, conn, selectCode);
     } catch (err: unknown) {
       const nack: NegativeAckCode = resolveNackCode(err);
-      code = nack;
+      code = selectCode(nack);
       // PHI-safe observability: control ID + outcome only, never the payload or error text.
       //
       // CONTAINED, and this one is load-bearing. This emit sits inside a `catch` block of an
@@ -1295,7 +1354,7 @@ export class MllpServer extends EventEmitter {
         "nack",
         Object.freeze({
           connectionId: conn.connectionId,
-          ackCode: nack,
+          ackCode: code,
           reason: "handler-rejected",
         }),
       );
@@ -1328,13 +1387,22 @@ export class MllpServer extends EventEmitter {
    *     discard, never a neighbouring frame's trailing junk.
    *
    * `'discarded-bytes'` takes precedence in the reason when both hold, it is the root cause.
+   *
+   * `selectCode` puts the resolved disposition in the half of HL7 Table 0008 the inbound
+   * asked for; it is the identity for a message that asked for nothing.
    */
-  private _resolveAutoAckPositive(payload: Buffer, meta: MessageMeta, conn: Connection): AckCode {
+  private _resolveAutoAckPositive(
+    payload: Buffer,
+    meta: MessageMeta,
+    conn: Connection,
+    selectCode: (disposition: AckCode) => AckCode,
+  ): AckCode {
     const discarded = meta.warnings.some((w) => w.code === "MLLP_TRAILING_BYTES");
     const uncorrelatable = rawAckUncorrelatable(payload);
-    if (!discarded && !uncorrelatable) return "AA";
+    if (!discarded && !uncorrelatable) return selectCode("AA");
 
     const reason: NackReason = discarded ? "discarded-bytes" : "uncorrelatable-inbound";
+    const code = selectCode("AE");
     // CONTAINED, this runs inside `_sendCommitAck`, a `void`-ed async task. A throwing `'nack'`
     // subscriber must not unwind into it (unhandled rejection → process death) nor skip the `AE`
     // that the caller dispatches next. PHI-safe: `reason` and `ackCode` are static, no payload.
@@ -1342,11 +1410,71 @@ export class MllpServer extends EventEmitter {
       "nack",
       Object.freeze({
         connectionId: conn.connectionId,
-        ackCode: "AE",
+        ackCode: code,
         reason,
       }),
     );
-    return "AE";
+    return code;
+  }
+
+  /**
+   * Build this message's acknowledgement-code selector: the function that puts a resolved
+   * disposition in the half of HL7 Table 0008 the inbound asked for.
+   *
+   * MSH-15 (accept acknowledgment type, HL7 Table 0155) says under which conditions the
+   * sender wants an **accept** acknowledgement, and it is a condition rather than a switch:
+   * `AL` always, `NE` never, `ER` on an error or reject only, `SU` on success only. So the
+   * request cannot be evaluated until the disposition is known, which is why this returns a
+   * function rather than a code. Where the answer is yes, the disposition is emitted as its
+   * accept-mode counterpart: `CA` where this server would answer `AA`, `CE` where it would
+   * answer `AE`, `CR` where it would answer `AR`.
+   *
+   * Exactly one acknowledgement still goes out per inbound message; nothing here sends a
+   * second one, and the later application acknowledgement of the two-part protocol remains
+   * the consumer's to send.
+   *
+   * Three inbound shapes leave the table entirely and keep this server's own answer:
+   *
+   *   * a header this server cannot scan for MSH-15: it behaves exactly as it would have,
+   *     adding no new failure and no new report;
+   *   * a **batch or concatenated** frame: it keeps its warned non-positive answer and
+   *     never selects an accept-mode code, whatever MSH-15 says. A single MSA-2 can echo one
+   *     control ID, and commit-accepting a batch nobody read is the same lie in the other
+   *     half of the table;
+   *   * an MSH-15 outside Table 0155: reported, and answered exactly as it would have been.
+   *     Downgrading a message the handler committed would make a discharged sender resend a
+   *     message already in storage.
+   */
+  private _ackModeSelector(payload: Buffer, conn: Connection): (disposition: AckCode) => AckCode {
+    const identity = (disposition: AckCode): AckCode => disposition;
+    const msh = readMshSegment(payload);
+    if (msh === null) return identity;
+    const accept = readAcceptCondition(msh);
+    if (accept.kind === "unrecognised") {
+      this._emitAckModeWarning("MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED", conn);
+      return identity;
+    }
+    if (accept.kind === "null") return identity;
+    if (containsBatchOrExtraMessage(payload)) return identity;
+    return (disposition) =>
+      acceptAckRequested(accept, disposition) ? acceptModeCounterpart(disposition) : disposition;
+  }
+
+  /**
+   * Emit the frozen `'ackModeWarning'` event.
+   *
+   * CONTAINED for the same reason every other emit on this path is: it is reached from a
+   * `void`-ed async acknowledgement task, and a throwing metrics tap must never be able to
+   * suppress the acknowledgement that follows it.
+   */
+  private _emitAckModeWarning(code: AckModeCode, conn: Connection): void {
+    const event: AckModeWarningEvent = Object.freeze({
+      connectionId: conn.connectionId,
+      code,
+      message: ackModeDiagnosticMessage(code),
+      timestamp: new Date(),
+    });
+    this._emitContained("ackModeWarning", event);
   }
 
   /**

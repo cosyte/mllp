@@ -31,7 +31,9 @@ your application, not here.
 `close()` **rejects** every in-flight send (`MllpConnectionError({ phase: 'close' })`) rather than
 waiting for their ACKs. The `DRAINING` state exists in the connection machine, but no drain hook is
 wired to it today, so `drainTimeoutMs` does not currently bound an in-flight ACK wait on the client.
-There is no such wait.
+There is no such wait. (One send is told apart: an enhanced-mode send whose commit disposition had
+already arrived is rejected with `MllpApplicationAckError({ reason: 'connection-lost' })`, which
+names the commit it did receive. Every other pending send is reported identically.)
 
 A message in flight at shutdown is therefore an **unknown**, not a failure: it may have been
 committed by the receiver with the ACK arriving after you stopped listening. Await your sends before
@@ -51,6 +53,27 @@ deliberate (a peer speaking the wrong protocol would otherwise be retried foreve
 client facing a peer that emits *occasional* junk will **stop**, not heal. If a peer's quirk is
 expected, use the tolerance opt-ins so the bytes are a warning rather than a fatal. See
 [Framing & tolerance](./framing.md).
+
+## It does not complete an enhanced-mode exchange on the server side
+
+The client half is built: an enhanced-mode send correlated by control ID draws both its commit
+disposition and its later application disposition, and neither is dropped
+([ACKs](./acks.md#enhanced-mode-one-send-two-acknowledgements)). Three bounds on that:
+
+- **This package's own server never sends the second acknowledgement.** It emits exactly one ACK per
+  inbound message and picks the right half of Table 0008 for it. Pointing this client at this server
+  with both MSH-15 and MSH-16 asking for acknowledgement therefore ends at the
+  application-acknowledgement timeout. A consumer that needs the second exchange owns it.
+- **Two-phase correlation needs `correlateByControlId: true`.** MSA-2 is the only thing that can
+  attribute a second acknowledgement to a send, and the default is FIFO. On FIFO an enhanced-mode
+  send gets the ordinary single-acknowledgement behaviour plus a warning.
+- **A conditional application condition that is never met ends at that timeout.** MSH-16 `SU` whose
+  peer applies the message unsuccessfully, or `ER` whose peer applies it successfully, never draws a
+  second acknowledgement. The failure carries the commit disposition you did receive, so you know the
+  peer took custody; what its application did is unknown and unknowable from here.
+
+Enhanced mode over a **batch** frame stays refused, and no sequence-number protocol (MSH-13/MSA-4),
+retransmission, queueing or replay is implemented here or planned for here.
 
 ## It does not decide clinical acceptance
 
