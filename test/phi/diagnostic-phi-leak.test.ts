@@ -83,6 +83,8 @@ import { createClient, type MllpClient } from "../../src/client/client.js";
 import { Connection } from "../../src/connection/index.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { VT, FS, CR, LF } from "../../src/framing/constants.js";
+import { encodeFrame } from "../../src/framing/index.js";
+import { MllpUnknownFateError } from "../../src/client/error.js";
 import { buildAckAA } from "../../src/ack-from-hl7/index.js";
 
 /** Repeats for the long probe. 512 units is 4 KiB, ample to expose growth. */
@@ -191,6 +193,13 @@ interface ClientScenario {
   readonly correlateByControlId?: boolean;
   /** Frame cap override for the oversized-frame slot. */
   readonly maxFrameSizeBytes?: number;
+  /**
+   * Close the client with this drain bound and let the bound expire, which is what makes a
+   * send that is still on the wire draw the unknown-fate report. Kept well under
+   * `ACK_TIMEOUT_MS` so the acknowledgement sweep cannot fire first and hand the slot a
+   * timeout error instead of the report it names.
+   */
+  readonly closeWithDrainMs?: number;
 }
 
 /** Flush pending microtasks without advancing the faked clock. */
@@ -291,6 +300,13 @@ async function runClientScenario(spec: ClientScenario, strict: boolean): Promise
 
     if (spec.lateInbound !== undefined) {
       peer.write(spec.lateInbound);
+      await settle();
+    }
+
+    if (spec.closeWithDrainMs !== undefined) {
+      const closing = client.close({ drainTimeoutMs: spec.closeWithDrainMs });
+      await vi.advanceTimersByTimeAsync(spec.closeWithDrainMs + 10);
+      await closing;
       await settle();
     }
 
@@ -408,6 +424,27 @@ const CLIENT_SLOTS: readonly Slot[] = [
       outbound: message(marker),
       correlateByControlId: false,
       dropConnection: true,
+    }),
+  },
+  {
+    // A send still unanswered when the client finishes closing. Its fate is unknown, and the
+    // report saying so is a NEW diagnostic surface: MSH-10 travels into it through the same
+    // correlator the timeout slots above use. Invariance is off, the report counts the
+    // control id's bytes and the frame's, both of which move with the marker.
+    name: "client/correlateByControlId/outbound MSH-10 (unknown fate at shutdown)",
+    expectCode: "MllpUnknownFateError",
+    lengthInvariant: false,
+    build: (marker) => ({ outbound: message(marker), closeWithDrainMs: 100 }),
+  },
+  {
+    // The same report reached with a clean control id and the marker in the payload BODY, so
+    // the slot pins that no part of the message content rides along with the counts.
+    name: "client/correlateByControlId/outbound payload body (unknown fate at shutdown)",
+    expectCode: "MllpUnknownFateError",
+    lengthInvariant: false,
+    build: (marker) => ({
+      outbound: message("OUTID0002", `ZZZ|1|${marker}\r`),
+      closeWithDrainMs: 100,
     }),
   },
   {
@@ -625,6 +662,79 @@ describe("PHI: no consumer-controlled input reaches a diagnostic surface", () =>
       expect(acks[0]?.payload.includes(Buffer.from(id, "latin1"))).toBe(true);
     } finally {
       client.destroy(new Error("disclosure complete"));
+      await settle();
+    }
+  });
+
+  it("the unknown-fate report carries only counts and timestamps", async () => {
+    // The slot table above sweeps this surface for the runner's marker. This case states the
+    // claim directly, because the claim is stronger than "the marker is absent": EVERY own
+    // property of the report is a number, so there is no field for a control id, a truncation
+    // of one, or a hex rendering to arrive on, and the message is a constant that no builder
+    // takes a value for. It matters more here than on the other surfaces in this file: an
+    // Error is what an error reporter ships off the box, `stack` and own properties included,
+    // and this one reports a message that WAS on the wire.
+    const controlId = "SYNTHID003";
+    const body = "ZZZ|1|SYNTHETICBODYMARKER\r";
+    const [local, peer] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: local, framing: {} });
+    const client = createClient({
+      host: "127.0.0.1",
+      port: 0,
+      ackTimeoutMs: ACK_TIMEOUT_MS,
+      correlateByControlId: true,
+    });
+    client.on("warning", () => undefined);
+    client._attachExistingConnection(conn);
+    conn.notifyConnect("127.0.0.1", 2575);
+    try {
+      const outbound = message(controlId, body);
+      const sent = client.send(outbound);
+      const caught = sent.catch((err: unknown) => err);
+      await settle();
+      // The peer says nothing at all, so the drain expires with the send unanswered.
+      const closing = client.close({ drainTimeoutMs: 100 });
+      await vi.advanceTimersByTimeAsync(110);
+      await closing;
+
+      const err = (await caught) as MllpUnknownFateError;
+      expect(err).toBeInstanceOf(MllpUnknownFateError);
+
+      // Only counts and timestamps, enumerated positively rather than by absence. `name` is
+      // the one own property that is not a number, and it is the stable discriminator a
+      // caller narrows on: a fixed literal, identical on every instance.
+      expect(err.name).toBe("MllpUnknownFateError");
+      const own = Object.entries({ ...err }).filter(([key]) => key !== "name");
+      expect(own.length).toBeGreaterThan(0);
+      for (const [key, value] of own) {
+        expect(`${key}=${typeof value}`).toBe(`${key}=number`);
+      }
+      expect(err.flushedAt).toBeGreaterThan(0);
+      expect(err.byteCount).toBe(encodeFrame(outbound).length);
+      expect(err.messageControlIdBytes).toBe(controlId.length);
+
+      // Nothing consumer-controlled reaches any rendering of it.
+      const rendered = `${err.message}\n${err.stack ?? ""}\n${JSON.stringify({ ...err })}`;
+      expect(rendered).not.toContain(controlId);
+      expect(rendered).not.toContain("SYNTHETICBODYMARKER");
+      expect(rendered).not.toContain(outbound.toString("hex"));
+      expect(rendered).not.toContain(outbound.toString("base64"));
+      // The message is a constant: the same bytes for every send, whatever it carried.
+      const other = createClient({ host: "127.0.0.1", port: 0 });
+      const [otherLocal] = InMemoryTransport.pair();
+      const otherConn = new Connection({ transport: otherLocal, framing: {} });
+      other._attachExistingConnection(otherConn);
+      otherConn.notifyConnect("127.0.0.1", 2575);
+      const otherSent = other.send(message("X"));
+      const otherCaught = otherSent.catch((e: unknown) => e);
+      const otherClosing = other.close({ drainTimeoutMs: 100 });
+      await vi.advanceTimersByTimeAsync(110);
+      await otherClosing;
+      expect(((await otherCaught) as Error).message).toBe(err.message);
+      other.destroy(new Error("disclosure complete"));
+    } finally {
+      peer.destroy(new Error("scenario complete"));
+      client.destroy(new Error("scenario complete"));
       await settle();
     }
   });

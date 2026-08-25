@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createClient, type MllpClient } from "../../src/client/client.js";
 import { Connection, MllpConnectionError } from "../../src/connection/index.js";
-import { MllpTimeoutError } from "../../src/client/error.js";
+import { MllpTimeoutError, MllpUnknownFateError } from "../../src/client/error.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { encodeFrame } from "../../src/framing/index.js";
 
@@ -204,12 +204,17 @@ describe("MllpClient.send (FIFO mode, PLAN-02)", () => {
   });
 
   it("Test 12: client.close() rejects all pending sends", async () => {
+    // Both sends are already on the wire and neither is answered, so the drain has nothing
+    // to wait for beyond its own bound and both are reported with their fate unknown. That
+    // report REPLACED the generic connection error this case used to assert: an unanswered
+    // send at shutdown may have been committed by the peer, and saying so is the point.
     const { client } = buildClientOverPair();
     const p1 = client.send(Buffer.from("a"));
     const p2 = client.send(Buffer.from("b"));
-    await client.close();
-    await expect(p1).rejects.toBeInstanceOf(MllpConnectionError);
-    await expect(p2).rejects.toBeInstanceOf(MllpConnectionError);
+    await client.close({ drainTimeoutMs: 20 });
+    await expect(p1).rejects.toBeInstanceOf(MllpUnknownFateError);
+    await expect(p2).rejects.toBeInstanceOf(MllpUnknownFateError);
+    await expect(p1).rejects.not.toBeInstanceOf(MllpConnectionError);
   });
 
   it("mock vi reference (avoid unused import)", () => {

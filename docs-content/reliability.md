@@ -131,23 +131,33 @@ const client = createClient({
 Set `pipeline: false` to collapse the in-flight set to one: strict send → await-ACK → send. Slower,
 and required by peers that cannot handle concurrent messages on one connection.
 
-## Shutdown, and what it does *not* do for in-flight messages
+## Shutdown, and what it does *and does not* do for in-flight messages
 
 ⚠️ **Read this before you rely on `close()` during a deploy.**
 
-`close()` **rejects every in-flight send immediately**. It does *not* wait for their ACKs. Each
-pending `send()` promise rejects with `MllpConnectionError({ phase: 'close' })`, and the connection
-then closes. The `DRAINING` state exists in the machine, but no drain hook is wired to it today.
-`drainTimeoutMs` (default 30 s) is therefore not currently what bounds an in-flight ACK wait on the
-client, because there is no such wait.
+`close()` **waits for the ACKs of sends already written to the transport**, bounded by
+`drainTimeoutMs` (default 30 s). The wait ends as soon as the last one arrives, so a peer that
+answers promptly costs you milliseconds, not the timeout; a link that fails mid-drain ends it too.
+`destroy()` is the opposite and is unchanged: everything settles at once, no ACK is awaited.
 
-**This means a message in flight at shutdown becomes an *unknown*, not a failure.** The rejection
-tells you the send did not complete *locally*. It does **not** tell you the receiver did not commit
-it. The message may well have been written, with the ACK arriving after you stopped listening. It
-is the same at-least-once boundary as an ACK timeout, and it is resolved the same way: by the
-receiver's idempotency on `MSH-10` + `MSH-7`, not by this library.
+What is still unresolved when the wait ends is reported **by population**, because whether a resend
+is safe depends on which one a message is in:
 
-If you need in-flight messages to settle before you exit, **await them yourself** before calling
+| Report                                                | What it means                                                        | Resend? |
+| ----------------------------------------------------- | -------------------------------------------------------------------- | ------- |
+| `MllpNeverDeliveredError`                             | still held inside the client; no bytes were written                  | safe    |
+| `MllpUnknownFateError`                                | written, no ACK back. Carries `flushedAt`, `elapsedMs`, `byteCount`  | unknown |
+| `MllpApplicationAckError({ reason: 'connection-lost' })` | the peer committed it; its application disposition never arrived  | no      |
+
+Narrow with `instanceof`, never on the text of a message.
+
+**A message reported with an unknown fate is exactly that: an *unknown*, not a failure.** It does
+**not** tell you the receiver did not commit it. The bytes may well have arrived, with the ACK
+coming back after you stopped listening. It is the same at-least-once boundary as an ACK timeout,
+and it is resolved the same way: by the receiver's idempotency on `MSH-10` + `MSH-7`, not by this
+library. Nothing is retried for you.
+
+If you would rather see none of these reports at all, **await your sends yourself** before calling
 `close()`:
 
 ```ts
@@ -161,7 +171,7 @@ Every closeable implements `Symbol.asyncDispose`, and every awaitable takes an `
 ```ts
 await using client = await createStarterClient({ host, port });
 await client.send(payload, { signal: AbortSignal.timeout(5_000) });
-// disposed on scope exit (including on throw). Note this closes, it does not drain
+// disposed on scope exit (including on throw), which closes, and so drains
 ```
 
 Server-side, `close()` stops accepting new connections and closes existing ones. A commit-gated

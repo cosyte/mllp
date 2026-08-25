@@ -24,6 +24,8 @@ export {
   MllpBackpressureError,
   MllpApplicationAckError,
   MllpCommitRejectedError,
+  MllpNeverDeliveredError,
+  MllpUnknownFateError,
   type ApplicationAckFailure,
   isTransientConnectionError,
   isTlsVerificationErrorCode,

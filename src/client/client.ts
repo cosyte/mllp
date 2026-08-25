@@ -54,10 +54,25 @@ import {
   MllpBackpressureError,
   MllpApplicationAckError,
   MllpCommitRejectedError,
+  MllpNeverDeliveredError,
+  MllpUnknownFateError,
   isTransientConnectionError,
   isTlsVerificationErrorCode,
   isTlsProtocolError,
 } from "./error.js";
+
+/**
+ * A send parked INSIDE the client with no bytes on the wire: one waiting for the queue to fall
+ * below the high-water mark, or for the single in-flight slot `pipeline: false` allows.
+ *
+ * Such a send is not in the correlator, so nothing else on the shutdown path can see it, and
+ * before this register existed its promise was simply left pending forever when the client
+ * closed. It is the clearest case of a message that never reached the transport.
+ */
+interface ParkedSend {
+  /** Stop waiting and fail the send. Assigned once the waiting is wired. */
+  cancel: () => void;
+}
 
 /**
  * Module-level "never aborts" sentinel for `RetryContext.signal`.
@@ -239,7 +254,11 @@ export interface ClientOptions {
   readonly port: number;
   /** FrameReader tolerance / size options. `onFrame` and `onWarning` are managed internally. */
   readonly framing?: Omit<FrameReaderOptions, "onFrame" | "onWarning">;
-  /** Drain timeout for {@link MllpClient.close} (default: `30_000` ms). */
+  /**
+   * Bound on the acknowledgement wait {@link MllpClient.close} performs (default: `30_000`
+   * ms). Sends already written to the transport are awaited until it elapses; the wait ends
+   * early the moment the last of them is answered.
+   */
   readonly drainTimeoutMs?: number;
   /**
    * Per-message ACK timeout in milliseconds. The clock starts at
@@ -524,6 +543,26 @@ export class MllpClient extends EventEmitter {
   private _connectSignal: AbortSignal | undefined;
   /** Set when close()/destroy()/abort fires; reconnect handler short-circuits. */
   private _userClosed = false;
+  /**
+   * Sends parked inside the client with nothing written for them. See {@link ParkedSend}.
+   * Every entry removes itself the moment its own wait ends, however it ends.
+   */
+  private readonly _parkedSends: Set<ParkedSend> = new Set();
+  /**
+   * Re-checks whether the shutdown drain is over, `null` when no `close()` is waiting.
+   * Called from every point at which a pending send is settled.
+   */
+  private _drainWaiter: (() => void) | null = null;
+  /**
+   * Ends the shutdown drain wait now, whatever is still outstanding. `null` when no `close()`
+   * is waiting. `destroy()` calls it, which is what makes a destroy during a drain prompt.
+   */
+  private _endDrainWait: (() => void) | null = null;
+  /**
+   * The `beforeClose` hook this client installed on its Connection, so a second `close()` call
+   * composes nothing twice. Compared by identity, never by shape.
+   */
+  private _drainHook: ((drainTimeoutMs: number) => Promise<void>) | null = null;
   /** Captured Connection error feeding `RetryContext.lastError`. */
   private _lastError: Error | null = null;
   /** Listener-removal handle for the abort listener bound in connect(). */
@@ -1552,6 +1591,10 @@ export class MllpClient extends EventEmitter {
    * (every expired send), both code paths free a live-store slot.
    */
   private _maybeEmitDrain(): void {
+    // Every path that settles a pending send comes through here, which makes this the one
+    // place a shutdown drain has to be re-checked: it ends as soon as the last acknowledgement
+    // it was waiting for lands, rather than sitting out the rest of the timeout.
+    this._drainWaiter?.();
     const corr = this._correlator;
     if (corr === null) return;
     const belowCount = corr.size < this._hwmCount;
@@ -1582,6 +1625,11 @@ export class MllpClient extends EventEmitter {
     // auto-reconnect.
     this._emitContained("stateChange", Object.freeze({ ...e }));
     // HOOK_EXTENSION_POINT: state-change
+    // A shutdown drain waiting on acknowledgements ends the moment the connection leaves
+    // DRAINING: the link failed, the peer went away, or the client was destroyed. Nothing
+    // further can be acknowledged over a link that is gone, so close() returns and reports
+    // what is left rather than hanging until the drain timeout.
+    if (e.to !== "DRAINING") this._endDrainWait?.();
     // Plan 05, dead-peer timer arm/clear (D-14). Cleared on every
     // transition OUT of CONNECTED; re-armed on entry TO CONNECTED.
     if (e.to === "CONNECTED") {
@@ -1733,7 +1781,11 @@ export class MllpClient extends EventEmitter {
       }
       // 'wait' mode (CLIENT-07/CLIENT-11): defer until 'drain' fires OR
       // ackTimeoutMs elapses OR the caller's signal aborts (B-06).
-      return this._waitThenSend(payload, opts);
+      return this._waitThenSend(
+        payload,
+        { byteCount: frame.length, messageControlIdBytes: controlId?.length },
+        opts,
+      );
     }
 
     return new Promise<Buffer>((resolve, reject) => {
@@ -1756,13 +1808,38 @@ export class MllpClient extends EventEmitter {
         // saturated. Wait for the next 'drain' event (the prior ACK
         // releases the slot) and then re-enter `send()`, the high-water
         // mark gate above has already approved this send.
+        //
+        // Nothing is on the wire for this send while it waits here, so it is registered as a
+        // parked send: a shutdown must fail it with the never-delivered report rather than
+        // leave its promise pending forever, which is what an unregistered park did.
+        const parked: ParkedSend = { cancel: (): void => undefined };
+        const neverDelivered = (): MllpNeverDeliveredError =>
+          new MllpNeverDeliveredError({
+            byteCount: frame.length,
+            messageControlIdBytes: controlId?.length,
+          });
         const onDrain = (): void => {
+          this._parkedSends.delete(parked);
           this.off("drain", onDrain);
+          // The settlement that ENDS a shutdown drain emits 'drain' on its way out, so this
+          // listener can run while the client is already going down. Re-entering send() then
+          // would trade the truthful report for the generic not-connected one, for a message
+          // whose bytes were never written. See `_shutdownBegun`.
+          if (this._shutdownBegun()) {
+            wrappedReject(neverDelivered());
+            return;
+          }
           this.send(payload, opts).then(wrappedResolve, wrappedReject);
         };
+        parked.cancel = (): void => {
+          this.off("drain", onDrain);
+          wrappedReject(neverDelivered());
+        };
+        this._parkedSends.add(parked);
         this.on("drain", onDrain);
         if (signal !== undefined) {
           abortListener = (): void => {
+            this._parkedSends.delete(parked);
             this.off("drain", onDrain);
             wrappedReject(new DOMException("Aborted", "AbortError"));
           };
@@ -1773,6 +1850,10 @@ export class MllpClient extends EventEmitter {
       if (signal !== undefined) {
         abortListener = (): void => {
           correlator.remove(key);
+          // An abort takes an entry out of the live store without going through the settlement
+          // path, so a shutdown drain waiting on that entry is re-checked here rather than
+          // left to wait out a timeout for an acknowledgement nobody wants any more.
+          this._drainWaiter?.();
           wrappedReject(new DOMException("Aborted", "AbortError"));
         };
         signal.addEventListener("abort", abortListener, { once: true });
@@ -1845,15 +1926,22 @@ export class MllpClient extends EventEmitter {
   /**
    * 'wait'-mode backpressure handler.
    *
-   * Awaits one of three terminating signals, in order:
+   * Awaits one of four terminating signals, in order:
    * - `'drain'` event → re-enter `send()` (the gate will now pass).
    * - `ackTimeoutMs` elapses → reject with `MllpTimeoutError`.
    * - Caller's `signal` aborts → reject with `AbortError`. Cleanup
    *   removes the drain listener AND the abort listener AND clears the
    *   timer to prevent leaks.
+   * - the client shuts down → reject with `MllpNeverDeliveredError`, because a send waiting
+   *   here has written nothing and the peer cannot have seen it. Registering the wait as a
+   *   {@link ParkedSend} is what makes that reachable at all.
+   *
+   * @param held - What this send would have written, for the never-delivered report. Counts
+   *   only: the caller still holds the payload it passed to `send()`.
    */
   private _waitThenSend(
     payload: Buffer,
+    held: { byteCount: number; messageControlIdBytes: number | undefined },
     opts?: {
       signal?: AbortSignal;
       ackTimeoutMs?: number;
@@ -1865,7 +1953,9 @@ export class MllpClient extends EventEmitter {
     return new Promise<Buffer>((resolve, reject) => {
       const ackTimeoutMs = opts?.ackTimeoutMs ?? this._ackTimeoutMs;
       let abortListener: (() => void) | null = null;
+      const parked: ParkedSend = { cancel: (): void => undefined };
       const cleanup = (): void => {
+        this._parkedSends.delete(parked);
         this.off("drain", onDrain);
         clearTimeout(timer);
         if (signal !== undefined && abortListener !== null) {
@@ -1874,6 +1964,13 @@ export class MllpClient extends EventEmitter {
       };
       const onDrain = (): void => {
         cleanup();
+        // The settlement that ENDS a shutdown drain emits 'drain' on its way out, so this
+        // listener can run while the client is already going down, and nothing was ever
+        // written for this send. Same rule as the in-flight-slot park; see `_shutdownBegun`.
+        if (this._shutdownBegun()) {
+          reject(new MllpNeverDeliveredError(held));
+          return;
+        }
         // Re-enter send(): the gate will now pass because the queue
         // shrank. Forward both branches to our promise.
         this.send(payload, opts).then(resolve, reject);
@@ -1889,6 +1986,11 @@ export class MllpClient extends EventEmitter {
         );
       }, ackTimeoutMs);
       timer.unref();
+      parked.cancel = (): void => {
+        cleanup();
+        reject(new MllpNeverDeliveredError(held));
+      };
+      this._parkedSends.add(parked);
       this.on("drain", onDrain);
       if (signal !== undefined) {
         // B-06: 'wait' mode MUST honor signal abort mid-wait. Cleanup
@@ -1912,9 +2014,16 @@ export class MllpClient extends EventEmitter {
    * naming the commit disposition it did receive, rather than with the generic
    * connection error every other pending send gets. The two are genuinely different
    * outcomes: one send may never have reached the peer, the other is known to be in its
-   * custody with only its application disposition unknown.
+   * custody with only its application disposition unknown. That branch runs FIRST and is not
+   * overridable by the caller, because the peer's custody of those bytes is a known fact and
+   * no shutdown report may downgrade it to an unknown one.
+   *
+   * @param reason - Error for every entry the caller offers no better answer for.
+   * @param unresolvedFor - Per-entry error for an entry whose commit disposition has NOT
+   *   arrived. This is where the shutdown path splits the two populations; omitted, every such
+   *   entry gets `reason`.
    */
-  private _teardownCorrelator(reason: Error): void {
+  private _teardownCorrelator(reason: Error, unresolvedFor?: (entry: PendingAck) => Error): void {
     if (this._ackSweepTimer !== null) {
       clearInterval(this._ackSweepTimer);
       this._ackSweepTimer = null;
@@ -1922,13 +2031,15 @@ export class MllpClient extends EventEmitter {
     if (this._correlator !== null) {
       this._correlator.clear(reason, (entry, fallback) => {
         const commitReceivedAt = entry.twoPhase?.commitReceivedAt ?? null;
-        if (commitReceivedAt === null) return fallback;
-        return this._applicationAckError(
-          entry,
-          "connection-lost",
-          Date.now() - commitReceivedAt,
-          "before the connection closed",
-        );
+        if (commitReceivedAt !== null) {
+          return this._applicationAckError(
+            entry,
+            "connection-lost",
+            Date.now() - commitReceivedAt,
+            "before the connection closed",
+          );
+        }
+        return unresolvedFor === undefined ? fallback : unresolvedFor(entry);
       });
       // Drop the reference so subsequent send() calls reject via the
       // _connection / _correlator null check.
@@ -1937,6 +2048,161 @@ export class MllpClient extends EventEmitter {
     // Plan 05, dead-peer timer cleanup. Belt-and-suspenders for the
     // destroy() path that may bypass an explicit FSM transition.
     this._clearDeadPeerTimer();
+  }
+
+  /**
+   * Number of pending sends whose bytes ARE on the transport and whose acknowledgement has not
+   * arrived. This is what a shutdown drain waits for, and nothing else: a send still held
+   * inside the client cannot be acknowledged, so holding the drain open for one would spend a
+   * clinical shutdown's timeout waiting for an answer that cannot come.
+   */
+  private _outstandingAckCount(): number {
+    return this._correlator?.getStats().inFlight ?? 0;
+  }
+
+  /**
+   * The report a still-pending send gets when the client has finished shutting down, for the
+   * one population `_teardownCorrelator` leaves to this method: entries whose commit
+   * disposition never arrived.
+   *
+   * The split is the whole point of the shutdown contract. `sentAt` is stamped at the
+   * transport write and is `null` until then, so it says exactly which side of the wire a
+   * message was on when the client stopped:
+   *
+   *   * written, unanswered: {@link MllpUnknownFateError}, ambiguous, and reported as
+   *     ambiguous, carrying the flush timestamp a replay decision reasons about;
+   *   * never written: {@link MllpNeverDeliveredError}, and a resend of one of those cannot
+   *     duplicate anything.
+   *
+   * **The unflushed branch is a structural guard, and today no caller can reach it.** `send()`
+   * writes and stamps in the same synchronous run, so an entry that is in the live store is an
+   * entry that went out, and the never-written population arrives instead as a
+   * {@link ParkedSend}, which never enters the store at all. The branch stays because the
+   * store MODELS the state, `sentAt` being nullable is its own claim about it, and the
+   * reconnect path already splits the same two ways on the same field. Deleting it would make
+   * this report say the opposite of the truth the day anything does produce one, which on this
+   * surface means telling a consumer to treat an unwritten message as possibly committed.
+   */
+  private _shutdownErrorFor(entry: PendingAck): Error {
+    const flushedAt = entry.sentAt;
+    /* c8 ignore next 6 -- structural guard, unreachable today; see the note above */
+    if (flushedAt === null) {
+      return new MllpNeverDeliveredError({
+        byteCount: entry.byteCount,
+        messageControlIdBytes: entry.controlId?.length,
+      });
+    }
+    return new MllpUnknownFateError({
+      flushedAt,
+      elapsedMs: Date.now() - flushedAt,
+      byteCount: entry.byteCount,
+      messageControlIdBytes: entry.controlId?.length,
+    });
+  }
+
+  /**
+   * Has this client begun shutting down? A send parked inside it must not be resumed once it
+   * has: nothing was ever written for such a send, so its report is that delivery did not
+   * occur, and re-entering `send()` would trade that report for the generic not-connected one.
+   *
+   * True from the moment `close()` or `destroy()` is called, true on every halt that has
+   * already given up on the connection (a permanent connect failure, an exhausted retry
+   * policy, an aborted connect), and true while the underlying connection is draining, which
+   * is how a connection closed from outside this client is caught. Each of those is a state a
+   * fresh `send()` cannot succeed from.
+   *
+   * Read on the `'drain'` listener of every {@link ParkedSend}, because a shutdown drain ends
+   * when the last outstanding acknowledgement (or timeout, or abort) settles, and that same
+   * settlement emits `'drain'`. A park woken by it unregisters itself, so the settle pass that
+   * runs after the drain no longer sees it: the choice has to be made here or not at all.
+   */
+  private _shutdownBegun(): boolean {
+    return this._userClosed || this._connection?.state === "DRAINING";
+  }
+
+  /**
+   * Fail every send parked inside the client. See {@link ParkedSend}.
+   *
+   * Iterates a copy and clears the register first, because each `cancel()` removes its own
+   * entry as it unwinds.
+   */
+  private _cancelParkedSends(): void {
+    if (this._parkedSends.size === 0) return;
+    const parked = [...this._parkedSends];
+    this._parkedSends.clear();
+    for (const send of parked) send.cancel();
+  }
+
+  /**
+   * Settle everything still unresolved once the shutdown drain is over, under the
+   * two-population rule. Runs on every exit from `close()`, including the aborted one, so no
+   * send's promise is left pending by a shutdown.
+   */
+  private _settleUnresolvedSends(): void {
+    this._endDrainWait?.();
+    this._cancelParkedSends();
+    this._teardownCorrelator(
+      new MllpConnectionError("client closed", {
+        cause: new Error("closed"),
+        phase: "close",
+      }),
+      (entry) => this._shutdownErrorFor(entry),
+    );
+  }
+
+  /**
+   * Install this client's acknowledgement drain on a Connection's `beforeClose` seam, which is
+   * what gives `drainTimeoutMs` a meaning on the client at all.
+   *
+   * Whatever hook is already there is **composed with**, not replaced: the seam is a public
+   * instance property an owner may legitimately have assigned, and a shutdown that silently
+   * dropped that work would be a worse defect than the one this fixes. Installing is
+   * idempotent by hook identity, so a second `close()` composes nothing twice.
+   */
+  private _installDrainHook(conn: Connection): void {
+    if (conn.beforeClose === this._drainHook) return;
+    const inherited = conn.beforeClose;
+    const hook = (drainTimeoutMs: number): Promise<void> =>
+      Promise.all([inherited.call(conn, drainTimeoutMs), this._awaitOutstandingAcks()]).then(
+        () => undefined,
+      );
+    this._drainHook = hook;
+    conn.beforeClose = hook;
+  }
+
+  /**
+   * Resolve once there is nothing left to wait for. Three ways that happens:
+   *
+   *   * the last outstanding acknowledgement lands (or its send is otherwise settled), which
+   *     is what lets `close()` return in a fraction of the drain timeout;
+   *   * the connection leaves `DRAINING`, i.e. the link failed, the peer went away or the
+   *     client was destroyed. Nothing further can be acknowledged over a link that is gone, so
+   *     waiting out the rest of the timeout would buy nothing and hang the shutdown. That one
+   *     arrives through `_onStateChange`, the single delegating listener, rather than through a
+   *     second `'stateChange'` registration of its own;
+   *   * never, in which case `Connection.close` times the whole thing out at `drainTimeoutMs`
+   *     and the still-unanswered sends are reported with their fate unknown. The bound lives
+   *     there, in the drain race, rather than being duplicated here.
+   */
+  private _awaitOutstandingAcks(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        this._drainWaiter = null;
+        this._endDrainWait = null;
+        resolve();
+      };
+      const recheck = (): void => {
+        if (this._outstandingAckCount() === 0) finish();
+      };
+      this._drainWaiter = recheck;
+      this._endDrainWait = finish;
+      // Nothing outstanding is the common case: a caller that awaited its sends gets a close
+      // that returns without touching the timeout at all.
+      recheck();
+    });
   }
 
   /**
@@ -1957,14 +2223,35 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
-   * Gracefully close the client.
+   * Gracefully close the client, awaiting the acknowledgements of sends already written to
+   * the transport.
    *
    * Delegates to {@link Connection.close}, which transitions `CONNECTED → DRAINING
    * → DISCONNECTED` (or `CLOSED` on drain timeout). No-op if no Connection is
-   * attached.
+   * attached, or if the close has already completed.
+   *
+   * The drain ends as soon as the last outstanding acknowledgement arrives, so a caller whose
+   * peer answers promptly does not wait out `drainTimeoutMs`. Whatever is still unresolved
+   * when it does end is reported to its own `send()` caller under one rule, and the whole
+   * point of this method is that the two halves of that rule are told apart:
+   *
+   *   * a send already written to the transport rejects with {@link MllpUnknownFateError},
+   *     carrying the timestamp at which its bytes went out. It may have been committed;
+   *     resending it may duplicate a clinical message. Nothing is retried here.
+   *   * a send still held inside the client rejects with {@link MllpNeverDeliveredError}.
+   *     The peer never saw those bytes, so resending them is safe.
+   *   * a send whose commit disposition the peer had already reported keeps its
+   *     {@link MllpApplicationAckError}, which names that disposition. The peer's custody of
+   *     those bytes is known, and a shutdown never downgrades a known fact to an unknown one.
    *
    * Rejects with `DOMException('Aborted', 'AbortError')` if `signal` aborts mid-drain;
-   * on abort, the underlying Connection is force-destroyed.
+   * on abort, the underlying Connection is force-destroyed and every still-pending send is
+   * settled under the same rule rather than left pending.
+   *
+   * A drain cannot make delivery certain, and nothing here claims otherwise: an
+   * acknowledgement lost in flight is indistinguishable from a message never received. That is
+   * what the unknown-fate report says, and it is why the application still owns idempotency,
+   * keyed on MSH-10 plus MSH-7.
    *
    * @example
    * ```typescript
@@ -1988,30 +2275,26 @@ export class MllpClient extends EventEmitter {
 
     const conn = this._connection;
     if (conn === null) {
-      // No connection attached; still tear down any stray correlator state
+      // No connection attached; still settle anything the client is holding
       // (defensive, this branch is unreachable in normal flow).
-      this._teardownCorrelator(
-        new MllpConnectionError("client closed", {
-          cause: new Error("closed"),
-          phase: "close",
-        }),
-      );
+      this._settleUnresolvedSends();
       return;
     }
 
-    // Reject pending sends BEFORE delegating to Connection.close so callers
-    // observe the rejection promptly rather than waiting for the drain.
-    this._teardownCorrelator(
-      new MllpConnectionError("client closed", {
-        cause: new Error("closed"),
-        phase: "close",
-      }),
-    );
+    // Pending sends are settled AFTER the drain, in the `finally` below, because the whole
+    // question this method answers, which messages definitely never reached the wire, cannot
+    // be answered before the wait it needs. A Connection already in a terminal state drains
+    // nothing and returns at once, so an already-closed client is still prompt.
+    this._installDrainHook(conn);
+    const closeOpts =
+      opts?.drainTimeoutMs !== undefined ? { drainTimeoutMs: opts.drainTimeoutMs } : undefined;
 
     if (signal === undefined) {
-      const closeOpts =
-        opts?.drainTimeoutMs !== undefined ? { drainTimeoutMs: opts.drainTimeoutMs } : undefined;
-      await conn.close(closeOpts);
+      try {
+        await conn.close(closeOpts);
+      } finally {
+        this._settleUnresolvedSends();
+      }
       return;
     }
 
@@ -2026,19 +2309,25 @@ export class MllpClient extends EventEmitter {
     });
 
     try {
-      const closeOpts =
-        opts?.drainTimeoutMs !== undefined ? { drainTimeoutMs: opts.drainTimeoutMs } : undefined;
       await Promise.race([conn.close(closeOpts), abortPromise]);
     } finally {
       if (abortHandler !== undefined) {
         signal.removeEventListener("abort", abortHandler);
       }
+      this._settleUnresolvedSends();
     }
   }
 
   /**
    * Abruptly destroy the client, force-transitions the underlying Connection
    * to `CLOSED` immediately. No-op if no Connection is attached. Idempotent.
+   *
+   * Every pending send is settled at once: no acknowledgement is awaited and no drain timeout
+   * is honoured, which is exactly what separates this from {@link MllpClient.close}. A
+   * `close()` already waiting on acknowledgements stops waiting here and returns. A send still
+   * held inside the client is failed with {@link MllpNeverDeliveredError}, because nothing was
+   * ever written for it; that is a statement about the bytes, not about how the client was
+   * shut down, so it holds on this path too.
    *
    * @example
    * ```typescript
@@ -2058,6 +2347,10 @@ export class MllpClient extends EventEmitter {
         cause: new Error("destroyed"),
         phase: "close",
       });
+    // A drain in progress is abandoned rather than awaited, so a close() racing this destroy
+    // returns instead of sitting out the rest of its timeout.
+    this._endDrainWait?.();
+    this._cancelParkedSends();
     this._teardownCorrelator(teardownReason);
     const conn = this._connection;
     if (conn === null) return;

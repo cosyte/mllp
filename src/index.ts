@@ -117,3 +117,7 @@ export {
   type CommitAckReport,
 } from "./client/index.js";
 export type { AckModeWarningEvent } from "./server/index.js";
+
+// The two halves of a shutdown report: what was never written, and what was written and never
+// answered. A caller tells them apart to decide whether resending is safe.
+export { MllpNeverDeliveredError, MllpUnknownFateError } from "./client/index.js";

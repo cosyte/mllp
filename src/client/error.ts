@@ -4,6 +4,8 @@
  * Exports:
  * - `MllpTimeoutError`, ACK timeout
  * - `MllpBackpressureError`, high-water mark exceeded
+ * - `MllpNeverDeliveredError`, a send that never reached the transport
+ * - `MllpUnknownFateError`, a send whose bytes went out and drew no answer
  * - `isTransientConnectionError`, transient/permanent classifier
  *
  * Re-exported from `src/client/index.ts` and `src/index.ts`.
@@ -228,6 +230,163 @@ export class MllpCommitRejectedError extends Error {
     this.elapsedMs = opts.elapsedMs;
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, MllpCommitRejectedError);
+    }
+  }
+}
+
+/**
+ * The whole text of a {@link MllpNeverDeliveredError}, held here rather than composed at the
+ * throw site.
+ *
+ * Fixed, and fixed on purpose: nothing input-derived may reach an error message, so the only
+ * safe builder is one that takes no value at all. Everything this report has to say beyond
+ * this sentence is a count, and a count travels on its own field.
+ */
+const NEVER_DELIVERED_MESSAGE =
+  "delivery did not occur: the message was still held by the client and no bytes were written " +
+  "to the transport, so the peer never saw it";
+
+/**
+ * The whole text of a {@link MllpUnknownFateError}. Fixed for the reason given on
+ * {@link NEVER_DELIVERED_MESSAGE}, and here the reason is at its sharpest: this error reports
+ * a message that WAS on the wire, so anything copied off it is payload content that has left
+ * the building the moment an error reporter ships the box.
+ */
+const UNKNOWN_FATE_MESSAGE =
+  "fate unknown: the message was written to the transport and no acknowledgement arrived " +
+  "before the client finished closing, so whether the peer received it cannot be determined " +
+  "from here";
+
+/**
+ * Rejects a `send()` whose bytes **never reached the transport**: the message was still held
+ * inside the client when the client shut down, waiting for room in the send queue or for the
+ * single in-flight slot.
+ *
+ * This is the safe half of a shutdown report. Nothing was written, so the peer cannot have
+ * seen this message, cannot have committed it, and cannot produce a duplicate if the
+ * application sends it again. It is deliberately a distinct type from
+ * {@link MllpUnknownFateError}, so a caller decides between resending and escalating on
+ * `instanceof` rather than on the wording of a message.
+ *
+ * Every field is a count. There is nothing else to carry: the caller passed the payload to
+ * `send()` and still holds it.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.send(payload);
+ * } catch (err) {
+ *   if (err instanceof MllpNeverDeliveredError) {
+ *     // safe to resend: these bytes were never written
+ *     await backupClient.send(payload);
+ *   }
+ * }
+ * ```
+ */
+export class MllpNeverDeliveredError extends Error {
+  override readonly name = "MllpNeverDeliveredError" as const;
+
+  /** Byte count of the framed message this send would have written. */
+  readonly byteCount: number;
+
+  /**
+   * Byte length of the send's MSH-10 control ID, or `undefined` when there was none to read.
+   * The control ID itself is deliberately not here, for the reason given on
+   * {@link MllpTimeoutError.messageControlIdBytes}.
+   */
+  readonly messageControlIdBytes: number | undefined;
+
+  /**
+   * Construct a never-delivered report.
+   *
+   * There is no `message` parameter, deliberately: see {@link NEVER_DELIVERED_MESSAGE}.
+   *
+   * @param opts - Report context (framed byte count, control-id byte length).
+   */
+  constructor(opts: { byteCount: number; messageControlIdBytes: number | undefined }) {
+    super(NEVER_DELIVERED_MESSAGE);
+    this.byteCount = opts.byteCount;
+    this.messageControlIdBytes = opts.messageControlIdBytes;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, MllpNeverDeliveredError);
+    }
+  }
+}
+
+/**
+ * Rejects a `send()` that **was** written to the transport and whose acknowledgement had still
+ * not arrived when the client finished closing.
+ *
+ * The ambiguous half of a shutdown report, and it is reported as ambiguous because it is: an
+ * acknowledgement lost on the way back is indistinguishable from a message the peer never
+ * received. Nothing is retried automatically. HL7 makes the accept acknowledgement the thing
+ * that releases a sender from resending, and puts the retransmission decision on the
+ * application and on its peer's duplicate detection, keyed on MSH-10 plus MSH-7.
+ *
+ * Distinct from {@link MllpNeverDeliveredError} (nothing was written, so a resend is safe) and
+ * from {@link MllpApplicationAckError} (the peer said in writing that it took custody, so a
+ * resend would commit the message twice). Confusing the three is how a consumer's replay logic
+ * either duplicates a clinical message or drops one.
+ *
+ * `flushedAt` is what a replay decision reasons about: it says when these bytes went out, so a
+ * caller can compare it against the peer's own record.
+ *
+ * **Every field is a byte count or a timestamp, and the message is a constant.** No part of
+ * the payload reaches this error, not the control ID, not a truncation of it, and not a hex
+ * rendering. An `Error` is a diagnostic surface: it is logged, and its `stack` plus its own
+ * properties are what an error reporter ships off the box.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.send(payload);
+ * } catch (err) {
+ *   if (err instanceof MllpUnknownFateError) {
+ *     // do NOT blindly resend: the peer may already hold this message
+ *     logger.warn({ flushedAt: err.flushedAt, bytes: err.byteCount });
+ *   }
+ * }
+ * ```
+ */
+export class MllpUnknownFateError extends Error {
+  override readonly name = "MllpUnknownFateError" as const;
+
+  /** Epoch ms at which this send's bytes were written to the transport. */
+  readonly flushedAt: number;
+
+  /** Milliseconds between that write and this report. */
+  readonly elapsedMs: number;
+
+  /** Byte count of the framed message that was written. */
+  readonly byteCount: number;
+
+  /**
+   * Byte length of the send's MSH-10 control ID, or `undefined` when there was none to read.
+   * The control ID itself is deliberately not here, for the reason given on
+   * {@link MllpTimeoutError.messageControlIdBytes}.
+   */
+  readonly messageControlIdBytes: number | undefined;
+
+  /**
+   * Construct an unknown-fate report.
+   *
+   * There is no `message` parameter, deliberately: see {@link UNKNOWN_FATE_MESSAGE}.
+   *
+   * @param opts - Report context (flush timestamp, elapsed time, byte counts).
+   */
+  constructor(opts: {
+    flushedAt: number;
+    elapsedMs: number;
+    byteCount: number;
+    messageControlIdBytes: number | undefined;
+  }) {
+    super(UNKNOWN_FATE_MESSAGE);
+    this.flushedAt = opts.flushedAt;
+    this.elapsedMs = opts.elapsedMs;
+    this.byteCount = opts.byteCount;
+    this.messageControlIdBytes = opts.messageControlIdBytes;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, MllpUnknownFateError);
     }
   }
 }
