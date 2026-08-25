@@ -20,7 +20,11 @@ import { Connection } from "../../src/connection/index.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { encodeFrame } from "../../src/framing/index.js";
 import { MllpConnectionError } from "../../src/connection/index.js";
-import { MllpApplicationAckError, MllpTimeoutError } from "../../src/client/error.js";
+import {
+  MllpApplicationAckError,
+  MllpTimeoutError,
+  MllpUnknownFateError,
+} from "../../src/client/error.js";
 
 const ACK_TIMEOUT_MS = 10_000;
 
@@ -226,13 +230,28 @@ describe("the second wait is measured from the accept acknowledgement", () => {
   });
 });
 
+/**
+ * Close a client and let its acknowledgement drain expire, on the faked clock.
+ *
+ * `close()` now waits for the acknowledgements of sends already on the wire, so a case that
+ * wants the wait to END has to advance the clock past the bound it passes in. `20` ms is well
+ * inside `ACK_TIMEOUT_MS`, so the drain expires before any first-wait timeout could fire and
+ * each case still exercises the branch it names.
+ */
+const DRAIN_MS = 20;
+async function closeAndExpireDrain(client: MllpClient): Promise<void> {
+  const closing = client.close({ drainTimeoutMs: DRAIN_MS });
+  await vi.advanceTimersByTimeAsync(DRAIN_MS + 5);
+  await closing;
+}
+
 describe("a link lost while the send is waiting on its application acknowledgement", () => {
   it("fails the send with an error carrying the commit disposition, on close()", async () => {
     const h = harness();
     const sent = h.client.send(message("M1", "AL", "AL"));
     const caught = sent.catch((err: unknown) => err);
     h.peerAck(ack("CA", "M1"));
-    await h.client.close();
+    await closeAndExpireDrain(h.client);
     const err = await caught;
     expect(err).toBeInstanceOf(MllpApplicationAckError);
     const failure = err as MllpApplicationAckError;
@@ -254,14 +273,20 @@ describe("a link lost while the send is waiting on its application acknowledgeme
     h.client.destroy();
   });
 
-  it("a send with no commit yet still gets the ordinary connection error", async () => {
+  it("a send with no commit yet is reported with its fate unknown, not with that error", async () => {
+    // The direction that matters here is the negative one, and it is unchanged: a send the
+    // peer never committed must NOT be handed an error claiming a commit disposition it
+    // never received. What the positive half asserts DID change: such a send used to draw the
+    // generic connection error, and now draws the shutdown report for a message that was
+    // written and never answered.
     const h = harness();
     const sent = h.client.send(message("M1", "AL", "AL"));
     const caught = sent.catch((err: unknown) => err);
-    await h.client.close();
+    await closeAndExpireDrain(h.client);
     const err = await caught;
-    expect(err).toBeInstanceOf(MllpConnectionError);
+    expect(err).toBeInstanceOf(MllpUnknownFateError);
     expect(err).not.toBeInstanceOf(MllpApplicationAckError);
+    expect(err).not.toBeInstanceOf(MllpConnectionError);
   });
 
   it("it is never reported as successful", async () => {
@@ -276,7 +301,7 @@ describe("a link lost while the send is waiting on its application acknowledgeme
       () => "rejected",
     );
     h.peerAck(ack("CA", "M1"));
-    await h.client.close();
+    await closeAndExpireDrain(h.client);
     expect(await caught).toBe("rejected");
     expect(resolvedWith).toBeNull();
   });

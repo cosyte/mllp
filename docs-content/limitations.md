@@ -26,18 +26,39 @@ receiver never having got it. Both look like a timeout.
 queue them, or replay them. There is no write-ahead log in this package. If you need one, it lives in
 your application, not here.
 
-## It does not drain in-flight messages on `close()`
+## It drains in-flight messages on `close()`, and still cannot make delivery certain
 
-`close()` **rejects** every in-flight send (`MllpConnectionError({ phase: 'close' })`) rather than
-waiting for their ACKs. The `DRAINING` state exists in the connection machine, but no drain hook is
-wired to it today, so `drainTimeoutMs` does not currently bound an in-flight ACK wait on the client.
-There is no such wait. (One send is told apart: an enhanced-mode send whose commit disposition had
-already arrived is rejected with `MllpApplicationAckError({ reason: 'connection-lost' })`, which
-names the commit it did receive. Every other pending send is reported identically.)
+`close()` **waits** for the ACKs of sends already written to the transport. `drainTimeoutMs` is what
+bounds that wait (default `30_000` ms), and it is the whole bound: the drain ends the moment the last
+outstanding ACK arrives, so a peer that answers promptly does not cost you the timeout. If the link
+fails mid-drain, `close()` returns then rather than waiting the bound out.
 
-A message in flight at shutdown is therefore an **unknown**, not a failure: it may have been
-committed by the receiver with the ACK arriving after you stopped listening. Await your sends before
-closing if that matters, and rely on receiver-side idempotency (`MSH-10` + `MSH-7`). See
+What is still unresolved when the wait ends is reported to its own `send()` caller, and the two
+populations are **told apart**, because a replay decision turns on which one a message is in:
+
+- **Never delivered.** `MllpNeverDeliveredError`: the message was still held inside the client and no
+  bytes were written for it, so the receiver cannot have seen it. Resending it cannot duplicate
+  anything.
+- **Fate unknown.** `MllpUnknownFateError`: the bytes went out and no ACK came back. It carries
+  `flushedAt` (when they went out), `elapsedMs` and `byteCount`, and **no payload content at all**,
+  not the control ID, only its byte length. The receiver may hold this message, so resending it may
+  commit a clinical message twice.
+- **Committed, application disposition unknown.** `MllpApplicationAckError({ reason:
+  'connection-lost' })`, unchanged: an enhanced-mode send whose commit disposition had already
+  arrived keeps the error that names that commit. The receiver's custody of those bytes is a known
+  fact, and a shutdown never downgrades it to an unknown one.
+
+Tell them apart with `instanceof`, never by reading an error message.
+
+**A drain cannot make delivery certain, and this one does not pretend to.** A commit whose ACK is
+lost in flight is indistinguishable from a message never received, and always will be: that is what
+the unknown-fate report says out loud. Nothing is retried automatically, because the accept
+acknowledgement is what releases a sender from resending, and the standard puts the retransmission
+decision on the application and on its peer's duplicate detection (`MSH-10` + `MSH-7`). There is
+still no write-ahead log, queue or replay in this package.
+
+`destroy()` is the other half of the pair and is unchanged: it settles every pending send at once,
+awaits no ACK and honours no drain timeout. Use it when you need the socket gone now. See
 [Connection, reconnect & backpressure](./reliability.md).
 
 ## A fatal framing error drops the connection, and is not retried
