@@ -49,6 +49,24 @@ export {
   type SecurityWarningCode,
 } from "./transport/index.js";
 
+// The ATNA transport-security option: what it offers, what it reports, and how it
+// refuses a suite list it cannot honour.
+export {
+  ATNA_CIPHER_SUITES,
+  TLS13_DEFAULT_CIPHER_SUITES,
+  ATNA_CIPHER_LIST,
+  resolveTlsCipherPolicy,
+  type TlsCipherPolicyInput,
+  type ResolvedTlsCipherPolicy,
+  readNegotiatedTlsParameters,
+  type NegotiatedTlsParameters,
+  MLLP_TLS_CIPHER_LIST_REJECTED,
+  MLLP_TLS_CIPHER_OPTION_CONFLICT,
+  MllpTlsConfigurationError,
+  tlsConfigurationMessage,
+  type TlsConfigurationErrorCode,
+} from "./transport/index.js";
+
 export {
   Connection,
   type ConnectionOptions,

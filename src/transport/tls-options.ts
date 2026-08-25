@@ -8,9 +8,11 @@
  * direct comparison. ITI TF-2 §3.19.6.2.3 mandates four TLS 1.2 cipher
  * suites: `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256`,
  * `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, `TLS_DHE_RSA_WITH_AES_256_GCM_SHA384`,
- * `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`. Node's default TLS 1.2 cipher list
- * already includes both mandated ECDHE suites, so this package pins to Node
- * defaults rather than bundling a cipher list, see `docs-content/tls.md`.
+ * `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`. Set `atnaTransportSecurity: true`
+ * to offer exactly those four (plus the TLS 1.3 defaults) instead of whatever
+ * the runtime's own list happens to be; it is off by default, and what a link
+ * negotiated is reported on the `'tlsNegotiated'` event either way. See
+ * `docs-content/tls.md`.
  *
  * @example
  * ```typescript
@@ -77,10 +79,39 @@ export interface TlsOptions {
   /** Maximum negotiated TLS protocol version. */
   readonly maxVersion?: "TLSv1.2" | "TLSv1.3";
   /**
+   * Offer exactly the cipher suites the IHE ATNA ITI-19 transport-security
+   * option names (ITI TF-2 §3.19.6.2.3), rather than inheriting the runtime's
+   * own list. Off by default; turning it on only ever **narrows** what is
+   * offered.
+   *
+   * This is the **cipher-suite half** of that option, and it does not make the
+   * declaration on your behalf. Mutual node authentication is
+   * `ServerTlsOptions.clientAuth` plus a client `cert`/`key`, and the TLS 1.2
+   * floor is {@link TlsOptions.minVersion}, which already defaults to it.
+   *
+   * The four TLS 1.2 suites are offered together with the three TLS 1.3 suites
+   * the runtime enables by default, so selecting this never removes a protocol
+   * version that was reachable without it. A peer that supports none of them
+   * fails the handshake rather than falling back, which is the point.
+   *
+   * Mutually exclusive with {@link TlsOptions.ciphers}: both declare the
+   * offered list, so setting both rejects `connect()` with a typed
+   * `MllpTlsConfigurationError`.
+   *
+   * @default false
+   */
+  readonly atnaTransportSecurity?: boolean;
+  /**
    * OpenSSL cipher-list string passthrough (`tls.connect`'s `ciphers`).
    * Unset uses Node's compiled-in defaults, which already include both
    * ATNA-mandated ECDHE suites (see the module doc comment). Set this to
-   * restrict to a stricter list (e.g. DHE suites) if your deployment requires it.
+   * restrict to a stricter list of your own choosing; for the ATNA option's
+   * own four suites prefer {@link TlsOptions.atnaTransportSecurity}, which is
+   * the same declaration made once and reported on `'tlsNegotiated'`.
+   *
+   * A list the runtime rejects rejects `connect()` with a typed
+   * `MllpTlsConfigurationError`; it never silently falls back to the default
+   * list.
    *
    * @default undefined (Node defaults)
    */
@@ -161,8 +192,31 @@ export interface ServerTlsOptions {
   /** Maximum negotiated TLS protocol version. */
   readonly maxVersion?: "TLSv1.2" | "TLSv1.3";
   /**
+   * Offer exactly the cipher suites the IHE ATNA ITI-19 transport-security
+   * option names (ITI TF-2 §3.19.6.2.3), rather than inheriting the runtime's
+   * own list. Off by default; turning it on only ever **narrows** what is
+   * offered.
+   *
+   * The server side additionally provides ephemeral Diffie-Hellman parameters,
+   * because two of the four named suites are DHE and a server without them
+   * cannot actually offer a DHE suite. See
+   * {@link TlsOptions.atnaTransportSecurity} for the rest, including what this
+   * setting does **not** claim on your behalf.
+   *
+   * Mutually exclusive with {@link ServerTlsOptions.ciphers}: setting both
+   * rejects `listen()` with a typed `MllpTlsConfigurationError`.
+   *
+   * @default false
+   */
+  readonly atnaTransportSecurity?: boolean;
+  /**
    * OpenSSL cipher-list string passthrough. Unset uses Node's defaults
-   * (includes both ATNA-mandated ECDHE suites).
+   * (includes both ATNA-mandated ECDHE suites). For the ATNA option's own four
+   * suites prefer {@link ServerTlsOptions.atnaTransportSecurity}.
+   *
+   * A list the runtime rejects rejects `listen()` with a typed
+   * `MllpTlsConfigurationError`; it never silently falls back to the default
+   * list.
    *
    * @default undefined (Node defaults)
    */

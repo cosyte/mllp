@@ -26,11 +26,16 @@ export interface MutualTlsFixture extends ServerCertFixture {
 }
 
 /**
- * Build a self-signed server certificate for CN/SAN `localhost` + `127.0.0.1`
- * trusted when a client configures `ca: fixture.cert`.
+ * Build a self-signed server certificate for CN/SAN `commonName` + `127.0.0.1`,
+ * trusted when a client configures `ca: fixture.cert`. The `127.0.0.1` IP SAN
+ * is what lets a client reach it at the loopback address whatever the CN says,
+ * which is how a caller can put a distinctive string in the CN and still
+ * connect.
+ *
+ * @param commonName - CN and DNS SAN for the generated certificate.
  */
-export function buildServerCertFixture(): ServerCertFixture {
-  const attrs = [{ name: "commonName", value: "localhost" }];
+export function buildNamedServerCertFixture(commonName: string): ServerCertFixture {
+  const attrs = [{ name: "commonName", value: commonName }];
   const pems = generate(attrs, {
     keySize: 2048,
     days: 1,
@@ -39,13 +44,21 @@ export function buildServerCertFixture(): ServerCertFixture {
       {
         name: "subjectAltName",
         altNames: [
-          { type: 2, value: "localhost" },
+          { type: 2, value: commonName },
           { type: 7, ip: "127.0.0.1" },
         ],
       },
     ],
   });
   return { cert: pems.cert, key: pems.private };
+}
+
+/**
+ * Build a self-signed server certificate for CN/SAN `localhost` + `127.0.0.1`
+ * trusted when a client configures `ca: fixture.cert`.
+ */
+export function buildServerCertFixture(): ServerCertFixture {
+  return buildNamedServerCertFixture("localhost");
 }
 
 /**

@@ -28,6 +28,22 @@ export {
   type SecurityWarning,
   type SecurityWarningCode,
 } from "./security-warnings.js";
+export {
+  MLLP_TLS_CIPHER_LIST_REJECTED,
+  MLLP_TLS_CIPHER_OPTION_CONFLICT,
+  MllpTlsConfigurationError,
+  tlsConfigurationMessage,
+  type TlsConfigurationErrorCode,
+} from "./error.js";
+export {
+  ATNA_CIPHER_SUITES,
+  TLS13_DEFAULT_CIPHER_SUITES,
+  ATNA_CIPHER_LIST,
+  resolveTlsCipherPolicy,
+  type TlsCipherPolicyInput,
+  type ResolvedTlsCipherPolicy,
+} from "./tls-cipher-policy.js";
+export { readNegotiatedTlsParameters, type NegotiatedTlsParameters } from "./negotiated-tls.js";
 
 /**
  * Pure callback-bag transport abstraction.

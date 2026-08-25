@@ -29,6 +29,9 @@
  * and carry static strings, counts, or Node's own TLS and socket text, so the
  * gap holds no HL7 payload today. That is a reason it was not urgent, not a
  * reason to call the table complete. Add server slots before relying on it.
+ * The one exception is the last block in this file, which covers the
+ * `'tlsNegotiated'` record on both a client and a server; it is not a slot,
+ * because it is not reachable from the slot machinery at all (see below).
  *
  * **What `expectCode` proves, exactly.** The runner asserts it in **lenient mode
  * on the short probe only**, deliberately: a strict mode throws on the first
@@ -52,10 +55,17 @@
  * `largeProbeRepeats`, so the cache key is derived from the same two values the
  * runner will plant, not guessed.
  *
- * Timers are faked and the clock is pinned, which buys two things: the suite
- * opens no socket and cannot hang CI, and every input-derived number in a
- * diagnostic (elapsed milliseconds, the flush timestamp) is deterministic,
+ * Timers are faked and the clock is pinned for every slot, which buys two
+ * things: the slot machinery opens no socket, and every input-derived number in
+ * a diagnostic (elapsed milliseconds, the flush timestamp) is deterministic,
  * which is what makes `checkLengthInvariance` usable on the slots that take it.
+ *
+ * **One block does open sockets, and the flat "this suite opens no socket"
+ * claim would be false.** The `'tlsNegotiated'` record only exists once a TLS
+ * handshake has completed, so it cannot be reached over `InMemoryTransport` and
+ * cannot be driven by a slot: a fake clock never finishes a handshake. That
+ * block restores real timers for its own duration, states its own budget at its
+ * own site, and hands the faked clock back afterwards.
  *
  * ## `checkLengthInvariance`, decided per group rather than globally
  *
@@ -80,6 +90,8 @@ import { describe, it, beforeAll, afterAll, expect, vi } from "vitest";
 import { assertNoDiagnosticPhiLeak, PHI_MARKER_UNIT } from "@cosyte/test-utils";
 
 import { createClient, type MllpClient } from "../../src/client/client.js";
+import { createServer } from "../../src/server/server.js";
+import { buildNamedServerCertFixture } from "../helpers/tls-fixtures.js";
 import { Connection } from "../../src/connection/index.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { VT, FS, CR, LF } from "../../src/framing/constants.js";
@@ -864,4 +876,96 @@ describe("PHI: the ack-from-hl7 subpath forwards no inbound bytes", () => {
       expect(w.message).not.toContain("SYNTHID001");
     }
   });
+});
+
+/**
+ * The `'tlsNegotiated'` record, on both ends of a real TLS link.
+ *
+ * This is the one block in this file that opens a socket, and it says so rather
+ * than leaving the file header's "opens no socket" claim quietly false: a TLS
+ * handshake is the only way to make this event exist at all, and the event is
+ * what carries the risk. It restores real timers for its own duration and hands
+ * the faked clock back afterwards.
+ *
+ * The marker is planted in the two places a leak could plausibly come from: the
+ * message body sent over the link, and the server certificate's CN, which is
+ * the only caller-controlled string a TLS session holds. The assertion is a
+ * WHITELIST on the payload's key set rather than a search for the marker alone,
+ * because a field added later would otherwise be admitted silently.
+ *
+ * The structural reason the payload cannot hold message content is stronger
+ * than the marker: it is built at handshake-completion time, before any HL7
+ * byte has crossed the link. The send below runs anyway, to pin that no later
+ * event carries one either.
+ */
+describe("PHI: the negotiated-TLS record carries no content", () => {
+  /** Exactly the fields the record is allowed to have. */
+  const ALLOWED_KEYS = ["protocolVersion", "cipherSuite", "host", "port", "timestamp"];
+
+  beforeAll(() => {
+    vi.useRealTimers();
+  });
+  afterAll(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T00:00:00.000Z"));
+  });
+
+  it("holds on both ends, with the marker in the payload and in the certificate CN", async () => {
+    const { cert, key } = buildNamedServerCertFixture(SHORT_MARKER);
+    const server = createServer({ tls: { cert, key, atnaTransportSecurity: true }, autoAck: "AA" });
+    const serverSeen: Array<Record<string, unknown>> = [];
+    server.on("tlsNegotiated", (p: Record<string, unknown>) => serverSeen.push(p));
+    await server.listen(0, "127.0.0.1");
+    const port = server.getStats().port;
+    if (port === null) throw new Error("expected a bound port");
+
+    const client = createClient({
+      host: "127.0.0.1",
+      port,
+      tls: { ca: cert, atnaTransportSecurity: true },
+    });
+    const clientSeen: Array<Record<string, unknown>> = [];
+    client.on("tlsNegotiated", (p: Record<string, unknown>) => clientSeen.push(p));
+
+    try {
+      await client.connect();
+      // A message whose control id AND body both carry the marker, sent after
+      // the record was emitted, so a late mutation would show.
+      const ack = await client.send(message(SHORT_MARKER, `ZZZ|1|${SHORT_MARKER}\r`));
+      expect(ack.length).toBeGreaterThan(0);
+
+      const deadline = Date.now() + 3000;
+      while (serverSeen.length === 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      expect(clientSeen).toHaveLength(1);
+      expect(serverSeen).toHaveLength(1);
+      // The CN really did carry the marker, so its absence below is evidence.
+      // A PEM is base64 over DER, so the plant is checked in the decoded bytes,
+      // not in the armoured text.
+      const der = Buffer.from(
+        cert.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/\s+/g, ""),
+        "base64",
+      ).toString("latin1");
+      expect(der).toContain(SHORT_MARKER);
+
+      for (const record of [...clientSeen, ...serverSeen]) {
+        expect(Object.keys(record).sort()).toEqual([...ALLOWED_KEYS].sort());
+        expect(Object.isFrozen(record)).toBe(true);
+        const rendered = JSON.stringify(record);
+        expect(rendered).not.toContain(SHORT_MARKER);
+        // No certificate or key material of any shape.
+        expect(rendered).not.toContain("BEGIN");
+        expect(rendered).not.toContain(cert.slice(40, 120));
+        expect(rendered).not.toContain(key.slice(40, 120));
+        // The two negotiated values are registry names, not caller data.
+        expect(record["protocolVersion"]).toMatch(/^TLSv1\.[23]$/);
+        expect(record["cipherSuite"]).toMatch(/^TLS_[A-Z0-9_]+$/);
+      }
+    } finally {
+      client.destroy();
+      await server.close().catch(() => undefined);
+    }
+  }, 60_000);
 });

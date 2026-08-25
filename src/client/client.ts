@@ -35,6 +35,8 @@ import { NetTransport, TlsTransport } from "../transport/index.js";
 import type { Transport } from "../transport/index.js";
 import type { TlsOptions } from "../transport/tls-options.js";
 import { MLLP_TLS_VERIFY_DISABLED, type SecurityWarning } from "../transport/security-warnings.js";
+import { resolveTlsCipherPolicy } from "../transport/tls-cipher-policy.js";
+import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import { MllpFramingError } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning, WarningCode } from "../framing/index.js";
@@ -460,6 +462,9 @@ export interface ClientStats {
  * - `'securityWarning'`, `SecurityWarning`. Emitted on every successful
  *   `secureConnect` (initial + every reconnect) when `tls.allowUnverified` is `true`
  *   with code `MLLP_TLS_VERIFY_DISABLED`. Also mirrored to `process.emitWarning`.
+ * - `'tlsNegotiated'`, {@link NegotiatedTlsParameters}. Emitted once per completed TLS
+ *   handshake (initial + every reconnect) with the negotiated protocol version and
+ *   cipher suite. Never emitted on a plaintext connection.
  * - `'error'`, re-emitted from Connection. Guarded by `listenerCount('error') > 0` so
  *   absence of a listener does NOT crash the process (server precedent).
  *
@@ -648,6 +653,10 @@ export class MllpClient extends EventEmitter {
    *   TLS failures carry a `connectionCause`: `'tls-verify'` for certificate
    *   verification failures, `'tls-handshake'` for TLS-protocol-shaped failures
    *   ({@link isTlsProtocolError}); pure TCP failures carry none.
+   * - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
+   *   honoured (the runtime rejects it, or `atnaTransportSecurity` and `ciphers`
+   *   both declare one). Raised **before** a socket is opened, so nothing is left
+   *   connected; identify it by `instanceof` plus its stable `code`.
    *
    * **Dual failure signal on initial connect:** the Connection's transport
    * error handler is attached before this promise's own error listener, so a
@@ -761,6 +770,7 @@ export class MllpClient extends EventEmitter {
         cleanup();
         conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
         this._emitInsecureWarningIfNeeded();
+        this._emitNegotiatedTlsParameters(socket);
         resolve();
       };
 
@@ -801,6 +811,12 @@ export class MllpClient extends EventEmitter {
       return { socket, transport: new NetTransport(socket) };
     }
     const tlsOpts: TlsOptions = tlsOpt === true ? {} : tlsOpt;
+    // Resolved and PROVEN acceptable to the runtime BEFORE any socket exists,
+    // so a suite list that cannot be honoured rejects connect() with a typed
+    // MllpTlsConfigurationError and leaves nothing connected behind. The throw
+    // lands in connect()'s promise executor (a rejection) and in
+    // _beginReconnectAttempt's catch (a permanent classification, MLLP_* code).
+    const cipherPolicy = resolveTlsCipherPolicy(tlsOpts, "client");
     const socket = tlsConnect({
       host: this._opts.host,
       port: this._opts.port,
@@ -811,7 +827,7 @@ export class MllpClient extends EventEmitter {
       ...(tlsOpts.passphrase !== undefined ? { passphrase: tlsOpts.passphrase } : {}),
       minVersion: tlsOpts.minVersion ?? "TLSv1.2",
       ...(tlsOpts.maxVersion !== undefined ? { maxVersion: tlsOpts.maxVersion } : {}),
-      ...(tlsOpts.ciphers !== undefined ? { ciphers: tlsOpts.ciphers } : {}),
+      ...cipherPolicy,
       rejectUnauthorized: tlsOpts.allowUnverified !== true,
     });
     return { socket, transport: new TlsTransport(socket) };
@@ -974,6 +990,26 @@ export class MllpClient extends EventEmitter {
     // connect() forever.
     this._emitContained("securityWarning", warning);
     process.emitWarning(message, { code: MLLP_TLS_VERIFY_DISABLED });
+  }
+
+  /**
+   * Emit the frozen negotiated-parameters record for a completed TLS
+   * handshake, once per connection, initial connect and every reconnect
+   * alike. No-op for a plaintext connection: there is nothing negotiated to
+   * report, so no event is emitted at all.
+   *
+   * The payload is read off the TLS session, so it is a pair of registry names
+   * plus this client's own host and port. It never sees a payload byte: it is
+   * built at handshake-completion time, before any HL7 byte crosses the link.
+   */
+  private _emitNegotiatedTlsParameters(socket: Socket | TLSSocket): void {
+    if (this._opts.tls === undefined) return;
+    const params = readNegotiatedTlsParameters(socket, this._opts.host, this._opts.port);
+    if (params === null) return;
+    // Contained: reached from the socket's 'secureConnect' listener, exactly like the insecure
+    // warning above. A throwing subscriber (a conformance auditor, the natural consumer of this
+    // event) must not kill the process nor skip the resolve() that follows in onSocketConnect.
+    this._emitContained("tlsNegotiated", params);
   }
 
   /**
@@ -1442,6 +1478,7 @@ export class MllpClient extends EventEmitter {
         arm = (): void => {
           conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
           this._emitInsecureWarningIfNeeded();
+          this._emitNegotiatedTlsParameters(socket);
         };
         const connectEventName = this._opts.tls !== undefined ? "secureConnect" : "connect";
         socket.once("error", (sErr: Error) => {
