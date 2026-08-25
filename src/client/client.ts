@@ -1813,19 +1813,27 @@ export class MllpClient extends EventEmitter {
         // parked send: a shutdown must fail it with the never-delivered report rather than
         // leave its promise pending forever, which is what an unregistered park did.
         const parked: ParkedSend = { cancel: (): void => undefined };
+        const neverDelivered = (): MllpNeverDeliveredError =>
+          new MllpNeverDeliveredError({
+            byteCount: frame.length,
+            messageControlIdBytes: controlId?.length,
+          });
         const onDrain = (): void => {
           this._parkedSends.delete(parked);
           this.off("drain", onDrain);
+          // The settlement that ENDS a shutdown drain emits 'drain' on its way out, so this
+          // listener can run while the client is already going down. Re-entering send() then
+          // would trade the truthful report for the generic not-connected one, for a message
+          // whose bytes were never written. See `_shutdownBegun`.
+          if (this._shutdownBegun()) {
+            wrappedReject(neverDelivered());
+            return;
+          }
           this.send(payload, opts).then(wrappedResolve, wrappedReject);
         };
         parked.cancel = (): void => {
           this.off("drain", onDrain);
-          wrappedReject(
-            new MllpNeverDeliveredError({
-              byteCount: frame.length,
-              messageControlIdBytes: controlId?.length,
-            }),
-          );
+          wrappedReject(neverDelivered());
         };
         this._parkedSends.add(parked);
         this.on("drain", onDrain);
@@ -1956,6 +1964,13 @@ export class MllpClient extends EventEmitter {
       };
       const onDrain = (): void => {
         cleanup();
+        // The settlement that ENDS a shutdown drain emits 'drain' on its way out, so this
+        // listener can run while the client is already going down, and nothing was ever
+        // written for this send. Same rule as the in-flight-slot park; see `_shutdownBegun`.
+        if (this._shutdownBegun()) {
+          reject(new MllpNeverDeliveredError(held));
+          return;
+        }
         // Re-enter send(): the gate will now pass because the queue
         // shrank. Forward both branches to our promise.
         this.send(payload, opts).then(resolve, reject);
@@ -2083,6 +2098,26 @@ export class MllpClient extends EventEmitter {
       byteCount: entry.byteCount,
       messageControlIdBytes: entry.controlId?.length,
     });
+  }
+
+  /**
+   * Has this client begun shutting down? A send parked inside it must not be resumed once it
+   * has: nothing was ever written for such a send, so its report is that delivery did not
+   * occur, and re-entering `send()` would trade that report for the generic not-connected one.
+   *
+   * True from the moment `close()` or `destroy()` is called, true on every halt that has
+   * already given up on the connection (a permanent connect failure, an exhausted retry
+   * policy, an aborted connect), and true while the underlying connection is draining, which
+   * is how a connection closed from outside this client is caught. Each of those is a state a
+   * fresh `send()` cannot succeed from.
+   *
+   * Read on the `'drain'` listener of every {@link ParkedSend}, because a shutdown drain ends
+   * when the last outstanding acknowledgement (or timeout, or abort) settles, and that same
+   * settlement emits `'drain'`. A park woken by it unregisters itself, so the settle pass that
+   * runs after the drain no longer sees it: the choice has to be made here or not at all.
+   */
+  private _shutdownBegun(): boolean {
+    return this._userClosed || this._connection?.state === "DRAINING";
   }
 
   /**

@@ -34,6 +34,7 @@ import { encodeFrame } from "../../src/framing/index.js";
 import {
   MllpApplicationAckError,
   MllpNeverDeliveredError,
+  MllpTimeoutError,
   MllpUnknownFateError,
 } from "../../src/client/error.js";
 
@@ -63,13 +64,15 @@ function harness(opts?: {
   correlateByControlId?: boolean;
   highWaterMark?: number | { count?: number; bytes?: number };
   onBackpressure?: "reject" | "wait";
+  /** Default is long enough never to fire; a case that wants it to fire says so. */
+  ackTimeoutMs?: number;
 }): Harness {
   const [local, peer] = InMemoryTransport.pair();
   const conn = new Connection({ transport: local });
   const client = createClient({
     host: "127.0.0.1",
     port: 0,
-    ackTimeoutMs: 30_000,
+    ackTimeoutMs: opts?.ackTimeoutMs ?? 30_000,
     ...(opts?.pipeline !== undefined ? { pipeline: opts.pipeline } : {}),
     ...(opts?.correlateByControlId !== undefined
       ? { correlateByControlId: opts.correlateByControlId }
@@ -257,6 +260,78 @@ describe("the two populations are reported differently", () => {
   });
 });
 
+describe("a drain that ends by a settlement rather than by its own timeout", () => {
+  // Every case above lets the drain expire, so the report a parked send earns is decided by
+  // the settle pass that runs when the shutdown gives up. It is decided in a second place as
+  // well: the settlement that ends the drain early also wakes the park's own 'drain'
+  // listener. That route is what these cases exercise, because the two halves of the contract
+  // are only wrong together.
+  it("keeps the never-delivered report when an acknowledgement ends the drain", async () => {
+    const h = harness({ pipeline: false, correlateByControlId: true });
+    const onTheWire = h.client.send(message("M1"));
+    const heldBack = h.client.send(message("M2"));
+    const held = heldBack.catch((e: unknown) => e);
+
+    // The peer answers DURING the drain, which is the prompt-return case with one message
+    // parked behind the one on the wire. Ending the drain frees the in-flight slot, so the
+    // park is woken by the same settlement that ends the shutdown wait.
+    const closing = h.client.close({ drainTimeoutMs: LONG_DRAIN_MS });
+    h.ackSoon(ack("AA", "M1"));
+
+    const took = await elapsed(async () => {
+      await closing;
+    });
+    expect(took).toBeLessThan(PROMPT_MS);
+    await expect(onTheWire).resolves.toBeInstanceOf(Buffer);
+    expect(await held).toBeInstanceOf(MllpNeverDeliveredError);
+    // The bytes never left the process, so the caller must not be handed the generic
+    // connection error it cannot safely replay on.
+    expect(await held).not.toBeInstanceOf(MllpConnectionError);
+    expect(String((await held) as Error)).toContain("delivery did not occur");
+  });
+
+  it("keeps it for a send waiting for queue room too", async () => {
+    const h = harness({
+      highWaterMark: { count: 1 },
+      onBackpressure: "wait",
+      correlateByControlId: true,
+    });
+    const onTheWire = h.client.send(message("M1"));
+    const heldBack = h.client.send(message("M2"));
+    const held = heldBack.catch((e: unknown) => e);
+
+    const closing = h.client.close({ drainTimeoutMs: LONG_DRAIN_MS });
+    h.ackSoon(ack("AA", "M1"));
+
+    const took = await elapsed(async () => {
+      await closing;
+    });
+    expect(took).toBeLessThan(PROMPT_MS);
+    await expect(onTheWire).resolves.toBeInstanceOf(Buffer);
+    expect(await held).toBeInstanceOf(MllpNeverDeliveredError);
+    expect(await held).not.toBeInstanceOf(MllpConnectionError);
+  });
+
+  it("keeps it when an acknowledgement timeout is what ends the drain", async () => {
+    // No peer answers at all: the in-flight send's own acknowledgement budget expires during
+    // the drain, which frees the slot and ends the wait just as an acknowledgement would.
+    const h = harness({ pipeline: false, correlateByControlId: true, ackTimeoutMs: 40 });
+    const onTheWire = h.client.send(message("M1"));
+    const wire = onTheWire.catch((e: unknown) => e);
+    const heldBack = h.client.send(message("M2"));
+    const held = heldBack.catch((e: unknown) => e);
+
+    const took = await elapsed(async () => {
+      await h.client.close({ drainTimeoutMs: LONG_DRAIN_MS });
+    });
+
+    expect(took).toBeLessThan(PROMPT_MS);
+    expect(await wire).toBeInstanceOf(MllpTimeoutError);
+    expect(await held).toBeInstanceOf(MllpNeverDeliveredError);
+    expect(await held).not.toBeInstanceOf(MllpConnectionError);
+  });
+});
+
 describe("a shutdown that has nothing to drain", () => {
   it("close() on a client with no connection attached returns without throwing", async () => {
     const client = createClient({ host: "127.0.0.1", port: 0 });
@@ -299,6 +374,35 @@ describe("an abort while close() is awaiting acknowledgements", () => {
     // report its own population earns.
     await expect(onTheWire).rejects.toBeInstanceOf(MllpUnknownFateError);
     await expect(heldBack).rejects.toBeInstanceOf(MllpNeverDeliveredError);
+  });
+
+  it("holds that rule when the abort races an acknowledgement", async () => {
+    // The acknowledgement lands first and ends the drain; the abort arrives into the same
+    // turn. The send on the wire is answered, and the message that never left the client is
+    // still reported as never delivered rather than being swept up by the abort.
+    const h = harness({ pipeline: false, correlateByControlId: true });
+    const onTheWire = h.client.send(message("M1"));
+    const heldBack = h.client.send(message("M2"));
+    const held = heldBack.catch((e: unknown) => e);
+    const controller = new AbortController();
+
+    const closing = h.client.close({
+      drainTimeoutMs: LONG_DRAIN_MS,
+      signal: controller.signal,
+    });
+    const settled = closing.catch((e: unknown) => e);
+    setImmediate(() => {
+      h.peer.write(encodeFrame(ack("AA", "M1")));
+      controller.abort();
+    });
+
+    const took = await elapsed(async () => {
+      await settled;
+    });
+    expect(took).toBeLessThan(PROMPT_MS);
+    await expect(onTheWire).resolves.toBeInstanceOf(Buffer);
+    expect(await held).toBeInstanceOf(MllpNeverDeliveredError);
+    expect(await held).not.toBeInstanceOf(MllpConnectionError);
   });
 });
 
