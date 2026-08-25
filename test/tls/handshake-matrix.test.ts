@@ -7,13 +7,20 @@
  * TLS handshakes need REAL timers; this suite never enables fake timers.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { connect as tlsConnect } from "node:tls";
+import { connect as tlsConnect, createServer as tlsCreateServer } from "node:tls";
+import type { Server as TlsServer } from "node:tls";
 import { createServer } from "../../src/server/server.js";
 import type { MllpServer } from "../../src/server/server.js";
 import { createClient } from "../../src/client/client.js";
 import type { MllpClient } from "../../src/client/client.js";
 import { MllpConnectionError } from "../../src/connection/index.js";
 import { isTlsProtocolError } from "../../src/client/error.js";
+import {
+  MllpTlsConfigurationError,
+  MLLP_TLS_CIPHER_LIST_REJECTED,
+  MLLP_TLS_CIPHER_OPTION_CONFLICT,
+  tlsConfigurationMessage,
+} from "../../src/transport/error.js";
 import {
   buildServerCertFixture,
   buildUntrustedCertFixture,
@@ -420,5 +427,443 @@ describe("TLS / MLLPS handshake matrix (Phase 8)", { timeout: 60_000 }, () => {
       createClient({ host: "127.0.0.1", port, tls: { ca: wrongCa.cert } }),
     );
     await expect(client.connect()).rejects.toMatchObject({ connectionCause: "tls-verify" });
+  });
+});
+
+/**
+ * The four suites ITI TF-2 §3.19.6.2.3 names, in the two spellings that matter.
+ * A cipher-list string is written in OpenSSL's spelling, and that is what
+ * restricts a peer below; the event reports the IANA spelling, which is the one
+ * the standard prints and the one a conformance claim is written in.
+ */
+const ATNA_SUITE_SPELLINGS: ReadonlyArray<{ openssl: string; iana: string }> = [
+  { openssl: "DHE-RSA-AES128-GCM-SHA256", iana: "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256" },
+  { openssl: "ECDHE-RSA-AES128-GCM-SHA256", iana: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" },
+  { openssl: "DHE-RSA-AES256-GCM-SHA384", iana: "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" },
+  { openssl: "ECDHE-RSA-AES256-GCM-SHA384", iana: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" },
+];
+
+/**
+ * A TLS 1.2 suite that IS in the runtime's default list and is NOT one of the
+ * four. It is what separates "the option narrowed the offer" from "the peer
+ * happened to pick an ATNA suite anyway".
+ */
+const NON_ATNA_DEFAULT_SUITE = "ECDHE-RSA-AES128-SHA256";
+const NON_ATNA_DEFAULT_SUITE_IANA = "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256";
+
+/**
+ * The ATNA transport-security option: what a link offers when it is selected,
+ * what it still offers when it is not, and the per-connection record of what
+ * each handshake actually agreed on.
+ *
+ * Every cipher assertion here is graded by an OBSERVED HANDSHAKE against a peer
+ * restricted to one suite, never by comparing a configured string against a
+ * document. That is deliberate: the runtime's own default list ends in a class
+ * token plus exclusions, so what it effectively contains is not settled by
+ * reading it, and it is replaceable from outside the process anyway.
+ *
+ * Real sockets and real TLS, so real timers, same budget reasoning as the
+ * matrix above.
+ */
+describe("ATNA transport-security option", { timeout: 60_000 }, () => {
+  const servers: MllpServer[] = [];
+  const clients: MllpClient[] = [];
+  const rawServers: TlsServer[] = [];
+
+  afterEach(async () => {
+    for (const c of clients) c.destroy();
+    clients.length = 0;
+    for (const s of servers) await s.close().catch(() => undefined);
+    servers.length = 0;
+    for (const r of rawServers) await new Promise<void>((res) => r.close(() => res()));
+    rawServers.length = 0;
+  });
+
+  function trackServer(s: MllpServer): MllpServer {
+    servers.push(s);
+    return s;
+  }
+  function trackClient(c: MllpClient): MllpClient {
+    clients.push(c);
+    return c;
+  }
+
+  /**
+   * A bare `tls.Server` restricted to exactly `ciphers`, capped at TLS 1.2 so
+   * the restriction is the whole of what it offers (a TLS 1.3 suite is enabled
+   * through a separate mechanism and would otherwise dominate the negotiation).
+   * `dhparam: 'auto'` so a DHE restriction is actually offerable.
+   */
+  async function startRestrictedPeerServer(ciphers: string): Promise<{
+    port: number;
+    cert: string;
+    accepted: Array<{ protocol: string | null; suite: string }>;
+  }> {
+    const { cert, key } = buildServerCertFixture();
+    const accepted: Array<{ protocol: string | null; suite: string }> = [];
+    const srv = tlsCreateServer({
+      cert,
+      key,
+      minVersion: "TLSv1.2",
+      maxVersion: "TLSv1.2",
+      ciphers,
+      dhparam: "auto",
+    });
+    rawServers.push(srv);
+    srv.on("secureConnection", (s) => {
+      accepted.push({ protocol: s.getProtocol(), suite: s.getCipher().standardName });
+    });
+    await new Promise<void>((res) => srv.listen(0, "127.0.0.1", () => res()));
+    const addr = srv.address();
+    if (addr === null || typeof addr === "string") throw new Error("no port");
+    return { port: addr.port, cert, accepted };
+  }
+
+  /** Collect every `'tlsNegotiated'` payload an emitter produces. */
+  function collectNegotiated(emitter: MllpClient | MllpServer): Array<Record<string, unknown>> {
+    const seen: Array<Record<string, unknown>> = [];
+    emitter.on("tlsNegotiated", (p: Record<string, unknown>) => {
+      seen.push(p);
+    });
+    return seen;
+  }
+
+  // Criteria 1, 2, 4 -----------------------------------------------------
+  for (const suite of ATNA_SUITE_SPELLINGS) {
+    it(`client with the option negotiates ${suite.iana} against a peer restricted to it`, async () => {
+      const peer = await startRestrictedPeerServer(suite.openssl);
+      const client = trackClient(
+        createClient({
+          host: "127.0.0.1",
+          port: peer.port,
+          tls: { ca: peer.cert, atnaTransportSecurity: true },
+        }),
+      );
+      const negotiated = collectNegotiated(client);
+      await client.connect();
+
+      expect(negotiated).toHaveLength(1);
+      expect(negotiated[0]?.["cipherSuite"]).toBe(suite.iana);
+      expect(negotiated[0]?.["protocolVersion"]).toBe("TLSv1.2");
+      // Frozen payload, the standing rule for every publicly emitted event.
+      expect(Object.isFrozen(negotiated[0])).toBe(true);
+      // The peer saw the same handshake, so the report is of a real negotiation.
+      await waitFor(() => peer.accepted.length === 1);
+      expect(peer.accepted[0]?.suite).toBe(suite.iana);
+
+      await client.close();
+    });
+  }
+
+  // Criteria 1, 2, 4, 8 --------------------------------------------------
+  for (const suite of ATNA_SUITE_SPELLINGS) {
+    it(`server with the option negotiates ${suite.iana} against a peer restricted to it`, async () => {
+      const { cert, key } = buildServerCertFixture();
+      const server = trackServer(createServer({ tls: { cert, key, atnaTransportSecurity: true } }));
+      const negotiated = collectNegotiated(server);
+      await server.listen(0, "127.0.0.1");
+      const port = must(server.getStats().port);
+
+      const peerObserved = await new Promise<{ protocol: string | null; suite: string }>(
+        (resolve, reject) => {
+          const raw = tlsConnect(
+            {
+              host: "127.0.0.1",
+              port,
+              ca: cert,
+              servername: "localhost",
+              minVersion: "TLSv1.2",
+              maxVersion: "TLSv1.2",
+              ciphers: suite.openssl,
+            },
+            () => {
+              const observed = {
+                protocol: raw.getProtocol(),
+                suite: raw.getCipher().standardName,
+              };
+              raw.end();
+              resolve(observed);
+            },
+          );
+          raw.once("error", reject);
+        },
+      );
+
+      expect(peerObserved.suite).toBe(suite.iana);
+      await waitFor(() => negotiated.length === 1);
+      expect(negotiated[0]?.["cipherSuite"]).toBe(suite.iana);
+      expect(negotiated[0]?.["protocolVersion"]).toBe(peerObserved.protocol);
+      expect(Object.isFrozen(negotiated[0])).toBe(true);
+    });
+  }
+
+  // Criterion 5 ----------------------------------------------------------
+  it(`client with the option FAILS against a peer offering only ${NON_ATNA_DEFAULT_SUITE}`, async () => {
+    const peer = await startRestrictedPeerServer(NON_ATNA_DEFAULT_SUITE);
+    const client = trackClient(
+      createClient({
+        host: "127.0.0.1",
+        port: peer.port,
+        tls: { ca: peer.cert, atnaTransportSecurity: true },
+      }),
+    );
+    const negotiated = collectNegotiated(client);
+    await expect(client.connect()).rejects.toBeInstanceOf(MllpConnectionError);
+    expect(negotiated).toHaveLength(0);
+    expect(peer.accepted).toHaveLength(0);
+  });
+
+  it(`server with the option FAILS a peer offering only ${NON_ATNA_DEFAULT_SUITE}`, async () => {
+    const { cert, key } = buildServerCertFixture();
+    const server = trackServer(createServer({ tls: { cert, key, atnaTransportSecurity: true } }));
+    const negotiated = collectNegotiated(server);
+    await server.listen(0, "127.0.0.1");
+    const port = must(server.getStats().port);
+
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const raw = tlsConnect(
+          {
+            host: "127.0.0.1",
+            port,
+            ca: cert,
+            servername: "localhost",
+            minVersion: "TLSv1.2",
+            maxVersion: "TLSv1.2",
+            ciphers: NON_ATNA_DEFAULT_SUITE,
+          },
+          () => {
+            raw.end();
+            resolve();
+          },
+        );
+        raw.once("error", reject);
+      }),
+    ).rejects.toBeInstanceOf(Error);
+    expect(negotiated).toHaveLength(0);
+  });
+
+  // Criterion 6 ----------------------------------------------------------
+  it(`option NOT selected: ${NON_ATNA_DEFAULT_SUITE} still handshakes, both ways`, async () => {
+    // Client side: the same restricted peer that refuses the option-on client
+    // above is negotiated fine when the option is off.
+    const peer = await startRestrictedPeerServer(NON_ATNA_DEFAULT_SUITE);
+    const client = trackClient(
+      createClient({ host: "127.0.0.1", port: peer.port, tls: { ca: peer.cert } }),
+    );
+    const clientNegotiated = collectNegotiated(client);
+    await client.connect();
+    await waitFor(() => peer.accepted.length === 1);
+    expect(peer.accepted[0]?.suite).toBe(NON_ATNA_DEFAULT_SUITE_IANA);
+    expect(clientNegotiated[0]?.["cipherSuite"]).toBe(NON_ATNA_DEFAULT_SUITE_IANA);
+    await client.close();
+
+    // Server side: same suite, same outcome.
+    const { cert, key } = buildServerCertFixture();
+    const server = trackServer(createServer({ tls: { cert, key } }));
+    const serverNegotiated = collectNegotiated(server);
+    await server.listen(0, "127.0.0.1");
+    const port = must(server.getStats().port);
+    const suite = await new Promise<string>((resolve, reject) => {
+      const raw = tlsConnect(
+        {
+          host: "127.0.0.1",
+          port,
+          ca: cert,
+          servername: "localhost",
+          minVersion: "TLSv1.2",
+          maxVersion: "TLSv1.2",
+          ciphers: NON_ATNA_DEFAULT_SUITE,
+        },
+        () => {
+          const s = raw.getCipher().standardName;
+          raw.end();
+          resolve(s);
+        },
+      );
+      raw.once("error", reject);
+    });
+    expect(suite).toBe(NON_ATNA_DEFAULT_SUITE_IANA);
+    await waitFor(() => serverNegotiated.length === 1);
+    expect(serverNegotiated[0]?.["cipherSuite"]).toBe(NON_ATNA_DEFAULT_SUITE_IANA);
+  });
+
+  // Criteria 7, 8 --------------------------------------------------------
+  it("option selected on both sides still negotiates TLSv1.3, and both ends report the same pair", async () => {
+    const { cert, key } = buildServerCertFixture();
+    const server = trackServer(
+      createServer({ tls: { cert, key, atnaTransportSecurity: true }, autoAck: "AA" }),
+    );
+    const serverNegotiated = collectNegotiated(server);
+    await server.listen(0, "127.0.0.1");
+    const port = must(server.getStats().port);
+
+    const client = trackClient(
+      createClient({ host: "127.0.0.1", port, tls: { ca: cert, atnaTransportSecurity: true } }),
+    );
+    const clientNegotiated = collectNegotiated(client);
+    await client.connect();
+
+    expect(clientNegotiated).toHaveLength(1);
+    expect(clientNegotiated[0]?.["protocolVersion"]).toBe("TLSv1.3");
+    await waitFor(() => serverNegotiated.length === 1);
+    expect(serverNegotiated[0]?.["protocolVersion"]).toBe("TLSv1.3");
+    // Criterion 8: the two ends of ONE connection report the same pair.
+    expect(serverNegotiated[0]?.["cipherSuite"]).toBe(clientNegotiated[0]?.["cipherSuite"]);
+
+    // And the link still carries messages.
+    const ack = await client.send(Buffer.from("MSH|^~\\&|A|B|C|D|20260101||ADT^A01|M9|P|2.5\r"));
+    expect(ack.length).toBeGreaterThan(0);
+    await client.close();
+  });
+
+  // Criterion 9 ----------------------------------------------------------
+  it("a reconnect emits the record again, so a log holds every session", async () => {
+    const { cert, key } = buildServerCertFixture();
+    const server = trackServer(
+      createServer({ tls: { cert, key, atnaTransportSecurity: true }, autoAck: "AA" }),
+    );
+    await server.listen(0, "127.0.0.1");
+    const port = must(server.getStats().port);
+
+    const client = trackClient(
+      createClient({
+        host: "127.0.0.1",
+        port,
+        tls: { ca: cert, atnaTransportSecurity: true },
+        autoReconnect: true,
+        initialDelayMs: 5,
+        maxDelayMs: 20,
+      }),
+    );
+    const negotiated = collectNegotiated(client);
+    await client.connect();
+    expect(negotiated).toHaveLength(1);
+
+    const reconnected = new Promise<void>((resolve) => {
+      client.once("connect", () => resolve());
+    });
+    const internals = client as unknown as { _socket: { destroy: (e?: Error) => void } | null };
+    internals._socket?.destroy(Object.assign(new Error("ECONNRESET"), { code: "ECONNRESET" }));
+    await reconnected;
+
+    await waitFor(() => negotiated.length >= 2);
+    expect(negotiated[1]?.["protocolVersion"]).toBe(negotiated[0]?.["protocolVersion"]);
+    await client.close();
+  });
+
+  // Criterion 11 ---------------------------------------------------------
+  it("a plaintext link emits no record at all, on either side", async () => {
+    const server = trackServer(createServer({ autoAck: "AA" }));
+    const serverNegotiated = collectNegotiated(server);
+    await server.listen(0, "127.0.0.1");
+    const port = must(server.getStats().port);
+
+    const client = trackClient(createClient({ host: "127.0.0.1", port }));
+    const clientNegotiated = collectNegotiated(client);
+    await client.connect();
+    const ack = await client.send(Buffer.from("MSH|^~\\&|A|B|C|D|20260101||ADT^A01|MP|P|2.5\r"));
+    expect(ack.length).toBeGreaterThan(0);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(clientNegotiated).toHaveLength(0);
+    expect(serverNegotiated).toHaveLength(0);
+    await client.close();
+  });
+
+  // Criteria 3, 12 -------------------------------------------------------
+  it("a suite list the runtime rejects fails connect() by type and code, nothing connected", async () => {
+    const { cert } = buildServerCertFixture();
+    const client = trackClient(
+      createClient({
+        host: "127.0.0.1",
+        port: 1,
+        tls: { ca: cert, ciphers: "NOT-A-REAL-CIPHER-SUITE" },
+      }),
+    );
+    const rejection = await client.connect().then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(rejection).toBeInstanceOf(MllpTlsConfigurationError);
+    expect((rejection as MllpTlsConfigurationError).code).toBe(MLLP_TLS_CIPHER_LIST_REJECTED);
+    expect(client.state).toBe("DISCONNECTED");
+    expect(client.getStats().connectionId).toBeNull();
+    const internals = client as unknown as { _socket: unknown };
+    expect(internals._socket).toBeNull();
+  });
+
+  it("a suite list the runtime rejects fails listen() by type and code, nothing bound", async () => {
+    const { cert, key } = buildServerCertFixture();
+    const server = trackServer(
+      createServer({ tls: { cert, key, ciphers: "NOT-A-REAL-CIPHER-SUITE" } }),
+    );
+    const rejection = await server.listen(0, "127.0.0.1").then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(rejection).toBeInstanceOf(MllpTlsConfigurationError);
+    expect((rejection as MllpTlsConfigurationError).code).toBe(MLLP_TLS_CIPHER_LIST_REJECTED);
+    expect(server.getStats().listening).toBe(false);
+    expect(server.getStats().port).toBeNull();
+    // A refused server stays refused; it does not become listenable on a retry.
+    await expect(server.listen(0, "127.0.0.1")).rejects.toBeInstanceOf(MllpTlsConfigurationError);
+  });
+
+  it("the option and the ciphers passthrough together are refused on both sides", async () => {
+    const { cert, key } = buildServerCertFixture();
+
+    const client = trackClient(
+      createClient({
+        host: "127.0.0.1",
+        port: 1,
+        tls: { ca: cert, atnaTransportSecurity: true, ciphers: "ECDHE-RSA-AES128-GCM-SHA256" },
+      }),
+    );
+    const clientRejection = await client.connect().then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(clientRejection).toBeInstanceOf(MllpTlsConfigurationError);
+    expect((clientRejection as MllpTlsConfigurationError).code).toBe(
+      MLLP_TLS_CIPHER_OPTION_CONFLICT,
+    );
+
+    const server = trackServer(
+      createServer({
+        tls: { cert, key, atnaTransportSecurity: true, ciphers: "ECDHE-RSA-AES128-GCM-SHA256" },
+      }),
+    );
+    await expect(server.listen(0, "127.0.0.1")).rejects.toMatchObject({
+      name: "MllpTlsConfigurationError",
+      code: MLLP_TLS_CIPHER_OPTION_CONFLICT,
+    });
+    expect(server.getStats().listening).toBe(false);
+  });
+
+  it("a configuration error carries neither key material nor a passphrase", async () => {
+    const { cert, key } = buildServerCertFixture();
+    const passphrase = "unit-test-passphrase-never-in-a-diagnostic";
+    const server = trackServer(
+      createServer({ tls: { cert, key, passphrase, ciphers: "NOT-A-REAL-CIPHER-SUITE" } }),
+    );
+    const rejection = (await server.listen(0, "127.0.0.1").then(
+      () => null,
+      (err: unknown) => err,
+    )) as MllpTlsConfigurationError;
+
+    const rendered = [
+      rejection.message,
+      String(rejection),
+      rejection.cause === undefined ? "" : rejection.cause.message,
+      JSON.stringify(Object.getOwnPropertyNames(rejection)),
+    ].join("\n");
+    expect(rendered).not.toContain(passphrase);
+    expect(rendered).not.toContain("PRIVATE KEY");
+    expect(rendered).not.toContain(key.slice(40, 120));
+    expect(rendered).not.toContain(cert.slice(40, 120));
+    // The message is a frozen registry entry, identical whatever the
+    // configuration was: the factory takes only a code.
+    expect(rejection.message).toBe(tlsConfigurationMessage(MLLP_TLS_CIPHER_LIST_REJECTED));
   });
 });

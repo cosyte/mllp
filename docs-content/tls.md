@@ -160,17 +160,72 @@ TLS 1.2 Floor using BCP195" option (ITI TF-2 §3.19.6.2.3). `TlsOptions`/`Server
 accept `'TLSv1.2' | 'TLSv1.3'` for `minVersion`/`maxVersion`. TLS 1.0/1.1 are not expressible
 through this API; the floor cannot be lowered by configuration.
 
-ITI TF-2 §3.19.6.2.3 mandates four TLS 1.2 cipher suites:
+ITI TF-2 §3.19.6.2.3 names four TLS 1.2 cipher suites an actor claiming the transport-security
+option supports. They are listed here in both spellings that matter: the IANA spelling the standard
+prints (and the one the `'tlsNegotiated'` event below reports), and the OpenSSL spelling a
+cipher-list string is written in.
 
-- `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256`
-- `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`
-- `TLS_DHE_RSA_WITH_AES_256_GCM_SHA384`
-- `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`
+| IANA name (ITI TF-2 §3.19.6.2.3) | OpenSSL name |
+|---|---|
+| `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256` | `DHE-RSA-AES128-GCM-SHA256` |
+| `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` | `ECDHE-RSA-AES128-GCM-SHA256` |
+| `TLS_DHE_RSA_WITH_AES_256_GCM_SHA384` | `DHE-RSA-AES256-GCM-SHA384` |
+| `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384` | `ECDHE-RSA-AES256-GCM-SHA384` |
 
-`@cosyte/mllp` does not bundle a cipher list. `ciphers` is unset by default, which means **Node's
-compiled-in defaults**. Node's default TLS 1.2 cipher list already includes both mandated ECDHE
-suites above. If your deployment requires the DHE suites specifically, or a stricter list, pass
-`ciphers` (an OpenSSL cipher-list string) on either side.
+### Selecting the option: `atnaTransportSecurity`
+
+**Off by default.** With it off, `@cosyte/mllp` imposes no cipher list at all and the offered list
+is the runtime's, which a Node distribution may configure at build time and an operator may replace
+wholesale from outside the process (`--tls-cipher-list`, `NODE_OPTIONS`). What a link offers is then
+a property of the deployment, not of this package.
+
+Set `atnaTransportSecurity: true` on either side and the offered list becomes those four suites and
+nothing else, from this package rather than from the runtime:
+
+```ts
+const server = createServer({
+  tls: { cert: certPem, key: keyPem, atnaTransportSecurity: true },
+});
+
+const client = createClient({
+  host: "mllp.example.com",
+  port: 2575,
+  tls: { ca: caPem, atnaTransportSecurity: true },
+});
+```
+
+```ts runnable
+import { ATNA_CIPHER_SUITES, TLS13_DEFAULT_CIPHER_SUITES } from "@cosyte/mllp";
+
+ATNA_CIPHER_SUITES.length; // => 4
+TLS13_DEFAULT_CIPHER_SUITES.length; // => 3
+```
+
+Four things to know before you turn it on:
+
+- **It only ever narrows what is offered, never widens it.** A peer that supports none of the four
+  fails the handshake instead of negotiating something else. That is the point, and it is why the
+  option is off by default: switching it on can stop a previously working link.
+- **TLS 1.3 is unaffected.** A TLS 1.3 suite is enabled only by its full name in the cipher list, so
+  a list holding the four TLS 1.2 suites alone would silently turn TLS 1.3 **off**. The three TLS
+  1.3 suites the runtime enables by default (`TLS_AES_256_GCM_SHA384`,
+  `TLS_CHACHA20_POLY1305_SHA256`, `TLS_AES_128_GCM_SHA256`) are therefore offered alongside the
+  four. Two peers that reach TLS 1.3 without the option still reach TLS 1.3 with it.
+- **The server also provides ephemeral Diffie-Hellman parameters.** Two of the four suites are DHE,
+  and a server with no DH parameters cannot actually offer a DHE suite: it would advertise the list
+  and then fail every DHE handshake in it.
+- **It is mutually exclusive with `ciphers`.** Both declare the offered list, so setting both
+  rejects `connect()` / `listen()` with a typed `MllpTlsConfigurationError` rather than silently
+  discarding one of them.
+
+`ciphers` (an OpenSSL cipher-list string) remains available on either side for a list of your own
+choosing. A list the runtime rejects is a loud, typed failure at connect or listen time; it never
+falls back to the runtime default list. See "Typed failure modes" below.
+
+**What this does not do.** It is the **cipher-suite half** of the transport-security option. Mutual
+node authentication is `clientAuth` plus a client `cert`/`key`, and the TLS 1.2 floor is
+`minVersion`, which already defaults to it. Claiming an IHE option is your declaration to make about
+your actor: this package can support it and evidence it, and cannot make it on anyone's behalf.
 
 ## Typed failure modes
 
@@ -211,10 +266,67 @@ Server-side, a failed handshake (including a rejected client certificate under `
 frozen `'tlsClientError'` event: `{ remoteAddress, remotePort, message, code, timestamp }`. Only
 the error's message and code are surfaced, never payload bytes, never a certificate dump.
 
+### Cipher-suite configuration errors
+
+A cipher-suite list this package cannot honour is refused **before** a socket exists, so nothing is
+left connected and nothing is left bound. `connect()` and `listen()` reject with
+`MllpTlsConfigurationError`, identified by `instanceof` plus a stable `code`, never by matching on
+the message text:
+
+| `code` | Meaning |
+|---|---|
+| `MLLP_TLS_CIPHER_LIST_REJECTED` | The TLS library refused the list: no suite in it is available in this build. There is **no fallback to the runtime default list**. |
+| `MLLP_TLS_CIPHER_OPTION_CONFLICT` | `atnaTransportSecurity` and `ciphers` both declare the offered list. Set exactly one. |
+
+```ts
+try {
+  await server.listen(2575);
+} catch (err) {
+  if (err instanceof MllpTlsConfigurationError && err.code === MLLP_TLS_CIPHER_LIST_REJECTED) {
+    // A configuration problem, not a network one. Nothing is listening.
+  }
+}
+```
+
+The list is validated on its own, with no certificate, key or passphrase in scope, so the error
+cannot carry credential material. Its `message` is a fixed registry entry per code. A server
+constructed with a refused configuration stays refused: every `listen()` on it rejects the same way,
+and it never serves on some other list.
+
 ## Observability
 
 `client.getStats().tls` and `server.getStats().tls` report whether TLS is configured.
 `server.getStats().tlsClientErrorsTotal` counts `'tlsClientError'` events since `listen()`.
+
+### What each link actually negotiated
+
+Both the client and the server emit a frozen `'tlsNegotiated'` event once per completed TLS
+handshake, carrying the protocol version and cipher suite that link agreed on. That is what turns a
+conformance claim into something a deployment can evidence from its own logs rather than assert.
+
+```ts
+client.on("tlsNegotiated", ({ protocolVersion, cipherSuite, host, port }) => {
+  logger.info({ tls: protocolVersion, suite: cipherSuite, host, port });
+  // e.g. { tls: 'TLSv1.2', suite: 'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256', ... }
+});
+
+server.on("tlsNegotiated", ({ protocolVersion, cipherSuite }) => {
+  metrics.increment(`mllp.tls.${protocolVersion}.${cipherSuite}`);
+});
+```
+
+- `protocolVersion`, as the TLS library reports it: `'TLSv1.2'` or `'TLSv1.3'`.
+- `cipherSuite`, in its **IANA** spelling, the one ITI TF-2 §3.19.6.2.3 prints, so it compares
+  against a conformance claim directly. The OpenSSL spelling is a different rendering of the same
+  suite; see the table above.
+- `host` / `port`, the same routing metadata a `'securityWarning'` carries: the target address for a
+  client, the bound address for a server.
+- `timestamp`, wall-clock time at emission.
+
+It fires **once per connection**, on the initial connect and on every reconnect, so a log records
+every session rather than only the first. It is **never** emitted for a plaintext connection: there
+is nothing negotiated to report. It carries no HL7 payload content and no certificate or key
+material, and it is emitted at handshake-completion time, before any HL7 byte has crossed the link.
 
 ## Known limitations
 
@@ -224,7 +336,11 @@ the error's message and code are surfaced, never payload bytes, never a certific
   `tls.createServer` construction time. Restart the process to rotate.
 - **No CRL/OCSP beyond Node's defaults.** Revocation checking is whatever `node:tls` does by
   default; there is no additional revocation-checking layer.
-- **Cipher list is Node's compiled-in default** unless you pass `ciphers` explicitly. See
+- **Claiming an IHE option stays your declaration to make.** `atnaTransportSecurity` fixes what a
+  link offers and `'tlsNegotiated'` evidences what it agreed on, but the option is claimed by an
+  actor, not by a transport library, and this package cannot make that claim on anyone's behalf.
+- **With the option off, the cipher list is the runtime's**, and the runtime's is configurable at
+  build time by a Node distribution and replaceable from outside the process. See
   "TLS 1.2 floor and cipher suites" above.
 - **Reconnect-path errors do not yet carry `connectionCause`.** The `tls-verify`/`tls-handshake`
   labels are attached on the initial `connect()` path only; auto-reconnect failures surface as raw

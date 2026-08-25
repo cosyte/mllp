@@ -122,6 +122,16 @@ observed. Validate against your actual peer before you trust a production interf
 TLS verifies **caller-supplied** certificates. This package bundles no CA, issues nothing, rotates
 nothing, and has no opinion about your certificate lifecycle. See [MLLPS / TLS](./tls.md).
 
+## It cannot claim an IHE option on your behalf
+
+The offered cipher suites are a property of this package once you select `atnaTransportSecurity`,
+and every completed handshake reports the protocol version and suite it agreed on. That is support
+and evidence, and it is as far as a transport library can go: an IHE option is claimed by an
+**actor**, in a conformance statement, and that statement is yours to make. With the option left
+off, the offered suites are not this package's at all: they are the runtime's, which a Node
+distribution can configure at build time and an operator can replace from outside the process. See
+[MLLPS / TLS](./tls.md).
+
 ## It cannot carry charsets that collide with the framing bytes
 
 MLLP is **not byte-transparent**. `0x0B` and `0x1C` are structural. A payload encoded in UTF-16 or

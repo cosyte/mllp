@@ -30,6 +30,12 @@ import { MllpConnectionError } from "../connection/index.js";
 import { NetTransport, TlsTransport } from "../transport/index.js";
 import type { ServerTlsOptions } from "../transport/tls-options.js";
 import { MLLP_BIND_ALL_INTERFACES, type SecurityWarning } from "../transport/security-warnings.js";
+import {
+  resolveTlsCipherPolicy,
+  type ResolvedTlsCipherPolicy,
+} from "../transport/tls-cipher-policy.js";
+import { MllpTlsConfigurationError } from "../transport/error.js";
+import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
 import { buildRawAck, rawAckUncorrelatable, resolveNackCode } from "./ack.js";
@@ -484,9 +490,12 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * during the bind window changes the `listen()` rejection from the bind error to the typed
  * close-during-listen `MllpConnectionError`, match on the `'error'` event payload, not the
  * rejection, if you do that.
- * TLS (MLLPS) adds two more: `'tlsClientError'` (a failed TLS handshake, the
- * server logs it and keeps serving other connections) and `'securityWarning'` (loud,
- * one-time notice when a wildcard host is bound via `allowWildcardBind: true`).
+ * TLS (MLLPS) adds three more: `'tlsClientError'` (a failed TLS handshake, the
+ * server logs it and keeps serving other connections), `'securityWarning'` (loud,
+ * one-time notice when a wildcard host is bound via `allowWildcardBind: true`), and
+ * `'tlsNegotiated'` ({@link NegotiatedTlsParameters}, the protocol version and cipher
+ * suite each accepted link actually negotiated, once per completed handshake and never
+ * on a plaintext listener).
  * All event payloads are `Object.freeze()`'d before emission.
  *
  * @example
@@ -525,6 +534,14 @@ export class MllpServer extends EventEmitter {
   private _closedTotal = 0;
   /** Count of `'tlsClientError'` events since listen(). */
   private _tlsClientErrorsTotal = 0;
+  /**
+   * A TLS cipher-suite configuration this server will not serve on. Set at
+   * construction, and the ONLY thing `listen()` consults before it binds:
+   * such a server never binds, never accepts, and never negotiates anything,
+   * which is what makes "no fallback to the default list" a structural
+   * property rather than a promise. `null` when the configuration is fine.
+   */
+  private readonly _tlsConfigError: MllpTlsConfigurationError | null = null;
 
   /**
    * Construct an MLLP server. Created idle; call `listen()` (or use
@@ -537,7 +554,28 @@ export class MllpServer extends EventEmitter {
     this._opts = opts;
     this._isTls = opts.tls !== undefined;
 
+    // Resolve and PROVE the offered-suite list before any TLS context exists.
+    // A construction-time throw could not reject listen(), which is what a
+    // caller awaits, so the refusal is carried to listen() instead. On that
+    // path no TLS context is built at all and the placeholder below is never
+    // bound, which is what makes "no fallback to the runtime default list" a
+    // structural property of a refused configuration rather than a promise.
+    let cipherPolicy: ResolvedTlsCipherPolicy | null = null;
     if (opts.tls !== undefined) {
+      try {
+        cipherPolicy = resolveTlsCipherPolicy(opts.tls, "server");
+      } catch (err) {
+        if (!(err instanceof MllpTlsConfigurationError)) throw err;
+        this._tlsConfigError = err;
+      }
+    }
+
+    if (opts.tls !== undefined && cipherPolicy === null) {
+      // Refused configuration: an unbound, connection-less placeholder that
+      // exists only so the field is definitely assigned. listen() rejects
+      // before it is ever touched.
+      this._netServer = netCreateServer();
+    } else if (opts.tls !== undefined && cipherPolicy !== null) {
       const tlsOpts: ServerTlsOptions = opts.tls;
       const clientAuth = tlsOpts.clientAuth ?? "NONE";
       const tlsServer = tlsCreateServer({
@@ -547,7 +585,7 @@ export class MllpServer extends EventEmitter {
         ...(tlsOpts.passphrase !== undefined ? { passphrase: tlsOpts.passphrase } : {}),
         minVersion: tlsOpts.minVersion ?? "TLSv1.2",
         ...(tlsOpts.maxVersion !== undefined ? { maxVersion: tlsOpts.maxVersion } : {}),
-        ...(tlsOpts.ciphers !== undefined ? { ciphers: tlsOpts.ciphers } : {}),
+        ...cipherPolicy,
         requestCert: clientAuth !== "NONE",
         rejectUnauthorized: clientAuth === "MUST",
       });
@@ -628,6 +666,12 @@ export class MllpServer extends EventEmitter {
    * binds raced each other's post-bind safety checks). Call `close()` before
    * re-listening; sequential `listen()` → `close()` → `listen()` is fine.
    *
+   * **A refused TLS cipher-suite configuration** (the runtime rejects the list,
+   * or `tls.atnaTransportSecurity` and `tls.ciphers` both declare one) rejects
+   * every `listen()` on this server with a typed `MllpTlsConfigurationError`,
+   * checked before the bind. Such a server never listens and never negotiates
+   * on any other list; construct a new one with a configuration that resolves.
+   *
    * **`close()` during an in-flight `listen()`** rejects that `listen()` with
    * a typed `MllpConnectionError` (never a hang) and clears the single-flight
    * guard, a subsequent `listen()` on the same server works. This makes
@@ -661,6 +705,15 @@ export class MllpServer extends EventEmitter {
     // AbortSignal: reject immediately if already aborted
     if (signal?.aborted) {
       return Promise.reject(new DOMException("Aborted", "AbortError"));
+    }
+
+    // A TLS cipher-suite configuration that cannot be honoured is refused
+    // BEFORE the bind, and before the single-flight guard is taken: nothing is
+    // listening, nothing was accepted, and no other cipher list was ever
+    // substituted. It is checked on every call, so a refused server stays
+    // refused rather than becoming listenable on a retry.
+    if (this._tlsConfigError !== null) {
+      return Promise.reject(this._tlsConfigError);
     }
 
     // Phase 8 bind safety, SINGLE-FLIGHT guard. Two concurrent listen()
@@ -1271,6 +1324,18 @@ export class MllpServer extends EventEmitter {
         peerCertificate,
       }),
     );
+
+    // The negotiated-parameters record for this accepted link. Reads `null` for
+    // a plaintext listener, so no event is emitted there at all. Host and port
+    // are this server's own bound address, the same routing metadata its
+    // security warnings carry.
+    const negotiated = readNegotiatedTlsParameters(socket, this._host ?? "", this._port ?? 0);
+    if (negotiated !== null) {
+      // Contained for the same reason as the 'connection' emit above: a conformance auditor is
+      // exactly the kind of subscriber this event attracts, and one that throws must not take the
+      // accept loop down with it.
+      this._emitContained("tlsNegotiated", negotiated);
+    }
   }
 
   /**
