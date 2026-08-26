@@ -12,8 +12,10 @@ TLS, mutual TLS (mTLS), the verification-on-by-default posture, bind safety, the
 the typed failure modes.
 
 Spec anchor: IHE ATNA, **ITI-19 Authenticate Node**
-(https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html), the "STX: TLS 1.2 Floor using BCP195"
-option, ITI TF-2 §3.19.6.2.3.
+(https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html), the "STX: TLS 1.2 floor using BCP195 Option"
+(ITI TF-2 §3.19.6.2.3), spelled here as the published text spells it. What this package supplies
+against that option, and what stays yours, is declared on the
+[Conformance statement](./conformance.md).
 
 ## Enabling TLS
 
@@ -156,7 +158,7 @@ check just closed.
 ## TLS 1.2 floor and cipher suites
 
 `minVersion` defaults to `'TLSv1.2'` on both the client and the server: the IHE ATNA ITI-19 "STX:
-TLS 1.2 Floor using BCP195" option (ITI TF-2 §3.19.6.2.3). `TlsOptions`/`ServerTlsOptions` only
+TLS 1.2 floor using BCP195 Option" (ITI TF-2 §3.19.6.2.3). `TlsOptions`/`ServerTlsOptions` only
 accept `'TLSv1.2' | 'TLSv1.3'` for `minVersion`/`maxVersion`. TLS 1.0/1.1 are not expressible
 through this API; the floor cannot be lowered by configuration.
 

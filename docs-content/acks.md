@@ -116,7 +116,9 @@ server.on("ackModeWarning", ({ code }) => metrics.increment("mllp.ack_mode", { c
 
 The server still sends **exactly one** acknowledgement per inbound message, in every mode. The later
 application acknowledgement of the two-part protocol is the consumer's to send; this package selects
-the code, it does not orchestrate the second exchange.
+the code, it does not orchestrate the second exchange. Every acknowledgement mode is recorded with a
+separate client verdict and server verdict on the
+[Conformance statement](./conformance.md#acknowledgement-modes).
 
 ## Full control
 
