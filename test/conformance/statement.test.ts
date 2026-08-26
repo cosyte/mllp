@@ -11,14 +11,18 @@
  *
  * WHAT IS CHECKED AGAINST THE CODE, rather than against another document:
  *
- *   1. THE TOLERANCE SET, ON BOTH HALVES OF THE CODEC. The `allow*` opt-ins the decoder actually
- *      accepts, read off `FrameReaderOptions` in `src/framing/decoder.ts`, must equal the set the
- *      page declares, and the same for `EncoderOptions` in `src/framing/encoder.ts`. Adding a
- *      tolerance and forgetting the page reds, and the message names the opt-in. THE ENCODER HALF IS
- *      NOT A COMPLETENESS FLOURISH: the encoder is strict BY DEFAULT and not structurally, and the
- *      guides said otherwise until this gate was written. An opt-in that emits a block a conformant
- *      peer will mis-split is the most consequential thing on the page, so it is declared and
- *      exercised rather than left in a type signature.
+ *   1. THE TOLERANCE SET, ON BOTH HALVES OF THE CODEC. The opt-ins the decoder actually accepts,
+ *      read off `FrameReaderOptions` in `src/framing/decoder.ts`, must equal the set the page
+ *      declares, and the same for `EncoderOptions` in `src/framing/encoder.ts`. Adding a tolerance
+ *      and forgetting the page reds, and the message names the opt-in. THE SET IS DERIVED BY
+ *      SUBTRACTING A PINNED LIST OF NON-TOLERANCE MEMBERS, NOT BY MATCHING AN `allow*` PREFIX: a
+ *      prefix match keys this gate on a naming convention rather than on the option set, and
+ *      `strict` is already a member of that interface such a match cannot see. Subtraction fails
+ *      closed, because a new member is neither excluded below nor declared on the page. THE ENCODER
+ *      HALF IS NOT A COMPLETENESS FLOURISH: the encoder is strict BY DEFAULT and not structurally,
+ *      and the guides said otherwise until this gate was written. An opt-in that emits a block a
+ *      conformant peer will mis-split is the most consequential thing on the page, so it is declared
+ *      and exercised rather than left in a type signature.
  *   2. THE WARNING CODES, twice over. Every code the page names must be a member of the shipped
  *      `WarningCode` union (a code the package CANNOT emit is caught), and each declared tolerance
  *      is then EXERCISED against the real decoder so the code the page pairs with it is the code the
@@ -32,6 +36,14 @@
  *   5. THE VERSION. The release the page declares must be `package.json`'s. `scripts/sync-version.mjs`
  *      rewrites the line during `pnpm run version`, exactly as it already rewrites the `VERSION`
  *      export, so a release does not red here and a hand-edit does.
+ *   6. THE MULTI-MESSAGE REFUSALS, ROUTE BY ROUTE. Both acknowledgement-building routes are run
+ *      against a batch envelope and against two concatenated messages, and the disposition each one
+ *      actually returns must be the disposition the page declares for that cell. THIS IS THE MOST
+ *      LOAD-BEARING CHECK ON THE PAGE and it is the one that was missing: the two routes do NOT
+ *      agree (the raw builder detects both shapes, the parser-backed builder detects only the batch
+ *      envelope), and a single sentence covering both roles asserted a refusal one of them does not
+ *      perform. A reviewer who reads a refusal does not add a guard above the library, so an
+ *      overstatement here is the one on this page with a clinical failure mode.
  *
  * WHAT IS CHECKED AS SHAPE, because it has no code to check against: the verdict vocabulary is
  * closed at three mutually exclusive words, every acknowledgement mode carries a separate client and
@@ -46,8 +58,11 @@
  * the documentation set must not carry two spellings of one option name. The scan normalizes
  * whitespace first, because the guides wrap the name across lines.
  *
- * All byte fixtures below are synthetic single ASCII letters. There is no HL7 message here, real or
- * realistic, deliberately: this file sits under a PHI-scan walk root.
+ * FIXTURES ARE SYNTHETIC AND CARRY NO PATIENT DATA, real or realistic, deliberately: this file sits
+ * under a PHI-scan walk root. The framing fixtures are single ASCII letters. The two multi-message
+ * fixtures needed by check 6 are bare `MSH` header lines with single-letter application and facility
+ * names and no `PID` segment at all, because the shapes being detected are "a batch envelope" and "a
+ * second `MSH`", and neither needs a message body to exist.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -55,10 +70,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { buildMllpAck } from "../../src/ack-from-hl7/build.js";
 import { FrameReader } from "../../src/framing/decoder.js";
 import { encodeFrame } from "../../src/framing/encoder.js";
 import { MllpFramingError } from "../../src/framing/error.js";
 import type { FrameReaderOptions, WarningCode } from "../../src/index.js";
+import { buildRawAck } from "../../src/server/ack.js";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const DOCS_DIR = join(ROOT, "docs-content");
@@ -208,26 +225,72 @@ function declarationBlock(source: string, opener: string, where: string): string
   return rest.slice(0, end);
 }
 
+/**
+ * Members of `FrameReaderOptions` that are NOT framing tolerances, each with the reason.
+ *
+ * The tolerance set is derived by SUBTRACTING this list from the interface's members. Matching an
+ * `allow*` prefix instead would key this gate on a naming convention rather than on the option set:
+ * `strict` is already a member of that interface a prefix match cannot see, and a future framing
+ * option not spelled `allow*` would move what the decoder tolerates without reddening anything.
+ * Subtraction fails closed, because a new member is neither named here nor declared on the page, and
+ * the check below refuses if a member named here stops existing, so this list cannot rot quietly.
+ */
+const NON_TOLERANCE_DECODER_MEMBERS: Readonly<Record<string, string>> = {
+  onFrame: "a delivery callback, not a framing behaviour",
+  onWarning: "a diagnostic callback, not a framing behaviour",
+  maxFrameSizeBytes: "a bound that always throws MLLP_FRAME_TOO_LARGE; it tolerates nothing",
+  strict: "the escalation rather than a tolerance: it takes every opt-in back to a throw",
+};
+
+/** The same partition for the encoder half. */
+const NON_TOLERANCE_ENCODER_MEMBERS: Readonly<Record<string, string>> = {
+  onWarning: "a diagnostic callback, not a framing behaviour",
+};
+
+/** Every member the given options interface declares, tolerance or not. */
+function declaredMembers(file: string, opener: string, where: string): string[] {
+  const parts = file.split("/");
+  const block = declarationBlock(readSource(...parts), opener, where);
+  const found = [...block.matchAll(/^ {2}([A-Za-z][A-Za-z0-9]*)\??:/gm)].map((m) => m[1] ?? "");
+  const members = [...new Set(found)].sort();
+  if (members.length === 0) {
+    throw new Error(
+      `${where}: \`${opener}\` parsed to zero members. The conformance statement's tolerance set ` +
+        `is derived from it, so a gate that found nothing here would check nothing.`,
+    );
+  }
+  return members;
+}
+
+const DECODER_OPTIONS = {
+  file: "framing/decoder.ts",
+  opener: "export interface FrameReaderOptions {",
+  excluded: NON_TOLERANCE_DECODER_MEMBERS,
+} as const;
+
+const ENCODER_OPTIONS = {
+  file: "framing/encoder.ts",
+  opener: "export interface EncoderOptions {",
+  excluded: NON_TOLERANCE_ENCODER_MEMBERS,
+} as const;
+
+type OptionsInterface = typeof DECODER_OPTIONS | typeof ENCODER_OPTIONS;
+
+/** Every member of an options interface that is not on its pinned non-tolerance list. */
+function shippedTolerances(iface: OptionsInterface): string[] {
+  const where = `src/${iface.file}`;
+  const excluded = new Set(Object.keys(iface.excluded));
+  return declaredMembers(iface.file, iface.opener, where).filter((m) => !excluded.has(m));
+}
+
 /** The tolerance opt-ins `FrameReaderOptions` actually accepts, read off the decoder. */
 function shippedToleranceOptions(): string[] {
-  const block = declarationBlock(
-    readSource("framing", "decoder.ts"),
-    "export interface FrameReaderOptions {",
-    "src/framing/decoder.ts",
-  );
-  const found = [...block.matchAll(/^ {2}(allow[A-Za-z0-9]*)\??:/gm)].map((m) => m[1] ?? "");
-  return [...new Set(found)].sort();
+  return shippedTolerances(DECODER_OPTIONS);
 }
 
 /** The encoder-side opt-ins `EncoderOptions` accepts. */
 function shippedEncoderOptions(): string[] {
-  const block = declarationBlock(
-    readSource("framing", "encoder.ts"),
-    "export interface EncoderOptions {",
-    "src/framing/encoder.ts",
-  );
-  const found = [...block.matchAll(/^ {2}(allow[A-Za-z0-9]*)\??:/gm)].map((m) => m[1] ?? "");
-  return [...new Set(found)].sort();
+  return shippedTolerances(ENCODER_OPTIONS);
 }
 
 /** The stable warning codes the shipped `WarningCode` union declares. */
@@ -338,6 +401,68 @@ function decodeWith(bytes: readonly number[], options: Partial<FrameReaderOption
 }
 
 // ---------------------------------------------------------------------------
+// Exercising both acknowledgement-building routes against a multi-message frame
+// ---------------------------------------------------------------------------
+
+/**
+ * An `FHS`/`BHS` batch envelope wrapping one message (HL7 v2.5.1 section 2.10.3).
+ *
+ * Synthetic: single-letter application and facility names, a fixed timestamp, and no `PID` segment.
+ * The shape being detected is the envelope itself, so the fixture needs no message body.
+ */
+const BATCH_ENVELOPE =
+  "FHS|^~\\&|A|B\rBHS|^~\\&|A|B\r" +
+  "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|MSG001|P|2.5\r" +
+  "BTS|1\rFTS|1\r";
+
+/** Two complete messages concatenated into one frame, the other multi-message shape. Synthetic. */
+const CONCATENATED_TWO_MSH =
+  "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|MSG001|P|2.5\r" +
+  "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|MSG002|P|2.5\r";
+
+/** The two multi-message shapes, in the column order the page's route table declares them. */
+const MULTI_MESSAGE_SHAPES = [BATCH_ENVELOPE, CONCATENATED_TWO_MSH] as const;
+
+/** What one acknowledgement-building route did with a requested positive `AA`. */
+interface AckOutcome {
+  /** The disposition MSA-1 actually carries. */
+  readonly code: string;
+  /** Warning codes the route reported, if it has a warning channel at all. */
+  readonly warningCodes: readonly string[];
+}
+
+/** The two positive dispositions of HL7 Table 0008: the ones a multi-message frame must not draw. */
+const POSITIVE_DISPOSITIONS = new Set(["AA", "CA"]);
+
+/**
+ * The page's declared word for an outcome, derived from the outcome itself.
+ *
+ * A non-positive answer is a refusal however it is spelled; a positive one is the route failing to
+ * detect the shape, which is the honest word for it and the one the page has to use.
+ */
+function classifyOutcome(outcome: AckOutcome): string {
+  return POSITIVE_DISPOSITIONS.has(outcome.code) ? "Not detected" : "Refused";
+}
+
+/**
+ * One probe per acknowledgement-building route, keyed by the identifier the page's route table
+ * names it with, so a route the page adds or renames without a probe here reds.
+ */
+const ROUTE_PROBES: Readonly<Record<string, (payload: Buffer) => AckOutcome>> = {
+  // The raw builder behind `autoAck`. It has no warning channel of its own: the server reports a
+  // downgrade through its `'nack'` event, not through the returned bytes.
+  autoAck: (payload) => {
+    const wire = buildRawAck(payload, "AA").toString("latin1");
+    const msa = /MSA\|([A-Z]{2})/.exec(wire);
+    return { code: msa?.[1] ?? "", warningCodes: [] };
+  },
+  "@cosyte/mllp/ack-from-hl7": (payload) => {
+    const ack = buildMllpAck(payload, { code: "AA" });
+    return { code: ack.code, warningCodes: ack.warnings.map((w) => w.code) };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------
 
@@ -371,6 +496,25 @@ describe("conformance statement", () => {
           `docs-content/conformance.md in this change.`,
       ).toStrictEqual([]);
       expect(stated).toStrictEqual(shipped);
+    });
+
+    it("derives the tolerance set from the option set, not from a naming convention", () => {
+      // The pinned non-tolerance list is the whole of what keeps this gate off an `allow*` prefix
+      // match. If a member named there is renamed or removed, the subtraction starts reporting it
+      // as an undeclared tolerance (or, worse, stops excluding something it should); either way the
+      // list has to be re-judged against the interface rather than silently carried.
+      for (const iface of [DECODER_OPTIONS, ENCODER_OPTIONS]) {
+        const where = `src/${iface.file}`;
+        const members = declaredMembers(iface.file, iface.opener, where);
+        const excluded = Object.keys(iface.excluded).sort();
+        const gone = excluded.filter((m) => !members.includes(m));
+        expect(
+          gone,
+          `${where} no longer declares ${gone.join(", ")}, which this gate excludes from the ` +
+            `tolerance set. Re-judge the exclusion against the interface and update the ` +
+            `conformance statement in the same change.`,
+        ).toStrictEqual([]);
+      }
     });
 
     it("names only warning codes the shipped package can emit", () => {
@@ -421,6 +565,28 @@ describe("conformance statement", () => {
             `but with the opt-in off the decoder accepted the deviation without throwing.`,
         ).not.toBeNull();
       }
+    });
+
+    it("throws for every declared tolerance when `strict` is on, whatever the opt-in says", () => {
+      // The page claims `strict: true` overrides every opt-in above it and that there is no
+      // configuration in which these are tolerated more widely than the table says. That is the one
+      // sentence on the page that bounds the whole table from above, and it had no assertion behind
+      // it, so it could have gone stale without anything noticing.
+      for (const { option } of declared) {
+        const fixture = TOLERANCE_FIXTURES[option] ?? [];
+        const options: Partial<FrameReaderOptions> = { [option]: true, strict: true };
+        const { threw } = decodeWith(fixture, options);
+        expect(
+          threw,
+          `the conformance statement says \`strict: true\` overrides every opt-in, but with ` +
+            `\`${option}\` enabled AND \`strict\` on the decoder tolerated the deviation. One of ` +
+            `the two drifted, and the page is the one a reviewer reads.`,
+        ).not.toBeNull();
+      }
+      expect(
+        STATEMENT,
+        "the strict-override sentence this case grades is no longer on the page.",
+      ).toContain("`strict: true` overrides every opt-in above");
     });
 
     it("declares the per-role defaults the code applies", () => {
@@ -554,6 +720,127 @@ describe("conformance statement", () => {
         expect(row?.[2], `server verdict for "${mode}"`).toBe("Not supported");
       }
     });
+
+    it("declares the automatic acknowledgement as opt-in, with the starter default the code sets", () => {
+      // "The server answers every inbound message" is true only where `autoAck` is set. With it
+      // unset the server sends nothing of its own and the handler owns the response, and only the
+      // starter server supplies a default. An unqualified sentence here tells a reviewer the
+      // package answers when the deployment may have configured it not to.
+      const source = readSource("server", "server.ts");
+      const starterDefault = /autoAck: opts\.autoAck \?\? "([A-Z]{2})"/.exec(source)?.[1];
+      expect(
+        starterDefault,
+        "src/server/server.ts no longer defaults the starter server's `autoAck`, so the sentence " +
+          "the conformance statement carries about it is stale. Update both in this change.",
+      ).toBeDefined();
+      expect(
+        source,
+        "src/server/server.ts no longer carries the manual-mode branch the conformance statement " +
+          "describes (no `autoAck`, so the handler owns the response).",
+      ).toContain("Manual mode: onMessage owns the response via conn.send()");
+      expect(
+        STATEMENT,
+        "the conformance statement must say that with `autoAck` unset the server sends nothing of " +
+          "its own, because that is what the code does.",
+      ).toContain("with `autoAck` left unset the server sends nothing of its own");
+      expect(
+        STATEMENT,
+        `the starter server defaults \`autoAck\` to \`${starterDefault ?? ""}\`, which is what the ` +
+          `conformance statement must declare.`,
+      ).toContain(`The starter server sets \`autoAck\` to \`${starterDefault ?? ""}\` for you`);
+    });
+  });
+
+  describe("batch and concatenated frames", () => {
+    const table = tableUnder("Batch and concatenated frames, route by route");
+
+    it("records an outcome for every acknowledgement-building route, on both shapes", () => {
+      expect(table.header.map(plain)).toStrictEqual([
+        "Acknowledgement route",
+        "An FHS/BHS batch envelope",
+        "A second MSH in the same frame",
+      ]);
+      const routes = table.rows.map((row) => backticked(row[0] ?? "") ?? "").sort();
+      expect(
+        routes,
+        "the route table must name exactly the acknowledgement-building routes this gate can " +
+          "exercise. A route added to the page with no probe here is a declaration nothing checks, " +
+          "and a route dropped from the page is a route a reviewer is never told about.",
+      ).toStrictEqual(Object.keys(ROUTE_PROBES).sort());
+
+      // The two route identifiers are real: one is a declared option, one a declared subpath.
+      expect(shippedPropertyNames().has("autoAck")).toBe(true);
+      const manifest: unknown = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+      const exports =
+        typeof manifest === "object" && manifest !== null && "exports" in manifest
+          ? manifest.exports
+          : {};
+      expect(
+        Object.keys(exports as Record<string, unknown>),
+        "the conformance statement names `./ack-from-hl7` as a route a consumer can take, so it " +
+          "must still be a declared export of this package.",
+      ).toContain("./ack-from-hl7");
+    });
+
+    it("declares, for each route and shape, the disposition the shipped package returns", () => {
+      // THE CHECK THIS WHOLE SUBSECTION EXISTS FOR. The two routes do not agree, and the page said
+      // they did. A reviewer who reads "refused" does not add a concatenation guard above the
+      // library, so a refusal claimed for a route that does not perform one is the overstatement on
+      // this page with a clinical failure mode: a positive acknowledgement for messages nobody read.
+      for (const row of table.rows) {
+        const route = backticked(row[0] ?? "") ?? "";
+        const probe = ROUTE_PROBES[route];
+        if (probe === undefined) throw new Error(`no probe for the route "${route}"`);
+
+        MULTI_MESSAGE_SHAPES.forEach((fixture, index) => {
+          const cell = row[index + 1] ?? "";
+          const shape = plain(table.header[index + 1] ?? "");
+          const stated = plain((cell.split(":")[0] ?? "").trim());
+          const observed = probe(Buffer.from(fixture, "latin1"));
+
+          expect(
+            classifyOutcome(observed),
+            `for "${shape}" the conformance statement declares "${stated}" on the \`${route}\` ` +
+              `route, but that route answered \`${observed.code}\`. The statement and the shipped ` +
+              `package disagree, and the statement is the one an integrator hands to a reviewer.`,
+          ).toBe(stated);
+
+          for (const code of allBackticked(cell).filter((t) => t.startsWith("MLLP_"))) {
+            expect(
+              observed.warningCodes,
+              `the conformance statement says the \`${route}\` route reports \`${code}\` for ` +
+                `"${shape}", but exercising it reported [${observed.warningCodes.join(", ")}].`,
+            ).toContain(code);
+          }
+
+          if (cell.includes("with no warning")) {
+            expect(
+              observed.warningCodes,
+              `the conformance statement says the \`${route}\` route reports no warning for ` +
+                `"${shape}". It reported [${observed.warningCodes.join(", ")}], which is better ` +
+                `news than the page carries: correct the page in this change.`,
+            ).toStrictEqual([]);
+          }
+        });
+      }
+    });
+
+    it("points a consumer on the undetected route at the detector the package exports", () => {
+      // A named limitation with no remedy beside it is a warning a reader cannot act on. The
+      // detector the server's own route applies is exported, so the remedy is one call.
+      expect(STATEMENT).toContain("rawAckUncorrelatable");
+      expect(
+        shippedPropertyNames().has("rawAckUncorrelatable") ||
+          readSource("server", "ack.ts").includes("export function rawAckUncorrelatable"),
+        "the conformance statement tells a consumer to detect the multi-message shape with " +
+          "`rawAckUncorrelatable`, which src/server/ack.ts no longer exports.",
+      ).toBe(true);
+      expect(
+        readSource("index.ts"),
+        "`rawAckUncorrelatable` is the remedy the conformance statement names, so it must stay on " +
+          "the package's public surface.",
+      ).toContain("rawAckUncorrelatable");
+    });
   });
 
   describe("IHE options", () => {
@@ -616,6 +903,34 @@ describe("conformance statement", () => {
         expect(row[1] ?? "", `"what this package supplies" for "${row[0] ?? ""}"`).not.toBe("");
         expect(row[2] ?? "", `"what the actor must still do" for "${row[0] ?? ""}"`).not.toBe("");
       }
+    });
+
+    it("names the switch that turns node authentication off, and the code it announces with", () => {
+      // D7 asks what a deploying actor must still do before entering an option in a Product
+      // Registry statement. "Do not ship with the switch that disables certificate verification" is
+      // the sharpest item on that list for a transport-security option, and the reviewer this page
+      // is written for is precisely the reader who will not open the TLS guide to find it.
+      const actorColumn = split.rows.map((row) => row[2] ?? "").join("\n");
+      expect(
+        actorColumn,
+        "the supplied-versus-actor split must name the client's verification opt-out in the " +
+          "column that says what stays the deploying actor's.",
+      ).toContain("allowUnverified");
+      expect(
+        actorColumn,
+        "the split must name the security-warning code the opt-out announces itself with, so a " +
+          "deployment can evidence its absence from its own logs.",
+      ).toContain("MLLP_TLS_VERIFY_DISABLED");
+      expect(
+        shippedPropertyNames().has("allowUnverified"),
+        "the conformance statement names `allowUnverified` as the switch a deploying actor must " +
+          "leave off, but no property of that name is declared under src/.",
+      ).toBe(true);
+      expect(
+        readSource("transport", "security-warnings.ts"),
+        "the conformance statement names `MLLP_TLS_VERIFY_DISABLED`, which src/transport/" +
+          "security-warnings.ts no longer declares.",
+      ).toContain('export const MLLP_TLS_VERIFY_DISABLED = "MLLP_TLS_VERIFY_DISABLED"');
     });
 
     it("records no option as claimed", () => {

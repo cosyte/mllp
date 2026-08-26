@@ -486,6 +486,9 @@ impossible. Split the batch and ACK each message yourself, or handle it with `au
   where it cannot be (above). It
   is the parser's canonical re-serialization, not a byte copy; `buildRawAck` is the byte copy.
 - **It does not ACK a batch.** An `FHS`/`BHS` envelope is refused with a warned, non-positive `AE`.
+  A frame carrying two concatenated messages is a different shape and this builder does not detect
+  it; which multi-message shape each acknowledgement route refuses is recorded route by route on the
+  [Conformance statement](./conformance.md#batch-and-concatenated-frames-route-by-route).
 - **It builds one ACK, it does not orchestrate an exchange.** The helpers build any of the six codes,
   and the server picks the right half of Table 0008 for the message it is answering
   ([above](#the-auto-ack-answers-in-the-half-of-table-0008-the-sender-asked-for)). *Sending* a later

@@ -83,9 +83,10 @@ it **on**, the deviation becomes the warning code in the table and the payload i
 
 Two more rules bound the set:
 
-- **`strict: true` overrides every opt-in above.** All four deviations throw again even where the
-  individual option is enabled. There is no configuration in which these four are tolerated more
-  widely than this table says.
+- **`strict: true` overrides every opt-in above.** Every deviation in the table throws again even
+  where its individual option is enabled. There is no configuration in which these are tolerated
+  more widely than this table says, and every row is exercised in both directions to keep that
+  true.
 - **`allowMissingLeadingVt` stays off even on the server.** A stream with no `<VT>` is not a
   tolerable quirk; it is an unframed stream, and guessing where a message starts is how a clinical
   message gets mis-split.
@@ -138,10 +139,13 @@ Each mode is recorded separately for the two roles this package ships, because t
 Row by row:
 
 - **Original mode.** One acknowledgement per message, correlated to the send. The client correlates
-  FIFO by default, or by MSH-10 to MSA-2 with `correlateByControlId: true`. The server answers every
-  inbound message. Where its automatic acknowledgement is paired with a message handler, the handler
-  is awaited and a positive `AA` is structurally unable to precede it; with no handler there is
-  nothing to await, and the `AA` truthfully means "bytes received and framed" and nothing more.
+  FIFO by default, or by MSH-10 to MSA-2 with `correlateByControlId: true`. On the server the
+  automatic acknowledgement is **opt-in**: with `autoAck` set, every inbound message is answered,
+  and with `autoAck` left unset the server sends nothing of its own, because the message handler
+  owns the response through `conn.send()`. The starter server sets `autoAck` to `AA` for you; the
+  plain server does not. Where the automatic acknowledgement is paired with a message handler, the
+  handler is awaited and a positive `AA` is structurally unable to precede it; with no handler there
+  is nothing to await, and the `AA` truthfully means "bytes received and framed" and nothing more.
 - **Enhanced mode, accept acknowledgement.** The client accepts a `CA` without settling the send,
   reports it through the per-send `onCommitAck` callback, and rejects the send at once on a `CE` or
   `CR`. The server answers in the accept half of Table 0008 when the inbound message's MSH-15 asks
@@ -156,16 +160,50 @@ Row by row:
 - **MLLP Release 2 commit acknowledgement.** Absent on both roles. The Release 2 commit blocks and
   Release 2's synchronous "no new content until acknowledged" discipline are not implemented at all,
   so there is no Release 2 code path a Release 1 link could downgrade into.
-- **Batch acknowledgement.** Absent on both roles, and **detected rather than ignored**. An
-  `FHS`/`BHS` envelope (§2.10.3) or a second `MSH` in one frame yields the warned, non-positive `AE`.
-  A positive acknowledgement correlated to the batch's first message would tell a sender the whole
-  batch was accepted while messages 2..N went unread, so the refusal is the safe answer, not a gap
-  waiting to be filled with a guess.
+- **Batch acknowledgement.** Absent on both roles. Nothing here parses a batch, re-bases on the
+  batch's first `MSH`, or answers a `BTS-1` count of messages with one acknowledgement. A positive
+  acknowledgement correlated to the batch's first message would tell a sender the whole batch was
+  accepted while messages 2..N went unread, so refusing is the safe answer, not a gap waiting to be
+  filled with a guess. **What is refused, and by which of this package's two acknowledgement-building
+  routes, is not uniform**, and a responder-builder has to know the difference: it is stated route by
+  route in [Batch and concatenated frames, route by
+  route](#batch-and-concatenated-frames-route-by-route) below rather than summarized here.
 
 Enhanced-mode correlation of both halves requires `correlateByControlId: true`, because MSA-2 is the
 only thing that can attribute a second acknowledgement to a send. An enhanced-mode send on a
 FIFO client keeps the ordinary single-acknowledgement behaviour and warns rather than being refused.
 Full detail: [ACKs and the commit contract](./acks.md).
+
+### Batch and concatenated frames, route by route
+
+Two frame shapes carry more than one message: an `FHS`/`BHS` batch envelope (§2.10.3), and two or
+more complete messages concatenated into a single frame, one `MSH` after another. Neither is
+acknowledged as a batch, per the row above. But this package ships **two** acknowledgement-building
+routes, and they do not detect those two shapes equally, so the answer is recorded per route rather
+than as one sentence covering both:
+
+| Acknowledgement route | An `FHS`/`BHS` batch envelope | A second `MSH` in the same frame |
+|---|---|---|
+| The server's automatic acknowledgement, `autoAck`, and the raw builder behind it | Refused: a requested positive `AA`/`CA` is downgraded to the non-positive `AE`/`CE` | Refused: a requested positive `AA`/`CA` is downgraded to the non-positive `AE`/`CE` |
+| The parser-backed builder on the `@cosyte/mllp/ack-from-hl7` subpath | Refused: the warned, non-positive `AE`, carrying `MLLP_ACK_INBOUND_UNPARSEABLE` and no correlation id | Not detected: a positive `AA` correlated to the **first** message, with no warning |
+
+**The one cell that is not a refusal is a limitation of this release, named here rather than left for
+a reviewer to discover.** The parser-backed builder strips leading segment terminators and hands what
+follows to the parser, which reads the first message and stops; a batch envelope has no parseable
+message at its head and so falls out into the warned refusal, but a second message sitting behind a
+perfectly good first one is neither read nor reported. Concatenated frames are rarer than batch
+envelopes and are not what that route is documented for, which is why the gap has stood; it is a
+gap all the same.
+
+What that means for a deploying actor: if you answer inbound messages through that subpath, **detect
+the shape yourself before you choose a disposition**. `rawAckUncorrelatable(payload)` is exported for
+exactly this and returns `true` for both shapes in the table. The server's automatic acknowledgement
+already applies it, which is why its row reads the way it does, and a system on that route needs to
+do nothing further.
+
+All four cells are exercised against the shipped package on every test run of this repository,
+including the one that is not a refusal. If any of the four outcomes moves, this table fails the
+build until it moves with it.
 
 ## IHE options
 
@@ -191,9 +229,9 @@ package is a component inside such an actor, never the actor itself.
 
 | Option | What this package supplies | What the deploying actor must still do | Claimed here |
 |---|---|---|---|
-| STX: TLS 1.2 floor using BCP195 Option | A TLS 1.2 floor that cannot be lowered through this API (`minVersion` defaults to `TLSv1.2` and only `TLSv1.2`/`TLSv1.3` are expressible); with `atnaTransportSecurity: true`, the four TLS 1.2 cipher suites ITI TF-2 §3.19.6.2.3 names and no other TLS 1.2 suite, offered alongside the three TLS 1.3 suites the runtime enables by default so that selecting the option never removes a protocol version that was reachable without it; mutual node authentication through `clientAuth` plus a client certificate and key; and a `'tlsNegotiated'` event per completed handshake reporting, in the IANA spelling the standard prints, what that link actually agreed on. | Supply and manage all certificate material and trust anchors, because this package ships no PKI and issues, rotates and revokes nothing; turn the option on, since it is off by default and with it off the offered suites are the runtime's rather than this package's; configure mutual authentication for the actor's own trust model; retain the negotiated-parameter evidence; and write and enter the Integration Statement. | No |
+| STX: TLS 1.2 floor using BCP195 Option | A TLS 1.2 floor that cannot be lowered through this API (`minVersion` defaults to `TLSv1.2` and only `TLSv1.2`/`TLSv1.3` are expressible); with `atnaTransportSecurity: true`, the four TLS 1.2 cipher suites ITI TF-2 §3.19.6.2.3 names and no other TLS 1.2 suite, offered alongside the three TLS 1.3 suites the runtime enables by default so that selecting the option never removes a protocol version that was reachable without it; mutual node authentication through `clientAuth` plus a client certificate and key; and a `'tlsNegotiated'` event per completed handshake reporting, in the IANA spelling the standard prints, what that link actually agreed on. | Supply and manage all certificate material and trust anchors, because this package ships no PKI and issues, rotates and revokes nothing; turn the option on, since it is off by default and with it off the offered suites are the runtime's rather than this package's; configure mutual authentication for the actor's own trust model; retain the negotiated-parameter evidence; **ship with certificate verification on**, because the client's `tls.allowUnverified` switch turns node authentication off wholesale and only announces it, emitting `MLLP_TLS_VERIFY_DISABLED` on every successful connection rather than refusing to connect; and write and enter the Integration Statement. | No |
 | STX: No Secure Transport | Plaintext MLLP on both roles, which is the transport this option describes and for which ITI-19 requires no actions. Nothing about the unsecured case is quiet: a server binds `127.0.0.1` by default, a wildcard bind has to be asked for by name and emits `MLLP_BIND_ALL_INTERFACES` when it is, and the strict framing and commit-contract behaviour is identical to the TLS case. | Establish that an unsecured transport is permitted by the local security policy for the information crossing the link, and declare the option deliberately rather than arriving at it by leaving TLS unconfigured. | No |
-| FQDN Validation of Server Certificate Option | Nothing of its own. The client's identity check is whatever `node:tls` performs by default against `servername` (which defaults to the configured host), and this package neither implements RFC6125 section 6 matching nor overrides the runtime's check. A failed identity check surfaces as a typed `'tls-verify'` failure classified permanent, so a misconfigured endpoint is not retried. | Establish that the runtime's identity check satisfies the option for the deployment; ensure every server certificate carries a `subjectAltName` entry of type DNS-ID; and set `servername` to the reference identifier the certificate is meant to match rather than relying on a host that is an address literal. | No |
+| FQDN Validation of Server Certificate Option | Nothing of its own. The client's identity check is whatever `node:tls` performs by default against `servername` (which defaults to the configured host), and this package neither implements RFC6125 section 6 matching nor overrides the runtime's check. A failed identity check surfaces as a typed `'tls-verify'` failure classified permanent, so a misconfigured endpoint is not retried. | Establish that the runtime's identity check satisfies the option for the deployment; ensure every server certificate carries a `subjectAltName` entry of type DNS-ID; set `servername` to the reference identifier the certificate is meant to match rather than relying on a host that is an address literal; and leave `tls.allowUnverified` off, which is the one switch that removes the identity check along with the rest of certificate verification. | No |
 | Acknowledgement Support Option | Enhanced acknowledgement mode on the client role: MSH-15 and MSH-16 are read byte-level and never validated, both halves of the exchange are correlated by MSA-2, and each disposition is surfaced with a typed result. On the server role, the accept half only: the server selects the correct half of Table 0008 for the message it answers. | Own the later application acknowledgement in any system built on this package's server, because that server emits exactly one acknowledgement per inbound message; and set `correlateByControlId: true`, without which an enhanced-mode send falls back to single-acknowledgement behaviour with a warning. | No |
 
 **Claimed here is `No` on every row, and it always will be.** An IHE option is claimed by an actor,
