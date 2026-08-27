@@ -2008,3 +2008,100 @@ describe("phi-scan: the index corpus (the bytes git carries)", () => {
     expect(r.stderr).toMatch(/observed no files under src\//);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The SHIPPED corpus under src/ keeps the structured scan
+// ---------------------------------------------------------------------------
+
+/**
+ * The differential harness's canonical exchange corpus ships INSIDE the published
+ * package, so it has to live under `src/`: `files` publishes `dist` and four
+ * documents and nothing else, and a corpus kept under `test/` cannot reach a
+ * consumer at all. `src/` gets the conservative dashed-SSN + email pass only, and
+ * that standing decision is NOT reversed here. What changed is a per-path OPT-IN,
+ * `STRUCTURED_SCAN_SOURCES`, naming the corpus module alone.
+ *
+ * Without it the corpus would be the one HL7 fixture in this repository that
+ * nothing scans structurally: the conservative pass models no fields, so a planted
+ * `PID-3` / `PID-5` / `PID-7` reports clean. That is the same shape
+ * `PHI-SCAN-WALK-ROOT-SCOPE` measured for `test/` before the recogniser existed.
+ *
+ * Everything below runs against a throwaway repo (`cwd`, which is the scanner's
+ * `REPO_ROOT`), so no probe is ever written into this repo's own `src/` and a
+ * parallel worker cannot see one. The CONTROL is the load-bearing half: the same
+ * bytes at a DIFFERENT `src/` path must still get the conservative pass, or the
+ * opt-in has quietly become a widening of the root.
+ */
+
+/** The corpus module's real path, and the exact key the opt-in is registered under. */
+const CORPUS_SOURCE_REL = "src/differential/corpus.ts";
+
+/** A corpus module shaped like the shipped one: HL7 segments as string literals. */
+function corpusModule(pidLine: string): string {
+  return [
+    "const ADT_A01_SEGMENTS: readonly string[] = [",
+    `  ${JSON.stringify(MSH)},`,
+    `  ${JSON.stringify(pidLine)},`,
+    "];",
+    "export const SEGMENTS = ADT_A01_SEGMENTS;",
+    "",
+  ].join("\n");
+}
+
+/** Write a source into a throwaway repo, creating its directory first. */
+function plantSource(repo: string, rel: string, content: string): void {
+  const parts = rel.split("/");
+  const abs = join(repo, ...parts);
+  mkdirSync(join(repo, ...parts.slice(0, -1)), { recursive: true });
+  writeFileSync(abs, content);
+}
+
+describe("phi-scan: the shipped corpus under src/ earns the structured HL7 scan", () => {
+  it("flags an identifier planted in the corpus module that is not allow-listed", () => {
+    const repo = makeScanRepo({ git: false });
+    plantSource(repo, CORPUS_SOURCE_REL, corpusModule(DIRTY_PID));
+
+    const r = runScannerIn(repo, null, undefined, [CORPUS_SOURCE_REL]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain(CORPUS_SOURCE_REL);
+    expect(r.stderr).toMatch(/PID-5/);
+    expect(r.stderr).toMatch(/Kowalczyk/);
+    expect(r.stderr).toMatch(/PID-7/);
+  });
+
+  it("passes the corpus module when every identifier in it IS allow-listed", () => {
+    const repo = makeScanRepo({ git: false });
+    plantSource(repo, CORPUS_SOURCE_REL, corpusModule(CLEAN_PID));
+
+    const r = runScannerIn(repo, null, undefined, [CORPUS_SOURCE_REL]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("CONTROL: the identical bytes at another src/ path still get the conservative pass", () => {
+    // The opt-in is per-path. If this ever reports PID-5, `src/` as a whole has been
+    // widened to the structured scan as a side effect, which is the standing decision
+    // this change is required not to reverse.
+    const repo = makeScanRepo({ git: false });
+    plantSource(repo, "src/framing/decoder.ts", corpusModule(DIRTY_PID));
+
+    const r = runScannerIn(repo, null, undefined, ["src/framing/decoder.ts"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("CONTROL: the real committed corpus module passes on its own", () => {
+    const r = runScanner([join(REPO_ROOT, "src", "differential", "corpus.ts")]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toMatch(/OK, no hits/);
+  });
+
+  it("keeps the corpus HL7 in string literals, which is what the recogniser can read", () => {
+    // Written as an opaque byte array the corpus is invisible to `extractEmbeddedHl7`
+    // and the opt-in above buys nothing at all. This is the premise the cases above
+    // rest on, asserted rather than assumed.
+    const source = readFileSync(join(REPO_ROOT, "src", "differential", "corpus.ts"), "utf8");
+    expect(source).toMatch(/"MSH\|/);
+    expect(source).toMatch(/"PID\|/);
+  });
+});

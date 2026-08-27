@@ -476,6 +476,49 @@ made. It no longer is (the index is read BEFORE the walk), so an unconditional s
 phase early, removes the decoy before the walk can enumerate it, and every one of those cases
 quietly starts proving something else while still passing on the exit code alone.
 
+## PHI-SCAN-STRUCTURED-SCAN-SOURCES, the shipped fixture corpus under `src/`
+
+**The standing `src/` decision is unchanged, and one path opts back IN.** `src/` gets the
+conservative dashed-SSN + email pass only, because its JSDoc `@example` snippets carry synthetic
+names and MRNs that are deliberately not held to the segment-aware detectors. That is a decision,
+not an oversight, and nothing here reverses it. What changed is a per-path opt-in set,
+`STRUCTURED_SCAN_SOURCES` in `scripts/phi-scan.ts`, holding exactly one entry:
+`src/differential/corpus.ts`.
+
+**Why an exception was forced rather than chosen.** The differential harness's canonical exchange
+corpus has to reach a consumer's installation. `files` publishes `dist`, `README.md`, `LICENSE`,
+`TRADEMARKS.md` and `CHANGELOG.md`, so **nothing under `test/` is installed anywhere**, and a
+corpus kept there is a harness a consumer cannot run. Moving it under `src/` put an HL7 fixture
+corpus behind the conservative pass, which models no fields: a planted `PID-3` / `PID-5` / `PID-7`
+reports clean. That is the same shape `PHI-SCAN-WALK-ROOT-SCOPE` measured for `test/` before the
+embedded-HL7 recogniser existed, arriving through a different door.
+
+**It is the narrowest remedy available, and the alternatives were each worse.** Widening the `src/`
+root reverses the standing decision wholesale. An extension rule cannot tell a file whose HL7
+literals ARE the product from one whose HL7 literals illustrate a doc comment, which is the whole
+distinction. Giving every index entry the structured scan is refused for its own reasons and is
+recorded as such in `phi-scan-overrides.md`: it hands `package.json` and workflow YAML to
+`checkUnknownSegment`'s name backstop. One named path, the recogniser run **on top of** the
+conservative floor, and adding to the list is a reviewed act exactly like adding an allow-list
+token.
+
+**▶ A LISTED FILE MUST KEEP ITS HL7 IN STRING LITERALS.** `extractEmbeddedHl7` recovers segments out
+of literals; written as an opaque byte array the corpus is invisible to it and the entry buys
+nothing at all, silently. The corpus module therefore writes its messages as segment strings joined
+by `CR`, and `test/scripts/phi-scan.test.ts` asserts that premise rather than assuming it.
+
+**Pinned in BOTH directions, because one direction is worth nothing.** A non-allow-listed identifier
+planted at that exact path in a throwaway repo reds (exit 1, `PID-5` and `PID-7` reported), and the
+IDENTICAL bytes at any other `src/` path still exit 0. Mutating the opt-in so it never matches turns
+the first case green at exit 0, which is the measurement that says the entry is what is doing the
+work. Nothing is ever written into this repo's own `src/`: the probes live in a throwaway repo under
+`tmpdir()`, which is the scanner's `REPO_ROOT` for those runs.
+
+**The corpus and the Tier 1 goldens are the same bytes**, asserted pairwise by
+`test/differential/differential.test.ts`, so the allow-list entries that cover
+`test/differential/fixtures/*.frame.bin` cover the corpus too and no token was added for it. If one
+ever stops being covered, both do.
+
 ## The package rename and the publish-state claim
 
 - Migrated onto the shared `@cosyte/*` engineering standard (Phase E) and **renamed

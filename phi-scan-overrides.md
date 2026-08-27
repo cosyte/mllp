@@ -55,6 +55,26 @@ detector misses; the enumeration and the recogniser are two halves of one remedy
 and neither works alone. The one deliberate-violator corpus
 (`test/scripts/phi-scan.test.ts`, whose positive tests need unallowed values) is
 exempt BY EXPLICIT PATH and totally, never by extension.
+**One `src/` path opts back IN, per-path, and the standing decision above is
+unchanged for everything else.** `src/differential/corpus.ts` is the canonical
+exchange corpus the differential harness sends at a consumer's own engine, and it
+is a shipped FIXTURE CORPUS rather than hand-written code. It has to live under
+`src/`, because `files` publishes `dist` and four documents and nothing else, so a
+corpus kept under `test/` cannot reach a consumer at all. Under the flat rule it
+would then be the one HL7 fixture in this repository that nothing scans
+structurally: the conservative pass models no fields, so a planted `PID-3` /
+`PID-5` / `PID-7` reports clean, the same shape `PHI-SCAN-WALK-ROOT-SCOPE`
+measured for `test/` before the recogniser existed. `STRUCTURED_SCAN_SOURCES` is
+the remedy and is deliberately the narrowest one available: one named path, the
+recogniser run **on top of** the conservative floor, and adding to it is a reviewed
+act exactly like adding an allow-list token. It is the widening the INDEX-corpus
+residual below anticipated ("widening the TIER rule is its own slice"), taken here
+for one path rather than for a root, and it is pinned in BOTH directions by
+`test/scripts/phi-scan.test.ts`: a planted identifier at that path reds, and the
+identical bytes at any other `src/` path still pass. A file listed there must keep
+its HL7 in **string literals**; written as an opaque byte array it is invisible to
+`extractEmbeddedHl7` and the entry buys nothing.
+
 Every other `test/` file is dispatched by `looksLikeHl7`: a file that contains a
 recognizable HL7 segment line after MLLP unwrap, whether a `.frame.bin` frame, a `.hl7`
 file, OR a `.txt` / `.json` / extensionless live-adapter capture (the differential

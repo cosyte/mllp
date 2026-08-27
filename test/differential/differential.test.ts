@@ -1,5 +1,5 @@
 /**
- * Differential conformance harness (MLLP-9, roadmap §6 tier "differential testing").
+ * Differential conformance harness.
  *
  * The interop bar for mllp is byte-parity with the two dominant open-source R1 MLLP
  * implementations named in the roadmap:
@@ -9,8 +9,7 @@
  *     https://github.com/nextgenhealthcare/connect
  *
  * Both frame HL7 v2 the same, spec-mandated way: `VT (0x0B) + payload + FS (0x1C) +
- * CR (0x0D)` (MLLP Release 1). This suite has two tiers, mirroring `@cosyte/hl7`'s
- * Phase-J differential harness:
+ * CR (0x0D)` (MLLP Release 1). This suite has two tiers:
  *
  *   **Tier 1, golden frames (always on).** `fixtures/*.frame.bin` are canonical R1
  *   frames, the exact wire bytes both adapters emit for the synthetic messages, per
@@ -20,26 +19,33 @@
  *   See `fixtures/README.md` for provenance and how to regenerate / replace with live
  *   captures.
  *
- *   **Tier 2, live adapter (opt-in, skips when absent).** If `MLLP_DIFF_ADAPTER` is
- *   set to `host:port` of a running R1 adapter (e.g. a locally-run Google adapter or
- *   Mirth listener), the suite sends a frame and asserts the ACK correlates
- *   (MSA-2 echoes MSH-10). With the env var unset, CI and most dev machines, where no
- *   Java/Go adapter or Docker is available, every Tier-2 test `skip`s, so `verify.sh`
- *   stays green. This matches hl7's oracle-gated pattern (no oracle ⇒ skip, never fail).
+ *   Tier 1 is now RE-POINTED at the SHIPPED corpus (`src/differential/corpus.ts`): each
+ *   golden is asserted byte-identical to the corpus entry of the same name, so what a
+ *   consumer's installed package sends at their engine is the same bytes these
+ *   assertions pin. The assertions themselves are unchanged in meaning.
+ *
+ *   **Tier 2, live peer (opt-in, skips when absent).** If `MLLP_DIFF_ADAPTER` is set to
+ *   `host:port` of a running R1 adapter (e.g. a locally-run Google adapter or Mirth
+ *   listener), the suite runs the shipped harness against it and asserts a report came
+ *   back. With the env var unset, CI and most dev machines, where no Java/Go adapter or
+ *   Docker is available, the run SKIPS cleanly (`result === 'skipped'`) so `pnpm test`
+ *   stays green. The harness's own behaviour, over an in-process peer, is pinned in
+ *   `harness.test.ts`; this tier exists only to exercise a real engine when one is there.
  *
  * All fixtures are synthetic (no real PHI).
  */
 
 import { readFileSync } from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { FrameReader } from "../../src/framing/decoder.js";
 import { encodeFrame } from "../../src/framing/encoder.js";
 import { VT, FS, CR } from "../../src/framing/constants.js";
+import { canonicalAcknowledgement, canonicalExchanges } from "../../src/differential/corpus.js";
+import { runDifferential } from "../../src/differential/run.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = path.join(HERE, "fixtures");
@@ -61,7 +67,16 @@ function stripR1(framed: Buffer): Buffer {
   return framed.subarray(1, framed.length - 2);
 }
 
-const GOLDENS = ["r1-adt-a01.frame.bin", "r1-oru-r01.frame.bin", "r1-ack-aa.frame.bin"] as const;
+/**
+ * The goldens, paired with the SHIPPED corpus entry each one pins. The third golden is the
+ * canonical positive acknowledgement, which the corpus ships as the reference ANSWER
+ * rather than as a message the harness sends.
+ */
+const GOLDENS: readonly { readonly file: string; readonly payload: Buffer }[] = [
+  { file: "r1-adt-a01.frame.bin", payload: canonicalExchanges()[0]?.payload as Buffer },
+  { file: "r1-oru-r01.frame.bin", payload: canonicalExchanges()[1]?.payload as Buffer },
+  { file: "r1-ack-aa.frame.bin", payload: canonicalAcknowledgement() },
+];
 
 // Tier 1 pins mllp against the *canonical R1 wire shape* (VT … FS CR), the framing both the
 // Google Cloud MLLP adapter and Mirth/NextGen emit, since R1 framing is byte-identical across
@@ -69,9 +84,9 @@ const GOLDENS = ["r1-adt-a01.frame.bin", "r1-oru-r01.frame.bin", "r1-ack-aa.fram
 // captures, so this tier is a self-consistency + regression guard on the canonical shape; true
 // per-binary parity against a running adapter is the opt-in Tier 2 below.
 describe("differential Tier 1: parity with the canonical R1 wire shape (spec-derived golden)", () => {
-  for (const name of GOLDENS) {
-    describe(name, () => {
-      const framed = readFileSync(path.join(FIXTURE_DIR, name));
+  for (const { file, payload } of GOLDENS) {
+    describe(file, () => {
+      const framed = readFileSync(path.join(FIXTURE_DIR, file));
 
       it("golden has canonical R1 structure (VT … FS CR)", () => {
         expect(framed.length).toBeGreaterThan(3);
@@ -81,12 +96,19 @@ describe("differential Tier 1: parity with the canonical R1 wire shape (spec-der
       });
 
       it("mllp FrameReader decodes the adapter's frame to the exact payload", () => {
-        const payload = decodeOne(framed);
-        expect(payload).toEqual(stripR1(framed));
+        const decoded = decodeOne(framed);
+        expect(decoded).toEqual(stripR1(framed));
       });
 
       it("mllp encodeFrame reproduces the canonical R1 golden bytes exactly (emit parity)", () => {
-        const payload = stripR1(framed);
+        expect(encodeFrame(stripR1(framed))).toEqual(framed);
+      });
+
+      it("the SHIPPED corpus entry is byte-identical to this golden", () => {
+        // The corpus is what a consumer's installed package sends; the golden is what this
+        // repository's framing assertions pin. If they ever diverge, the two are testing
+        // different messages and Tier 1 stops standing for the shipped harness.
+        expect(payload).toEqual(stripR1(framed));
         expect(encodeFrame(payload)).toEqual(framed);
       });
     });
@@ -103,73 +125,27 @@ describe("differential Tier 1: parity with the canonical R1 wire shape (spec-der
     const msa2 = ack.split("\r")[1]?.split("|")[2]; // MSA-2 control ID
     expect(msh10).toBe("MSG00001");
     expect(msa2).toBe(msh10);
+    // And the corpus declares the same control ID, so the harness correlates on it.
+    expect(canonicalExchanges()[0]?.controlId).toBe(msh10);
   });
 });
 
-/** Parse `MLLP_DIFF_ADAPTER=host:port`; undefined when unset/malformed → Tier 2 skips. */
-function liveAdapter(): { host: string; port: number } | undefined {
-  const raw = process.env["MLLP_DIFF_ADAPTER"]?.trim();
-  if (raw === undefined || raw === "") return undefined;
-  // Split on the LAST colon so an IPv6 host parses too (e.g. '::1:2575', '[::1]:2575'), not just
-  // IPv4/hostname, a naive split(':') would mangle the host and NaN the port, silently skipping
-  // the live tier when the developer believes it ran.
-  const lastColon = raw.lastIndexOf(":");
-  if (lastColon <= 0) return undefined;
-  const host = raw.slice(0, lastColon).replace(/^\[|\]$/g, "");
-  const port = Number(raw.slice(lastColon + 1));
-  if (host === "" || !Number.isInteger(port) || port <= 0) return undefined;
-  return { host, port };
-}
-
-describe("differential Tier 2: live R1 adapter (opt-in via MLLP_DIFF_ADAPTER)", () => {
-  let adapter: { host: string; port: number } | undefined;
-
-  beforeAll(() => {
-    adapter = liveAdapter();
-    if (adapter === undefined) {
-      // eslint-disable-next-line no-console
-      console.log(
-        "[differential] MLLP_DIFF_ADAPTER not set, skipping live-adapter tier (verify stays green)",
-      );
-    }
-  });
-
-  it("sends a frame to the live adapter and the ACK correlates on MSH-10", async (ctx) => {
-    if (adapter === undefined) {
-      ctx.skip();
+describe("differential Tier 2: live R1 peer (opt-in via MLLP_DIFF_ADAPTER)", () => {
+  it("with no peer configured the run skips cleanly and the default verify stays green", async () => {
+    const configured = process.env["MLLP_DIFF_ADAPTER"]?.trim();
+    if (configured !== undefined && configured !== "") {
+      // A peer IS configured: run the shipped harness against it and report. No assertion
+      // is made about the peer's conformance, only that a report came back.
+      const report = await runDifferential({ peer: configured, deadlineMs: 10_000 });
+      expect(report.result).not.toBe("skipped");
+      expect(report.exchangesAttempted).toBe(canonicalExchanges().length);
+      expect(report.exchanges).toHaveLength(canonicalExchanges().length);
       return;
     }
-    const { host, port } = adapter;
-    const adtFramed = readFileSync(path.join(FIXTURE_DIR, "r1-adt-a01.frame.bin"));
-    const adt = decodeOne(adtFramed).toString("ascii");
-    const msh10 = adt.split("\r")[0]?.split("|")[9];
-
-    const ackBytes = await new Promise<Buffer>((resolve, reject) => {
-      const sock = net.createConnection({ host, port }, () => {
-        sock.write(adtFramed);
-      });
-      const reader = new FrameReader({
-        onFrame: (p) => {
-          sock.end();
-          resolve(p);
-        },
-        allowFsOnly: true,
-        allowLfAfterFs: true,
-      });
-      sock.on("data", (d) => {
-        reader.push(d);
-      });
-      sock.on("error", (err) => {
-        sock.destroy();
-        reject(err);
-      });
-      sock.setTimeout(10_000, () => {
-        sock.destroy();
-        reject(new Error("live adapter did not ACK within 10s"));
-      });
-    });
-
-    const msa2 = ackBytes.toString("ascii").split("\r")[1]?.split("|")[2];
-    expect(msa2).toBe(msh10);
+    const report = await runDifferential({ peer: configured });
+    expect(report.result).toBe("skipped");
+    expect(report.skipReason).toBe("no-peer-configured");
+    expect(report.exchanges).toEqual([]);
+    expect(report.peer).toBeUndefined();
   });
 });

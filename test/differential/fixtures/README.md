@@ -16,6 +16,24 @@ golden byte-for-byte; a framing regression surfaces as a byte diff.
 To compare against a **live** adapter instead (Tier 2), run one locally and point the suite at
 it: `MLLP_DIFF_ADAPTER=127.0.0.1:2575 pnpm test`. With the env var unset, the live tier skips.
 
+## These bytes are also the SHIPPED corpus
+
+The two message goldens and the acknowledgement golden are paired, byte for byte, with
+`src/differential/corpus.ts`, which is what `runDifferential` sends at a consumer's own engine
+and is the copy that reaches the published package (`files` publishes `dist`, so nothing under
+`test/` is installed anywhere). `differential.test.ts` asserts the pairing, so the two cannot
+drift: change a golden here and the corpus reds, and the other way round.
+
+Two consequences worth knowing before editing anything in this directory:
+
+- **Replacing a golden with a live capture no longer only affects Tier 1.** It breaks the
+  pairing, which is the point: decide whether the shipped corpus should carry the capture too,
+  and change both, or keep the capture out of this directory.
+- **The corpus module is under the HL7-aware structured PHI scan**, by an explicit per-path
+  entry in `scripts/phi-scan.ts` (`STRUCTURED_SCAN_SOURCES`), because `src/` otherwise gets the
+  conservative pass only. A capture dropped HERE is scanned by the `test/` rules as it always
+  was. Neither route is a place to put a real identifier.
+
 ## Fixtures (all synthetic, no real PHI)
 
 | File | Message | Notes |
