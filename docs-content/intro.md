@@ -166,5 +166,8 @@ than the inbound's original bytes, and there is no enhanced-mode sequencing) are
 - **[MLLPS / TLS](./tls.md)**: mutual TLS, the ATNA TLS 1.2 floor, bind safety.
 - **[Known limitations & non-goals](./limitations.md)**: what *not* to trust this package to do.
   Read it before you depend on it.
+- **[Conformance statement](./conformance.md)**: the single document to hand a conformance reviewer,
+  declaring the framing tolerances, the per-role acknowledgement verdicts and the IHE options in
+  actor-and-option terms.
 - The **API reference** for every export, generated from source.
 - For parsing the payloads this transport carries, see **`@cosyte/hl7`**.

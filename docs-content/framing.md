@@ -22,10 +22,14 @@ contain `0x0B` or `0x1C`. See [Limitations](./limitations.md) for what that mean
 
 ## Postel's Law: strict encoder, liberal decoder
 
-The encoder is **always strict**. `encodeFrame()` emits canonical `VT + payload + FS + CR`, every
-time. There is no option to emit a malformed frame. If the payload itself contains a framing byte,
-it throws (`MLLP_PAYLOAD_CONTAINS_VT` / `MLLP_PAYLOAD_CONTAINS_FS`) rather than emitting a frame a
-peer would mis-split.
+The encoder is **strict by default**. `encodeFrame()` emits canonical `VT + payload + FS + CR`, and
+if the payload itself contains a framing byte it throws (`MLLP_PAYLOAD_CONTAINS_VT` /
+`MLLP_PAYLOAD_CONTAINS_FS`) rather than emitting a frame a peer would mis-split. The one opt-in that
+changes that is `allowDelimiterBytesInPayload`, which passes those bytes through verbatim with a
+warning each; the frame it produces *is* one a conformant peer will mis-split, so turning it on is a
+deliberate decision to emit a non-conformant block. It is off by default on every path, including the
+`ack-from-hl7` builder that exposes it as a passthrough. It is declared, with the rest, on the
+[Conformance statement](./conformance.md#encoder-deviations).
 
 The decoder is **liberal, but only where you opt in.** This is the part most easily misread:
 
@@ -56,6 +60,9 @@ reader.push(chunk); // chunk boundaries are irrelevant, frames may split across 
 | `allowLfAfterFs` | `false` | **`true`** |
 | `allowLeadingWhitespace` | `false` | **`true`** |
 | `allowMissingLeadingVt` | `false` | `false` |
+
+The same four flags are declared as deviations from the strict block, each with its warning code and
+its per-role default, on the [Conformance statement](./conformance.md#framing-tolerances).
 
 `allowMissingLeadingVt` stays **off** even on the server. A stream with no `<VT>` is not a
 tolerable quirk. It is an unframed stream, and guessing where a message starts is how you

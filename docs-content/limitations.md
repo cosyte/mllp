@@ -132,6 +132,11 @@ off, the offered suites are not this package's at all: they are the runtime's, w
 distribution can configure at build time and an operator can replace from outside the process. See
 [MLLPS / TLS](./tls.md).
 
+What this package *does* declare about itself, in the actor-and-option wording a Product Registry
+entry or a Connectathon test is recorded in, is on one page: the
+[Conformance statement](./conformance.md). It names what this package supplies for each option and
+what stays yours, and it claims none of them on your behalf.
+
 ## It cannot carry charsets that collide with the framing bytes
 
 MLLP is **not byte-transparent**. `0x0B` and `0x1C` are structural. A payload encoded in UTF-16 or

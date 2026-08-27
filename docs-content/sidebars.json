@@ -26,6 +26,11 @@
       "type": "category",
       "label": "Troubleshooting",
       "items": ["limitations"]
+    },
+    {
+      "type": "category",
+      "label": "Conformance",
+      "items": ["conformance"]
     }
   ]
 }
