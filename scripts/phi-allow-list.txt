@@ -33,6 +33,15 @@
 # test/differential/fixtures/r1-oru-r01.frame.bin : PID `900000002^^^FAC^MR`,
 #   `ROE^RICHARD`
 # The `900000000`-range MRNs are a synthetic reserved block (never a real MRN).
+#
+# THE SAME TWO MESSAGES ALSO SHIP, byte-identical, in `src/differential/corpus.ts`,
+# the canonical exchange corpus the differential harness sends at a consumer's own
+# engine. That module lives under `src/` because it has to reach the published
+# package (`files` publishes `dist` and four documents), and it is named in the
+# scanner's `STRUCTURED_SCAN_SOURCES` so it earns the segment-aware scan rather
+# than only the conservative `src/` pass. No token is added by it: the goldens and
+# the corpus are asserted byte-identical by test/differential/differential.test.ts,
+# so if this list ever stops covering one it stops covering both.
 ID 900000001
 ID 900000002
 

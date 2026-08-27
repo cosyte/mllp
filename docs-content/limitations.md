@@ -110,12 +110,63 @@ universal default for HL7 v2. The R2 commit-acknowledgement blocks (`<SB><ACK 0x
 supported**. R2 is used mainly with HL7 v3 and is rarely needed for v2; if it ships, it will be
 opt-in and off by default, and R1 framing will never silently downgrade to it.
 
-## It is not differentially verified against Epic or Cerner
+## It is not differentially verified against Epic or Cerner, so verify your own engine
 
-Interop is proven against **freely available** engines only: the Google Cloud Healthcare MLLP
-adapter and Mirth/NextGen Connect (byte-parity on canonical R1 frames, plus a live-adapter tier).
-Neither Epic nor Cerner is part of that harness. Their behavior is inferred from the spec, not
-observed. Validate against your actual peer before you trust a production interface.
+Interop is proven here against **freely available** engines only: the Google Cloud Healthcare MLLP
+adapter and Mirth/NextGen Connect (byte-parity on canonical R1 frames). Neither Epic nor Cerner is
+part of that. Their behavior is inferred from the spec, not observed, and this package will never
+tell you otherwise.
+
+**What it gives you instead is the harness, so you can observe your own engine before go-live.**
+`runDifferential` ships in the package. Point it at an engine you name and it sends a small corpus
+of synthetic messages, one connection per message, and reports for each one whether the frame that
+came back was byte-identical to the canonical Release 1 block (`VT` + payload + `FS` + `CR`) and
+whether its `MSA-2` echoed the `MSH-10` of the message it answered:
+
+```ts
+// differential.ts
+import { runDifferential } from "@cosyte/mllp";
+
+const report = await runDifferential({ peer: process.env["MLLP_DIFF_PEER"] });
+console.log(JSON.stringify(report, null, 2));
+```
+
+```bash
+MLLP_DIFF_PEER=engine.staging.example:2575 node differential.js
+```
+
+> **The run sends messages INTO whatever engine you aim it at.** They are synthetic patients, and an
+> engine that accepts them stores synthetic patients: an admit and an observation result will land in
+> whatever that endpoint feeds. Aim it at a test or staging endpoint. Never at a production interface
+> carrying live traffic, and never at an endpoint you do not own.
+
+Four things about the report, so you know what you are holding:
+
+- **It is an observation, not a verdict.** `result` is one of `parity-observed`,
+  `deviations-observed`, `no-observation` or `skipped`. None of them says a peer is conformant, and
+  a run in which nothing was answered is never presented as a success. Whether an interface is fit
+  to carry clinical traffic is your call, with this evidence in front of you.
+- **A deviation is named, not guessed at.** Each one carries a stable warning code and a byte
+  offset: `MLLP_MISSING_LEADING_VT`, `MLLP_FS_WITHOUT_CR`, `MLLP_LF_AFTER_FS`,
+  `MLLP_LEADING_WHITESPACE`, `MLLP_FRAME_TOO_LARGE` for the block, and
+  `MLLP_ACK_UNMATCHED_CONTROL_ID` when an acknowledgement does not echo the control ID it answered.
+  See [Framing & tolerance](./framing.md).
+- **It carries no payload content, by construction.** A code, a byte offset and structural counts.
+  Not a run of the peer's bytes, not the acknowledged control ID, not a truncation of either, so a
+  report is safe to attach to a ticket. That matters, because the engine you aim this at may hold
+  real patients.
+- **It is JSON.** Plain objects, numbers and strings throughout, so a pipeline reads it without
+  scraping text.
+
+With no peer configured (`MLLP_DIFF_PEER` unset or empty) the run **skips** and returns
+`result: 'skipped'`, so it is safe to leave in a test suite that also runs where no engine exists.
+An address that is *present* and is not a `host:port` is a different case: it throws
+`MllpDifferentialConfigurationError` naming the value, because a silent skip there would read as
+proof the harness ran.
+
+Byte parity means the MLLP **envelope**, compared against the canonical block this package emits.
+It is not equality of message content, which can never hold: an acknowledgement carries the peer's
+own control ID, its own timestamp and its own sending application, and it is supposed to.
 
 ## It ships no PKI
 

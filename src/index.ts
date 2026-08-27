@@ -139,3 +139,31 @@ export type { AckModeWarningEvent } from "./server/index.js";
 // The two halves of a shutdown report: what was never written, and what was written and never
 // answered. A caller tells them apart to decide whether resending is safe.
 export { MllpNeverDeliveredError, MllpUnknownFateError } from "./client/index.js";
+
+// Differential verification against a peer the caller names: the canonical exchange corpus, the
+// run that sends it, and the per-exchange parity / correlation report it returns.
+export {
+  MLLP_DIFF_PEER_UNPARSEABLE,
+  MllpDifferentialConfigurationError,
+  canonicalAcknowledgement,
+  canonicalExchanges,
+  differentialConfigurationMessage,
+  resolveDifferentialPeer,
+  runDifferential,
+} from "./differential/index.js";
+export type {
+  CanonicalExchange,
+  DifferentialConfigurationErrorCode,
+  DifferentialConnect,
+  DifferentialCorrelationOutcome,
+  DifferentialDeviation,
+  DifferentialExchangeOutcome,
+  DifferentialExchangeReport,
+  DifferentialParityOutcome,
+  DifferentialPeer,
+  DifferentialReport,
+  DifferentialReportPeer,
+  DifferentialRunOptions,
+  DifferentialRunResult,
+  DifferentialSkipReason,
+} from "./differential/index.js";

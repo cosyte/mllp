@@ -90,6 +90,16 @@ in `phi-scan-overrides.md`. The rules that came out of them:
 - **`src/` KEEPS THE CONSERVATIVE PASS ONLY, and that is a decision, not an oversight.** Its JSDoc
   `@example` snippets are deliberately not held to the segment-aware detectors. Do not reverse it as
   a side effect of a change about `test/`.
+- **▶ ONE `src/` PATH OPTS BACK IN, PER-PATH, AND THE RULE ABOVE IS OTHERWISE UNCHANGED**
+  (`STRUCTURED_SCAN_SOURCES`). `src/differential/corpus.ts` is a SHIPPED FIXTURE CORPUS, not
+  hand-written code: it has to live under `src/` because `files` publishes `dist` and four
+  documents, so a corpus under `test/` reaches no consumer. Behind the flat rule it was the one HL7
+  fixture here that nothing scanned structurally. **Never widen this to the root, to an extension,
+  or to "every index entry"**, and **a listed file must keep its HL7 in STRING LITERALS** or
+  `extractEmbeddedHl7` sees nothing and the entry is worth zero. Pinned in both directions (a
+  planted identifier at that path reds; the identical bytes at another `src/` path still pass).
+  Why, and the mutation that proves it:
+  `documentation/agent-notes.md#phi-scan-structured-scan-sources-the-shipped-fixture-corpus-under-src`
 - **▶ NEVER WRITE "NEITHER ROUTE FOLLOWS A LINK" FLAT.** `walk()` opens the ROOTS with `existsSync` +
   `readdirSync`, which both follow, so replacing `test/` or `src/` itself with a link is read
   straight through. Disclosed, not closed; never restate it as a promise.

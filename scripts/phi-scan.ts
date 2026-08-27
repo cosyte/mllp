@@ -238,6 +238,43 @@ const DELIBERATE_VIOLATOR_SOURCES: ReadonlySet<string> = new Set([
   "test/scripts/phi-scan.test.ts",
 ]);
 
+// Sources under `src/` that are a SHIPPED FIXTURE CORPUS rather than hand-written
+// code, and therefore earn the structured HL7 scan on top of the conservative pass
+// every `src/` file gets.
+//
+// THIS IS THE EXACT OPPOSITE OF THE LIST ABOVE, AND IT IS AN EXPLICIT PATH LIST FOR
+// THE SAME REASON. An extension cannot tell a file whose HL7 literals ARE the
+// product from one whose HL7 literals are an illustration in a doc comment, and
+// that distinction is the whole of the standing `src/` decision.
+//
+// ▶ THE STANDING `src/` DECISION IS NOT REVERSED HERE, AND MUST NOT BE.
+// `src/` keeps the conservative pass only, because its JSDoc `@example` snippets
+// carry synthetic names and MRNs that are deliberately not held to the
+// segment-aware detectors. Everything not named below is unchanged. What forced an
+// exception is that the differential harness's canonical exchange corpus SHIPS
+// INSIDE THE PUBLISHED PACKAGE: `files` publishes `dist` and four documents, so a
+// corpus kept under `test/` cannot reach a consumer at all, and a corpus that lives
+// in `src/` would, under the flat rule, be the one HL7 fixture in this repository
+// that NOTHING scans structurally. Measured shape of that hole: the conservative
+// pass models no fields, so a planted `PID-3` / `PID-5` / `PID-7` in a corpus
+// module reports clean, exactly as `PHI-SCAN-WALK-ROOT-SCOPE` measured for `test/`
+// before the recogniser existed.
+//
+// The remedy is deliberately the NARROWEST one available: not a widened root, not
+// an extension rule, not "every index entry gets the structured scan" (which
+// `phi-scan-overrides.md` records as refused, because it would hand `package.json`
+// and workflow YAML to the segment detectors). One path, named, and adding to it is
+// a reviewed act exactly like adding an allow-list token.
+//
+// A file listed here must keep its HL7 in STRING LITERALS. Written as an opaque
+// byte array it is invisible to `extractEmbeddedHl7` and this entry buys nothing,
+// which is why the corpus module writes its messages as segment strings.
+const STRUCTURED_SCAN_SOURCES: ReadonlySet<string> = new Set([
+  // The canonical exchange corpus the differential harness sends at a consumer's own
+  // engine. Every identifier in it is synthetic and declared in the allow-list.
+  "src/differential/corpus.ts",
+]);
+
 // Which `test/` files get swept: EVERY file under `test/` except `.md` docs.
 // `.ts` SOURCES ARE INCLUDED HERE, and `scanTarget` then dispatches them to the
 // embedded-HL7 recogniser rather than to the file-is-the-document scan (see
@@ -2352,9 +2389,15 @@ function scanTarget(target: Target, allow: AllowList, hits: Hit[]): Buffer | nul
     // DIFFERENT root: `src/` was never the defect here, it was enumerated and
     // read by both routes all along. Measured, three `src/` files carry six
     // recoverable runs and all six are clean today, so this costs nothing now
-    // and is a scope decision rather than a workaround. Widening `src/` to the
-    // structured scan is its own slice, with its own argument.
-    if (!isScannableSrcFile(target.path)) {
+    // and is a scope decision rather than a workaround.
+    //
+    // ▶ THE ONE EXCEPTION IS PER-PATH AND OPTS IN, NEVER OUT. A source named in
+    // `STRUCTURED_SCAN_SOURCES` is a SHIPPED FIXTURE CORPUS rather than
+    // hand-written code, so it earns the structured scan ON TOP OF the
+    // conservative floor above. It is the widening that section anticipated,
+    // taken deliberately and bounded to one named path rather than to `src/`.
+    // Read the argument at that declaration before adding to it.
+    if (!isScannableSrcFile(target.path) || STRUCTURED_SCAN_SOURCES.has(target.path)) {
       const embedded = extractEmbeddedHl7(text);
       if (embedded.length > 0) scanHl7(target, embedded, allow, hits, false);
     }
