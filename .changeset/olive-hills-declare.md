@@ -1,5 +1,5 @@
 ---
-"@cosyte/mllp": patch
+"@cosyte/mllp": minor
 ---
 
 A conformance statement an integrator can hand to a reviewer, and a gate that keeps it true. Documentation and test-suite change only: no framing, acknowledgement, TLS or transport behaviour moves.

@@ -1,5 +1,5 @@
 ---
-"@cosyte/mllp": patch
+"@cosyte/mllp": minor
 ---
 
 Enhanced acknowledgement mode: a client send can now draw both its commit disposition and its later application disposition, and the server's auto-ACK answers in the half of HL7 Table 0008 the sender asked for.
