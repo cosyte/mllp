@@ -201,14 +201,39 @@ bytes back to your handler. It holds a message in memory only while that message
 `send()` until its acknowledgement is correlated, or until `close()` drains it or reports it
 unresolved.
 
-**What it does not do.** It never inspects, parses or interprets the payload. It writes nothing to
-disk: there is no queue, no write-ahead log, no replay store and no cache anywhere in this package.
-Library code calls no logger and no `console` method. Its diagnostics report shape rather than
-content: a framing error carries at most the single byte at the structural violation and its byte
-offset; warning and acknowledgement-diagnostic messages are built from a code alone and take no value
-parameter, so a control id cannot reach one; and `getStats()` returns plain JSON-serialisable
-counters. The two security warnings raised through `process.emitWarning` carry a fixed message and a
-code, never message content.
+**The one read it performs, and where that read stops.** This package does not parse HL7, but it is
+not blind to the payload either, and the bound is worth more to you than the slogan. To answer a
+message it has to correlate the answer, so it locates the `MSH` segment and reads the header fields
+an acknowledgement is built from: `MSH-10`, echoed byte for byte into `MSA-2`, the sending and
+receiving application and facility, which swap sides in the reply, and the declared delimiters,
+processing id and version. **That scan is bounded at the `MSH` segment's own terminator**, so no
+field of any later segment is reachable: `PID` and everything after it is never read, never decoded
+and never echoed. It is one scan, in one place, shared by the client's correlator and both
+acknowledgement builders. Separately, the leading identifier of each segment is checked so that a
+batch envelope or a second `MSH` can be refused rather than falsely acknowledged; no field of those
+segments is read.
+
+**What it does not do.** It does not parse the message, and outside the bounded `MSH` read above it
+does not inspect it. It writes nothing to disk: there is no queue, no write-ahead log, no replay
+store and no cache anywhere in this package. Library code calls no logger and no `console` method.
+
+**What its diagnostics can carry.** Shape rather than content: no error, warning, event payload or
+stats object ever echoes a run of message content.
+
+- A **framing error** carries at most the single byte at the structural violation, plus that byte's
+  offset.
+- A **warning message** carries structural facts: byte offsets, counts and accumulated sizes. Two
+  framing codes are the exception worth knowing about. `MLLP_MISSING_LEADING_VT` and
+  `MLLP_FS_WITHOUT_CR` render the hex of the single byte found where a framing byte was expected,
+  and on a stream that omits its leading `VT` that byte is the first byte of the unframed content.
+  One byte, never a run, the same bound a framing error carries. If that is more than your threat
+  model allows, log `code` and `byteOffset` rather than `message`.
+- The **acknowledgement-correlation diagnostics** are stricter. Their text comes from a frozen
+  registry keyed on the code alone, with no value parameter anywhere in it, so a control id cannot
+  reach one; they report byte lengths instead of bytes.
+- `getStats()` returns plain JSON-serialisable counters, and the two security warnings raised
+  through `process.emitWarning` carry their code and a fixed description. The wildcard-bind warning
+  names the address you bound, which is your own configuration, never message content.
 
 **What you still own.**
 
@@ -256,9 +281,11 @@ Full reference: [the documentation](https://github.com/cosyte/mllp/tree/main/doc
 ## Compatibility
 
 - **Node.js 22 and 24.** `engines.node` is `>=22.0.0` and CI runs both.
-- **HL7 v2 payloads are opaque bytes here.** This package does not parse HL7. Pair it with
-  [`@cosyte/hl7`](https://github.com/cosyte/hl7), which is exactly what the `ack-from-hl7` subpath
-  does.
+- **HL7 v2 payloads are bytes here, with one bounded exception.** This package does not parse HL7.
+  It reads the `MSH` header its acknowledgement is built from and stops at that segment's
+  terminator, which [PHI and safety](#phi-and-safety) sets out in full. For actual parsing, pair it
+  with [`@cosyte/hl7`](https://github.com/cosyte/hl7), which is exactly what the `ack-from-hl7`
+  subpath does.
 - **Differentially verified against freely available engines**: Mirth Connect from NextGen, and the
   Google Cloud Healthcare MLLP adapter. **Epic and Cerner are not part of that harness**, and no
   claim about either is made here. `runDifferential` ships in the published artifact, so you can aim
