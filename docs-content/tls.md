@@ -52,11 +52,11 @@ to `'secureConnect'` (handshake complete) rather than the raw TCP `'connect'`.
 
 `ServerTlsOptions.clientAuth` selects the ATNA ITI-19 mutual-authentication mode:
 
-| `clientAuth` | Client certificate | Behavior |
-|---|---|---|
-| `'NONE'` (default) | Not requested | Standard server-authenticated TLS only. |
-| `'WANT'` | Requested, not required | An absent or untrusted client cert does **not** reject the connection; the peer certificate (if any) is surfaced on the `'connection'` event as `peerCertificate`. |
-| `'MUST'` | Requested and required | ATNA mutual node authentication. A missing or untrusted client certificate rejects the handshake; the server never accepts the connection. |
+| `clientAuth`       | Client certificate      | Behavior                                                                                                                                                           |
+| ------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `'NONE'` (default) | Not requested           | Standard server-authenticated TLS only.                                                                                                                            |
+| `'WANT'`           | Requested, not required | An absent or untrusted client cert does **not** reject the connection; the peer certificate (if any) is surfaced on the `'connection'` event as `peerCertificate`. |
+| `'MUST'`           | Requested and required  | ATNA mutual node authentication. A missing or untrusted client certificate rejects the handshake; the server never accepts the connection.                         |
 
 ```ts
 const server = createServer({
@@ -167,11 +167,11 @@ option supports. They are listed here in both spellings that matter: the IANA sp
 prints (and the one the `'tlsNegotiated'` event below reports), and the OpenSSL spelling a
 cipher-list string is written in.
 
-| IANA name (ITI TF-2 §3.19.6.2.3) | OpenSSL name |
-|---|---|
-| `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256` | `DHE-RSA-AES128-GCM-SHA256` |
+| IANA name (ITI TF-2 §3.19.6.2.3)        | OpenSSL name                  |
+| --------------------------------------- | ----------------------------- |
+| `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256`   | `DHE-RSA-AES128-GCM-SHA256`   |
 | `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` | `ECDHE-RSA-AES128-GCM-SHA256` |
-| `TLS_DHE_RSA_WITH_AES_256_GCM_SHA384` | `DHE-RSA-AES256-GCM-SHA384` |
+| `TLS_DHE_RSA_WITH_AES_256_GCM_SHA384`   | `DHE-RSA-AES256-GCM-SHA384`   |
 | `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384` | `ECDHE-RSA-AES256-GCM-SHA384` |
 
 ### Selecting the option: `atnaTransportSecurity`
@@ -275,10 +275,10 @@ left connected and nothing is left bound. `connect()` and `listen()` reject with
 `MllpTlsConfigurationError`, identified by `instanceof` plus a stable `code`, never by matching on
 the message text:
 
-| `code` | Meaning |
-|---|---|
-| `MLLP_TLS_CIPHER_LIST_REJECTED` | The TLS library refused the list: no suite in it is available in this build. There is **no fallback to the runtime default list**. |
-| `MLLP_TLS_CIPHER_OPTION_CONFLICT` | `atnaTransportSecurity` and `ciphers` both declare the offered list. Set exactly one. |
+| `code`                            | Meaning                                                                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `MLLP_TLS_CIPHER_LIST_REJECTED`   | The TLS library refused the list: no suite in it is available in this build. There is **no fallback to the runtime default list**. |
+| `MLLP_TLS_CIPHER_OPTION_CONFLICT` | `atnaTransportSecurity` and `ciphers` both declare the offered list. Set exactly one.                                              |
 
 ```ts
 try {

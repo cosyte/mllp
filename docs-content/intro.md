@@ -102,7 +102,7 @@ whitespace, and each tolerated deviation surfaces as a warning with a **stable c
 rather than failing the frame (Postel's Law). Codes such as `MLLP_MISSING_LEADING_VT` and
 `MLLP_TRAILING_BYTES` are part of the public API.
 
-Note that **tolerance is opt-in**: a bare `FrameReader` is *strict* by default, while `MllpServer`
+Note that **tolerance is opt-in**: a bare `FrameReader` is _strict_ by default, while `MllpServer`
 ships tolerant defaults (`allowFsOnly`, `allowLfAfterFs`, `allowLeadingWhitespace`) because it is the
 side that must accept what real senders emit. Accumulators are bounded: frames past
 `maxFrameSizeBytes` (16 MB default) throw `MLLP_FRAME_TOO_LARGE` instead of growing unbounded.
@@ -164,7 +164,7 @@ than the inbound's original bytes, and there is no enhanced-mode sequencing) are
 - **[Connection, reconnect & backpressure](./reliability.md)**: the 6-state machine, backoff,
   dead-peer detection, and load shedding.
 - **[MLLPS / TLS](./tls.md)**: mutual TLS, the ATNA TLS 1.2 floor, bind safety.
-- **[Known limitations & non-goals](./limitations.md)**: what *not* to trust this package to do.
+- **[Known limitations & non-goals](./limitations.md)**: what _not_ to trust this package to do.
   Read it before you depend on it.
 - **[Conformance statement](./conformance.md)**: the single document to hand a conformance reviewer,
   declaring the framing tolerances, the per-role acknowledgement verdicts and the IHE options in
