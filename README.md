@@ -199,23 +199,40 @@ footnote.
 **What it does with your payload.** It moves the buffer you hand it to the peer and hands the peer's
 bytes back to your handler. It holds a message in memory only while that message is in flight: from
 `send()` until its acknowledgement is correlated, or until `close()` drains it or reports it
-unresolved.
+unresolved. On the receive side your handler is given a copy, and the decoder then reuses its
+internal accumulator for the next frame rather than zeroing it, so those bytes stay in that private
+buffer until a later frame overwrites them, for as long as that reader lives. That is buffer reuse
+rather than storage, and no public API hands the buffer out, but it is not a scrub.
 
-**The one read it performs, and where that read stops.** This package does not parse HL7, but it is
-not blind to the payload either, and the bound is worth more to you than the slogan. To answer a
+**The reads the transport performs, and where they stop.** The transport does not parse HL7, but it
+is not blind to the payload either, and the bound is worth more to you than the slogan. To answer a
 message it has to correlate the answer, so it locates the `MSH` segment and reads the header fields
-an acknowledgement is built from: `MSH-10`, echoed byte for byte into `MSA-2`, the sending and
-receiving application and facility, which swap sides in the reply, and the declared delimiters,
-processing id and version. **That scan is bounded at the `MSH` segment's own terminator**, so no
-field of any later segment is reachable: `PID` and everything after it is never read, never decoded
-and never echoed. It is one scan, in one place, shared by the client's correlator and both
-acknowledgement builders. Separately, the leading identifier of each segment is checked so that a
-batch envelope or a second `MSH` can be refused rather than falsely acknowledged; no field of those
-segments is read.
+an acknowledgement is built from and answered with: `MSH-10`, echoed byte for byte into `MSA-2`, the
+sending and receiving application and facility, which swap sides in the reply, the declared
+delimiters, processing id and version, and the acknowledgement mode in `MSH-15` and `MSH-16`.
+**That scan is bounded at the `MSH` segment's own terminator**, so it reaches nothing past the
+header: on the transport path `PID`, and every other segment carrying clinical content, is never
+read, never decoded and never echoed. Reading an inbound acknowledgement adds one segment and no
+more, `MSA`, for its acknowledgement code and the control id it echoes back, decoded under the same
+bound at that segment's own terminator. Those two are the whole of it, in one place, shared by the
+client's correlator and both acknowledgement builders. Separately, the leading identifier of each
+segment is checked so that a batch envelope or a second `MSH` can be refused rather than falsely
+acknowledged; no field of those segments is read.
 
-**What it does not do.** It does not parse the message, and outside the bounded `MSH` read above it
-does not inspect it. It writes nothing to disk: there is no queue, no write-ahead log, no replay
-store and no cache anywhere in this package. Library code calls no logger and no `console` method.
+**The exception, and it is opt-in: `@cosyte/mllp/ack-from-hl7`.** That subpath is a parser front end
+rather than transport. Hand `buildMllpAck` or `detectMode` a payload and this package decodes the
+whole message, later segments included, and gives it to the optional
+[`@cosyte/hl7`](https://github.com/cosyte/hl7) peer, which resolves every field of every segment,
+`PID` among them. That decode is this package's own code and it ships in this package's tarball, so
+count it as yours rather than the peer's. Nothing reaches it by default: the client, the server and
+`buildRawAck` never import that subpath, and the peer is an optional dependency you install
+deliberately. If your data-flow boundary turns on later segments never being materialised as decoded
+text, that is the subpath to leave out.
+
+**What it does not do.** Outside that subpath it does not parse the message, and outside the two
+bounded segment reads above it does not inspect it. It writes nothing to disk: there is no queue, no
+write-ahead log, no replay store and no cache anywhere in this package. Library code calls no logger
+and no `console` method.
 
 **What its diagnostics can carry.** Shape rather than content: no error, warning, event payload or
 stats object ever echoes a run of message content.
@@ -259,8 +276,8 @@ Three code subpaths ship, plus `@cosyte/mllp/package.json`:
   errors, and the differential harness (`runDifferential`).
 - **`@cosyte/mllp/testing`** is `InMemoryTransport`, a deterministic socket-free test double. Every
   test that can run over it should.
-- **`@cosyte/mllp/ack-from-hl7`** builds acknowledgements from parsed messages, and is the one place
-  the optional `@cosyte/hl7` peer is needed.
+- **`@cosyte/mllp/ack-from-hl7`** builds acknowledgements from a parsed message, or from raw bytes it
+  parses through the peer, and is the one place the optional `@cosyte/hl7` peer is needed.
 
 What comes with them:
 
@@ -281,11 +298,12 @@ Full reference: [the documentation](https://github.com/cosyte/mllp/tree/main/doc
 ## Compatibility
 
 - **Node.js 22 and 24.** `engines.node` is `>=22.0.0` and CI runs both.
-- **HL7 v2 payloads are bytes here, with one bounded exception.** This package does not parse HL7.
-  It reads the `MSH` header its acknowledgement is built from and stops at that segment's
-  terminator, which [PHI and safety](#phi-and-safety) sets out in full. For actual parsing, pair it
-  with [`@cosyte/hl7`](https://github.com/cosyte/hl7), which is exactly what the `ack-from-hl7`
-  subpath does.
+- **HL7 v2 payloads are bytes here, and the exceptions are named.** The transport does not parse
+  HL7: it reads the `MSH` header its acknowledgement is built from, and the `MSA` of an inbound
+  acknowledgement, each bounded at that segment's own terminator. The opt-in `ack-from-hl7` subpath
+  is the one place a whole message is parsed. [PHI and safety](#phi-and-safety) sets all of that out
+  in full. For actual parsing, pair this with [`@cosyte/hl7`](https://github.com/cosyte/hl7), which
+  is exactly what that subpath does.
 - **Differentially verified against freely available engines**: Mirth Connect from NextGen, and the
   Google Cloud Healthcare MLLP adapter. **Epic and Cerner are not part of that harness**, and no
   claim about either is made here. `runDifferential` ships in the published artifact, so you can aim
