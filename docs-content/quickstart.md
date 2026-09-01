@@ -1,7 +1,10 @@
 ---
 id: quickstart
 title: Quickstart
-sidebar_position: 1
+description: >-
+  Frame an HL7 v2 message and read it back, tolerate a real sender's quirks, then send and receive
+  over a connection with the commit contract in place.
+sidebar_position: 3
 ---
 
 # Quickstart
@@ -132,7 +135,8 @@ This is the page to internalize before you put the package in front of a clinica
 > can never silently drift from the code. They stay at the framing layer because it runs
 > deterministically in-process; the client/server blocks open real sockets, so they are shown as
 > plain ` ```ts ` illustrations. For socket-free _integration_ tests, the `@cosyte/mllp/testing`
-> subpath's in-memory transport wires a `Connection` end-to-end with no ports and no certs.
+> subpath's in-memory transport wires a `Connection` end-to-end with no ports and no certs:
+> [Testing & verification](./testing.md).
 
 ## Next
 
@@ -141,4 +145,6 @@ This is the page to internalize before you put the package in front of a clinica
 - [ACKs & the commit contract](./acks.md): the page to read before a clinical deployment.
 - [Connection, reconnect & backpressure](./reliability.md): the 6-state machine, backoff, and load
   shedding.
+- [Testing & verification](./testing.md): the socket-free in-memory transport, and the differential
+  harness for checking a real engine before go-live.
 - [Known limitations & non-goals](./limitations.md): what _not_ to trust this transport to do.

@@ -1,7 +1,10 @@
 ---
 id: framing
 title: Framing & tolerance
-sidebar_position: 2
+description: >-
+  The MLLP wire format, the opt-in tolerance flags, the stable warning codes, what throws and what
+  happens when it does, and the PHI contract on diagnostics.
+sidebar_position: 4
 ---
 
 # Framing & tolerance

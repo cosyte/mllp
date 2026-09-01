@@ -1,7 +1,10 @@
 ---
 id: conformance
 title: Conformance statement
-sidebar_position: 7
+description: >-
+  The self-declared conformance statement: framing tolerances, per-role acknowledgement verdicts,
+  IHE options in actor-and-option terms, and what stays the deploying actor's to do.
+sidebar_position: 10
 ---
 
 # Conformance statement

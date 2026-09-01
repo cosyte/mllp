@@ -1,6 +1,9 @@
 ---
 id: intro
 title: Getting started
+description: >-
+  A production-grade MLLP client and server for Node.js, with canonical framing, ACK correlation,
+  reconnect, backpressure and TLS, and no runtime dependencies.
 sidebar_position: 1
 ---
 
@@ -123,7 +126,9 @@ const conn = new Connection({ transport: clientSide });
 
 The in-memory transport is a first-class deliverable from the `@cosyte/mllp/testing` subpath.
 Pair two ends with `InMemoryTransport.pair()` and hand one to a `Connection` (deterministic, no
-ports, no certs) and reserve real sockets for integration smoke tests.
+ports, no certs) and reserve real sockets for integration smoke tests. Chunked reads, backpressure
+and an abrupt disconnect are all one call each, and `runDifferential` ships alongside it to check a
+real engine before go-live: see [Testing & verification](./testing.md).
 
 ## ACK from an HL7 message
 
@@ -164,6 +169,8 @@ than the inbound's original bytes, and there is no enhanced-mode sequencing) are
 - **[Connection, reconnect & backpressure](./reliability.md)**: the 6-state machine, backoff,
   dead-peer detection, and load shedding.
 - **[MLLPS / TLS](./tls.md)**: mutual TLS, the ATNA TLS 1.2 floor, bind safety.
+- **[Testing & verification](./testing.md)**: the socket-free in-memory transport, and the
+  differential harness for checking a real engine before go-live.
 - **[Known limitations & non-goals](./limitations.md)**: what _not_ to trust this package to do.
   Read it before you depend on it.
 - **[Conformance statement](./conformance.md)**: the single document to hand a conformance reviewer,

@@ -1,7 +1,10 @@
 ---
 id: acks
 title: ACKs & the commit contract
-sidebar_position: 3
+description: >-
+  The commit contract, the Table 0008 code the auto-ACK path selects, ACK correlation on the
+  client, both halves of the enhanced-mode exchange, and the ack-from-hl7 builder.
+sidebar_position: 5
 ---
 
 # ACKs & the commit contract
@@ -191,7 +194,8 @@ const applicationAck = await client.send(payload, {
   logged to tell you.
 - The later **`AA`, `AE` or `AR`** settles the send, and all three settle it _successfully_, with the
   acknowledgement handed to you. `AE` and `AR` are the receiving application's clinical verdict on a
-  message it did take custody of, and [judging that verdict is not this package's job](#it-does-not-decide-clinical-acceptance).
+  message it did take custody of, and
+  [judging that verdict is not this package's job](./limitations.md#it-does-not-decide-clinical-acceptance).
   Read MSA-1 off the buffer you are given.
 - A **`CE` or `CR`** rejects the send at once with `MllpCommitRejectedError` (`err.commitCode`). The
   peer refused custody of the bytes, so no application acknowledgement is coming, and waiting out the
@@ -329,11 +333,11 @@ whose MSA-2 differs by a single byte is an ACK it cannot match. The send never s
 out, it resends, and the receiver commits the clinical message **twice**.
 
 So `buildMllpAck` decodes raw `Buffer` input as **`latin1`** and encodes the ACK back with the same
-codec. `latin1` is a 1:1 map between the 256 byte values and `U+0000`–`U+00FF`, which makes the
+codec. `latin1` is a 1:1 map between the 256 byte values and `U+0000`-`U+00FF`, which makes the
 round-trip the exact identity for _any_ inbound bytes, including a high-bit control ID under an
 `MSH-18` of `8859/1`. (It is the only codec for which that holds. `ascii` masks the high bit;
 `utf8` folds invalid sequences onto `U+FFFD`; and a `TextDecoder`'s `iso-8859-1` is aliased by the
-WHATWG Encoding Standard to **windows-1252**, which does not round-trip `0x80`–`0x9F` at all.)
+WHATWG Encoding Standard to **windows-1252**, which does not round-trip `0x80`-`0x9F` at all.)
 
 Every build is then **checked** against the same byte-level scanners the `@cosyte/mllp` client uses
 to correlate. If MSA-2 does not match the inbound MSH-10 byte-for-byte, the ACK still goes out (a
@@ -454,7 +458,7 @@ a non-text codec there garbles the _inbound_ decode so it never
 parses as `MSH` (routing to the unparseable fallback whose MSA-2 is empty, so the
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check never runs) and then serializes that fallback ACK to
 garbage bytes that intermittently contain a framing delimiter and trip the strict frame encoder
-(`MllpFramingError`, ~3–4 % of calls, identically on Node 22 and 24). It was never the "loud AE" it
+(`MllpFramingError`, ~3-4 % of calls, identically on Node 22 and 24). It was never the "loud AE" it
 was once documented to be. The legitimate byte-level escape hatch is unchanged: a **charset** codec
 on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that is still caught loudly by
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`) is exactly what serves a receiving system that demands a specific

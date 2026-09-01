@@ -1,7 +1,10 @@
 ---
 id: tls
 title: MLLPS / TLS
-sidebar_position: 5
+description: >-
+  TLS-wrapped MLLP on the client and the server: mutual TLS, verification on by default, bind
+  safety, the TLS 1.2 floor and cipher suites, and the typed failure modes.
+sidebar_position: 7
 ---
 
 # MLLPS / TLS

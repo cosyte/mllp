@@ -1,7 +1,10 @@
 ---
 id: reliability
 title: Connection, reconnect & backpressure
-sidebar_position: 4
+description: >-
+  The six-state connection machine, auto-reconnect with backoff, dead-peer detection, backpressure,
+  and what close() does and does not do for in-flight messages.
+sidebar_position: 6
 ---
 
 # Connection, reconnect & backpressure
