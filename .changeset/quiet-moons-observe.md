@@ -1,5 +1,5 @@
 ---
-"@cosyte/mllp": patch
+"@cosyte/mllp": minor
 ---
 
 Differential verification you can point at your own interface engine: `runDifferential` now ships in the published package, sends a canonical corpus of synthetic messages at a peer you name, and returns a per-exchange frame-parity and `MSA-2` correlation report.

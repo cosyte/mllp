@@ -1,5 +1,5 @@
 ---
-"@cosyte/mllp": patch
+"@cosyte/mllp": minor
 ---
 
 `close()` now drains: it awaits the acknowledgements of sends already written to the transport, bounded by `drainTimeoutMs`, and reports whatever is still unresolved by population, so a consumer's replay logic can tell a message that definitely never reached the wire from one whose fate is unknown.

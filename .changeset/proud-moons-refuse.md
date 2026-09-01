@@ -1,5 +1,5 @@
 ---
-"@cosyte/mllp": patch
+"@cosyte/mllp": minor
 ---
 
 A deployment claiming the IHE ATNA ITI-19 transport-security option can now turn it on as one setting, and can prove from its own logs which protocol version and cipher suite each TLS link actually negotiated.
