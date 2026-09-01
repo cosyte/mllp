@@ -1,15 +1,18 @@
 ---
 id: quickstart
 title: Quickstart
-sidebar_position: 1
+description: >-
+  Frame an HL7 v2 message and read it back, tolerate a real sender's quirks, then send and receive
+  over a connection with the commit contract in place.
+sidebar_position: 3
 ---
 
 # Quickstart
 
 `@cosyte/mllp` is **transport, not parsing**: it frames HL7 v2 bytes onto the wire, correlates the
-ACK that comes back, and never inspects the payload. The core primitive is the frame (`VT + payload
-+ FS + CR`) and everything else (the client, the server, reconnect, TLS) is built on it. This page
-starts there, then shows the client and server you will actually deploy.
+ACK that comes back, and never inspects the payload. The core primitive is the frame
+(`VT + payload + FS + CR`) and everything else (the client, the server, reconnect, TLS) is built on
+it. This page starts there, then shows the client and server you will actually deploy.
 
 ## Frame a message, read it back
 
@@ -39,7 +42,7 @@ received.equals(payload); // => true
 ```
 
 The payload round-trips **exactly**. The transport adds and strips three delimiter bytes and
-changes nothing in between. What those bytes *mean* is the HL7 parser's job, not this package's.
+changes nothing in between. What those bytes _mean_ is the HL7 parser's job, not this package's.
 
 ## Tolerate a real sender's quirks, loudly
 
@@ -131,8 +134,9 @@ This is the page to internalize before you put the package in front of a clinica
 > build, executed against the package, and their `// =>` results asserted, so a documented example
 > can never silently drift from the code. They stay at the framing layer because it runs
 > deterministically in-process; the client/server blocks open real sockets, so they are shown as
-> plain ` ```ts ` illustrations. For socket-free *integration* tests, the `@cosyte/mllp/testing`
-> subpath's in-memory transport wires a `Connection` end-to-end with no ports and no certs.
+> plain ` ```ts ` illustrations. For socket-free _integration_ tests, the `@cosyte/mllp/testing`
+> subpath's in-memory transport wires a `Connection` end-to-end with no ports and no certs:
+> [Testing & verification](./testing.md).
 
 ## Next
 
@@ -141,4 +145,6 @@ This is the page to internalize before you put the package in front of a clinica
 - [ACKs & the commit contract](./acks.md): the page to read before a clinical deployment.
 - [Connection, reconnect & backpressure](./reliability.md): the 6-state machine, backoff, and load
   shedding.
-- [Known limitations & non-goals](./limitations.md): what *not* to trust this transport to do.
+- [Testing & verification](./testing.md): the socket-free in-memory transport, and the differential
+  harness for checking a real engine before go-live.
+- [Known limitations & non-goals](./limitations.md): what _not_ to trust this transport to do.

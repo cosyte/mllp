@@ -1,7 +1,10 @@
 ---
 id: limitations
 title: Known limitations & non-goals
-sidebar_position: 6
+description: >-
+  What not to trust this transport to do: delivery guarantees, batch acknowledgement, Release 2,
+  charsets that collide with the framing bytes, and where the public surface stands today.
+sidebar_position: 9
 ---
 
 # Known limitations & non-goals
@@ -43,10 +46,10 @@ populations are **told apart**, because a replay decision turns on which one a m
   `flushedAt` (when they went out), `elapsedMs` and `byteCount`, and **no payload content at all**,
   not the control ID, only its byte length. The receiver may hold this message, so resending it may
   commit a clinical message twice.
-- **Committed, application disposition unknown.** `MllpApplicationAckError({ reason:
-  'connection-lost' })`, unchanged: an enhanced-mode send whose commit disposition had already
-  arrived keeps the error that names that commit. The receiver's custody of those bytes is a known
-  fact, and a shutdown never downgrades it to an unknown one.
+- **Committed, application disposition unknown.**
+  `MllpApplicationAckError({ reason: 'connection-lost' })`, unchanged: an enhanced-mode send whose
+  commit disposition had already arrived keeps the error that names that commit. The receiver's
+  custody of those bytes is a known fact, and a shutdown never downgrades it to an unknown one.
 
 Tell them apart with `instanceof`, never by reading an error message.
 
@@ -71,7 +74,7 @@ mis-split. Bytes already accumulated in that connection's partial frame are **lo
 The failure is contained to the one connection (a server keeps serving every other peer) and it is
 classified `framing-fatal`, i.e. **permanent**, so a client does not reconnect into it. That is
 deliberate (a peer speaking the wrong protocol would otherwise be retried forever), but it means a
-client facing a peer that emits *occasional* junk will **stop**, not heal. If a peer's quirk is
+client facing a peer that emits _occasional_ junk will **stop**, not heal. If a peer's quirk is
 expected, use the tolerance opt-ins so the bytes are a warning rather than a fatal. See
 [Framing & tolerance](./framing.md).
 
@@ -98,7 +101,7 @@ retransmission, queueing or replay is implemented here or planned for here.
 
 ## It does not decide clinical acceptance
 
-The package builds *conformant* ACKs and structurally enforces *never-`AA`-without-commit*. It does
+The package builds _conformant_ ACKs and structurally enforces _never-`AA`-without-commit_. It does
 not, and cannot, decide whether your application should accept a message. `AA` / `AE` / `AR` is your
 call, from your own processing outcome. See [the commit contract](./acks.md).
 
@@ -118,55 +121,15 @@ part of that. Their behavior is inferred from the spec, not observed, and this p
 tell you otherwise.
 
 **What it gives you instead is the harness, so you can observe your own engine before go-live.**
-`runDifferential` ships in the package. Point it at an engine you name and it sends a small corpus
-of synthetic messages, one connection per message, and reports for each one whether the frame that
-came back was byte-identical to the canonical Release 1 block (`VT` + payload + `FS` + `CR`) and
-whether its `MSA-2` echoed the `MSH-10` of the message it answered:
+`runDifferential` ships in the package. Point it at an engine you name and it reports, per exchange,
+whether the frame that came back was byte-identical to the canonical Release 1 block
+(`VT` + payload + `FS` + `CR`) and whether its `MSA-2` echoed the `MSH-10` of the message it
+answered. What the report carries, what it deliberately does not, and how to aim a run safely are on
+[Testing & verification](./testing.md#verify-your-own-engine-rundifferential).
 
-```ts
-// differential.ts
-import { runDifferential } from "@cosyte/mllp";
-
-const report = await runDifferential({ peer: process.env["MLLP_DIFF_PEER"] });
-console.log(JSON.stringify(report, null, 2));
-```
-
-```bash
-MLLP_DIFF_PEER=engine.staging.example:2575 node differential.js
-```
-
-> **The run sends messages INTO whatever engine you aim it at.** They are synthetic patients, and an
-> engine that accepts them stores synthetic patients: an admit and an observation result will land in
-> whatever that endpoint feeds. Aim it at a test or staging endpoint. Never at a production interface
-> carrying live traffic, and never at an endpoint you do not own.
-
-Four things about the report, so you know what you are holding:
-
-- **It is an observation, not a verdict.** `result` is one of `parity-observed`,
-  `deviations-observed`, `no-observation` or `skipped`. None of them says a peer is conformant, and
-  a run in which nothing was answered is never presented as a success. Whether an interface is fit
-  to carry clinical traffic is your call, with this evidence in front of you.
-- **A deviation is named, not guessed at.** Each one carries a stable warning code and a byte
-  offset: `MLLP_MISSING_LEADING_VT`, `MLLP_FS_WITHOUT_CR`, `MLLP_LF_AFTER_FS`,
-  `MLLP_LEADING_WHITESPACE`, `MLLP_FRAME_TOO_LARGE` for the block, and
-  `MLLP_ACK_UNMATCHED_CONTROL_ID` when an acknowledgement does not echo the control ID it answered.
-  See [Framing & tolerance](./framing.md).
-- **It carries no payload content, by construction.** A code, a byte offset and structural counts.
-  Not a run of the peer's bytes, not the acknowledged control ID, not a truncation of either, so a
-  report is safe to attach to a ticket. That matters, because the engine you aim this at may hold
-  real patients.
-- **It is JSON.** Plain objects, numbers and strings throughout, so a pipeline reads it without
-  scraping text.
-
-With no peer configured (`MLLP_DIFF_PEER` unset or empty) the run **skips** and returns
-`result: 'skipped'`, so it is safe to leave in a test suite that also runs where no engine exists.
-An address that is *present* and is not a `host:port` is a different case: it throws
-`MllpDifferentialConfigurationError` naming the value, because a silent skip there would read as
-proof the harness ran.
-
-Byte parity means the MLLP **envelope**, compared against the canonical block this package emits.
-It is not equality of message content, which can never hold: an acknowledgement carries the peer's
-own control ID, its own timestamp and its own sending application, and it is supposed to.
+That harness does not soften the non-goal above. A run is evidence **you** hold about **your** peer,
+gathered by a corpus of synthetic messages; it is not a conformance verdict, and this package issues
+none about an engine it has never met.
 
 ## It ships no PKI
 
@@ -183,7 +146,7 @@ off, the offered suites are not this package's at all: they are the runtime's, w
 distribution can configure at build time and an operator can replace from outside the process. See
 [MLLPS / TLS](./tls.md).
 
-What this package *does* declare about itself, in the actor-and-option wording a Product Registry
+What this package _does_ declare about itself, in the actor-and-option wording a Product Registry
 entry or a Connectathon test is recorded in, is on one page: the
 [Conformance statement](./conformance.md). It names what this package supplies for each option and
 what stays yours, and it claims none of them on your behalf.
@@ -210,7 +173,7 @@ canonical form rather than copying the bytes. Five things that canonical form do
 - **Trailing empty components/subcomponents.** Canonicalized away: `ID^` and `ID&` both become `ID`.
 - **A lossy `encoding` override.** Any codec that cannot round-trip the inbound bytes.
 
-Each yields a *different* MSH-10, and so an ACK the sender cannot match. On a **`Buffer`** inbound none
+Each yields a _different_ MSH-10, and so an ACK the sender cannot match. On a **`Buffer`** inbound none
 of them is silent. The result carries `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`. And all five have the same
 answer: **`buildRawAck`**
 (the root export, and what the server's `autoAck` path uses) is parser-free (it copies the MSH-10
@@ -219,11 +182,11 @@ delimiter set. It always emits the ACK under the inbound's own field separator (
 one), and MSH-10 provably cannot contain that separator, so the echo round-trips byte-for-byte
 whatever the control ID contains. See [ACKs](./acks.md).
 
-And the *verbatim proof* is a **`Buffer`** guarantee. On a `string` / `Hl7Message` inbound the wire
+And the _verbatim proof_ is a **`Buffer`** guarantee. On a `string` / `Hl7Message` inbound the wire
 bytes were decoded before `buildMllpAck` ever saw them, so it re-encodes your text with the same codec
 it decoded it with: the codec cancels on both sides, and `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` (a
 byte-for-byte comparison) cannot fire. `buildAckAA(payload.toString("latin1"))` on a high-bit control
-ID (`0x8B`) emits the two `utf8` bytes `0xC2 0x8B`, a *different* control ID the sender cannot
+ID (`0x8B`) emits the two `utf8` bytes `0xC2 0x8B`, a _different_ control ID the sender cannot
 correlate. The encoding cannot be fixed from here (decoded text does not remember its bytes), and the
 verbatim check cannot catch it (the bytes are gone), but the API no longer stays **silent** about it.
 Whenever the emitted MSA-2 holds a non-ASCII byte on a text inbound, `buildMllpAck` emits
@@ -232,14 +195,14 @@ separate from the `Buffer`-path proof-of-mismatch. An all-ASCII control ID round
 codec and stays quiet. Pass a `Buffer`. That is what the `Buffer`-first API rule is for.
 
 A **non-text** `encoding` override is a step past even that. It is **rejected**, not warned, on
-**every** input shape. `"base64"`/`"base64url"`/`"hex"` reinterpret the ACK *string* as encoded data,
+**every** input shape. `"base64"`/`"base64url"`/`"hex"` reinterpret the ACK _string_ as encoded data,
 and `"utf16le"`/`"ucs2"` NUL-pad every byte, so the emitted frame is wholesale garbage a receiver
 cannot parse. Because a garbage frame is a caller mistake rather than a runtime condition,
 `buildMllpAck` throws a `TypeError` at the boundary for a non-text codec; only text codecs
 (`"utf8"`/`"ascii"`/`"latin1"`/`"binary"`) are accepted. This includes a
-`Buffer` inbound: a non-text codec there garbles the *inbound* decode into the unparseable fallback
+`Buffer` inbound: a non-text codec there garbles the _inbound_ decode into the unparseable fallback
 (empty MSA-2, so the `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof never runs) and then serializes the
-fallback ACK to garbage bytes that ~3–4 % of the time (identically on Node 22 and 24) contain a
+fallback ACK to garbage bytes that ~3-4 % of the time (identically on Node 22 and 24) contain a
 `VT`/`FS` byte and trip the strict frame encoder with a nondeterministic `MllpFramingError`. It was
 never the "loud AE" escape hatch it was documented to be. The legitimate byte-level escape hatch is
 untouched: a **charset** codec on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that

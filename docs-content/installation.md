@@ -1,7 +1,10 @@
 ---
 id: installation
 title: Installation
-sidebar_position: 1
+description: >-
+  Install @cosyte/mllp and the optional @cosyte/hl7 peer, meet the Node and module-system
+  prerequisites, and confirm the install with a smoke test.
+sidebar_position: 2
 ---
 
 # Installation
@@ -11,9 +14,10 @@ sidebar_position: 1
 without configuration. It is **transport, not parsing**. It moves HL7 v2 bytes over TCP and never
 inspects the payload.
 
-> **Status:** published on npm and public, still pre-alpha on the cosyte
-> `0.0.x`-until-first-alpha ladder, so the API can change with no deprecation cycle. The
-> `npm install @cosyte/mllp` command below is live, not aspirational.
+> **Status:** published on npm and public, so the `npm install @cosyte/mllp` command below is live,
+> not aspirational. Where the package sits on the release ladder, and what that means for the
+> stability of its public surface, is stated in one place:
+> [The API is not stable yet](./limitations.md#the-api-is-not-stable-yet). Read it before you pin.
 
 ## Prerequisites
 
@@ -53,7 +57,7 @@ import { VERSION } from "@cosyte/mllp";
 typeof VERSION; // => "string"
 ```
 
-If that resolves, the install is good. Head to the [Quickstart](./quickstart).
+If that resolves, the install is good. Head to the [Quickstart](./quickstart.md).
 
 ## Module systems
 

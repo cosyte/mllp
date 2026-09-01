@@ -1,7 +1,10 @@
 ---
 id: conformance
 title: Conformance statement
-sidebar_position: 7
+description: >-
+  The self-declared conformance statement: framing tolerances, per-role acknowledgement verdicts,
+  IHE options in actor-and-option terms, and what stays the deploying actor's to do.
+sidebar_position: 10
 ---
 
 # Conformance statement
@@ -48,11 +51,11 @@ transport-security options, which is exactly what the sections below cover.
 
 Every verdict on this page is one of exactly three words, and they are mutually exclusive:
 
-| Verdict | Meaning |
-|---|---|
-| **Supported** | The behaviour is implemented in this release and is exercised by this package's own tests. |
-| **Not supported** | The behaviour is **absent**. It is not implemented, and nothing here approximates it. |
-| **Unverified** | The behaviour is neither claimed present nor claimed absent. Something is delegated or untested, so we have not established it, and an inference from a specification is not an observation. Every one is listed with its reason under [Behaviours recorded as unverified](#behaviours-recorded-as-unverified). |
+| Verdict           | Meaning                                                                                                                                                                                                                                                                                                         |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Supported**     | The behaviour is implemented in this release and is exercised by this package's own tests.                                                                                                                                                                                                                      |
+| **Not supported** | The behaviour is **absent**. It is not implemented, and nothing here approximates it.                                                                                                                                                                                                                           |
+| **Unverified**    | The behaviour is neither claimed present nor claimed absent. Something is delegated or untested, so we have not established it, and an inference from a specification is not an observation. Every one is listed with its reason under [Behaviours recorded as unverified](#behaviours-recorded-as-unverified). |
 
 ## Framing tolerances
 
@@ -64,12 +67,12 @@ silent one.
 The decoder is where nearly all of it lives: it is the side that has to survive what a real sender
 emits.
 
-| Option | Strict-block behaviour it deviates from | Warning code | Standalone reader | Server |
-|---|---|---|---|---|
-| `allowFsOnly` | A frame ends `<FS>` `<CR>`; the `<CR>` is required. | `MLLP_FS_WITHOUT_CR` | off | on |
-| `allowLfAfterFs` | The byte after `<FS>` is `<CR>`, never `<LF>`. | `MLLP_LF_AFTER_FS` | off | on |
-| `allowLeadingWhitespace` | A frame opens at `<VT>` with no padding before it. | `MLLP_LEADING_WHITESPACE` | off | on |
-| `allowMissingLeadingVt` | A frame opens at `<VT>`; a stream without one is unframed. | `MLLP_MISSING_LEADING_VT` | off | off |
+| Option                   | Strict-block behaviour it deviates from                    | Warning code              | Standalone reader | Server |
+| ------------------------ | ---------------------------------------------------------- | ------------------------- | ----------------- | ------ |
+| `allowFsOnly`            | A frame ends `<FS>` `<CR>`; the `<CR>` is required.        | `MLLP_FS_WITHOUT_CR`      | off               | on     |
+| `allowLfAfterFs`         | The byte after `<FS>` is `<CR>`, never `<LF>`.             | `MLLP_LF_AFTER_FS`        | off               | on     |
+| `allowLeadingWhitespace` | A frame opens at `<VT>` with no padding before it.         | `MLLP_LEADING_WHITESPACE` | off               | on     |
+| `allowMissingLeadingVt`  | A frame opens at `<VT>`; a stream without one is unframed. | `MLLP_MISSING_LEADING_VT` | off               | off    |
 
 "Standalone reader" is a `FrameReader` you construct yourself. "Server" is every connection an
 `MllpServer` accepts, which applies the defaults above and merges anything you pass in
@@ -103,9 +106,9 @@ emits the canonical block every time, and refuses a payload it could not frame u
 than emitting one a peer would mis-split. There is nonetheless **one** encoder-side opt-in, and a
 reviewer should see it here rather than discover it in the type signature:
 
-| Option | Strict-block behaviour it deviates from | Warning code | Default |
-|---|---|---|---|
-| `allowDelimiterBytesInPayload` | The payload contains no `0x0B` and no `0x1C`, because MLLP is not byte-transparent and those bytes are structural. | `MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS` | off |
+| Option                         | Strict-block behaviour it deviates from                                                                            | Warning code                                           | Default |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ | ------- |
+| `allowDelimiterBytesInPayload` | The payload contains no `0x0B` and no `0x1C`, because MLLP is not byte-transparent and those bytes are structural. | `MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS` | off     |
 
 Off, a payload carrying either byte throws `MllpFramingError` with the matching code and no frame is
 produced. On, the offending bytes are passed through verbatim, one warning is emitted per byte, and
@@ -121,20 +124,20 @@ as the latter.
 ## Acknowledgement modes
 
 HL7 v2.5.1 §2.9 splits acknowledgement into two protocols. In the **original** protocol one message
-draws one acknowledgement. In the **enhanced** protocol it draws two: an *accept* acknowledgement
+draws one acknowledgement. In the **enhanced** protocol it draws two: an _accept_ acknowledgement
 (`CA`/`CE`/`CR`, "I have your bytes in safe storage; stop resending") and a later, separate
-*application* acknowledgement (`AA`/`AE`/`AR`, "here is what my application did with it"). The
+_application_ acknowledgement (`AA`/`AE`/`AR`, "here is what my application did with it"). The
 original protocol is the enhanced protocol with MSH-15 = `NE` and MSH-16 = `AL`.
 
 Each mode is recorded separately for the two roles this package ships, because the two do not agree:
 
-| Acknowledgement mode | Client role | Server role |
-|---|---|---|
-| Original mode | Supported | Supported |
-| Enhanced mode, accept acknowledgement | Supported | Supported |
-| Enhanced mode, application acknowledgement | Supported | Not supported |
-| MLLP Release 2 commit acknowledgement | Not supported | Not supported |
-| Batch acknowledgement | Not supported | Not supported |
+| Acknowledgement mode                       | Client role   | Server role   |
+| ------------------------------------------ | ------------- | ------------- |
+| Original mode                              | Supported     | Supported     |
+| Enhanced mode, accept acknowledgement      | Supported     | Supported     |
+| Enhanced mode, application acknowledgement | Supported     | Not supported |
+| MLLP Release 2 commit acknowledgement      | Not supported | Not supported |
+| Batch acknowledgement                      | Not supported | Not supported |
 
 Row by row:
 
@@ -182,10 +185,10 @@ acknowledged as a batch, per the row above. But this package ships **two** ackno
 routes, and they do not detect those two shapes equally, so the answer is recorded per route rather
 than as one sentence covering both:
 
-| Acknowledgement route | An `FHS`/`BHS` batch envelope | A second `MSH` in the same frame |
-|---|---|---|
-| The server's automatic acknowledgement, `autoAck`, and the raw builder behind it | Refused: a requested positive `AA`/`CA` is downgraded to the non-positive `AE`/`CE` | Refused: a requested positive `AA`/`CA` is downgraded to the non-positive `AE`/`CE` |
-| The parser-backed builder on the `@cosyte/mllp/ack-from-hl7` subpath | Refused: the warned, non-positive `AE`, carrying `MLLP_ACK_INBOUND_UNPARSEABLE` and no correlation id | Not detected: a positive `AA` correlated to the **first** message, with no warning |
+| Acknowledgement route                                                            | An `FHS`/`BHS` batch envelope                                                                         | A second `MSH` in the same frame                                                    |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| The server's automatic acknowledgement, `autoAck`, and the raw builder behind it | Refused: a requested positive `AA`/`CA` is downgraded to the non-positive `AE`/`CE`                   | Refused: a requested positive `AA`/`CA` is downgraded to the non-positive `AE`/`CE` |
+| The parser-backed builder on the `@cosyte/mllp/ack-from-hl7` subpath             | Refused: the warned, non-positive `AE`, carrying `MLLP_ACK_INBOUND_UNPARSEABLE` and no correlation id | Not detected: a positive `AA` correlated to the **first** message, with no warning  |
 
 **The one cell that is not a refusal is a limitation of this release, named here rather than left for
 a reviewer to discover.** The parser-backed builder strips leading segment terminators and hands what
@@ -215,24 +218,24 @@ mechanism on.
 The role columns record **this package's support for the mechanism**. They are not a claim on the
 option: see the split below, and note that no row is claimed here.
 
-| IHE actor | Transaction | Option, as ITI TF-2 spells it | Package option | Client role | Server role |
-|---|---|---|---|---|---|
-| Secure Node | Authenticate Node [ITI-19] | STX: TLS 1.2 floor using BCP195 Option | `atnaTransportSecurity` | Supported | Supported |
-| Secure Node | Authenticate Node [ITI-19] | STX: No Secure Transport | none | Supported | Supported |
-| Secure Node | Authenticate Node [ITI-19] | FQDN Validation of Server Certificate Option | `servername` | Unverified | Unverified |
-| Patient Demographics Supplier | Patient Identity Management [ITI-30] | Acknowledgement Support Option | `correlateByControlId` | Supported | Not supported |
+| IHE actor                     | Transaction                          | Option, as ITI TF-2 spells it                | Package option          | Client role | Server role   |
+| ----------------------------- | ------------------------------------ | -------------------------------------------- | ----------------------- | ----------- | ------------- |
+| Secure Node                   | Authenticate Node [ITI-19]           | STX: TLS 1.2 floor using BCP195 Option       | `atnaTransportSecurity` | Supported   | Supported     |
+| Secure Node                   | Authenticate Node [ITI-19]           | STX: No Secure Transport                     | none                    | Supported   | Supported     |
+| Secure Node                   | Authenticate Node [ITI-19]           | FQDN Validation of Server Certificate Option | `servername`            | Unverified  | Unverified    |
+| Patient Demographics Supplier | Patient Identity Management [ITI-30] | Acknowledgement Support Option               | `correlateByControlId`  | Supported   | Not supported |
 
 The IHE actor named in each row is the actor a **deployer** would be claiming the option for. This
 package is a component inside such an actor, never the actor itself.
 
 ### What this package supplies, and what stays yours
 
-| Option | What this package supplies | What the deploying actor must still do | Claimed here |
-|---|---|---|---|
-| STX: TLS 1.2 floor using BCP195 Option | A TLS 1.2 floor that cannot be lowered through this API (`minVersion` defaults to `TLSv1.2` and only `TLSv1.2`/`TLSv1.3` are expressible); with `atnaTransportSecurity: true`, the four TLS 1.2 cipher suites ITI TF-2 §3.19.6.2.3 names and no other TLS 1.2 suite, offered alongside the three TLS 1.3 suites the runtime enables by default so that selecting the option never removes a protocol version that was reachable without it; mutual node authentication through `clientAuth` plus a client certificate and key; and a `'tlsNegotiated'` event per completed handshake reporting, in the IANA spelling the standard prints, what that link actually agreed on. | Supply and manage all certificate material and trust anchors, because this package ships no PKI and issues, rotates and revokes nothing; turn the option on, since it is off by default and with it off the offered suites are the runtime's rather than this package's; configure mutual authentication for the actor's own trust model; retain the negotiated-parameter evidence; **ship with certificate verification on**, because the client's `tls.allowUnverified` switch turns node authentication off wholesale and only announces it, emitting `MLLP_TLS_VERIFY_DISABLED` on every successful connection rather than refusing to connect; and write and enter the Integration Statement. | No |
-| STX: No Secure Transport | Plaintext MLLP on both roles, which is the transport this option describes and for which ITI-19 requires no actions. Nothing about the unsecured case is quiet: a server binds `127.0.0.1` by default, a wildcard bind has to be asked for by name and emits `MLLP_BIND_ALL_INTERFACES` when it is, and the strict framing and commit-contract behaviour is identical to the TLS case. | Establish that an unsecured transport is permitted by the local security policy for the information crossing the link, and declare the option deliberately rather than arriving at it by leaving TLS unconfigured. | No |
-| FQDN Validation of Server Certificate Option | Nothing of its own. The client's identity check is whatever `node:tls` performs by default against `servername` (which defaults to the configured host), and this package neither implements RFC6125 section 6 matching nor overrides the runtime's check. A failed identity check surfaces as a typed `'tls-verify'` failure classified permanent, so a misconfigured endpoint is not retried. | Establish that the runtime's identity check satisfies the option for the deployment; ensure every server certificate carries a `subjectAltName` entry of type DNS-ID; set `servername` to the reference identifier the certificate is meant to match rather than relying on a host that is an address literal; and leave `tls.allowUnverified` off, which is the one switch that removes the identity check along with the rest of certificate verification. | No |
-| Acknowledgement Support Option | Enhanced acknowledgement mode on the client role: MSH-15 and MSH-16 are read byte-level and never validated, both halves of the exchange are correlated by MSA-2, and each disposition is surfaced with a typed result. On the server role, the accept half only: the server selects the correct half of Table 0008 for the message it answers. | Own the later application acknowledgement in any system built on this package's server, because that server emits exactly one acknowledgement per inbound message; and set `correlateByControlId: true`, without which an enhanced-mode send falls back to single-acknowledgement behaviour with a warning. | No |
+| Option                                       | What this package supplies                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | What the deploying actor must still do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Claimed here |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| STX: TLS 1.2 floor using BCP195 Option       | A TLS 1.2 floor that cannot be lowered through this API (`minVersion` defaults to `TLSv1.2` and only `TLSv1.2`/`TLSv1.3` are expressible); with `atnaTransportSecurity: true`, the four TLS 1.2 cipher suites ITI TF-2 §3.19.6.2.3 names and no other TLS 1.2 suite, offered alongside the three TLS 1.3 suites the runtime enables by default so that selecting the option never removes a protocol version that was reachable without it; mutual node authentication through `clientAuth` plus a client certificate and key; and a `'tlsNegotiated'` event per completed handshake reporting, in the IANA spelling the standard prints, what that link actually agreed on. | Supply and manage all certificate material and trust anchors, because this package ships no PKI and issues, rotates and revokes nothing; turn the option on, since it is off by default and with it off the offered suites are the runtime's rather than this package's; configure mutual authentication for the actor's own trust model; retain the negotiated-parameter evidence; **ship with certificate verification on**, because the client's `tls.allowUnverified` switch turns node authentication off wholesale and only announces it, emitting `MLLP_TLS_VERIFY_DISABLED` on every successful connection rather than refusing to connect; and write and enter the Integration Statement. | No           |
+| STX: No Secure Transport                     | Plaintext MLLP on both roles, which is the transport this option describes and for which ITI-19 requires no actions. Nothing about the unsecured case is quiet: a server binds `127.0.0.1` by default, a wildcard bind has to be asked for by name and emits `MLLP_BIND_ALL_INTERFACES` when it is, and the strict framing and commit-contract behaviour is identical to the TLS case.                                                                                                                                                                                                                                                                                       | Establish that an unsecured transport is permitted by the local security policy for the information crossing the link, and declare the option deliberately rather than arriving at it by leaving TLS unconfigured.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | No           |
+| FQDN Validation of Server Certificate Option | Nothing of its own. The client's identity check is whatever `node:tls` performs by default against `servername` (which defaults to the configured host), and this package neither implements RFC6125 section 6 matching nor overrides the runtime's check. A failed identity check surfaces as a typed `'tls-verify'` failure classified permanent, so a misconfigured endpoint is not retried.                                                                                                                                                                                                                                                                              | Establish that the runtime's identity check satisfies the option for the deployment; ensure every server certificate carries a `subjectAltName` entry of type DNS-ID; set `servername` to the reference identifier the certificate is meant to match rather than relying on a host that is an address literal; and leave `tls.allowUnverified` off, which is the one switch that removes the identity check along with the rest of certificate verification.                                                                                                                                                                                                                                       | No           |
+| Acknowledgement Support Option               | Enhanced acknowledgement mode on the client role: MSH-15 and MSH-16 are read byte-level and never validated, both halves of the exchange are correlated by MSA-2, and each disposition is surfaced with a typed result. On the server role, the accept half only: the server selects the correct half of Table 0008 for the message it answers.                                                                                                                                                                                                                                                                                                                              | Own the later application acknowledgement in any system built on this package's server, because that server emits exactly one acknowledgement per inbound message; and set `correlateByControlId: true`, without which an enhanced-mode send falls back to single-acknowledgement behaviour with a warning.                                                                                                                                                                                                                                                                                                                                                                                        | No           |
 
 **Claimed here is `No` on every row, and it always will be.** An IHE option is claimed by an actor,
 in a statement that actor makes about itself. A library can supply a mechanism and produce evidence,
@@ -244,10 +247,10 @@ An unverified behaviour is not a missing one. These are the places where somethi
 untested, or inferred rather than observed, and recording them as either supported or not supported
 would hand a reviewer a guess dressed as a finding.
 
-| Behaviour | Verdict | Why it is unverified rather than absent |
-|---|---|---|
-| FQDN Validation of Server Certificate Option (ITI-19 section 3.19.6.1.4) | Unverified | The client half is delegated wholesale to the runtime's default identity check, which this package neither implements nor overrides, and this package's own harness exercises only the rejection direction, with an address literal as the reference identifier rather than a DNS-ID. The server half is a property of certificates the deployer supplies and this package examines none of them. The mechanism is very probably adequate; it has not been established here, and probably is not a verdict. |
-| Interoperability with Epic and Cerner interfaces | Unverified | Byte-level interoperability is proven here against freely available engines only. Neither of those two is part of this package's own verification, so their behaviour is inferred from the specification rather than observed, and no claim about either is made anywhere on this page. What the package supplies instead is the differential harness itself: `runDifferential` ships in the published artifact, so a deploying actor can point it at the engine they are integrating with and obtain a per-exchange frame-parity and `MSA-2` correlation report for that engine, named by the stable warning codes this page already declares. The run sends synthetic messages into whatever engine it is aimed at, so aim it at a test or staging endpoint. The resulting report is evidence the actor holds, not a conformance verdict this package issues. See [Known limitations](./limitations.md). |
+| Behaviour                                                                | Verdict    | Why it is unverified rather than absent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FQDN Validation of Server Certificate Option (ITI-19 section 3.19.6.1.4) | Unverified | The client half is delegated wholesale to the runtime's default identity check, which this package neither implements nor overrides, and this package's own harness exercises only the rejection direction, with an address literal as the reference identifier rather than a DNS-ID. The server half is a property of certificates the deployer supplies and this package examines none of them. The mechanism is very probably adequate; it has not been established here, and probably is not a verdict.                                                                                                                                                                                                                                                                                                                                                                                                |
+| Interoperability with Epic and Cerner interfaces                         | Unverified | Byte-level interoperability is proven here against freely available engines only. Neither of those two is part of this package's own verification, so their behaviour is inferred from the specification rather than observed, and no claim about either is made anywhere on this page. What the package supplies instead is the differential harness itself: `runDifferential` ships in the published artifact, so a deploying actor can point it at the engine they are integrating with and obtain a per-exchange frame-parity and `MSA-2` correlation report for that engine, named by the stable warning codes this page already declares. The run sends synthetic messages into whatever engine it is aimed at, so aim it at a test or staging endpoint. The resulting report is evidence the actor holds, not a conformance verdict this package issues. See [Known limitations](./limitations.md). |
 
 ## Evidence you can run
 

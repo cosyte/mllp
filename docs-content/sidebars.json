@@ -20,7 +20,7 @@
     {
       "type": "category",
       "label": "Guides",
-      "items": ["reliability", "tls"]
+      "items": ["reliability", "tls", "testing"]
     },
     {
       "type": "category",

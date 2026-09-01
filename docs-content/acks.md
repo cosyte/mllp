@@ -1,7 +1,10 @@
 ---
 id: acks
 title: ACKs & the commit contract
-sidebar_position: 3
+description: >-
+  The commit contract, the Table 0008 code the auto-ACK path selects, ACK correlation on the
+  client, both halves of the enhanced-mode exchange, and the ack-from-hl7 builder.
+sidebar_position: 5
 ---
 
 # ACKs & the commit contract
@@ -9,8 +12,8 @@ sidebar_position: 3
 This is the page that matters most. MLLP framing is trivial; **acknowledgement is where a transport
 can hurt a patient.**
 
-A positive acknowledgement (`AA`) means one thing to the sender: *"you may forget this message: I
-have it."* A well-behaved sending system deletes its copy, or marks the message delivered and never
+A positive acknowledgement (`AA`) means one thing to the sender: _"you may forget this message: I
+have it."_ A well-behaved sending system deletes its copy, or marks the message delivered and never
 retries. So if a receiver says `AA` for a message it then drops (because the database was down,
 because the handler threw, because the process was killed between "bytes received" and "row
 committed") the message is **silently gone**. No error, no retry, no alarm. A lab result, an
@@ -22,7 +25,7 @@ allergy update, a discharge order: acknowledged and lost.
 
 **A positive ACK can never precede a successful durable commit.**
 
-Pair `autoAck: 'AA'` with an `onMessage` handler and the server treats your handler *as* the commit
+Pair `autoAck: 'AA'` with an `onMessage` handler and the server treats your handler _as_ the commit
 step: it **awaits** it, and only then acknowledges.
 
 ```ts
@@ -38,13 +41,13 @@ const server = createServer({
 await server.listen(2575, "127.0.0.1");
 ```
 
-| Handler outcome | ACK the sender receives |
-|---|---|
-| Resolves | **`AA`**: application accept. MSA-2 echoes the inbound MSH-10. |
-| Throws / rejects | **`AE`**: application error. The sender **may resend**; a retry could succeed. |
-| Throws `new MllpAckError({ ackCode: "AR" })` | **`AR`**: application reject. Do not resend unchanged. |
+| Handler outcome                              | ACK the sender receives                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------ |
+| Resolves                                     | **`AA`**: application accept. MSA-2 echoes the inbound MSH-10.                 |
+| Throws / rejects                             | **`AE`**: application error. The sender **may resend**; a retry could succeed. |
+| Throws `new MllpAckError({ ackCode: "AR" })` | **`AR`**: application reject. Do not resend unchanged.                         |
 
-`AE` is the default on failure precisely because it is the *safe* failure: it invites a retry. Use
+`AE` is the default on failure precisely because it is the _safe_ failure: it invites a retry. Use
 `AR` only when a retry of the identical bytes is guaranteed to fail again (a malformed message, an
 unsupported type). Telling a sender "don't bother resending" is a decision to lose the message if
 you are wrong.
@@ -52,7 +55,7 @@ you are wrong.
 Do **not** call `conn.send()` inside `onMessage` when `autoAck` is set. The server is already
 acknowledging, and you would emit two ACKs for one message.
 
-## `autoAck: 'AA'` with no handler is a *transport*-accept
+## `autoAck: 'AA'` with no handler is a _transport_-accept
 
 ```ts
 const server = createServer({ autoAck: "AA" }); // ⚠️ read this before using it
@@ -62,7 +65,7 @@ With no `onMessage` handler there is nothing to await, so the `AA` is sent on fr
 `AA` truthfully means **"bytes received and framed"**, and nothing more. It does **not** mean
 "application-processed".
 
-This is safe only when something downstream owns durability *before* the ACK goes out. On its own,
+This is safe only when something downstream owns durability _before_ the ACK goes out. On its own,
 for clinical messages, it is exactly the failure mode described at the top of this page. If you are
 reaching for it, reach for the commit-gated form instead.
 
@@ -78,21 +81,21 @@ delivered, or resends it as a duplicate. The same downgrade guards `buildRawAck`
 HL7 Table 0008 has two halves: the application-mode `AA`/`AE`/`AR`, and the accept-mode `CA`/`CE`/`CR`
 of the enhanced acknowledgement protocol (v2.5.1 §2.9). Which half a responder answers in is not its
 own choice. **MSH-15** (accept acknowledgment type, HL7 Table 0155) states the conditions under which
-the sender wants an accept acknowledgement, and it is a *condition*, not a switch: `AL` always, `NE`
+the sender wants an accept acknowledgement, and it is a _condition_, not a switch: `AL` always, `NE`
 never, `ER` on an error or reject only, `SU` on a successful completion only. So the request can only
 be evaluated once the disposition is known.
 
 The auto-ACK path evaluates exactly that. Rows are MSH-15; columns are the disposition the commit
 contract above reached; the cell is what goes on the wire:
 
-| MSH-15 | handler resolved | handler threw | handler threw `MllpAckError({ ackCode: 'AR' })` |
-|---|---|---|---|
-| absent / empty | `AA` | `AE` | `AR` |
-| `NE` | `AA` | `AE` | `AR` |
-| `AL` | **`CA`** | **`CE`** | **`CR`** |
-| `ER` | `AA` | **`CE`** | **`CR`** |
-| `SU` | **`CA`** | `AE` | `AR` |
-| outside Table 0155 | `AA` + warning | `AE` + warning | `AR` + warning |
+| MSH-15             | handler resolved | handler threw  | handler threw `MllpAckError({ ackCode: 'AR' })` |
+| ------------------ | ---------------- | -------------- | ----------------------------------------------- |
+| absent / empty     | `AA`             | `AE`           | `AR`                                            |
+| `NE`               | `AA`             | `AE`           | `AR`                                            |
+| `AL`               | **`CA`**         | **`CE`**       | **`CR`**                                        |
+| `ER`               | `AA`             | **`CE`**       | **`CR`**                                        |
+| `SU`               | **`CA`**         | `AE`           | `AR`                                            |
+| outside Table 0155 | `AA` + warning   | `AE` + warning | `AR` + warning                                  |
 
 `CR` for a rejected message is what a commit acknowledgement is required to carry for an unrecognised
 message type or trigger event.
@@ -171,7 +174,7 @@ is the one that discharges the sender: the receiver has the bytes in safe storag
 resending. The **application** acknowledgement is a later, separate exchange saying what the
 receiving application actually did with the message. A message asks for that protocol by carrying a
 non-null **MSH-15** or **MSH-16**, and §2.9 states the equivalence that ties the two protocols
-together: the original protocol *is* the enhanced protocol with MSH-15 = `NE` and MSH-16 = `AL`. The
+together: the original protocol _is_ the enhanced protocol with MSH-15 = `NE` and MSH-16 = `AL`. The
 single ACK this package has always correlated is, in that framing, the application acknowledgement.
 
 So on an interface that runs enhanced mode, `client.send()` gives you both:
@@ -189,9 +192,10 @@ const applicationAck = await client.send(payload, {
 - A **`CA`** reports the commit disposition through `onCommitAck` and leaves the send pending. The
   report is scoped to your own send, which is how you know which message it belongs to. Nothing is
   logged to tell you.
-- The later **`AA`, `AE` or `AR`** settles the send, and all three settle it *successfully*, with the
+- The later **`AA`, `AE` or `AR`** settles the send, and all three settle it _successfully_, with the
   acknowledgement handed to you. `AE` and `AR` are the receiving application's clinical verdict on a
-  message it did take custody of, and [judging that verdict is not this package's job](#it-does-not-decide-clinical-acceptance).
+  message it did take custody of, and
+  [judging that verdict is not this package's job](./limitations.md#it-does-not-decide-clinical-acceptance).
   Read MSA-1 off the buffer you are given.
 - A **`CE` or `CR`** rejects the send at once with `MllpCommitRejectedError` (`err.commitCode`). The
   peer refused custody of the bytes, so no application acknowledgement is coming, and waiting out the
@@ -216,16 +220,16 @@ acknowledgement that would otherwise have settled it.
 never refused.** The field reads as its default (MSH-15 as `NE`, MSH-16 as `AL`), a
 `MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED` or `MLLP_ACK_APPLICATION_TYPE_UNRECOGNISED` warning names which
 field it was, and your bytes go to the wire unaltered. This is a transport: no send is refused,
-delayed or altered over the *value* of a field.
+delayed or altered over the _value_ of a field.
 
 Both fields empty is an original-mode send, and nothing above applies to it. It behaves exactly as it
 always has: one acknowledgement, settled by the first match, on the same timeout with the same error.
 
 #### The two waits
 
-| wait | starts at | bounded by | ends with |
-|---|---|---|---|
-| first acknowledgement | the socket write-flush | `ackTimeoutMs` | `MllpTimeoutError` |
+| wait                        | starts at                  | bounded by                | ends with                 |
+| --------------------------- | -------------------------- | ------------------------- | ------------------------- |
+| first acknowledgement       | the socket write-flush     | `ackTimeoutMs`            | `MllpTimeoutError`        |
 | application acknowledgement | the accept acknowledgement | `applicationAckTimeoutMs` | `MllpApplicationAckError` |
 
 The second window defaults to whatever `ackTimeoutMs` is in force for that send, and takes a global
@@ -293,7 +297,7 @@ whole ACK.
 
 ## Building spec-correct ACKs: `ack-from-hl7`
 
-Framing an ACK means building a real HL7 v2 `ACK^` message. That is *parsing* work, and this package
+Framing an ACK means building a real HL7 v2 `ACK^` message. That is _parsing_ work, and this package
 does not parse, so the optional `@cosyte/mllp/ack-from-hl7` subpath is a thin adapter over
 [`@cosyte/hl7`](https://github.com/cosyte/hl7)'s `buildAck`. It is the only place the two packages
 touch, and the peer is loaded lazily on first call.
@@ -321,7 +325,7 @@ not accept.
 `@cosyte/hl7` is an **optional peer dependency**. Install it only if you use this subpath. Calling
 in without it throws a typed `MllpPeerMissingError` rather than a bare module-not-found.
 
-### MSA-2 echoes MSH-10 *verbatim*, and says so when it can't
+### MSA-2 echoes MSH-10 _verbatim_, and says so when it can't
 
 HL7 v2.5.1 §2.9.2.2 requires MSA-2 to carry the inbound MSH-10 **verbatim**. That is not a
 formality: the sender keys its in-flight store on the control-ID bytes it put on the wire, so an ACK
@@ -329,16 +333,16 @@ whose MSA-2 differs by a single byte is an ACK it cannot match. The send never s
 out, it resends, and the receiver commits the clinical message **twice**.
 
 So `buildMllpAck` decodes raw `Buffer` input as **`latin1`** and encodes the ACK back with the same
-codec. `latin1` is a 1:1 map between the 256 byte values and `U+0000`–`U+00FF`, which makes the
-round-trip the exact identity for *any* inbound bytes, including a high-bit control ID under an
+codec. `latin1` is a 1:1 map between the 256 byte values and `U+0000`-`U+00FF`, which makes the
+round-trip the exact identity for _any_ inbound bytes, including a high-bit control ID under an
 `MSH-18` of `8859/1`. (It is the only codec for which that holds. `ascii` masks the high bit;
 `utf8` folds invalid sequences onto `U+FFFD`; and a `TextDecoder`'s `iso-8859-1` is aliased by the
-WHATWG Encoding Standard to **windows-1252**, which does not round-trip `0x80`–`0x9F` at all.)
+WHATWG Encoding Standard to **windows-1252**, which does not round-trip `0x80`-`0x9F` at all.)
 
 Every build is then **checked** against the same byte-level scanners the `@cosyte/mllp` client uses
 to correlate. If MSA-2 does not match the inbound MSH-10 byte-for-byte, the ACK still goes out (a
-mismatched ACK tells the peer *something*, which beats silence) but it carries a
-`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` warning. The warning reports the two byte *lengths* and
+mismatched ACK tells the peer _something_, which beats silence) but it carries a
+`MLLP_ACK_CONTROL_ID_NOT_VERBATIM` warning. The warning reports the two byte _lengths_ and
 withholds the field values: MSH-10 is inbound payload content, a warning goes to a log, and a log is
 not a place PHI may reach. You already hold both byte strings: your inbound `payload`, and the
 returned `MllpAck.payload`. **Check your warnings.**
@@ -366,7 +370,7 @@ preserve, it cannot echo verbatim:
 5. **Trailing empty components or subcomponents.** Canonicalized away: `ID^` and `ID&` both come back
    as `ID`.
 
-Each yields a *different* MSH-10 on the wire, and so an ACK the sender cannot match. All five warn.
+Each yields a _different_ MSH-10 on the wire, and so an ACK the sender cannot match. All five warn.
 And all five have the same answer: use **`buildRawAck`** (the root export, and what the server's
 `autoAck` path uses). It is parser-free (it copies the MSH-10 bytes rather than re-serializing them)
 so it holds the verbatim guarantee across escapes, padding, empty components, and **any** delimiter
@@ -374,7 +378,7 @@ set.
 
 That last claim is exact, and it turns on one invariant worth stating: `buildRawAck` always emits the
 ACK under the **inbound's own** field separator, never a substituted one. MSH-10 is a product of
-splitting the inbound MSH *on* that separator, so it provably cannot contain it, and MSA-2 is read
+splitting the inbound MSH _on_ that separator, so it provably cannot contain it, and MSA-2 is read
 back by splitting on that same separator, so the echo round-trips byte-for-byte regardless of what the
 control ID contains (a `|`, a `^`, an escape, anything). When an inbound declares a field separator
 that collides with the HL7 default encoding characters (`MSH-1` = `^`/`~`/`\`/`&`) and offers no
@@ -384,8 +388,8 @@ could truncate MSA-2.
 
 ### Pass a `Buffer`. The guarantee is a byte guarantee.
 
-The verbatim *proof* (the byte-for-byte comparison, and `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` when it
-fails) holds for a **`Buffer`** inbound, and *only* for a `Buffer`. A `Buffer` is the wire bytes, so
+The verbatim _proof_ (the byte-for-byte comparison, and `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` when it
+fails) holds for a **`Buffer`** inbound, and _only_ for a `Buffer`. A `Buffer` is the wire bytes, so
 `buildMllpAck` can compare what it emitted against what actually arrived.
 
 Hand it a `string` (or an already-parsed `Hl7Message`) and the wire bytes are **already gone**. It
@@ -400,9 +404,9 @@ buildAckAA(wire.toString("latin1"));     // MSA-2 = A <0xC2 0x8B> B    ⚠️ di
 ```
 
 The second is the natural call for anyone already holding a decoded payload, and it still emits a
-*different* control ID the sender cannot correlate. The encoding is unchanged, because from decoded
+_different_ control ID the sender cannot correlate. The encoding is unchanged, because from decoded
 text there is no way to know the original bytes to encode back to. What changed is the **silence**:
-because a text inbound's echo cannot be *verified*, `buildMllpAck` no longer passes it off as clean.
+because a text inbound's echo cannot be _verified_, `buildMllpAck` no longer passes it off as clean.
 Whenever the ACK's MSA-2 control ID holds a non-ASCII **code unit** on a `string`/`Hl7Message`
 inbound (the range where the codec is load-bearing) it emits **`MLLP_ACK_CONTROL_ID_UNVERIFIABLE`**:
 an explicit "this echo cannot be verified; pass the raw `Buffer` for the byte-level guarantee". An
@@ -410,7 +414,7 @@ all-ASCII control ID round-trips identically under every codec, so the common ca
 
 The check reads the control ID's **pre-encoding code units**, not the emitted bytes, on purpose. A
 lossy `{ encoding: "ascii" }` override truncates a code unit to its low 8 bits, so a value above
-`0xFF` (say `U+0153`, what a windows-1252 decode yields for a `0x9C` wire byte) is masked *into* the
+`0xFF` (say `U+0153`, what a windows-1252 decode yields for a `0x9C` wire byte) is masked _into_ the
 ASCII byte range (`0x53`, `'S'`). An emitted-byte proxy would fall silent on exactly that corruption;
 the code units carry the high bit whatever the codec did to the byte,
 so the strongly-discouraged text-plus-override path is flagged for the same reason the default is.
@@ -424,13 +428,13 @@ if (ack.warnings.some((w) => w.code === MLLP_ACK_CONTROL_ID_UNVERIFIABLE)) {
 }
 ```
 
-It is a *cannot-verify* signal, not a *known-broken* one: from a decoded string the two are
+It is a _cannot-verify_ signal, not a _known-broken_ one: from a decoded string the two are
 genuinely indistinguishable (a caller who decoded with `latin1` and re-encodes with `latin1` is
 byte-safe; one who decoded with `latin1` and lets the `utf8` default re-encode is not, and the
 string looks identical either way). This is why the package is `Buffer`-first on every public
 surface. **Pass the raw payload.**
 
-### Only a *text* codec is accepted, on every input shape
+### Only a _text_ codec is accepted, on every input shape
 
 The `encoding` override serializes the ACK back to bytes, so it must be a codec that writes
 characters as a byte stream a peer can read as HL7: `"utf8"`, `"ascii"`, `"latin1"`, or `"binary"`.
@@ -445,16 +449,16 @@ Either way the emitted frame is wholesale garbage the receiver cannot parse, so 
 
 ```ts
 buildAckAA(decodedText, { encoding: "base64" }); // ❌ throws TypeError, not a serializable ACK codec
-buildAckAA(wireBuffer, { encoding: "base64" });  // ❌ throws too, same reason, on a Buffer
-buildAckAA(wireBuffer, { encoding: "latin1" });  // ✅ charset codec: the byte-level escape hatch
+buildAckAA(wireBuffer, { encoding: "base64" }); // ❌ throws too, same reason, on a Buffer
+buildAckAA(wireBuffer, { encoding: "latin1" }); // ✅ charset codec: the byte-level escape hatch
 ```
 
 This is a caller mistake, caught loudly and immediately. It applies to a **`Buffer` inbound too**:
-a non-text codec there garbles the *inbound* decode so it never
+a non-text codec there garbles the _inbound_ decode so it never
 parses as `MSH` (routing to the unparseable fallback whose MSA-2 is empty, so the
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check never runs) and then serializes that fallback ACK to
 garbage bytes that intermittently contain a framing delimiter and trip the strict frame encoder
-(`MllpFramingError`, ~3–4 % of calls, identically on Node 22 and 24). It was never the "loud AE" it
+(`MllpFramingError`, ~3-4 % of calls, identically on Node 22 and 24). It was never the "loud AE" it
 was once documented to be. The legitimate byte-level escape hatch is unchanged: a **charset** codec
 on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that is still caught loudly by
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`) is exactly what serves a receiving system that demands a specific
@@ -467,7 +471,7 @@ An HL7 batch (§2.10.3) is `[FHS] { [BHS] { MSH … } [BTS] } [FTS]`: a **sequen
 envelope yields the warned, non-positive fallback (`AE` + `MLLP_ACK_INBOUND_UNPARSEABLE`, no
 correlation id).
 
-That is deliberate and it is the safe answer. Acknowledging the batch's *first* message with a
+That is deliberate and it is the safe answer. Acknowledging the batch's _first_ message with a
 positive `AA` would tell the sender the whole batch was accepted, while messages 2..N were never
 looked at. They would be lost outright, or time out and resend as duplicates. A positive ACK for a
 message nobody read is precisely what the [commit contract](#the-commit-contract) exists to make
@@ -482,7 +486,7 @@ impossible. Split the batch and ACK each message yourself, or handle it with `au
   positive disposition the sender cannot match. Both builders do this (`buildRawAck` on the raw
   path; `buildMllpAck` on an unparseable inbound).
 - **MSA-2 is byte-verbatim for a plain control ID under the HL7 default delimiters** (including a
-  high-bit one) and, **on a `Buffer` inbound**, *loud* rather than silently wrong in the five cases
+  high-bit one) and, **on a `Buffer` inbound**, _loud_ rather than silently wrong in the five cases
   where it cannot be (above). It
   is the parser's canonical re-serialization, not a byte copy; `buildRawAck` is the byte copy.
 - **It does not ACK a batch.** An `FHS`/`BHS` envelope is refused with a warned, non-positive `AE`.
@@ -491,7 +495,7 @@ impossible. Split the batch and ACK each message yourself, or handle it with `au
   [Conformance statement](./conformance.md#batch-and-concatenated-frames-route-by-route).
 - **It builds one ACK, it does not orchestrate an exchange.** The helpers build any of the six codes,
   and the server picks the right half of Table 0008 for the message it is answering
-  ([above](#the-auto-ack-answers-in-the-half-of-table-0008-the-sender-asked-for)). *Sending* a later
+  ([above](#the-auto-ack-answers-in-the-half-of-table-0008-the-sender-asked-for)). _Sending_ a later
   application acknowledgement of your own, as the responding system in an enhanced-mode exchange, is
   still your orchestration: this package's server emits exactly one ACK per inbound message. The
   client side of that exchange is built, and correlates both halves; see

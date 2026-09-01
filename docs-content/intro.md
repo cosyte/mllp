@@ -1,6 +1,9 @@
 ---
 id: intro
 title: Getting started
+description: >-
+  A production-grade MLLP client and server for Node.js, with canonical framing, ACK correlation,
+  reconnect, backpressure and TLS, and no runtime dependencies.
 sidebar_position: 1
 ---
 
@@ -102,7 +105,7 @@ whitespace, and each tolerated deviation surfaces as a warning with a **stable c
 rather than failing the frame (Postel's Law). Codes such as `MLLP_MISSING_LEADING_VT` and
 `MLLP_TRAILING_BYTES` are part of the public API.
 
-Note that **tolerance is opt-in**: a bare `FrameReader` is *strict* by default, while `MllpServer`
+Note that **tolerance is opt-in**: a bare `FrameReader` is _strict_ by default, while `MllpServer`
 ships tolerant defaults (`allowFsOnly`, `allowLfAfterFs`, `allowLeadingWhitespace`) because it is the
 side that must accept what real senders emit. Accumulators are bounded: frames past
 `maxFrameSizeBytes` (16 MB default) throw `MLLP_FRAME_TOO_LARGE` instead of growing unbounded.
@@ -123,7 +126,9 @@ const conn = new Connection({ transport: clientSide });
 
 The in-memory transport is a first-class deliverable from the `@cosyte/mllp/testing` subpath.
 Pair two ends with `InMemoryTransport.pair()` and hand one to a `Connection` (deterministic, no
-ports, no certs) and reserve real sockets for integration smoke tests.
+ports, no certs) and reserve real sockets for integration smoke tests. Chunked reads, backpressure
+and an abrupt disconnect are all one call each, and `runDifferential` ships alongside it to check a
+real engine before go-live: see [Testing & verification](./testing.md).
 
 ## ACK from an HL7 message
 
@@ -164,7 +169,9 @@ than the inbound's original bytes, and there is no enhanced-mode sequencing) are
 - **[Connection, reconnect & backpressure](./reliability.md)**: the 6-state machine, backoff,
   dead-peer detection, and load shedding.
 - **[MLLPS / TLS](./tls.md)**: mutual TLS, the ATNA TLS 1.2 floor, bind safety.
-- **[Known limitations & non-goals](./limitations.md)**: what *not* to trust this package to do.
+- **[Testing & verification](./testing.md)**: the socket-free in-memory transport, and the
+  differential harness for checking a real engine before go-live.
+- **[Known limitations & non-goals](./limitations.md)**: what _not_ to trust this package to do.
   Read it before you depend on it.
 - **[Conformance statement](./conformance.md)**: the single document to hand a conformance reviewer,
   declaring the framing tolerances, the per-role acknowledgement verdicts and the IHE options in
