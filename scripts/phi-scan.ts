@@ -85,12 +85,38 @@
  *
  * Modes:
  *   --staged                 - scan only files staged in `git diff --cached`
- *   --allow-fixture <path>   - bypass one path; rejected unless logged in
- *                              phi-scan-overrides.md
+ *   --allow-fixture <path>   - withdraw one path from the read set; rejected
+ *                              unless logged in phi-scan-overrides.md, and the
+ *                              run REFUSES (exit 2) if the withdrawal actually
+ *                              took an enumerated target away (see below)
  *   <path> [<path>...]       - scan specific paths
  *   (no args)                - scan all in-scope working-tree files
  *
  * Exit codes: 0 (clean), 1 (hits found), 2 (invocation error).
+ *
+ * ---------------------------------------------------------------------------
+ * ▶ A TARGET WITHDRAWN BY `--allow-fixture` IS A TARGET THIS RUN NEVER READ, SO
+ * THE RUN REFUSES (exit 2) INSTEAD OF REPORTING ON WHAT WAS LEFT.
+ *
+ * The flag used to SUBTRACT a target and let the run carry on, so the same argv
+ * over a corpus whose only violator was withdrawn printed "OK, no hits" at exit
+ * 0. A scan that did not open a file has no clean verdict about it, which is the
+ * same rule every other refusal in this file already applies to a file it could
+ * not read; the bypass was the one route that reached a clean report by NOT
+ * reading one.
+ *
+ * The refusal comes AFTER the hits from the targets the run DID read are
+ * printed, so a real finding is never swallowed by it, and it is 2 and never 1:
+ * 1 means "hits found", and an incomplete sweep makes no such claim.
+ *
+ * WHAT THE FLAG IS FOR NOW: acknowledging that a named path is deliberately
+ * being left unread, with the override log as the reviewed record of it. It is
+ * not a way to get a green run. To keep a synthetic fixture PASSING, declare its
+ * identifiers in `scripts/phi-allow-list.txt`, which leaves the file scanned.
+ *
+ * A run that names no `--allow-fixture`, or one whose `--allow-fixture` matched
+ * no enumerated target, is untouched by any of this.
+ * ---------------------------------------------------------------------------
  *
  * ---------------------------------------------------------------------------
  * AN IN-SCOPE ENTRY THAT IS NOT A REGULAR FILE REFUSES THE SCAN (exit 2). It is
@@ -612,8 +638,10 @@ function parseArgs(argv: string[]): Args {
 
   // An `--allow-fixture` path is a *subtractive* acknowledgement on a broader
   // scan, never a scan target on its own, so it also seeds the positional path
-  // set. That makes `--allow-fixture X` mean "scan X, but allow it" (proving the
-  // override gate actually subtracts a scanned target) instead of a silent no-op.
+  // set. That is what makes `--allow-fixture X` ENUMERATE X (proving the override
+  // gate subtracts a target this run would otherwise have read) instead of being
+  // a silent no-op. What the subtraction then costs the run is decided at the end
+  // of `main`: an enumerated target that goes unread refuses the run.
   const scanPaths = paths.length > 0 ? paths : [...allowFixtures];
 
   let mode: Args["mode"];
@@ -2554,6 +2582,12 @@ function main(): number {
     throw err;
   }
 
+  // WHAT THE BYPASS TOOK OUT OF THIS RUN, KEPT RATHER THAN DISCARDED. A path is
+  // WITHDRAWN when this run ENUMERATED it and `--allow-fixture` then removed it
+  // from the read set, which is a different thing from an `--allow-fixture` that
+  // matched no target at all: the second withdraws nothing and is silent here.
+  // The list is answered at the end of `main`; see the refusal there for why.
+  const withdrawn = targets.filter((t) => allowed.has(t.path)).map((t) => t.path);
   targets = targets.filter((t) => !allowed.has(t.path));
 
   const hits: Hit[] = [];
@@ -2686,6 +2720,51 @@ function main(): number {
       );
       return 2;
     }
+  }
+
+  // ▶ A WITHDRAWN TARGET IS AN UNREAD TARGET, AND A SCAN THAT DID NOT OPEN A
+  // FILE HAS NO VERDICT ABOUT IT. `--allow-fixture` used to SUBTRACT a target
+  // and then let the run report on what was left, so the same argv over a corpus
+  // whose only violator was withdrawn printed `OK, no hits` at exit 0. That is
+  // the shape every refusal above already refuses: the sweep was incomplete, and
+  // an incomplete sweep is not a clean one whatever it found on the way.
+  //
+  // WHAT THE FLAG NOW MEANS, STATED SO NOBODY READS THE OLD MEANING INTO IT. It
+  // is an acknowledgement that a named path is being left unread, not a licence
+  // to call the rest clean. Non-zero still blocks the commit, so the flag is no
+  // longer a route to a green run; the way to make a fixture pass is
+  // `scripts/phi-allow-list.txt`, which declares its identifiers synthetic and
+  // leaves the file SCANNED.
+  //
+  // IT REPORTS BEFORE IT REFUSES, the same rule the index and per-root refusals
+  // above carry: hits found in the targets this run DID read are real findings
+  // and printing the refusal alone would make the output strictly worse than
+  // reporting them. The exit code is 2 either way, never 1: 1 means "hits found"
+  // and this run is not making that claim.
+  //
+  // SCOPED TO THE WITHDRAWAL, AND ONLY TO IT. A run that names no
+  // `--allow-fixture`, or whose `--allow-fixture` matched no enumerated target,
+  // reaches this with an empty list and behaves exactly as before: the tolerated
+  // mid-sweep vanish above is still tolerated, the per-root observed-nothing
+  // refusal still owns its own case, `--staged` enumerates what it always did,
+  // and the index corpus is read on the same terms.
+  //
+  // DISCLOSED, NOT CLOSED: the list is built from the WALK/argv enumeration
+  // only. A path the index corpus alone would have carried, withdrawn by the
+  // same flag, is filtered out at that route without landing here, so a
+  // withdrawal that touches nothing under a walk root and nothing on argv is
+  // still silent. Closing it means making that route's filter answerable too,
+  // which is a change to the index corpus and not to this rule.
+  if (withdrawn.length > 0) {
+    if (hits.length > 0) report(hits);
+    process.stderr.write(
+      `[phi-scan] refusing: ${String(withdrawn.length)} target(s) this run enumerated were ` +
+        `withdrawn by --allow-fixture and never read: ${withdrawn.join(", ")}. The scan did not ` +
+        `open them, so it has no clean verdict about them. Declare the synthetic identifiers in ` +
+        `scripts/phi-allow-list.txt to keep the file scanned, or accept that a run carrying this ` +
+        `flag reports an incomplete sweep.\n`,
+    );
+    return 2;
   }
 
   report(hits);
