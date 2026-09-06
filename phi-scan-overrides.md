@@ -500,6 +500,39 @@ the mutants that kill each control and the full reasoning live at
 index. It is not a hook, it does not stop a `git add`, and it must not be described as preventing a
 leak.
 
+## What an `--allow-fixture` withdrawal may do
+
+**Nothing that ends in a clean verdict. It refuses the run (exit 2).** A scan that did not open a
+file has no clean verdict about it, and this flag was the one route that reached a clean report by
+not opening one: it subtracted a target and let the run report on what was left, so the same argv
+over a corpus whose ONLY violator was withdrawn printed `OK, no hits` at exit 0. The reasoning, the
+scope and the residual live at
+`documentation/agent-notes.md#phi-scan-allow-fixture-withdrawal-a-target-the-bypass-never-read`.
+
+**The contract, stated once here so a reader does not have to infer it from the code:**
+
+- **A path is WITHDRAWN when this run ENUMERATED it and the bypass then removed it from the read
+  set.** `--allow-fixture X` on its own enumerates X (the flag seeds the positional path set), so it
+  always withdraws something; combined with an explicit path list that does not contain X it
+  withdraws nothing and the run's ordinary verdict stands.
+- **The refusal comes AFTER the hits from the targets the run DID read are printed**, the same rule
+  the index-corpus and per-root refusals carry. A refusal must not swallow a real finding.
+- **It exits 2, never 1.** 1 is reserved for "hits found", and an incomplete sweep makes no such
+  claim.
+- **Everything else is untouched.** A run with no `--allow-fixture` behaves exactly as before: the
+  tolerated mid-sweep vanish is still tolerated, the per-walk-root observed-nothing refusal still
+  owns its own case, `--staged` enumerates what it always did, and the index corpus is read on the
+  same terms.
+- **The flag no longer means "allow this file to pass".** It means "acknowledge that this path is
+  deliberately going unread", and the `### <path>` entry below is the reviewed record of that
+  acknowledgement. **To keep a synthetic fixture PASSING, declare its identifiers in
+  `scripts/phi-allow-list.txt`**, which leaves the file scanned.
+
+**Residual, stated rather than hidden:** the withdrawal is answered on the walk/argv enumeration
+only. The index corpus filters the same allowed set out on its own route, so a withdrawal reaching
+only a path the index alone would have carried is still silent. Closing it is a change to the index
+corpus, not to this rule.
+
 ## Format
 
 Each entry is a markdown subsection:

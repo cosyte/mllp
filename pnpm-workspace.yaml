@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------------
+# INSTALL HARDENING. The two settings at the bottom of this file are the only
+# defence this repository has against a compromised release during the window
+# between its publication and its removal from the registry. Neither is a pnpm
+# default (`minimumReleaseAge` is 0 before v11, `trustPolicy` is off), so both
+# lines are load-bearing and neither restates something pnpm already does.
+#
+# ▶ NEITHER KEY IS IN FORCE AT THE pnpm THIS REPO PINS, AND THAT IS WRITTEN DOWN
+# RATHER THAN LEFT TO BE INFERRED FROM A GREEN INSTALL. `package.json` pins
+# `packageManager: pnpm@10.0.0`. pnpm added `minimumReleaseAge` in 10.16.0 and
+# `trustPolicy` in 10.21.0, and a pnpm older than the release that added a
+# setting IGNORES the key outright rather than rejecting it. So this file
+# declares the floor and defends nothing here today: each setting takes force
+# the moment the pin is raised past its own release, one at a time. Read a
+# passing install as evidence about the PIN, never as evidence that either
+# setting was applied.
+#
+# Raising `packageManager` is its own decision with its own blast radius, since
+# it is what CI, the pre-commit hook and every developer box run. The two
+# releases these keys wait on are therefore RECORDED here instead of being
+# taken, and "an ignored key is a dead key, delete the file" is the one wrong
+# reading of that.
+# ---------------------------------------------------------------------------
+
+# ▶ `packages` IS HERE BECAUSE pnpm@10.0.0 REFUSES A SETTINGS FILE WITHOUT IT,
+# NOT BECAUSE THIS REPO IS A WORKSPACE. Measured at the pinned version: with the
+# key absent, `pnpm install --frozen-lockfile` exits 1 with `ERROR  packages
+# field missing or empty`, because a `pnpm-workspace.yaml` was still only a
+# WORKSPACE manifest there. It became the home for settings later, in the same
+# 10.16.0 that added the first key below.
+#
+# `.` is the single package, at the repository root, which is what this
+# repository actually contains: it declares no member this tree does not have,
+# and it leaves `pnpm-lock.yaml` byte-identical (measured: install with and
+# without this file produces the same lockfile, `importers:` included). Do not
+# read it as an invitation to add a second entry; a real workspace here would be
+# a package-layout decision, not a settings-file edit.
+packages:
+  - "."
+
+# 1440 minutes = 24 hours. pnpm's own rationale for the number: "Since malware is
+# usually detected quickly, delaying updates by 24 hours will most likely prevent
+# you from installing a bad version" (https://pnpm.io/supply-chain-security).
+minimumReleaseAge: 1440
+
+# Fail the install when a package's trust evidence is weaker than that of an
+# earlier-published version of the same package (a trusted publisher that
+# becomes provenance-only, or provenance that becomes nothing at all).
+#
+# No exemption list is carried. An empty list is a place for an entry to appear
+# unremarked, so the key is ABSENT rather than empty, and the first exemption
+# this repo ever needs arrives with a `# reason:` line above it.
+trustPolicy: no-downgrade

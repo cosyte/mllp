@@ -570,7 +570,41 @@ describe("phi-scan: structured scan is not silently bypassed (refuter regression
 // --allow-fixture override gate
 // ---------------------------------------------------------------------------
 
+/**
+ * TWO GATES SIT BEHIND ONE FLAG, AND BOTH EXIT 2, SO EVERY CASE HERE PINS WHICH
+ * ONE ANSWERED. The first is the override LOG: an `--allow-fixture` with no
+ * `### <path>` entry is rejected before anything is opened. The second is the
+ * COMPLETENESS rule: a bypass that IS logged is admitted, the run reads the rest
+ * of its targets, reports what it found, and then refuses because a target it
+ * enumerated went unread. Asserting only the code would let either gate stand in
+ * for the other, and the second gate exists precisely because the first one
+ * passing used to mean the run reported clean.
+ *
+ * The distinguishing string is `phi-scan-overrides.md`, which only the log
+ * rejection prints, and `never read`, which only the completeness refusal does.
+ */
 describe("phi-scan: --allow-fixture override gate", () => {
+  /** Append one override-log entry, run `body`, and always put the file back. */
+  function withOverrideEntries(rels: string[], body: () => void): void {
+    const original = readFileSync(OVERRIDES_PATH, "utf8");
+    try {
+      for (const rel of rels) {
+        appendFileSync(
+          OVERRIDES_PATH,
+          `\n### ${rel}\n\n- **Date:** 2026-07-18\n- **Reason:** unit test\n- **Approved by:** vitest\n- **Expires:** permanent\n`,
+        );
+      }
+      body();
+    } finally {
+      writeFileSync(OVERRIDES_PATH, original);
+    }
+  }
+
+  /** The repo-relative, forward-slash spelling the scanner reports a path under. */
+  function rel(path: string): string {
+    return relative(REPO_ROOT, path).split(sep).join("/");
+  }
+
   it("rejects --allow-fixture without an override-log entry (exit 2)", () => {
     const r = scan("gated.hl7", msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M"));
     expect(r.code).toBe(1); // sanity: it is a violator
@@ -578,25 +612,90 @@ describe("phi-scan: --allow-fixture override gate", () => {
     const r2 = runScanner(["--allow-fixture", path]);
     expect(r2.code).toBe(2);
     expect(r2.stderr).toMatch(/phi-scan-overrides\.md/);
+    // The LOG gate answered, so nothing was opened and the completeness rule was
+    // never reached. Without this the case would pass on the other gate's exit.
+    expect(r2.stderr).not.toMatch(/never read/);
   });
 
-  it("honors --allow-fixture WITH an override-log entry (exit 0)", () => {
+  it("admits a LOGGED --allow-fixture and then refuses the run as incomplete (exit 2)", () => {
+    // A scan that did not open a file has no clean verdict about it. The bypass
+    // is honored (the log gate passes), the target is withdrawn, and the run
+    // refuses rather than reporting on what was left.
     const path = join(dir, "override-me.hl7");
     writeFileSync(path, msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M"));
-    const rel = relative(REPO_ROOT, path).split(sep).join("/");
     expect(runScanner([path]).code).toBe(1);
 
-    const original = readFileSync(OVERRIDES_PATH, "utf8");
-    try {
-      appendFileSync(
-        OVERRIDES_PATH,
-        `\n### ${rel}\n\n- **Date:** 2026-07-18\n- **Reason:** unit test\n- **Approved by:** vitest\n- **Expires:** permanent\n`,
-      );
+    withOverrideEntries([rel(path)], () => {
       const r = runScanner(["--allow-fixture", path]);
+      expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+      expect(r.stderr).toMatch(/never read/);
+      expect(r.stderr).toContain(rel(path));
+      // NOT the log gate: that one prints this filename and opens nothing.
+      expect(r.stderr).not.toMatch(/phi-scan-overrides\.md/);
+      // 2, never 1. 1 means "hits found", and this run makes no such claim.
+      expect(r.code).not.toBe(1);
+    });
+  });
+
+  it("reports the hit in the target it DID read before refusing (exit 2)", () => {
+    // The case the completeness rule is really about: two targets named on argv,
+    // one of them withdrawn. The withdrawal must not swallow a real finding in
+    // the other, and the run must not settle for the hits code either, because
+    // the same argv over a corpus whose ONLY violator was withdrawn would then
+    // report clean.
+    const violator = join(dir, "withdraw-violator.hl7");
+    const decoy = join(dir, "withdraw-decoy.hl7");
+    writeFileSync(violator, msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M"));
+    writeFileSync(decoy, msg(MSH, "PID|1||MRN12345^^^HOSP^MR||Doe^John^Q||19800115|M"));
+
+    withOverrideEntries([rel(decoy)], () => {
+      const r = runScanner([violator, decoy, "--allow-fixture", decoy]);
+      expect(r.code, `stderr: ${r.stderr}`).toBe(2);
+      // The finding it DID make, printed before the refusal.
+      expect(r.stderr).toMatch(/HIT: /);
+      expect(r.stderr).toContain(rel(violator));
+      expect(r.stderr).toContain("Anderson");
+      // And the refusal, naming the target that went unread.
+      expect(r.stderr).toMatch(/never read/);
+      expect(r.stderr).toContain(rel(decoy));
+    });
+  });
+
+  it("leaves the SAME corpus unchanged when no target is withdrawn", () => {
+    // The other direction, and the reason the rule is scoped to the withdrawal
+    // rather than to the flag's presence: over exactly the corpus above, with no
+    // `--allow-fixture`, the run behaves as it always has. A refusal that fired
+    // here would be a false red on every ordinary invocation.
+    const violator = join(dir, "withdraw-violator.hl7");
+    const decoy = join(dir, "withdraw-decoy.hl7");
+    writeFileSync(violator, msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19770707|M"));
+    writeFileSync(decoy, msg(MSH, "PID|1||MRN12345^^^HOSP^MR||Doe^John^Q||19800115|M"));
+
+    const both = runScanner([violator, decoy]);
+    expect(both.code, `stderr: ${both.stderr}`).toBe(1); // hits found, not a refusal
+    expect(both.stderr).not.toMatch(/never read/);
+    expect(both.stderr).toContain(rel(violator));
+
+    const cleanOnly = runScanner([decoy]);
+    expect(cleanOnly.code, `stderr: ${cleanOnly.stderr}`).toBe(0);
+    expect(cleanOnly.stdout).toContain("OK, no hits");
+  });
+
+  it("stays silent when an --allow-fixture withdraws no enumerated target", () => {
+    // `--allow-fixture` seeds the positional set, so the flag alone always
+    // withdraws something. Combined with an explicit path it does NOT have to:
+    // here the bypass names a logged path that is not among the targets, so
+    // nothing was taken out of the run and the ordinary verdict stands.
+    const target = join(dir, "unwithdrawn-target.hl7");
+    const elsewhere = join(dir, "unwithdrawn-other.hl7");
+    writeFileSync(target, msg(MSH, "PID|1||MRN12345^^^HOSP^MR||Doe^John^Q||19800115|M"));
+    writeFileSync(elsewhere, msg(MSH, "PID|1||MRN12345^^^HOSP^MR||Doe^John^Q||19800115|M"));
+
+    withOverrideEntries([rel(elsewhere)], () => {
+      const r = runScanner([target, "--allow-fixture", elsewhere]);
       expect(r.code, `stderr: ${r.stderr}`).toBe(0);
-    } finally {
-      writeFileSync(OVERRIDES_PATH, original);
-    }
+      expect(r.stderr).not.toMatch(/never read/);
+    });
   });
 });
 

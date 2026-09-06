@@ -476,6 +476,57 @@ made. It no longer is (the index is read BEFORE the walk), so an unconditional s
 phase early, removes the decoy before the walk can enumerate it, and every one of those cases
 quietly starts proving something else while still passing on the exit code alone.
 
+## PHI-SCAN-ALLOW-FIXTURE-WITHDRAWAL, a target the bypass never read
+
+**A scan that did not open a file has no clean verdict about it, and `--allow-fixture` was the one
+route that reached a clean report by not opening one.** The flag subtracted a target from the read
+set and the run then reported on whatever was left, so the marker case is not the fixture it was
+invented for: it is the SAME argv over a corpus whose ONLY violator has been withdrawn, which
+printed `OK, no hits` and exited 0. Every other incompleteness in this scanner already refuses (a
+tracked file that cannot be read, a non-regular entry, an unmerged path, an emptied walk root, an
+empty index); the bypass was the hole in that set, and it was the one a caller could open on
+purpose.
+
+**The rule, and its exact scope.** A path is WITHDRAWN when the run ENUMERATED it (the walk, argv,
+`--staged`, or the seeding that makes `--allow-fixture X` mean "enumerate X") and the bypass then
+removed it from the read set. If anything was withdrawn, `main` REFUSES with exit **2**. Nothing
+else changed: a run that names no `--allow-fixture` behaves exactly as it did, and so does one whose
+`--allow-fixture` matched no enumerated target, which is a real state (the flag combined with an
+explicit path list that does not contain it) and is pinned in both directions in
+`test/scripts/phi-scan.test.ts`.
+
+**▶ IT REPORTS BEFORE IT REFUSES, AND IT IS 2 AND NEVER 1.** Hits found in the targets the run DID
+read are printed first, the same rule the index-corpus and per-root refusals already carry: a
+refusal that swallowed a real finding would make this route's output strictly worse than the
+behaviour it replaces. The code is 2 because 1 means "hits found" and an incomplete sweep makes no
+such claim, which is also what makes the change observable from outside: exit 1 and exit 2 are the
+two answers a caller branches on, and the old behaviour returned the hits code over a corpus it had
+not finished reading.
+
+**▶ THE FLAG'S MEANING CHANGED, AND THE OLD ONE MUST NOT BE READ BACK IN.** It is no longer "allow
+this file to pass"; it is "acknowledge that this path is deliberately going unread", with the
+`### <path>` entry in `phi-scan-overrides.md` as the reviewed record of the acknowledgement. There
+is therefore NO argv that makes a run carrying it exit 0 over a withdrawn target. **The way to keep
+a synthetic fixture passing is `scripts/phi-allow-list.txt`**, which declares its identifiers fake
+and leaves the file SCANNED. Nothing in this repo passes `--allow-fixture` today (the override log's
+`## Entries` section is empty), so no committed caller was broken by the change; a future one is
+choosing a refusal, deliberately.
+
+**Two gates now sit behind one flag and both exit 2, so a test that asserts only the code proves
+nothing.** The override LOG rejects an unlogged bypass before anything is opened and names
+`phi-scan-overrides.md`; the COMPLETENESS rule admits a logged one, reads the rest, reports, and
+refuses naming the unread path. The cases in `test/scripts/phi-scan.test.ts` pin which gate answered
+by its own distinguishing string, in both directions. This matters beyond tidiness: the log gate
+passing is precisely the state in which the old behaviour reported clean, so a case that cannot tell
+them apart would go green on the defect.
+
+**Residual, disclosed rather than closed.** The withdrawal list is built from the walk/argv
+enumeration only. The index corpus filters the same allowed set out on its own route, so a
+withdrawal that touches NOTHING under a walk root and nothing on argv, reaching only a path the
+index alone would have carried, is still silent. Closing it means making that route's filter
+answerable too, which is a change to the index corpus rather than to this rule, and the index
+corpus's own contract is deliberately held still here.
+
 ## PHI-SCAN-STRUCTURED-SCAN-SOURCES, the shipped fixture corpus under `src/`
 
 **The standing `src/` decision is unchanged, and one path opts back IN.** `src/` gets the
