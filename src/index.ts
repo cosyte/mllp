@@ -28,7 +28,7 @@
  * console.log(VERSION);
  * ```
  */
-export const VERSION: string = "0.0.11";
+export const VERSION: string = "0.1.0";
 
 // Phase 2: framing codec public surface
 export type { WarningCode, MllpWarning } from "./framing/index.js";
