@@ -280,12 +280,19 @@ What to know:
   parameter block, so it is refused here rather than discarded quietly later. Everything the library
   itself tolerates is tolerated: CRLF endings, a missing final newline, text before or after the
   block, and a body wrapped at any width or not at all.
+- **The body has to be the whole parameter structure, and only it.** Behind armour the library
+  reads, what it then parses is a prime, a generator, and at most one optional private-value length
+  behind them. A block carrying anything else, an extra field of any kind or a private-value length
+  wider than the 32 bits the library reads it at, is discarded just as silently as damaged armour
+  is, so it is refused here too. A parameter file from a related standard has exactly that extra
+  field, and armouring one under this label is the wrong file rather than a typo: take
+  `openssl dhparam` output and the case never arises.
 - **What is checked, and what is not.** The block is read before anything binds: it must be PEM,
-  must be a `DH PARAMETERS` block, must decode to the prime-and-generator structure the library
-  reads, and the library itself must accept the group (it refuses one below 1024 bits, and one
-  below its configured security level). The group itself is **not** checked for soundness: neither
-  that the prime is prime nor that the generator generates, because that test costs seconds on a
-  3072-bit group and minutes on a large one, and `listen()` is not the place to spend it. A
+  must be a `DH PARAMETERS` block, must decode to the parameter structure the library reads and
+  nothing besides, and the library itself must accept the group (it refuses one below 1024 bits,
+  and one below its configured security level). The group itself is **not** checked for soundness:
+  neither that the prime is prime nor that the generator generates, because that test costs seconds
+  on a 3072-bit group and minutes on a large one, and `listen()` is not the place to spend it. A
   structurally sound block whose group is unsound, whether through a composite prime or a generator
   the library will not take, is therefore accepted here and fails at handshake time. Generate
   parameters with a tool that produces valid ones (`openssl dhparam`) rather than relying on this
