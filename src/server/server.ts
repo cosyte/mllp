@@ -535,11 +535,13 @@ export class MllpServer extends EventEmitter {
   /** Count of `'tlsClientError'` events since listen(). */
   private _tlsClientErrorsTotal = 0;
   /**
-   * A TLS cipher-suite configuration this server will not serve on. Set at
-   * construction, and the ONLY thing `listen()` consults before it binds:
+   * A TLS configuration this server will not serve on: an offered-suite list
+   * it cannot honour, or ephemeral Diffie-Hellman parameters it cannot use. Set
+   * at construction, and the ONLY thing `listen()` consults before it binds:
    * such a server never binds, never accepts, and never negotiates anything,
-   * which is what makes "no fallback to the default list" a structural
-   * property rather than a promise. `null` when the configuration is fine.
+   * which is what makes "no fallback to the default list, and none to a server
+   * with no Diffie-Hellman parameters" a structural property rather than a
+   * promise. `null` when the configuration is fine.
    */
   private readonly _tlsConfigError: MllpTlsConfigurationError | null = null;
 
@@ -666,11 +668,13 @@ export class MllpServer extends EventEmitter {
    * binds raced each other's post-bind safety checks). Call `close()` before
    * re-listening; sequential `listen()` → `close()` → `listen()` is fine.
    *
-   * **A refused TLS cipher-suite configuration** (the runtime rejects the list,
-   * or `tls.atnaTransportSecurity` and `tls.ciphers` both declare one) rejects
-   * every `listen()` on this server with a typed `MllpTlsConfigurationError`,
-   * checked before the bind. Such a server never listens and never negotiates
-   * on any other list; construct a new one with a configuration that resolves.
+   * **A refused TLS configuration** (the runtime rejects the offered suite
+   * list, `tls.atnaTransportSecurity` and `tls.ciphers` both declare one, or
+   * `tls.dhParameters` are not usable) rejects every `listen()` on this server
+   * with a typed `MllpTlsConfigurationError`, checked before the bind. Such a
+   * server never listens, never negotiates on any other list and never runs
+   * without the Diffie-Hellman parameters it was given; construct a new one
+   * with a configuration that resolves.
    *
    * **`close()` during an in-flight `listen()`** rejects that `listen()` with
    * a typed `MllpConnectionError` (never a hang) and clears the single-flight
@@ -707,11 +711,12 @@ export class MllpServer extends EventEmitter {
       return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
-    // A TLS cipher-suite configuration that cannot be honoured is refused
-    // BEFORE the bind, and before the single-flight guard is taken: nothing is
-    // listening, nothing was accepted, and no other cipher list was ever
-    // substituted. It is checked on every call, so a refused server stays
-    // refused rather than becoming listenable on a retry.
+    // A TLS configuration that cannot be honoured is refused BEFORE the bind,
+    // and before the single-flight guard is taken: nothing is listening,
+    // nothing was accepted, no other cipher list was ever substituted, and no
+    // server ran without the Diffie-Hellman parameters it was handed. It is
+    // checked on every call, so a refused server stays refused rather than
+    // becoming listenable on a retry.
     if (this._tlsConfigError !== null) {
       return Promise.reject(this._tlsConfigError);
     }

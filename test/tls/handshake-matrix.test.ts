@@ -21,6 +21,7 @@ import {
   MLLP_TLS_CIPHER_OPTION_CONFLICT,
   tlsConfigurationMessage,
 } from "../../src/transport/error.js";
+import { resolveTlsCipherPolicy } from "../../src/transport/tls-cipher-policy.js";
 import {
   buildServerCertFixture,
   buildUntrustedCertFixture,
@@ -528,6 +529,48 @@ describe("ATNA transport-security option", { timeout: 60_000 }, () => {
     return seen;
   }
 
+  /**
+   * One raw TLS 1.2 handshake against `port`, restricted to `ciphers`, reporting
+   * the suite it agreed on and the ephemeral key exchange behind it. The key
+   * information is what distinguishes "a DHE suite was negotiated" from "a DHE
+   * suite was negotiated on a real Diffie-Hellman group".
+   */
+  async function rawHandshake(
+    port: number,
+    ca: string,
+    ciphers: string,
+  ): Promise<{ suite: string; ephemeral: { type: string; size: number } }> {
+    return new Promise((resolve, reject) => {
+      const raw = tlsConnect(
+        {
+          host: "127.0.0.1",
+          port,
+          ca,
+          servername: "localhost",
+          minVersion: "TLSv1.2",
+          maxVersion: "TLSv1.2",
+          ciphers,
+        },
+        () => {
+          const suite = raw.getCipher().standardName;
+          const info: unknown = raw.getEphemeralKeyInfo();
+          raw.end();
+          if (typeof info !== "object" || info === null || !("type" in info) || !("size" in info)) {
+            reject(new Error("the socket reported no ephemeral key information"));
+            return;
+          }
+          const { type, size } = info;
+          if (typeof type !== "string" || typeof size !== "number") {
+            reject(new Error("ephemeral key information of an unexpected shape"));
+            return;
+          }
+          resolve({ suite, ephemeral: { type, size } });
+        },
+      );
+      raw.once("error", reject);
+    });
+  }
+
   // Criteria 1, 2, 4 -----------------------------------------------------
   for (const suite of ATNA_SUITE_SPELLINGS) {
     it(`client with the option negotiates ${suite.iana} against a peer restricted to it`, async () => {
@@ -687,6 +730,56 @@ describe("ATNA transport-security option", { timeout: 60_000 }, () => {
     await waitFor(() => serverNegotiated.length === 1);
     expect(serverNegotiated[0]?.["cipherSuite"]).toBe(NON_ATNA_DEFAULT_SUITE_IANA);
   });
+
+  it("neither option set: no cipher list AND no Diffie-Hellman parameters are imposed", async () => {
+    // The not-selected path, guarded on BOTH halves now that a server can be
+    // handed a group of its own. The resolved policy must contribute nothing at
+    // all: a key present with an undefined value would still be spread into the
+    // TLS context, and `dhparam: undefined` is not the same thing as no
+    // `dhparam` at all to a reader of this code.
+    const policy = resolveTlsCipherPolicy({}, "server");
+    expect(Object.keys(policy)).toStrictEqual([]);
+
+    const { cert, key } = buildServerCertFixture();
+    const server = trackServer(createServer({ tls: { cert, key } }));
+    const negotiated = collectNegotiated(server);
+    await server.listen(0, "127.0.0.1");
+    const port = must(server.getStats().port);
+
+    // A link that handshakes today still handshakes, on the same suite.
+    const observed = await rawHandshake(port, cert, NON_ATNA_DEFAULT_SUITE);
+    expect(observed.suite).toBe(NON_ATNA_DEFAULT_SUITE_IANA);
+    await waitFor(() => negotiated.length === 1);
+    expect(negotiated[0]?.["cipherSuite"]).toBe(NON_ATNA_DEFAULT_SUITE_IANA);
+
+    // And a DHE-only peer still finds nothing to negotiate, which is what "no
+    // Diffie-Hellman parameters are imposed" looks like from the wire: a server
+    // that had acquired a group would answer this.
+    await expect(rawHandshake(port, cert, "DHE-RSA-AES128-GCM-SHA256")).rejects.toBeInstanceOf(
+      Error,
+    );
+  });
+
+  // The option alone, with no caller-supplied group ----------------------
+  for (const suite of ATNA_SUITE_SPELLINGS.filter((s) => s.openssl.startsWith("DHE-"))) {
+    it(`the option alone still negotiates ${suite.iana} on a real Diffie-Hellman group`, async () => {
+      // The automatic selection is not lost to the option that can now replace
+      // it. Graded on the ephemeral key exchange rather than on the suite name,
+      // because a server with no group advertises the same suite and then fails.
+      const { cert, key } = buildServerCertFixture();
+      const server = trackServer(createServer({ tls: { cert, key, atnaTransportSecurity: true } }));
+      const negotiated = collectNegotiated(server);
+      await server.listen(0, "127.0.0.1");
+
+      const observed = await rawHandshake(must(server.getStats().port), cert, suite.openssl);
+      expect(observed.suite).toBe(suite.iana);
+      expect(observed.ephemeral.type).toBe("DH");
+      expect(observed.ephemeral.size).toBeGreaterThanOrEqual(2048);
+
+      await waitFor(() => negotiated.length === 1);
+      expect(negotiated[0]?.["cipherSuite"]).toBe(suite.iana);
+    });
+  }
 
   // Criteria 7, 8 --------------------------------------------------------
   it("option selected on both sides still negotiates TLSv1.3, and both ends report the same pair", async () => {

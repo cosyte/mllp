@@ -186,7 +186,12 @@ These bind every change in this repo (mirrored from the cosyte meta-repo's `docu
 
 1. **Documentation follows code.** A public-surface / stack / status change isn't done until its docs are: this package's own docs (`docs-content/` + JSDoc), and (in the meta-repo) its
    `documentation/repos/<repo>.md` and the `ecosystem-map.md` status table.
-2. **Version + changelog every meaningful change.** Add a Changeset (`pnpm changeset`, `patch`); stay on `0.0.x` until first alpha. **The changeset summary IS the changelog entry**: a generator
+2. **Version + changelog every meaningful change.** Add a Changeset (`pnpm changeset`) and pick the bump from what the change does to the PUBLISHED package, on the **`0.1.x` ladder**
+   `.changeset/README.md` states: **minor** for anything a consumer gains (a newly exported symbol, a new option, a new event, a new stable code, a new published artifact), **patch** for a fix, for
+   documentation of a surface that already ships, and for contributor-only tooling, **major** only when you mean to declare `1.0.0`, so until then a breaking change is a **minor** whose summary
+   spells the break out. **There is no `0.0.x` rung left to stay on.** Why, and the ten-`patch` batch the old instruction produced:
+   `documentation/agent-notes.md#the-version-ladder-and-the-pre-alpha-instruction-it-replaced`
+   **The changeset summary IS the changelog entry**: a generator
    is on, so the RELEASE writes everything above `## Released before this file was generated`. **Never hand-edit it, never reintroduce `[Unreleased]`, keep only the H1 above the first heading,
    and never resync `"prettier"` (`false` on purpose).** **An UNCHANGED changelog after release is a swallowed write failure, not a reverted flag.**
    Why: `documentation/agent-notes.md#changelog-generation`
