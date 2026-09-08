@@ -341,6 +341,55 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
   const BODY_LINES = ARMOUR_LINES.slice(1, -1);
   const BODY = BODY_LINES.join("");
 
+  // A DER writer, local to this file, so the body cases below are built rather
+  // than pasted as opaque base64 nobody can check by eye. It is deliberately
+  // able to emit encodings a conforming writer would not (a redundant length
+  // field, contents with no octets), because those are the inputs under test.
+  function derLength(octets: number, width?: number): Buffer {
+    if (width === undefined && octets < 0x80) return Buffer.from([octets]);
+    const bytes: number[] = [];
+    let rest = octets;
+    while (rest > 0) {
+      bytes.unshift(rest & 0xff);
+      rest = Math.floor(rest / 256);
+    }
+    while (bytes.length < (width ?? 1)) bytes.unshift(0);
+    return Buffer.from([0x80 | bytes.length, ...bytes]);
+  }
+  function derElement(tag: number, content: Buffer, width?: number): Buffer {
+    return Buffer.concat([Buffer.from([tag]), derLength(content.length, width), content]);
+  }
+  /** A DER `INTEGER` carrying `magnitude` as an unsigned big-endian value. */
+  function derInteger(magnitude: Buffer): Buffer {
+    const first = magnitude[0];
+    const signed =
+      first !== undefined && (first & 0x80) !== 0
+        ? Buffer.concat([Buffer.from([0x00]), magnitude])
+        : magnitude;
+    return derElement(0x02, signed);
+  }
+  /** A DER `INTEGER` whose contents are used verbatim, sign rules and all. */
+  function derRawInteger(content: Buffer): Buffer {
+    return derElement(0x02, content);
+  }
+  /** Canonical armour around `der`: the exact form the library and reader want. */
+  function armour(der: Buffer): string {
+    const wrapped = der.toString("base64").match(/.{1,64}/g) ?? [];
+    return BEGIN + "\n" + wrapped.join("\n") + "\n" + END + "\n";
+  }
+  /** A `DH PARAMETERS` block whose body is the given sequence contents. */
+  function parametersFrom(...parts: Buffer[]): string {
+    return armour(derElement(0x30, Buffer.concat(parts)));
+  }
+
+  const PRIME = must(readDhPrime(DH_PARAMETERS_3072_PEM));
+  const PRIME_FIELD = derInteger(PRIME);
+  const GENERATOR_FIELD = derInteger(Buffer.from([0x02]));
+  /** The committed group, plus one element behind the two the template has. */
+  function withExtra(extra: Buffer): string {
+    return parametersFrom(PRIME_FIELD, GENERATOR_FIELD, extra);
+  }
+
   const UNUSABLE_PARAMETERS: ReadonlyArray<{ what: string; value: string }> = [
     { what: "content that is not PEM at all", value: "these are not parameters" },
     {
@@ -417,7 +466,70 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     },
   ];
 
-  for (const unusable of UNUSABLE_PARAMETERS) {
+  // THE OVERLONG-BODY CLASS, AND WHY IT NEEDS ITS OWN TABLE. Behind armour the
+  // library reads, the body still has to be the whole parameter template and
+  // nothing besides: `SEQUENCE { INTEGER prime, INTEGER base, INTEGER
+  // privateValueLength OPTIONAL }`, with the optional field read at 32 bits.
+  // Anything else is discarded exactly as silently as damaged armour is, and
+  // every entry below was measured on this container to leave a server that
+  // fails a DHE handshake in `tls_post_process_client_hello` with `no shared
+  // cipher`, which is byte for byte what a server given no parameters at all
+  // gives. The last case in particular is not hand-written DER for its own sake:
+  // `SEQUENCE { p, g, q }` with a third field far too wide for a private-value
+  // length is the shape an X9.42 or DSA parameter file has, which is the wrong
+  // file under the right label rather than a typo.
+  const UNUSABLE_BODIES: ReadonlyArray<{ what: string; value: string }> = [
+    {
+      what: "an OCTET STRING behind the generator",
+      value: withExtra(derElement(0x04, Buffer.from("junkjunk"))),
+    },
+    { what: "a NULL behind the generator", value: withExtra(derElement(0x05, Buffer.alloc(0))) },
+    {
+      what: "a BOOLEAN behind the generator",
+      value: withExtra(derElement(0x01, Buffer.from([0xff]))),
+    },
+    {
+      what: "an empty SEQUENCE behind the generator",
+      value: withExtra(derElement(0x30, Buffer.alloc(0))),
+    },
+    {
+      what: "a third INTEGER far too wide to be a private-value length",
+      value: withExtra(derInteger(Buffer.alloc(32, 0x41))),
+    },
+    {
+      what: "a private-value length one octet past the width the library reads",
+      value: withExtra(derInteger(Buffer.from([0x80, 0x00, 0x00, 0x00]))),
+    },
+    {
+      what: "a redundantly padded private-value length",
+      value: withExtra(derRawInteger(Buffer.from([0xff, 0xff, 0xff, 0xff]))),
+    },
+    {
+      what: "a fourth element behind a private-value length the library would take",
+      value: parametersFrom(
+        PRIME_FIELD,
+        GENERATOR_FIELD,
+        derInteger(Buffer.from([0x01, 0x00])),
+        derInteger(Buffer.from([0x01, 0x00])),
+      ),
+    },
+    {
+      what: "a context-specific tag where the private-value length goes",
+      value: withExtra(derElement(0x82, Buffer.from([0x01]))),
+    },
+    {
+      what: "a generator with no content octets at all",
+      value: parametersFrom(PRIME_FIELD, derRawInteger(Buffer.alloc(0))),
+    },
+    {
+      what: "a prime with no content octets at all",
+      value: parametersFrom(derRawInteger(Buffer.alloc(0)), GENERATOR_FIELD),
+    },
+    { what: "a sequence carrying the prime and nothing else", value: parametersFrom(PRIME_FIELD) },
+    { what: "an empty sequence", value: parametersFrom() },
+  ];
+
+  for (const unusable of [...UNUSABLE_PARAMETERS, ...UNUSABLE_BODIES]) {
     it(`listen() is refused for ${unusable.what}, with nothing bound`, async () => {
       const { cert, key } = buildServerCertFixture();
       const server = trackServer(
@@ -514,7 +626,48 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     },
   ];
 
-  for (const tolerated of TOLERATED_ARMOUR) {
+  // The same bound, on the body rather than the armour. The optional
+  // private-value length is part of the template and the library takes it, so a
+  // reader that refused a block for carrying one would refuse parameter files
+  // that work; and the library's DER reader is not fussy about a length field
+  // written wider than it needs to be. Every form below was measured to put the
+  // caller's 3072-bit group in force on a real link.
+  const TOLERATED_BODIES: ReadonlyArray<{ what: string; value: string }> = [
+    {
+      what: "a body rebuilt field by field from the committed group",
+      value: parametersFrom(PRIME_FIELD, GENERATOR_FIELD),
+    },
+    {
+      what: "a private-value length of zero",
+      value: withExtra(derRawInteger(Buffer.from([0x00]))),
+    },
+    {
+      what: "a private-value length of 256",
+      value: withExtra(derInteger(Buffer.from([0x01, 0x00]))),
+    },
+    {
+      what: "a private-value length at the top of the width the library reads",
+      value: withExtra(derInteger(Buffer.from([0x7f, 0xff, 0xff, 0xff]))),
+    },
+    {
+      what: "a negative private-value length",
+      value: withExtra(derRawInteger(Buffer.from([0xff]))),
+    },
+    {
+      what: "a private-value length with no content octets",
+      value: withExtra(derRawInteger(Buffer.alloc(0))),
+    },
+    {
+      what: "a length field on the sequence written wider than it needs to be",
+      value: armour(derElement(0x30, Buffer.concat([PRIME_FIELD, GENERATOR_FIELD]), 3)),
+    },
+    {
+      what: "a length field on the generator written wider than it needs to be",
+      value: parametersFrom(PRIME_FIELD, derElement(0x02, Buffer.from([0x02]), 2)),
+    },
+  ];
+
+  for (const tolerated of [...TOLERATED_ARMOUR, ...TOLERATED_BODIES]) {
     it(`${tolerated.what} still puts the caller's group in force`, async () => {
       const { cert, key } = buildServerCertFixture();
       const supplied =

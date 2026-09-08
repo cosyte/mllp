@@ -10,10 +10,10 @@
  * hands over is read here first, before any socket is bound.
  *
  * WHAT THIS READ DOES AND DOES NOT ESTABLISH. It establishes that the input is
- * a PKCS#3 `DH PARAMETERS` PEM block whose body decodes to a DER `SEQUENCE`
- * beginning with two `INTEGER`s, which is what the TLS library will look for.
- * It does **not** establish that the group is sound: neither that the prime is
- * prime nor that the generator generates. The check that would
+ * a PKCS#3 `DH PARAMETERS` PEM block whose body decodes to the whole template
+ * the TLS library reads and nothing besides. It does **not** establish that the
+ * group is sound: neither that the prime is prime nor that the generator
+ * generates. The check that would
  * (`crypto.createDiffieHellman(prime, generator).verifyError`) runs a full
  * primality test, measured at 1.8 s for a 3072-bit group and 30 s for an
  * 8192-bit one on this container, and `listen()` is not a place to spend that.
@@ -21,6 +21,26 @@
  * library will not accept, is therefore accepted here and fails at handshake
  * time. Said plainly rather than left to be inferred from a promise this module
  * does not keep.
+ *
+ * THE TWO FAILURES ARE DISTINGUISHABLE, AND ONLY ONE IS THIS MODULE'S. Measured
+ * on this container against a server-side TLS error rather than the client's:
+ * parameters the library DISCARDED leave a server that cannot offer a DHE suite
+ * at all and dies in `tls_post_process_client_hello` with `no shared cipher`,
+ * byte for byte what a server given no parameters gives. Parameters the library
+ * LOADED whose group is unsound get as far as `tls_construct_server_key_exchange`
+ * and die there instead. Everything this reader refuses is in the first class;
+ * the second is the soundness limit above, and it is the caller's to avoid.
+ *
+ * WHAT THE BODY HAS TO BE. The library parses the PKCS#3 template
+ * `SEQUENCE { INTEGER prime, INTEGER base, INTEGER privateValueLength OPTIONAL }`
+ * and refuses anything else as silently as it refuses damaged armour. Measured:
+ * a block carrying a good prime and generator with ONE extra element behind them
+ * gives `no shared cipher`, whether the extra is an `OCTET STRING`, a `NULL`, a
+ * `BOOLEAN`, a nested `SEQUENCE`, a fourth field, or a third `INTEGER` too wide
+ * to be a private-value length, which is the shape an X9.42 or DSA parameter
+ * file has under this label. So the sequence has to END where the template ends,
+ * and the optional third field has to be readable at the width the library reads
+ * it at.
  *
  * WHY THE ARMOUR IS READ LINE BY LINE. The encapsulation boundary is the one
  * place where "looks like a PEM block" and "is a PEM block the library reads"
@@ -32,6 +52,23 @@
  * collapsed value is not parameters at all and is discarded in silence. This
  * reader therefore mirrors what the library's own PEM reader does with a line
  * rather than searching the text for a boundary-shaped substring.
+ *
+ * WHERE THIS READER AND THE LIBRARY DELIBERATELY DIVERGE. The agreement is
+ * measured input by input rather than asserted, and it is not total: five forms
+ * the library would have read are refused here anyway. `'auto'` (see below); a
+ * good block behind a first `DH PARAMETERS` block whose body is junk, because
+ * the library skips a block it cannot decode and keeps looking while this reader
+ * takes the first opening boundary and the first closing boundary after it;
+ * trailing bytes after the parameter sequence inside one body; the
+ * indefinite-length form, which is BER and not DER; and a prime or a generator
+ * whose `INTEGER` carries no content octets at all, which no generator emits
+ * and which measured as a context that throws (the prime) or a group that
+ * cannot answer a key exchange (the generator), so refusing it forfeits no
+ * working link. None is reachable without hand-built bytes, and each fails
+ * LOUDLY at `listen()` with a typed error rather than silently at handshake
+ * time. That asymmetry is the whole reason to accept it: refusing more than the
+ * library does costs a configuration that says it will not start, and accepting
+ * more costs a listener that answers no handshake and says nothing.
  *
  * The bytes are read as an opaque parameter block: nothing derived from them
  * reaches a message, an error, or a log line.
@@ -64,6 +101,16 @@ const BASE64_BODY = /^[A-Za-z0-9+/]+={0,2}$/;
 /** ASN.1 DER tag numbers this reader accepts, and no others. */
 const DER_SEQUENCE = 0x30;
 const DER_INTEGER = 0x02;
+
+/**
+ * The widest contents a DER `INTEGER` can carry and still be read as the
+ * template's optional private-value length.
+ *
+ * The library reads that field at 32 bits, so four content octets is the whole
+ * range: five or more is either out of range or illegally padded, and both were
+ * measured to leave a server with no parameters.
+ */
+const INT32_CONTENT_OCTETS = 4;
 
 /** One definite-length DER element: its tag, and where its contents begin and end. */
 interface DerElement {
@@ -113,6 +160,39 @@ function readDerElement(der: Buffer, offset: number): DerElement | null {
   const contentEnd = contentStart + length;
   if (contentEnd > der.length) return null;
   return { tag, contentStart, contentEnd };
+}
+
+/**
+ * Whether `element`'s contents read as a 32-bit integer the way the library
+ * reads the template's optional private-value length.
+ *
+ * Two rules, both measured against real handshakes rather than inferred. The
+ * contents may be no wider than four octets: five accepted nothing, at any
+ * value tried. And an `INTEGER` two octets or wider may not be padded
+ * redundantly, which is what the library's own integer reader refuses first: a
+ * leading `0x00` in front of a non-negative octet, or a leading `0xff` in front
+ * of a negative one. Empty contents ARE accepted, by the library and so here.
+ *
+ * The two required fields are deliberately not held to this: the library reads
+ * a prime and a generator as arbitrary-width unsigned values with no padding
+ * rule at all, and refusing there would refuse blocks it would have used.
+ *
+ * @param der - The decoded DER bytes.
+ * @param element - The element to judge, already located.
+ * @returns `true` when the library would read it at 32 bits.
+ */
+function readsAsInt32(der: Buffer, element: DerElement): boolean {
+  const octets = element.contentEnd - element.contentStart;
+  if (octets > INT32_CONTENT_OCTETS) return false;
+  if (octets < 2) return true;
+
+  const first = der[element.contentStart];
+  const second = der[element.contentStart + 1];
+  if (first === undefined || second === undefined) return false;
+  const secondIsNegative = (second & 0x80) !== 0;
+  if (first === 0x00 && !secondIsNegative) return false;
+  if (first === 0xff && secondIsNegative) return false;
+  return true;
 }
 
 /**
@@ -201,8 +281,8 @@ function readArmouredBody(text: string): string | null {
  * The four refusals it exists for, in the order a caller hits them: content
  * that is not PEM at all, a PEM block of some other kind (a certificate, a key),
  * a `DH PARAMETERS` block whose encapsulation boundaries are not the ones the
- * TLS library reads a line at a time, and one whose body is not the
- * `INTEGER`-then-`INTEGER` `SEQUENCE` it expects. Each of those is discarded in
+ * TLS library reads a line at a time, and one whose body is not the whole
+ * PKCS#3 template and only that template. Each of those is discarded in
  * silence by the library itself, which is why they are caught here instead.
  *
  * `'auto'` is deliberately **not** accepted: the automatic selection is reached
@@ -239,7 +319,23 @@ export function isDhParametersPem(input: string | Buffer): boolean {
 
   const prime = readDerElement(der, sequence.contentStart);
   if (prime === null || prime.tag !== DER_INTEGER) return false;
+  if (prime.contentEnd > sequence.contentEnd) return false;
   const generator = readDerElement(der, prime.contentEnd);
   if (generator === null || generator.tag !== DER_INTEGER) return false;
-  return generator.contentEnd <= sequence.contentEnd;
+  // An `INTEGER` carries at least one content octet; a required field with none
+  // is not an encoding any generator produces, and it is the one place refusing
+  // more than the library does costs nothing at all (see the module doc).
+  if (prime.contentEnd === prime.contentStart) return false;
+  if (generator.contentEnd === generator.contentStart) return false;
+  // The two-field form: the template ends here, and so must the sequence.
+  if (generator.contentEnd === sequence.contentEnd) return true;
+  if (generator.contentEnd > sequence.contentEnd) return false;
+
+  // The only thing the template allows behind the generator is one private-value
+  // length. A `SEQUENCE` that runs on past it is not these parameters, and the
+  // library reads it as no parameters at all rather than saying so.
+  const privateValueLength = readDerElement(der, generator.contentEnd);
+  if (privateValueLength === null || privateValueLength.tag !== DER_INTEGER) return false;
+  if (privateValueLength.contentEnd !== sequence.contentEnd) return false;
+  return readsAsInt32(der, privateValueLength);
 }
