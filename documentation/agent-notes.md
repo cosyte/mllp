@@ -586,6 +586,38 @@ ever stops being covered, both do.
   than making the claim. **Publish state and repo visibility are still independent facts, and
   neither is derivable from the other.**
 
+## The version ladder, and the pre-alpha instruction it replaced
+
+**The instruction that stood here was "add a Changeset (`pnpm changeset`, `patch`); stay on `0.0.x`
+until first alpha", and it was a bump type stated as a constant.** Read literally, which is how a
+one-line rule gets read, it says the answer is always `patch` and never asks what the change did to
+the published package. It produced exactly that: a pending set of **ten changesets all declaring
+`patch`** while **forty five names** were added to the root subpath, including whole capabilities a
+consumer can use. `changeset status` on that set resolved to `0.0.12`, a number that tells a consumer
+on a `0.x` release nothing about a release that added forty five exports.
+
+**The correction was made in two places at two different times, and the gap between them is the
+lesson.** `.changeset/README.md` was reconciled to the `0.1.x` ladder in the change that classified
+that batch; `CLAUDE.md` was outside that change's scope and kept the `0.0.x` sentence, so the two
+files in this checkout disagreed about the same rule, in writing, and
+`documentation/release-0.1.0-readiness.md` recorded the contradiction as a known residual rather than
+letting it be discovered. **A rule split across two files is not corrected until both are corrected**,
+and the honest interim move is to write the disagreement down where the next reader will hit it.
+That residual is closed: item 2 of the standing disciplines now states the same ladder.
+
+**The ladder itself, and why each rung is where it is.** `minor` for anything a consumer *gains*: a
+newly exported symbol, an option, an event, a stable code, or a published artifact of independent
+standing (one they use as an input to their own work, not one they read to understand a surface that
+already ships). `patch` for a fix, for documentation of a surface that already ships, and for
+contributor-only tooling. `major` **only** to declare `1.0.0`; before that a breaking change is a
+`minor` and **the break has to be spelled out in the summary**, because the number alone tells a
+consumer on a `0.x` release nothing. That last clause is the load-bearing one: on a `0.x` ladder the
+version is not the warning, the changelog entry is, and the changelog entry is the changeset summary.
+
+**Do not restate the ladder from memory: read `.changeset/README.md`.** It is the file this rule
+defers to, `CLAUDE.md` names it rather than paraphrasing it for that reason, and the failure mode
+being avoided is two files carrying two ladders again.
+
 ## Changelog generation
 
 **`CHANGELOG.md` is written by the release, and the changeset summary is the entry.** This section

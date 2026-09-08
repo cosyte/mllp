@@ -32,11 +32,15 @@ Two files in this checkout carried the guidance, and both said the same thing be
 Both defer to a file that is not in this checkout and was not read for this record. What is in the
 checkout is the instruction to pick `patch` unconditionally, and that instruction is what produced a
 pending set of ten changesets all declaring `patch` while forty five names were added to the root
-subpath. `.changeset/README.md` is reconciled to the `0.1.x` ladder by this change. `CLAUDE.md` is
-not: it is outside this change's scope, so its item 2 still reads "stay on `0.0.x` until first
-alpha" and now disagrees with `.changeset/README.md`. **That contradiction is a residual of this
-change and is the first thing to fix next**, in its own change, by the writer who owns `CLAUDE.md`
-and its gated pair `documentation/agent-notes.md`.
+subpath. `.changeset/README.md` was reconciled to the `0.1.x` ladder by the change that wrote this
+record. `CLAUDE.md` was not: it was outside that change's scope, so its item 2 went on reading "stay
+on `0.0.x` until first alpha" and disagreed with `.changeset/README.md` in writing.
+
+**That residual is now closed.** Item 2 of the standing disciplines states the same `0.1.x` ladder
+`.changeset/README.md` states, with no surviving instruction to stay on `0.0.x`, and the narrative
+behind it is at `documentation/agent-notes.md#the-version-ladder-and-the-pre-alpha-instruction-it-replaced`,
+which is the gated pair the pointer resolves through. The two blockquotes above are kept as the
+record of what the files said, not as live guidance.
 
 **The ecosystem-wide release frequency policy this batch depends on had not landed when this record
 was written.** It is owned by the shared workflow repository, not by this one, and at the time of
@@ -67,15 +71,23 @@ documentation of what already ships and contributor-only tooling, stays `patch`.
 | `quiet-moons-observe.md` | patch | **minor** | "New exports on the root subpath, all additive: `runDifferential`, `canonicalExchanges`, `canonicalAcknowledgement`, `resolveDifferentialPeer`, `MllpDifferentialConfigurationError`, `MLLP_DIFF_PEER_UNPARSEABLE`, `differentialConfigurationMessage`, and the report and option types." |
 | `tidy-hounds-explain.md` | patch | patch | "Metadata only: no API, no behaviour and no dependency change." |
 | `wild-pears-repeat.md` | patch | **minor** | "New error identities: `MllpApplicationAckError` and `MllpCommitRejectedError`." |
-| `sweet-pandas-classify.md` | not present, added by this change | patch | "No runtime, API or published behaviour changes: this is release bookkeeping." |
+| `sweet-pandas-classify.md` | not present, added by the change that wrote this record | patch | "No runtime, API or published behaviour changes: this is release bookkeeping." |
+| `brave-moons-withdraw.md` | present, unlisted when this table was written | patch | "No runtime behaviour of this package changes. The framing, ACK, warning-code and TLS surfaces are untouched." |
+| `plain-owls-supply.md` | not present, added by the Diffie-Hellman parameter change | **minor** | "**`tls.dhParameters` on `ServerTlsOptions`, PEM content, server side only.**" |
 
 **Only the frontmatter bump-type line moved.** Every summary is byte-identical to what it was, and
 the diff for the five corrected files is one line each. A summary is the changelog entry for its
 release, so a summary that is wrong is recorded here and left alone rather than edited.
 
+**The table is maintained, not frozen.** Its rule is "every file under `.changeset/` other than
+`README.md` and `config.json`", so a change that adds a changeset while this batch is still pending
+adds its row here in the same change, and one that finds a row missing adds it. The two rows at the
+foot arrived that way: `brave-moons-withdraw.md` was already in the folder and unlisted, and
+`plain-owls-supply.md` is new. Neither moves the classification, which stays `minor` at `0.1.0`.
+
 ### Nothing was unclassifiable
 
-Every one of the eleven files carries exactly one frontmatter line, and that line is exactly
+Every one of the thirteen files carries exactly one frontmatter line, and that line is exactly
 `"@cosyte/mllp": <patch|minor|major>`. None had to be left unedited for want of a readable bump
 type, and none had a bump type inferred for it. The check that establishes it:
 
@@ -169,12 +181,12 @@ at the release commit, spelled exactly as it was, and with the same kind (value 
 removed and nothing was renamed. That is what makes the release additive, and it is why `minor` is
 the correct type rather than `major`.
 
-The root subpath goes from 60 names to 105, so forty five are added. `./ack-from-hl7` is unchanged at
+The root subpath goes from 60 names to 106, so forty six are added. `./ack-from-hl7` is unchanged at
 17 and `./testing` unchanged at 1.
 
 #### `.`
 
-105 names at the release commit, 60 in 0.0.11: 45 added, 0 removed or renamed.
+106 names at the release commit, 60 in 0.0.11: 46 added, 0 removed or renamed.
 
 | name | kind | in 0.0.11 |
 |---|---|---|
@@ -218,6 +230,7 @@ The root subpath goes from 60 names to 105, so forty five are added. `./ack-from
 | `MLLP_DIFF_PEER_UNPARSEABLE` | value | absent (new) |
 | `MLLP_TLS_CIPHER_LIST_REJECTED` | value | absent (new) |
 | `MLLP_TLS_CIPHER_OPTION_CONFLICT` | value | absent (new) |
+| `MLLP_TLS_DH_PARAMETERS_REJECTED` | value | absent (new) |
 | `MLLP_TLS_VERIFY_DISABLED` | value | present |
 | `MessageMeta` | type | present |
 | `MllpAckError` | value | present |
@@ -409,6 +422,14 @@ Recorded so the list above reads as complete rather than short.
   the not-selected path offers exactly what it offered before. `MllpTlsConfigurationError` can only be
   reached by setting an option that did not exist in `0.0.11`. Turning it on can stop a link that
   worked, which is the point of it being opt-in, but no `0.0.11` integration can have turned it on.
+- **Caller-supplied Diffie-Hellman parameters** (`plain-owls-supply.md`). Purely additive on the same
+  reasoning: `ServerTlsOptions.dhParameters` and `MLLP_TLS_DH_PARAMETERS_REJECTED` are both new, a
+  server that sets neither this nor `atnaTransportSecurity` still supplies no parameters at all, and
+  the group the option selects on its own is unchanged. The one thing to say about it is what it does
+  NOT do: it does not test the prime for primality, because that test costs seconds on a 3072-bit
+  group and `listen()` is not the place to spend it, so a structurally sound block carrying a
+  composite prime is accepted and fails at handshake time. Recorded rather than left to be inferred
+  from the refusal path.
 - **The differential harness** (`quiet-moons-observe.md`). Purely additive, and its own summary
   records that no warning code was renamed, removed or repurposed and no decoder tolerance widened.
 - **The conformance statement** (`olive-hills-declare.md`). No behaviour moved. It does correct a
@@ -483,4 +504,4 @@ node -e "const s=require('/tmp/mllp-status.json'); console.log(JSON.stringify(s.
 ```
 
 At the release commit that prints exactly one release for `@cosyte/mllp`, `"type": "minor"`,
-`"oldVersion": "0.0.11"`, `"newVersion": "0.1.0"`, consuming all eleven pending changesets.
+`"oldVersion": "0.0.11"`, `"newVersion": "0.1.0"`, consuming all thirteen pending changesets.

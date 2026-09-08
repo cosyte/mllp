@@ -1,0 +1,15 @@
+---
+"@cosyte/mllp": minor
+---
+
+A server can now supply the ephemeral Diffie-Hellman parameters its own site policy mandates, instead of taking whatever group the TLS library picks.
+
+**`tls.dhParameters` on `ServerTlsOptions`, PEM content, server side only.** Two of the four TLS 1.2 cipher suites the IHE ATNA ITI-19 transport-security option names are DHE, and a server with no Diffie-Hellman parameters cannot offer a DHE suite at all: it advertises the suite and then fails every handshake in it. Until now the only way to get a group was `tls.atnaTransportSecurity: true`, which picks one for you, so a server that instead restricted `tls.ciphers` to a DHE suite had no route to a working link, and a deployment whose policy names a specific group had no route to that group.
+
+The value is PEM content and never a filesystem path, matching every other credential on these types; this package performs no disk IO for any of them. There is deliberately no counterpart on the client type: the side that answers the key exchange supplies the parameters.
+
+**It takes precedence over the group `atnaTransportSecurity` selects, and setting both is not a conflict.** The two declare different things, so they compose: the option decides which suites are offered, and this decides which group answers the DHE half of them. That is unlike `atnaTransportSecurity` and `ciphers`, which both declare the offered list and therefore still refuse each other.
+
+**New stable code `MLLP_TLS_DH_PARAMETERS_REJECTED`**, on `MllpTlsConfigurationError` beside `MLLP_TLS_CIPHER_LIST_REJECTED` and `MLLP_TLS_CIPHER_OPTION_CONFLICT`. Parameters that are not PEM, are not a `DH PARAMETERS` block, or carry a group the TLS library refuses reject `listen()` before anything is bound, and nothing falls back to a server running without them. That check is there because the TLS library's own behaviour for parameters it cannot read is to discard them in silence, leaving a listener that answers no DHE handshake and says nothing about why. The prime is not tested for primality: that test costs seconds on a 3072-bit group and `listen()` is not the place to spend it, so a structurally sound block carrying a composite prime is accepted and fails at handshake time.
+
+Nothing else moves. The four suites, the cipher list the option offers, the TLS 1.2 floor, the `'tlsNegotiated'` event and the existing configuration-error codes are unchanged, and a server that sets neither option still imposes no cipher list and no Diffie-Hellman parameters at all.

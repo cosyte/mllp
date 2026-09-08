@@ -218,7 +218,8 @@ Four things to know before you turn it on:
   four. Two peers that reach TLS 1.3 without the option still reach TLS 1.3 with it.
 - **The server also provides ephemeral Diffie-Hellman parameters.** Two of the four suites are DHE,
   and a server with no DH parameters cannot actually offer a DHE suite: it would advertise the list
-  and then fail every DHE handshake in it.
+  and then fail every DHE handshake in it. The group is the one the TLS library selects for the
+  certificate in use, unless you name your own with `dhParameters` (next section), which wins.
 - **It is mutually exclusive with `ciphers`.** Both declare the offered list, so setting both
   rejects `connect()` / `listen()` with a typed `MllpTlsConfigurationError` rather than silently
   discarding one of them.
@@ -226,6 +227,63 @@ Four things to know before you turn it on:
 `ciphers` (an OpenSSL cipher-list string) remains available on either side for a list of your own
 choosing. A list the runtime rejects is a loud, typed failure at connect or listen time; it never
 falls back to the runtime default list. See "Typed failure modes" below.
+
+### Supplying your own group: `dhParameters`
+
+Two of the four suites are DHE, and **a server with no ephemeral Diffie-Hellman parameters cannot
+offer a DHE suite at all**: it advertises the suite and then fails every handshake in it.
+`ServerTlsOptions.dhParameters` is how you hand it a group.
+
+```ts
+import { readFileSync } from "node:fs";
+
+const server = createServer({
+  tls: {
+    cert: certPem,
+    key: keyPem,
+    ciphers: "DHE-RSA-AES128-GCM-SHA256",
+    dhParameters: readFileSync("dhparam.pem", "utf8"), // openssl dhparam -out dhparam.pem 3072
+  },
+});
+```
+
+Two reasons to reach for it:
+
+- **Your site policy names a group.** Turning on `atnaTransportSecurity` gets you a group, but it is
+  the one the TLS library selects for the certificate in use, not one you chose.
+- **You restricted `ciphers` yourself to a list containing a DHE suite.** Without parameters that
+  list is unofferable in its DHE half, and this is the only way to make it work.
+
+What to know:
+
+- **The value is PEM content, never a filesystem path.** Every credential on these types is content
+  and this package performs no disk IO for any of it: read the file yourself, as above. A path
+  string is not a Diffie-Hellman parameter block and is refused as such.
+- **It takes precedence over the group `atnaTransportSecurity` selects.** Setting both is not a
+  conflict and is the intended combination for a deployment with its own policy: the option decides
+  which suites are offered, and this decides which group answers the DHE half of them. Unlike
+  `atnaTransportSecurity` and `ciphers`, which both declare the offered list and therefore refuse
+  each other, these two declare different things.
+- **There is no client-side counterpart, deliberately.** The side that answers the key exchange
+  supplies the parameters, so this exists on `ServerTlsOptions` and not on `TlsOptions`.
+- **`"auto"` is not accepted here.** That is the TLS library's own spelling for its automatic
+  selection, and `atnaTransportSecurity` is this package's way of asking for it.
+- **Parameters that cannot be used reject `listen()`,** with `MLLP_TLS_DH_PARAMETERS_REJECTED` (see
+  the table below). Nothing binds, and nothing falls back to a server running without them. That
+  check exists because the TLS library's own behaviour for parameters it cannot read is to
+  **discard them in silence**, which leaves a listener that answers no DHE handshake and says
+  nothing about why.
+- **What is checked, and what is not.** The block is read before anything binds: it must be PEM,
+  must be a `DH PARAMETERS` block, must decode to the prime-and-generator structure the library
+  reads, and the library itself must accept the group (it refuses one below 1024 bits, and one
+  below its configured security level). The prime is **not** tested for primality, because that
+  test costs seconds on a 3072-bit group and minutes on a large one, and `listen()` is not the
+  place to spend it. A structurally sound block carrying a composite prime is therefore accepted
+  here and fails at handshake time. Generate parameters with a tool that produces valid ones
+  (`openssl dhparam`) rather than relying on this check to find out.
+
+With neither `atnaTransportSecurity` nor `dhParameters` set, the server supplies no Diffie-Hellman
+parameters at all, exactly as before either option existed.
 
 **What this does not do.** It is the **cipher-suite half** of the transport-security option. Mutual
 node authentication is `clientAuth` plus a client `cert`/`key`, and the TLS 1.2 floor is
@@ -278,10 +336,11 @@ left connected and nothing is left bound. `connect()` and `listen()` reject with
 `MllpTlsConfigurationError`, identified by `instanceof` plus a stable `code`, never by matching on
 the message text:
 
-| `code`                            | Meaning                                                                                                                            |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `MLLP_TLS_CIPHER_LIST_REJECTED`   | The TLS library refused the list: no suite in it is available in this build. There is **no fallback to the runtime default list**. |
-| `MLLP_TLS_CIPHER_OPTION_CONFLICT` | `atnaTransportSecurity` and `ciphers` both declare the offered list. Set exactly one.                                              |
+| `code`                            | Meaning                                                                                                                                                                                                                    |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MLLP_TLS_CIPHER_LIST_REJECTED`   | The TLS library refused the list: no suite in it is available in this build. There is **no fallback to the runtime default list**.                                                                                         |
+| `MLLP_TLS_CIPHER_OPTION_CONFLICT` | `atnaTransportSecurity` and `ciphers` both declare the offered list. Set exactly one.                                                                                                                                      |
+| `MLLP_TLS_DH_PARAMETERS_REJECTED` | `ServerTlsOptions.dhParameters` is not usable: not PEM, not a `DH PARAMETERS` block, or a group the TLS library refuses. Nothing is bound and there is **no fallback to a server running without them**. Server side only. |
 
 ```ts
 try {
