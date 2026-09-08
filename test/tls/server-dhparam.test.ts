@@ -324,6 +324,23 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
   });
 
   // Criterion 4 ----------------------------------------------------------
+  //
+  // THE DAMAGED-ARMOUR CLASS, AND WHY IT IS HERE IN FORCE. A well-formed body
+  // behind a damaged encapsulation boundary is the one class where "looks like a
+  // PEM block" and "is a PEM block the TLS library reads" come apart, and it is
+  // the class an operator reaches by accident rather than by typing garbage: a
+  // value that crosses an environment variable, a single-line JSON field or any
+  // whitespace-collapsing config layer arrives with its newlines gone and is
+  // still a boundary, a body and a boundary in the right order. Every entry
+  // below was measured on this container to leave a server that advertises its
+  // DHE suite and then answers no handshake, which is precisely the fallback
+  // this criterion forbids.
+  const BEGIN = "-----BEGIN DH PARAMETERS-----";
+  const END = "-----END DH PARAMETERS-----";
+  const ARMOUR_LINES = DH_PARAMETERS_3072_PEM.trimEnd().split("\n");
+  const BODY_LINES = ARMOUR_LINES.slice(1, -1);
+  const BODY = BODY_LINES.join("");
+
   const UNUSABLE_PARAMETERS: ReadonlyArray<{ what: string; value: string }> = [
     { what: "content that is not PEM at all", value: "these are not parameters" },
     {
@@ -345,6 +362,58 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
       // 'auto' is what the TLS library spells its own selection; on this field
       // it is not PEM content and is refused rather than quietly honoured.
       value: "auto",
+    },
+    {
+      what: "armour with every newline stripped out of it",
+      value: BEGIN + BODY + END,
+    },
+    {
+      what: "an extra dash on the opening boundary",
+      value: DH_PARAMETERS_3072_PEM.replace("-----BEGIN", "------BEGIN"),
+    },
+    {
+      what: "an extra dash on the closing boundary",
+      value: DH_PARAMETERS_3072_PEM.replace(END, END + "-"),
+    },
+    {
+      what: "an opening boundary indented by a space",
+      value: "  " + DH_PARAMETERS_3072_PEM,
+    },
+    {
+      what: "a closing boundary indented by a tab",
+      value: DH_PARAMETERS_3072_PEM.replace(END, "\t" + END),
+    },
+    {
+      what: "anything else sharing the opening boundary's line",
+      value: "site policy: " + DH_PARAMETERS_3072_PEM,
+    },
+    {
+      what: "the body sharing a line with the opening boundary",
+      value: BEGIN + BODY_LINES.join("\n") + "\n" + END + "\n",
+    },
+    {
+      what: "the closing boundary sharing a line with the body",
+      value: BEGIN + "\n" + BODY_LINES.join("\n") + END + "\n",
+    },
+    {
+      what: "a blank line part way through the body",
+      value:
+        BEGIN +
+        "\n" +
+        BODY_LINES.slice(0, 3).join("\n") +
+        "\n\n" +
+        BODY_LINES.slice(3).join("\n") +
+        "\n" +
+        END +
+        "\n",
+    },
+    {
+      what: "carriage returns where the line feeds should be",
+      value: DH_PARAMETERS_3072_PEM.replace(/\n/g, "\r"),
+    },
+    {
+      what: "a label the PEM reader does not know",
+      value: DH_PARAMETERS_3072_PEM.replace(/DH PARAMETERS/g, "DH  PARAMETERS"),
     },
   ];
 
@@ -396,6 +465,77 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     const observed = await handshake(must(server.getStats().port), cert, DHE_SUITE_OPENSSL);
     expect(observed.suite).toBe(DHE_SUITE_IANA);
   });
+
+  // Criterion 4, the other direction --------------------------------------
+  //
+  // THE STRICTNESS ABOVE IS BOUNDED, AND THE BOUND IS TESTED. A check that
+  // refuses more than the runtime does is the same defect pointed the other way:
+  // a configuration that would have worked, turned into a listener that will not
+  // start. The TLS library reads PEM a line at a time and tolerates a great deal
+  // around the lines it cares about, and every form below was measured on this
+  // container to put the caller's 3072-bit group in force on a real link. Each
+  // case asserts the SIZE, not merely that `listen()` resolved: a server that
+  // bound and then fell back to the automatic selection would report 2048.
+  const TOLERATED_ARMOUR: ReadonlyArray<{ what: string; value: string }> = [
+    { what: "CRLF line endings", value: DH_PARAMETERS_3072_PEM.replace(/\n/g, "\r\n") },
+    { what: "no final newline", value: DH_PARAMETERS_3072_PEM.trimEnd() },
+    {
+      what: "trailing spaces after the opening boundary",
+      value: DH_PARAMETERS_3072_PEM.replace(BEGIN, BEGIN + "   "),
+    },
+    {
+      what: "explanatory text before the opening boundary",
+      value: "the group this site's policy names:\n" + DH_PARAMETERS_3072_PEM,
+    },
+    {
+      what: "explanatory text after the closing boundary",
+      value: DH_PARAMETERS_3072_PEM + "and that was the group.\n",
+    },
+    {
+      what: "an indented body",
+      value: BEGIN + "\n" + BODY_LINES.map((l) => "    " + l).join("\n") + "\n" + END + "\n",
+    },
+    { what: "a body unwrapped onto one line", value: BEGIN + "\n" + BODY + "\n" + END + "\n" },
+    {
+      what: "a byte-order mark in front of it",
+      value: String.fromCharCode(0xfeff) + DH_PARAMETERS_3072_PEM,
+    },
+    {
+      what: "another PEM block in front of it",
+      value: buildServerCertFixture().cert + DH_PARAMETERS_3072_PEM,
+    },
+    {
+      what: "a blank line opening an empty header section",
+      value: BEGIN + "\n\n" + BODY_LINES.join("\n") + "\n" + END + "\n",
+    },
+    {
+      what: "raw bytes rather than a string",
+      value: DH_PARAMETERS_3072_PEM,
+    },
+  ];
+
+  for (const tolerated of TOLERATED_ARMOUR) {
+    it(`${tolerated.what} still puts the caller's group in force`, async () => {
+      const { cert, key } = buildServerCertFixture();
+      const supplied =
+        tolerated.what === "raw bytes rather than a string"
+          ? Buffer.from(tolerated.value)
+          : tolerated.value;
+      const server = trackServer(
+        createServer({
+          tls: { cert, key, ciphers: DHE_SUITE_OPENSSL, dhParameters: supplied },
+        }),
+      );
+      await server.listen(0, "127.0.0.1");
+      expect(server.getStats().listening).toBe(true);
+
+      const observed = await handshake(must(server.getStats().port), cert, DHE_SUITE_OPENSSL);
+      expect(observed.suite).toBe(DHE_SUITE_IANA);
+      expect(observed.ephemeral.type).toBe("DH");
+      expect(observed.ephemeral.size).toBe(DH_PARAMETERS_3072_BITS);
+      expect(observed.ephemeral.size).not.toBe(AUTOMATIC_GROUP_BITS);
+    });
+  }
 
   // Criterion 5 ----------------------------------------------------------
   it("a parameter refusal carries no credential material and no parameter bytes", async () => {

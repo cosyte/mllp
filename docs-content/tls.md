@@ -273,14 +273,23 @@ What to know:
   check exists because the TLS library's own behaviour for parameters it cannot read is to
   **discard them in silence**, which leaves a listener that answers no DHE handshake and says
   nothing about why.
+- **The armour has to survive the trip.** The TLS library reads PEM a line at a time and wants each
+  `-----BEGIN DH PARAMETERS-----` / `-----END DH PARAMETERS-----` boundary alone on its own line,
+  with exactly five dashes on each side. A value that crosses an environment variable, a single-line
+  JSON field or any other whitespace-collapsing layer loses its line breaks and stops being a
+  parameter block, so it is refused here rather than discarded quietly later. Everything the library
+  itself tolerates is tolerated: CRLF endings, a missing final newline, text before or after the
+  block, and a body wrapped at any width or not at all.
 - **What is checked, and what is not.** The block is read before anything binds: it must be PEM,
   must be a `DH PARAMETERS` block, must decode to the prime-and-generator structure the library
   reads, and the library itself must accept the group (it refuses one below 1024 bits, and one
-  below its configured security level). The prime is **not** tested for primality, because that
-  test costs seconds on a 3072-bit group and minutes on a large one, and `listen()` is not the
-  place to spend it. A structurally sound block carrying a composite prime is therefore accepted
-  here and fails at handshake time. Generate parameters with a tool that produces valid ones
-  (`openssl dhparam`) rather than relying on this check to find out.
+  below its configured security level). The group itself is **not** checked for soundness: neither
+  that the prime is prime nor that the generator generates, because that test costs seconds on a
+  3072-bit group and minutes on a large one, and `listen()` is not the place to spend it. A
+  structurally sound block whose group is unsound, whether through a composite prime or a generator
+  the library will not take, is therefore accepted here and fails at handshake time. Generate
+  parameters with a tool that produces valid ones (`openssl dhparam`) rather than relying on this
+  check to find out.
 
 With neither `atnaTransportSecurity` nor `dhParameters` set, the server supplies no Diffie-Hellman
 parameters at all, exactly as before either option existed.

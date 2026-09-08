@@ -10,15 +10,28 @@
  * hands over is read here first, before any socket is bound.
  *
  * WHAT THIS READ DOES AND DOES NOT ESTABLISH. It establishes that the input is
- * a PKCS#3 `DH PARAMETERS` PEM block whose body decodes to a DER `SEQUENCE` of
- * two `INTEGER`s and nothing else, which is what the TLS library will look for.
- * It does **not** establish that the prime is prime: the check that would
+ * a PKCS#3 `DH PARAMETERS` PEM block whose body decodes to a DER `SEQUENCE`
+ * beginning with two `INTEGER`s, which is what the TLS library will look for.
+ * It does **not** establish that the group is sound: neither that the prime is
+ * prime nor that the generator generates. The check that would
  * (`crypto.createDiffieHellman(prime, generator).verifyError`) runs a full
  * primality test, measured at 1.8 s for a 3072-bit group and 30 s for an
  * 8192-bit one on this container, and `listen()` is not a place to spend that.
- * A structurally sound group with a composite prime is therefore accepted here
- * and refused by the peer at handshake time. Said plainly rather than left to
- * be inferred from a promise this module does not keep.
+ * A structurally sound block carrying a composite prime, or a generator the
+ * library will not accept, is therefore accepted here and fails at handshake
+ * time. Said plainly rather than left to be inferred from a promise this module
+ * does not keep.
+ *
+ * WHY THE ARMOUR IS READ LINE BY LINE. The encapsulation boundary is the one
+ * place where "looks like a PEM block" and "is a PEM block the library reads"
+ * come apart, and the gap is reachable by accident rather than by typing
+ * garbage: a value that crosses an environment variable or a single-line JSON
+ * field arrives with its newlines collapsed, and it is still a boundary, a
+ * body and a boundary in the right order. The library requires each boundary to
+ * occupy a line of its own with exactly five dashes on each side, so that
+ * collapsed value is not parameters at all and is discarded in silence. This
+ * reader therefore mirrors what the library's own PEM reader does with a line
+ * rather than searching the text for a boundary-shaped substring.
  *
  * The bytes are read as an opaque parameter block: nothing derived from them
  * reaches a message, an error, or a log line.
@@ -26,8 +39,24 @@
  * @packageDocumentation
  */
 
-/** PEM armour for the PKCS#3 parameter block `tls.createServer`'s `dhparam` reads. */
-const DH_PEM_BLOCK = /-----BEGIN DH PARAMETERS-----([\sA-Za-z0-9+/=]*?)-----END DH PARAMETERS-----/;
+/**
+ * The encapsulation boundaries of a PKCS#3 parameter block, exactly as the TLS
+ * library's PEM reader requires them: five dashes, the keyword, the label, five
+ * dashes, alone on a line.
+ */
+const BEGIN_BOUNDARY = "-----BEGIN DH PARAMETERS-----";
+const END_BOUNDARY = "-----END DH PARAMETERS-----";
+
+/**
+ * The byte-order mark, in both spellings this module can meet: the decoded
+ * character when the caller passed a string, and the same three bytes seen
+ * through the latin1 decode when the caller passed a buffer. The library's PEM
+ * reader strips it from the first line, so it cannot be what refuses a block.
+ */
+const BOM_SPELLINGS: readonly string[] = [
+  String.fromCharCode(0xfeff),
+  String.fromCharCode(0xef, 0xbb, 0xbf),
+];
 
 /** A base64 body: full quartets, padding only at the end. */
 const BASE64_BODY = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -87,14 +116,94 @@ function readDerElement(der: Buffer, offset: number): DerElement | null {
 }
 
 /**
+ * One line as the TLS library's PEM reader sees it: every trailing character at
+ * or below `U+0020` removed.
+ *
+ * That single rule is why a file written with CRLF endings, a boundary followed
+ * by stray spaces, and the canonical block all read identically. It deliberately
+ * does **not** touch LEADING whitespace, because the library does not either: an
+ * indented boundary is not a boundary, and a server built on one runs with no
+ * parameters.
+ *
+ * @param line - One line of the input, split on line feeds.
+ * @returns The line with its trailing blanks removed.
+ */
+function sanitizeLine(line: string): string {
+  let end = line.length;
+  while (end > 0 && line.charCodeAt(end - 1) <= 0x20) end -= 1;
+  return line.slice(0, end);
+}
+
+/**
+ * The base64 body of the `DH PARAMETERS` block in `text`, or `null` when the
+ * armour is not armour the TLS library reads.
+ *
+ * WHAT COUNTS AS A BOUNDARY, AND WHY IT IS THIS STRICT. The library reads PEM a
+ * line at a time and requires an encapsulation boundary to be the whole line:
+ * exactly five dashes, the keyword, the label, exactly five dashes. Measured on
+ * this container, every one of these advertises a DHE suite and then answers no
+ * handshake, because the library found no parameters and discarded them without
+ * a word: the same block with its newlines collapsed, with an extra dash on
+ * either boundary, with either boundary indented by a space or a tab, with the
+ * body sharing a line with a boundary, and with a boundary preceded by anything
+ * else on its line. Matching a boundary-shaped substring anywhere in the text
+ * accepts all of them.
+ *
+ * WHAT IT STILL ADMITS, BECAUSE THE LIBRARY DOES. Text before the opening
+ * boundary and after the closing one, a byte-order mark, CRLF endings, a missing
+ * final newline, trailing blanks on any line, leading blanks on a BODY line, and
+ * a body wrapped at any width or not wrapped at all. Refusing one of those would
+ * be this same defect pointed the other way: a configuration the runtime accepts
+ * turned into a listener that will not start.
+ *
+ * A blank line between the boundaries opens the encapsulated header section, and
+ * the library refuses every header this option could not answer anyway, so a
+ * blank line is admitted only where the header it opens is empty.
+ *
+ * @param text - The caller's input, decoded to text.
+ * @returns The body with all whitespace removed, or `null`.
+ */
+function readArmouredBody(text: string): string | null {
+  let head = text;
+  for (const bom of BOM_SPELLINGS) {
+    if (head.startsWith(bom)) {
+      head = head.slice(bom.length);
+      break;
+    }
+  }
+
+  // A line feed is the only line ending the reader knows; a lone carriage
+  // return is an ordinary character, so a file that uses one is not lines.
+  const lines = head.split("\n").map(sanitizeLine);
+  const begin = lines.indexOf(BEGIN_BOUNDARY);
+  if (begin === -1) return null;
+  const end = lines.indexOf(END_BOUNDARY, begin + 1);
+  if (end === -1) return null;
+
+  const inner = lines.slice(begin + 1, end);
+  const blank = inner.indexOf("");
+  if (blank !== -1) {
+    // Everything before the first blank line is a header, and this option takes
+    // no passphrase, so there is no header it could honour.
+    if (blank !== 0) return null;
+    // A second blank line would truncate the body the same way.
+    if (inner.indexOf("", 1) !== -1) return null;
+  }
+
+  const body = inner.join("").replace(/\s+/g, "");
+  return body.length === 0 ? null : body;
+}
+
+/**
  * Whether `input` is a PKCS#3 Diffie-Hellman parameter block this package will
  * hand to a TLS context.
  *
- * The three refusals it exists for, in the order a caller hits them: content
+ * The four refusals it exists for, in the order a caller hits them: content
  * that is not PEM at all, a PEM block of some other kind (a certificate, a key),
- * and a `DH PARAMETERS` block whose body is not the two-`INTEGER` `SEQUENCE`
- * the TLS library reads. Each of those is discarded in silence by the library
- * itself, which is why they are caught here instead.
+ * a `DH PARAMETERS` block whose encapsulation boundaries are not the ones the
+ * TLS library reads a line at a time, and one whose body is not the
+ * `INTEGER`-then-`INTEGER` `SEQUENCE` it expects. Each of those is discarded in
+ * silence by the library itself, which is why they are caught here instead.
  *
  * `'auto'` is deliberately **not** accepted: the automatic selection is reached
  * through `ServerTlsOptions.atnaTransportSecurity`, and a magic string on a
@@ -114,14 +223,13 @@ export function isDhParametersPem(input: string | Buffer): boolean {
   // PEM armour is ASCII, so latin1 round-trips any byte without substituting
   // U+FFFD the way a utf8 decode of arbitrary bytes would.
   const text = typeof input === "string" ? input : input.toString("latin1");
-  const block = DH_PEM_BLOCK.exec(text);
-  if (block === null) return false;
+  const body = readArmouredBody(text);
+  if (body === null) return false;
 
-  const body = (block[1] ?? "").replace(/\s+/g, "");
   // Checked BEFORE decoding: `Buffer.from(s, 'base64')` never throws and skips
   // whatever it cannot read, so a body that is not base64 at all decodes to a
   // shorter buffer that could still parse. The regexp is what refuses it.
-  if (body.length === 0 || body.length % 4 !== 0 || !BASE64_BODY.test(body)) return false;
+  if (body.length % 4 !== 0 || !BASE64_BODY.test(body)) return false;
 
   const der = Buffer.from(body, "base64");
   const sequence = readDerElement(der, 0);

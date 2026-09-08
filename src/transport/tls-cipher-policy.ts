@@ -103,10 +103,15 @@ export interface TlsCipherPolicyInput {
   /** See `TlsOptions.ciphers`. */
   readonly ciphers?: string;
   /**
-   * See `ServerTlsOptions.dhParameters`. Read only when `side` is `'server'`,
-   * because Diffie-Hellman parameters are supplied by the end that answers the
-   * key exchange; there is deliberately no such field on the client option
-   * type at all.
+   * See `ServerTlsOptions.dhParameters`. Diffie-Hellman parameters are supplied
+   * by the end that answers the key exchange, so this is read when `side` is
+   * `'server'` and **ignored, without an error, when `side` is `'client'`**.
+   *
+   * That asymmetry is stated rather than enforced because the field is
+   * unreachable from the client option type in the first place: `TlsOptions`
+   * carries no Diffie-Hellman parameter field at all, so a client value can
+   * only arrive through a direct call to
+   * {@link resolveTlsCipherPolicy}.
    */
   readonly dhParameters?: string | Buffer;
 }

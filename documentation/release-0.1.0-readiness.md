@@ -426,10 +426,11 @@ Recorded so the list above reads as complete rather than short.
   reasoning: `ServerTlsOptions.dhParameters` and `MLLP_TLS_DH_PARAMETERS_REJECTED` are both new, a
   server that sets neither this nor `atnaTransportSecurity` still supplies no parameters at all, and
   the group the option selects on its own is unchanged. The one thing to say about it is what it does
-  NOT do: it does not test the prime for primality, because that test costs seconds on a 3072-bit
-  group and `listen()` is not the place to spend it, so a structurally sound block carrying a
-  composite prime is accepted and fails at handshake time. Recorded rather than left to be inferred
-  from the refusal path.
+  NOT do: it does not check the group for soundness, neither the prime for primality nor the
+  generator for being one, because that test costs seconds on a 3072-bit group and `listen()` is not
+  the place to spend it, so a structurally sound block whose group is unsound in either way is
+  accepted and fails at handshake time. Recorded rather than left to be inferred from the refusal
+  path.
 - **The differential harness** (`quiet-moons-observe.md`). Purely additive, and its own summary
   records that no warning code was renamed, removed or repurposed and no decoder tolerance widened.
 - **The conformance statement** (`olive-hills-declare.md`). No behaviour moved. It does correct a
