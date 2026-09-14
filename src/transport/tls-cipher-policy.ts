@@ -152,9 +152,11 @@ export interface ResolvedTlsCipherPolicy {
  * silently discards parameters it cannot read, so content that is not a
  * `DH PARAMETERS` block reaches `createSecureContext` without an error and
  * leaves a server that advertises DHE and answers no DHE handshake:
- * {@link isDhParametersPem} is the net for that. A block that IS one and whose
- * group the library refuses (too small, or below its security level) throws,
- * and the second net is that throw. Neither net covers the other's case.
+ * {@link isDhParametersPem} is the net for that, and for the values that parse
+ * and then fail the library's own parameter check just as quietly at handshake
+ * time. A block the library reads and whose group it refuses OUT LOUD (too
+ * small, or below its configured security level) throws instead, and the second
+ * net is that throw. Neither net covers the other's case.
  *
  * Validated with the parameters **alone**, no certificate, key or passphrase in
  * scope, so the error cannot carry credential material. The parameter bytes

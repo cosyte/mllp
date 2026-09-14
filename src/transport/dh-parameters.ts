@@ -11,25 +11,31 @@
  *
  * WHAT THIS READ DOES AND DOES NOT ESTABLISH. It establishes that the input is
  * a PKCS#3 `DH PARAMETERS` PEM block whose body decodes to the whole template
- * the TLS library reads and nothing besides. It does **not** establish that the
- * group is sound: neither that the prime is prime nor that the generator
- * generates. The check that would
+ * the TLS library reads and nothing besides, and that the two values it carries
+ * are inside the bounds the library's own parameter check applies before it will
+ * answer a key exchange with them. The one thing it does **not** establish is
+ * that the prime is prime. The check that would
  * (`crypto.createDiffieHellman(prime, generator).verifyError`) runs a full
  * primality test, measured at 1.8 s for a 3072-bit group and 30 s for an
  * 8192-bit one on this container, and `listen()` is not a place to spend that.
- * A structurally sound block carrying a composite prime, or a generator the
- * library will not accept, is therefore accepted here and fails at handshake
- * time. Said plainly rather than left to be inferred from a promise this module
- * does not keep.
+ * A structurally sound block carrying a composite modulus is therefore accepted
+ * here, and the library accepts it too: measured, the committed 3072-bit prime
+ * plus two completes a real handshake and reports a 3072-bit group. Said plainly
+ * rather than left to be inferred from a promise this module does not keep.
  *
- * THE TWO FAILURES ARE DISTINGUISHABLE, AND ONLY ONE IS THIS MODULE'S. Measured
- * on this container against a server-side TLS error rather than the client's:
+ * THE TWO FAILURES ARE DISTINGUISHABLE, AND BOTH ARE REFUSED HERE. Measured on
+ * this container against a server-side TLS error rather than the client's:
  * parameters the library DISCARDED leave a server that cannot offer a DHE suite
  * at all and dies in `tls_post_process_client_hello` with `no shared cipher`,
  * byte for byte what a server given no parameters gives. Parameters the library
- * LOADED whose group is unsound get as far as `tls_construct_server_key_exchange`
- * and die there instead. Everything this reader refuses is in the first class;
- * the second is the soundness limit above, and it is the caller's to avoid.
+ * LOADED whose values are out of bounds get as far as
+ * `tls_construct_server_key_exchange` and die there instead, with
+ * `DH_check_params_ex: not suitable generator` or an internal-error alert. The
+ * first class is a server running with no parameters at all and the second is a
+ * server running with parameters it cannot use, and a caller cannot tell them
+ * apart from the outside: both are a bound listener that answers no handshake in
+ * the suite it advertises. So this reader refuses both, and the only thing left
+ * to fail at handshake time is a composite modulus.
  *
  * WHAT THE BODY HAS TO BE. The library parses the PKCS#3 template
  * `SEQUENCE { INTEGER prime, INTEGER base, INTEGER privateValueLength OPTIONAL }`
@@ -41,6 +47,20 @@
  * file has under this label. So the sequence has to END where the template ends,
  * and the optional third field has to be readable at the width the library reads
  * it at.
+ *
+ * WHAT THE TWO VALUES HAVE TO BE. The library reads both as unsigned magnitudes,
+ * sign bit and leading zero octets alike ignored: measured, a prime and a
+ * generator written with the high bit set and no padding octet both complete a
+ * handshake at the size they spell. On those magnitudes it then applies its own
+ * parameter check, and the line it draws was measured one value at a time
+ * against a real key exchange: the prime must be ODD, and the generator must be
+ * at least 2 and no greater than the prime minus 2. A generator of 0, of 1, of
+ * the prime minus 1, of the prime, or wider than the prime, and an even prime,
+ * each leave a bound listener that advertises its DHE suite and answers no
+ * handshake in it. Every one of those is a comparison over octets this reader has
+ * already located, so refusing them costs microseconds and buys back the whole
+ * class; the generator at the prime minus 2 is accepted, by the library and so
+ * here.
  *
  * WHY THE ARMOUR IS READ LINE BY LINE. The encapsulation boundary is the one
  * place where "looks like a PEM block" and "is a PEM block the library reads"
@@ -54,21 +74,24 @@
  * rather than searching the text for a boundary-shaped substring.
  *
  * WHERE THIS READER AND THE LIBRARY DELIBERATELY DIVERGE. The agreement is
- * measured input by input rather than asserted, and it is not total: five forms
- * the library would have read are refused here anyway. `'auto'` (see below); a
- * good block behind a first `DH PARAMETERS` block whose body is junk, because
- * the library skips a block it cannot decode and keeps looking while this reader
- * takes the first opening boundary and the first closing boundary after it;
- * trailing bytes after the parameter sequence inside one body; the
- * indefinite-length form, which is BER and not DER; and a prime or a generator
- * whose `INTEGER` carries no content octets at all, which no generator emits
- * and which measured as a context that throws (the prime) or a group that
- * cannot answer a key exchange (the generator), so refusing it forfeits no
- * working link. None is reachable without hand-built bytes, and each fails
- * LOUDLY at `listen()` with a typed error rather than silently at handshake
- * time. That asymmetry is the whole reason to accept it: refusing more than the
- * library does costs a configuration that says it will not start, and accepting
- * more costs a listener that answers no handshake and says nothing.
+ * measured input by input rather than asserted, and it is not total: FOUR forms
+ * the library would have put on a real link are refused here anyway. `'auto'`
+ * (see below); a good block behind a first `DH PARAMETERS` block whose body is
+ * junk, because the library skips a block it cannot decode and keeps looking
+ * while this reader takes the first opening boundary and the first closing
+ * boundary after it; trailing bytes after the parameter sequence inside one
+ * body; and the indefinite-length form, which is BER and not DER. That is the
+ * whole list as measured, and it is deliberately not padded with the forms the
+ * library merely PARSES: an `INTEGER` with no content octets at all, for
+ * instance, is refused here and is refused by the library too, loudly for the
+ * prime and at key-exchange time for the generator, so refusing it forfeits no
+ * working link.
+ *
+ * None of the four is reachable without hand-built bytes, and each fails LOUDLY
+ * at `listen()` with a typed error rather than silently at handshake time. That
+ * asymmetry is the whole reason to accept them: refusing more than the library
+ * does costs a configuration that says it will not start, and accepting more
+ * costs a listener that answers no handshake and says nothing.
  *
  * The bytes are read as an opaque parameter block: nothing derived from them
  * reaches a message, an error, or a log line.
@@ -196,6 +219,97 @@ function readsAsInt32(der: Buffer, element: DerElement): boolean {
 }
 
 /**
+ * The value a DER `INTEGER`'s content octets carry, as the TLS library reads it:
+ * an unsigned big-endian magnitude with its leading zero octets dropped.
+ *
+ * The sign bit is deliberately ignored, because the library ignores it: measured,
+ * a prime and a generator each written with the high bit set and no padding
+ * octet complete a real handshake at the size they spell. Reading them as
+ * negative numbers here would refuse a group the runtime would have used.
+ *
+ * @param der - The decoded DER bytes.
+ * @param element - The element to read, already located.
+ * @returns The magnitude, never empty for an element with content octets.
+ */
+function magnitudeOf(der: Buffer, element: DerElement): Buffer {
+  let start = element.contentStart;
+  while (start + 1 < element.contentEnd && der[start] === 0x00) start += 1;
+  return der.subarray(start, element.contentEnd);
+}
+
+/**
+ * Compare two unsigned big-endian magnitudes, each already stripped of leading
+ * zero octets.
+ *
+ * @param left - The first magnitude.
+ * @param right - The second magnitude.
+ * @returns A negative number, zero, or a positive number, as `left` is less
+ * than, equal to, or greater than `right`.
+ */
+function compareMagnitudes(left: Buffer, right: Buffer): number {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  return Buffer.compare(left, right);
+}
+
+/**
+ * Whether `value` is exactly one less than `oddPrime`.
+ *
+ * Written as a comparison rather than a subtraction, which the shape of the
+ * input makes exact: an odd number's last octet is odd, so subtracting one from
+ * it cannot borrow, and every other octet of `oddPrime` is unchanged. The caller
+ * establishes the oddness first, and this is only ever asked about a prime it
+ * has already accepted as odd.
+ *
+ * @param value - The magnitude to test.
+ * @param oddPrime - The prime magnitude, known to be odd.
+ * @returns `true` when `value` is the prime minus one.
+ */
+function isOneBelow(value: Buffer, oddPrime: Buffer): boolean {
+  if (value.length !== oddPrime.length) return false;
+  const last = value.length - 1;
+  for (let i = 0; i < last; i += 1) {
+    if (value[i] !== oddPrime[i]) return false;
+  }
+  const tail = value[last];
+  const primeTail = oddPrime[last];
+  return tail !== undefined && primeTail !== undefined && tail === primeTail - 1;
+}
+
+/**
+ * Whether the prime and the generator are inside the bounds the TLS library's
+ * own parameter check applies before it will answer a key exchange with them.
+ *
+ * Two rules, and the line each draws was measured one value at a time against a
+ * real TLS 1.2 DHE handshake rather than read off a specification. The prime
+ * must be ODD: an even one leaves a listener that advertises its DHE suite and
+ * answers no handshake in it. And the generator must be at least 2 and no
+ * greater than the prime minus 2: 0, 1, the prime minus 1, the prime, and
+ * anything wider than the prime all fail the library's `DH_check_params`, while
+ * 2, 3, 5 and the prime minus 2 all complete the handshake.
+ *
+ * This is the CHEAP half of what makes a group usable, and it is the only half
+ * done here. The expensive half, that the prime is actually prime, is a full
+ * primality test measured in seconds and is declined (see the module doc).
+ *
+ * @param der - The decoded DER bytes.
+ * @param prime - The first template field, already located.
+ * @param generator - The second template field, already located.
+ * @returns `true` when the library would accept both values.
+ */
+function isUsableGroup(der: Buffer, prime: DerElement, generator: DerElement): boolean {
+  const primeValue = magnitudeOf(der, prime);
+  const generatorValue = magnitudeOf(der, generator);
+
+  const lowest = primeValue[primeValue.length - 1];
+  if (lowest === undefined || (lowest & 1) === 0) return false;
+
+  const smallest = generatorValue[0];
+  if (generatorValue.length === 1 && (smallest === undefined || smallest < 2)) return false;
+  if (compareMagnitudes(generatorValue, primeValue) >= 0) return false;
+  return !isOneBelow(generatorValue, primeValue);
+}
+
+/**
  * One line as the TLS library's PEM reader sees it: every trailing character at
  * or below `U+0020` removed.
  *
@@ -278,12 +392,15 @@ function readArmouredBody(text: string): string | null {
  * Whether `input` is a PKCS#3 Diffie-Hellman parameter block this package will
  * hand to a TLS context.
  *
- * The four refusals it exists for, in the order a caller hits them: content
+ * The five refusals it exists for, in the order a caller hits them: content
  * that is not PEM at all, a PEM block of some other kind (a certificate, a key),
  * a `DH PARAMETERS` block whose encapsulation boundaries are not the ones the
- * TLS library reads a line at a time, and one whose body is not the whole
- * PKCS#3 template and only that template. Each of those is discarded in
- * silence by the library itself, which is why they are caught here instead.
+ * TLS library reads a line at a time, one whose body is not the whole PKCS#3
+ * template and only that template, and one whose two values are outside the
+ * bounds the library will answer a key exchange with. The first four are
+ * discarded in silence by the library itself and the fifth is loaded and then
+ * refused at handshake time; from outside, both are a listener that advertises
+ * a DHE suite and answers nothing, which is why all five are caught here.
  *
  * `'auto'` is deliberately **not** accepted: the automatic selection is reached
  * through `ServerTlsOptions.atnaTransportSecurity`, and a magic string on a
@@ -327,6 +444,10 @@ export function isDhParametersPem(input: string | Buffer): boolean {
   // more than the library does costs nothing at all (see the module doc).
   if (prime.contentEnd === prime.contentStart) return false;
   if (generator.contentEnd === generator.contentStart) return false;
+  // The values, not just the shape: a group outside these bounds is loaded by
+  // the library and then refused at key-exchange time, which a caller cannot
+  // tell from parameters it discarded outright.
+  if (!isUsableGroup(der, prime, generator)) return false;
   // The two-field form: the template ends here, and so must the sequence.
   if (generator.contentEnd === sequence.contentEnd) return true;
   if (generator.contentEnd > sequence.contentEnd) return false;

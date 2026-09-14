@@ -287,16 +287,21 @@ What to know:
   is, so it is refused here too. A parameter file from a related standard has exactly that extra
   field, and armouring one under this label is the wrong file rather than a typo: take
   `openssl dhparam` output and the case never arises.
+- **The two values have to be inside the bounds the library uses.** A perfect structure can still
+  carry values the library will not answer a key exchange with, and that failure is invisible from
+  outside: it loads the parameters, refuses them when the handshake asks for a key, and the listener
+  advertises its DHE suite and answers nothing, exactly as if it had discarded them. So the same
+  bounds are applied before anything binds: the prime must be odd, and the generator must be at
+  least 2 and no greater than the prime minus 2.
 - **What is checked, and what is not.** The block is read before anything binds: it must be PEM,
   must be a `DH PARAMETERS` block, must decode to the parameter structure the library reads and
-  nothing besides, and the library itself must accept the group (it refuses one below 1024 bits,
-  and one below its configured security level). The group itself is **not** checked for soundness:
-  neither that the prime is prime nor that the generator generates, because that test costs seconds
-  on a 3072-bit group and minutes on a large one, and `listen()` is not the place to spend it. A
-  structurally sound block whose group is unsound, whether through a composite prime or a generator
-  the library will not take, is therefore accepted here and fails at handshake time. Generate
-  parameters with a tool that produces valid ones (`openssl dhparam`) rather than relying on this
-  check to find out.
+  nothing besides, must carry values inside the bounds above, and the library itself must accept the
+  group (it refuses one below 1024 bits, and one below its configured security level). The one thing
+  **not** checked is that the prime is prime, because a primality test costs seconds on a 3072-bit
+  group and minutes on a large one, and `listen()` is not the place to spend it. A well-formed block
+  whose modulus is composite is therefore accepted here, as it is by the library itself, and the
+  link it carries is weaker than its size suggests. Generate parameters with a tool that produces
+  valid ones (`openssl dhparam`) rather than relying on this check to find out.
 
 With neither `atnaTransportSecurity` nor `dhParameters` set, the server supplies no Diffie-Hellman
 parameters at all, exactly as before either option existed.

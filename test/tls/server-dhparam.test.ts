@@ -390,6 +390,18 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     return parametersFrom(PRIME_FIELD, GENERATOR_FIELD, extra);
   }
 
+  // Arithmetic on the committed prime, so the group cases below can be written
+  // as the values they are rather than as pasted constants nobody can check.
+  const PRIME_VALUE = BigInt("0x" + PRIME.toString("hex"));
+  function magnitude(value: bigint): Buffer {
+    const hex = value.toString(16);
+    return Buffer.from(hex.length % 2 === 1 ? "0" + hex : hex, "hex");
+  }
+  /** A parameter block for one prime and one generator, both as values. */
+  function group(prime: bigint, generator: bigint): string {
+    return parametersFrom(derInteger(magnitude(prime)), derInteger(magnitude(generator)));
+  }
+
   const UNUSABLE_PARAMETERS: ReadonlyArray<{ what: string; value: string }> = [
     { what: "content that is not PEM at all", value: "these are not parameters" },
     {
@@ -529,7 +541,27 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     { what: "an empty sequence", value: parametersFrom() },
   ];
 
-  for (const unusable of [...UNUSABLE_PARAMETERS, ...UNUSABLE_BODIES]) {
+  // THE OUT-OF-BOUNDS-GROUP CLASS, AND WHY IT IS REFUSED HERE TOO. The template
+  // can be perfect and the values still outside what the TLS library will answer
+  // a key exchange with. That failure looks different from the inside (the
+  // library LOADS these and dies in `tls_construct_server_key_exchange` with
+  // `DH_check_params_ex: not suitable generator` or an internal-error alert,
+  // rather than discarding them and dying in `tls_post_process_client_hello`
+  // with `no shared cipher`) and identical from the outside: a bound listener
+  // that advertises its DHE suite and answers no handshake in it. Every entry
+  // below was measured on this container to do exactly that, and every one is a
+  // comparison over octets the reader has already located, so none of it costs
+  // the primality test this package declines.
+  const UNUSABLE_GROUPS: ReadonlyArray<{ what: string; value: string }> = [
+    { what: "a generator of 0", value: group(PRIME_VALUE, 0n) },
+    { what: "a generator of 1", value: group(PRIME_VALUE, 1n) },
+    { what: "a generator of the prime minus 1", value: group(PRIME_VALUE, PRIME_VALUE - 1n) },
+    { what: "a generator equal to the prime", value: group(PRIME_VALUE, PRIME_VALUE) },
+    { what: "a generator wider than the prime", value: group(PRIME_VALUE, PRIME_VALUE + 1n) },
+    { what: "an even prime", value: group(PRIME_VALUE - 1n, 2n) },
+  ];
+
+  for (const unusable of [...UNUSABLE_PARAMETERS, ...UNUSABLE_BODIES, ...UNUSABLE_GROUPS]) {
     it(`listen() is refused for ${unusable.what}, with nothing bound`, async () => {
       const { cert, key } = buildServerCertFixture();
       const server = trackServer(
@@ -664,6 +696,27 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     {
       what: "a length field on the generator written wider than it needs to be",
       value: parametersFrom(PRIME_FIELD, derElement(0x02, Buffer.from([0x02]), 2)),
+    },
+    // The bound on the group rules, case by case. The last two are the ones that
+    // keep those rules honest: the top of the generator range the library
+    // accepts, and the group whose only fault is the one this package declines
+    // to test for, which the library itself does not test for either.
+    { what: "a generator of 3", value: group(PRIME_VALUE, 3n) },
+    {
+      what: "a prime written with its high bit set and no padding octet",
+      value: parametersFrom(derRawInteger(PRIME), GENERATOR_FIELD),
+    },
+    {
+      what: "a generator carrying redundant leading zero octets",
+      value: parametersFrom(PRIME_FIELD, derRawInteger(Buffer.from([0x00, 0x00, 0x02]))),
+    },
+    {
+      what: "a generator of the prime minus 2, the top of the range",
+      value: group(PRIME_VALUE, PRIME_VALUE - 2n),
+    },
+    {
+      what: "an odd modulus that is not prime, the limit this package declines to test",
+      value: group(PRIME_VALUE + 2n, 2n),
     },
   ];
 
