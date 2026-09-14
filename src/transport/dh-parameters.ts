@@ -432,11 +432,14 @@ export function isDhParametersPem(input: string | Buffer): boolean {
   const sequence = readDerElement(der, 0);
   if (sequence === null || sequence.tag !== DER_SEQUENCE) return false;
   // Trailing bytes after the SEQUENCE mean the block is not what it claims.
+  // This line also carries the bound every field below relies on: the sequence
+  // now ends exactly where the decoded bytes do, and `readDerElement` never
+  // returns an element reaching past them, so no field inside it can overrun
+  // the sequence and nothing below needs to re-check that.
   if (sequence.contentEnd !== der.length) return false;
 
   const prime = readDerElement(der, sequence.contentStart);
   if (prime === null || prime.tag !== DER_INTEGER) return false;
-  if (prime.contentEnd > sequence.contentEnd) return false;
   const generator = readDerElement(der, prime.contentEnd);
   if (generator === null || generator.tag !== DER_INTEGER) return false;
   // An `INTEGER` carries at least one content octet; a required field with none
@@ -450,7 +453,6 @@ export function isDhParametersPem(input: string | Buffer): boolean {
   if (!isUsableGroup(der, prime, generator)) return false;
   // The two-field form: the template ends here, and so must the sequence.
   if (generator.contentEnd === sequence.contentEnd) return true;
-  if (generator.contentEnd > sequence.contentEnd) return false;
 
   // The only thing the template allows behind the generator is one private-value
   // length. A `SEQUENCE` that runs on past it is not these parameters, and the

@@ -476,6 +476,18 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
       what: "a label the PEM reader does not know",
       value: DH_PARAMETERS_3072_PEM.replace(/DH PARAMETERS/g, "DH  PARAMETERS"),
     },
+    {
+      what: "two blank lines opening the header section",
+      value: BEGIN + "\n\n\n" + BODY_LINES.join("\n") + "\n" + END + "\n",
+    },
+    { what: "no body at all between the boundaries", value: BEGIN + "\n" + END + "\n" },
+    {
+      // `Buffer.from(s, 'base64')` never throws and silently drops what it
+      // cannot read, so a body that is not base64 decodes to a shorter buffer
+      // that could still parse as something. It is refused before decoding.
+      what: "a body that is not base64 at all",
+      value: BEGIN + "\n$$$$\n" + END + "\n",
+    },
   ];
 
   // THE OVERLONG-BODY CLASS, AND WHY IT NEEDS ITS OWN TABLE. Behind armour the
@@ -539,6 +551,17 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     },
     { what: "a sequence carrying the prime and nothing else", value: parametersFrom(PRIME_FIELD) },
     { what: "an empty sequence", value: parametersFrom() },
+    {
+      what: "a length field claiming more octets than the body carries",
+      value: armour(Buffer.from([0x30, 0x83, 0x00, 0x01])),
+    },
+    {
+      // The mirror of the redundantly padded NEGATIVE case above: a leading
+      // zero octet in front of a non-negative one is the same illegal padding,
+      // and the library's integer reader refuses both.
+      what: "a private-value length padded with a leading zero octet",
+      value: withExtra(derRawInteger(Buffer.from([0x00, 0x7f]))),
+    },
   ];
 
   // THE OUT-OF-BOUNDS-GROUP CLASS, AND WHY IT IS REFUSED HERE TOO. The template
@@ -558,10 +581,60 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     { what: "a generator of the prime minus 1", value: group(PRIME_VALUE, PRIME_VALUE - 1n) },
     { what: "a generator equal to the prime", value: group(PRIME_VALUE, PRIME_VALUE) },
     { what: "a generator wider than the prime", value: group(PRIME_VALUE, PRIME_VALUE + 1n) },
+    {
+      what: "a generator one whole octet wider than the prime",
+      value: group(PRIME_VALUE, PRIME_VALUE * 256n),
+    },
     { what: "an even prime", value: group(PRIME_VALUE - 1n, 2n) },
   ];
 
-  for (const unusable of [...UNUSABLE_PARAMETERS, ...UNUSABLE_BODIES, ...UNUSABLE_GROUPS]) {
+  // THE FOUR FORMS REFUSED BY CHOICE, MEASURED AND NAMED. Everything above is
+  // refused because the runtime refuses it. These are the whole of the other
+  // list: forms the TLS library would have put on a real link, and each was
+  // measured doing exactly that (a completed handshake at 3072 bits, and 2048
+  // for the automatic selection). They are refused anyway, because the two
+  // directions are not symmetric: accepting what the library discards is a
+  // listener that answers nothing and says nothing, while refusing what it
+  // would have taken is a configuration that says out loud it will not start.
+  // None is reachable without hand-built bytes. `'auto'` is the fourth and sits
+  // in the table above, where a reader looking for it will be.
+  const REFUSED_BY_CHOICE: ReadonlyArray<{ what: string; value: string }> = [
+    {
+      // The library skips a block whose body it cannot decode and keeps looking
+      // for the next one; this reader takes the first opening boundary and the
+      // first closing boundary after it.
+      what: "a good block behind a first DH PARAMETERS block whose body is junk",
+      value: BEGIN + "\nZm9vYmFy\n" + END + "\n" + DH_PARAMETERS_3072_PEM,
+    },
+    {
+      what: "trailing bytes behind the parameter sequence in one body",
+      value: armour(
+        Buffer.concat([
+          derElement(0x30, Buffer.concat([PRIME_FIELD, GENERATOR_FIELD])),
+          Buffer.from("junk"),
+        ]),
+      ),
+    },
+    {
+      // BER, not DER.
+      what: "the indefinite-length form of the parameter sequence",
+      value: armour(
+        Buffer.concat([
+          Buffer.from([0x30, 0x80]),
+          PRIME_FIELD,
+          GENERATOR_FIELD,
+          Buffer.from([0x00, 0x00]),
+        ]),
+      ),
+    },
+  ];
+
+  for (const unusable of [
+    ...UNUSABLE_PARAMETERS,
+    ...UNUSABLE_BODIES,
+    ...UNUSABLE_GROUPS,
+    ...REFUSED_BY_CHOICE,
+  ]) {
     it(`listen() is refused for ${unusable.what}, with nothing bound`, async () => {
       const { cert, key } = buildServerCertFixture();
       const server = trackServer(
@@ -717,6 +790,13 @@ describe("server-supplied ephemeral Diffie-Hellman parameters", { timeout: 60_00
     {
       what: "an odd modulus that is not prime, the limit this package declines to test",
       value: group(PRIME_VALUE + 2n, 2n),
+    },
+    {
+      // The prime minus 256: the same width as the prime and differing from it
+      // above its last octet, which is the case the range check cannot decide
+      // by looking at one octet.
+      what: "a generator just below the prime but not at its edge",
+      value: group(PRIME_VALUE, PRIME_VALUE - 256n),
     },
   ];
 
