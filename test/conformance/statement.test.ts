@@ -905,6 +905,44 @@ describe("conformance statement", () => {
       }
     });
 
+    it("names the caller-supplied Diffie-Hellman parameters the transport-security option accepts", () => {
+      // Two of the four suites §3.19.6.2.3 names are DHE, so what group answers them is part of
+      // what this package supplies against that option, and a deployment whose own policy names a
+      // group needs the split to say the route exists. Checked against `src/` as well as against
+      // the page, so renaming the option reds here rather than leaving the statement stale.
+      const row = split.rows.find(
+        (r) => plain(r[0] ?? "") === "STX: TLS 1.2 floor using BCP195 Option",
+      );
+      if (row === undefined) {
+        throw new Error(
+          "the supplied-versus-actor split has no row for the transport-security option.",
+        );
+      }
+      const supplies = row[1] ?? "";
+      expect(
+        allBackticked(supplies),
+        "the transport-security row must name the server option that supplies a Diffie-Hellman " +
+          "group, because the two DHE suites it offers are unofferable without one.",
+      ).toContain("dhParameters");
+      expect(
+        supplies,
+        "the row must say that a caller-supplied group takes precedence over the automatic " +
+          "selection, which is the whole reason the option is worth naming.",
+      ).toContain("precedence");
+      expect(
+        shippedPropertyNames().has("dhParameters"),
+        "the conformance statement names `dhParameters` as the route to a caller-supplied " +
+          "Diffie-Hellman group, but no property of that name is declared under src/.",
+      ).toBe(true);
+      expect(
+        readSource("transport", "error.ts"),
+        "the statement says an unusable group is refused before anything binds, which is the " +
+          "stable code src/transport/error.ts declares for exactly that.",
+      ).toContain(
+        'export const MLLP_TLS_DH_PARAMETERS_REJECTED = "MLLP_TLS_DH_PARAMETERS_REJECTED"',
+      );
+    });
+
     it("names the switch that turns node authentication off, and the code it announces with", () => {
       // D7 asks what a deploying actor must still do before entering an option in a Product
       // Registry statement. "Do not ship with the switch that disables certificate verification" is

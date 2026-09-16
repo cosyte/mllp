@@ -31,6 +31,7 @@ export {
 export {
   MLLP_TLS_CIPHER_LIST_REJECTED,
   MLLP_TLS_CIPHER_OPTION_CONFLICT,
+  MLLP_TLS_DH_PARAMETERS_REJECTED,
   MllpTlsConfigurationError,
   tlsConfigurationMessage,
   type TlsConfigurationErrorCode,

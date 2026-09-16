@@ -199,7 +199,9 @@ export interface ServerTlsOptions {
    *
    * The server side additionally provides ephemeral Diffie-Hellman parameters,
    * because two of the four named suites are DHE and a server without them
-   * cannot actually offer a DHE suite. See
+   * cannot actually offer a DHE suite. The group is the one the runtime selects
+   * for the certificate in use unless {@link ServerTlsOptions.dhParameters}
+   * names another, which takes precedence. See
    * {@link TlsOptions.atnaTransportSecurity} for the rest, including what this
    * setting does **not** claim on your behalf.
    *
@@ -221,6 +223,39 @@ export interface ServerTlsOptions {
    * @default undefined (Node defaults)
    */
   readonly ciphers?: string;
+  /**
+   * Ephemeral Diffie-Hellman parameters this server answers a DHE key exchange
+   * with, as **PEM content**. There is deliberately no filesystem-path input:
+   * every credential on this type is content, and this package performs no disk
+   * IO for any of it. Generate a group with `openssl dhparam` and read it in
+   * yourself.
+   *
+   * A DHE cipher suite is unofferable by a server with no parameters, so this
+   * is what makes one reachable through {@link ServerTlsOptions.ciphers}: a
+   * list restricted to a DHE suite without this advertises that suite and then
+   * fails every handshake in it.
+   *
+   * **It takes precedence over the group
+   * {@link ServerTlsOptions.atnaTransportSecurity} selects automatically**, and
+   * setting both is not a conflict: the option picks a group when nothing else
+   * says which, and this says which. That is how a deployment whose own policy
+   * names a group puts it in force while still offering exactly the ITI TF-2
+   * §3.19.6.2.3 suites.
+   *
+   * Parameters this package or the TLS library cannot use reject `listen()`
+   * with a typed `MllpTlsConfigurationError` carrying
+   * `MLLP_TLS_DH_PARAMETERS_REJECTED`, before anything is bound. Nothing falls
+   * back to a server running without them, which matters because the TLS
+   * library's own behaviour for unreadable parameters is to discard them in
+   * silence. `'auto'` is not accepted here; that selection is what
+   * `atnaTransportSecurity` already makes.
+   *
+   * There is no counterpart on {@link TlsOptions}: the side that answers the
+   * key exchange supplies the parameters.
+   *
+   * @default undefined (no Diffie-Hellman parameters unless `atnaTransportSecurity` selects them)
+   */
+  readonly dhParameters?: string | Buffer;
 }
 
 export {
