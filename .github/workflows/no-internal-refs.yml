@@ -75,7 +75,7 @@ jobs:
       # the only two workflows here that call a third-party action directly. The pin was
       # resolved against the upstream repo rather than copied on faith: actions/checkout
       # tag v7.0.0 is commit 9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # `node` is required by the script, which reads package.json's `files`,
       # `description` and `keywords` through it. The runner image ships Node, and the
