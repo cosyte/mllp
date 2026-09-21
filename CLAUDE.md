@@ -199,7 +199,7 @@ These bind every change in this repo (mirrored from the cosyte meta-repo's `docu
 4. **No internal project bookkeeping on a public surface** (founder directive, 2026-07-27). What a consumer reads (`README.md`, `docs-content/`, the npm `description`, a release body, and the JSDoc
    their editor renders on hover) says what the software does and what changed. Item identifiers, phase and plan language, ADR numbers, meta-repo paths and "how this got built" commentary belong
    in the changeset, `CHANGELOG.md`, the commit, the PR and the roadmap. It is a **translation** at the boundary, not a deletion: **when you strip an identifier off the front of a line, repair the
-   head.** Gated by `pnpm check:no-internal-refs` (check-run context **`no-internal-refs`**).
+   head.** Gated by `pnpm check:no-internal-refs` (check-run context **`no-internal-refs / public-surface`**).
    Full rule-by-rule reasoning: `documentation/agent-notes.md#no-internal-bookkeeping-on-a-public-surface-and-the-word-n-trap`
    - **Four surfaces, four answers.** `/** */` doc comments are **gated** (they compile into all
      three entry points' declarations). String literals are **gated too**, because this package puts
