@@ -62,7 +62,7 @@ export function section(markdown: string, heading: string): string {
  * escape these examples use (`\\`, `\r`). `undefined` when the snippet builds none.
  */
 export function wirePayloadLiteral(code: string): string | undefined {
-  const found = /Buffer\.from\(\s*("(?:[^"\\\n]|\\.)*")\s*,?\s*\)/.exec(code);
+  const found = /Buffer\.from\(\s*("(?:[^"\\\n]|\\.)*")\s*(?:,\s*)?\)/.exec(code);
   return found?.[1] === undefined ? undefined : (JSON.parse(found[1]) as string);
 }
 
