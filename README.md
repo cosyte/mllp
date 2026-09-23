@@ -73,27 +73,24 @@ pnpm add @cosyte/hl7
 
 ## Usage
 
-Start a server. Auto-ACK is on by default, and the server awaits your handler, which is the durable
-commit step, before it answers.
+Start a server, send it a message, and read the acknowledgement it built. Auto-ACK is on by default,
+and the server awaits your handler, which is the durable commit step, before it answers. The payload
+API is **Buffer-first** everywhere: HL7 v2 messages are raw bytes with caller-managed charset decoding.
 
 ```ts
-import { createStarterServer } from "@cosyte/mllp";
+import { createStarterClient, createStarterServer } from "@cosyte/mllp";
 
+const committed: Buffer[] = [];
+
+// Port 0: the OS picks a free port. The host defaults to loopback, 127.0.0.1.
 const server = await createStarterServer({
-  port: 2575,
+  port: 0,
   onMessage: async (payload) => {
-    await db.commit(payload); // a throw here answers AE, never AA
+    committed.push(payload); // your durable commit: a throw here answers AE, never AA
   },
 });
-```
 
-Send a message and read the acknowledgement the server built. The payload API is **Buffer-first**
-everywhere: HL7 v2 messages are raw bytes with caller-managed charset decoding.
-
-```ts
-import { createStarterClient } from "@cosyte/mllp";
-
-const client = await createStarterClient({ host: "127.0.0.1", port: 2575 });
+const client = await createStarterClient({ host: "127.0.0.1", port: server.getStats().port ?? 0 });
 
 const ack = await client.send(
   Buffer.from(
@@ -101,17 +98,28 @@ const ack = await client.send(
   ),
 );
 
-console.log(ack.toString("utf8").split("\r").join("\n"));
+// Log the shape of the acknowledgement, never its field values.
+const msa = ack
+  .toString("utf8")
+  .split("\r")
+  .find((segment) => segment.startsWith("MSA|"))
+  ?.split("|");
+console.log("acknowledgement code:", msa?.[1]);
+console.log("MSA-2 echoes the control id sent:", msa?.[2] === "CTRL0001");
+console.log("messages committed:", committed.length);
+
+await client.close();
+await server.close();
 ```
 
 ```text
-MSH|^~\&|RECEIVING_APP|RECEIVING_FAC|SENDING_APP|SENDING_FAC|20260831191657||ACK|96184dbca807488c8583|P|2.5.1
-MSA|AA|CTRL0001
+acknowledgement code: AA
+MSA-2 echoes the control id sent: true
+messages committed: 1
 ```
 
-`MSH-7` and the acknowledgement's own `MSH-10` change on every run. `MSA|AA|CTRL0001` is the part to
-read: `MSA-2` echoes the control id you sent, byte for byte, which is what lets the client match the
-answer to the message.
+`MSA-2` echoes the control id you sent, byte for byte, which is what lets the client match the answer
+to the message. The acknowledgement's own `MSH-7` and `MSH-10` change on every run.
 
 ### Framing on its own
 
