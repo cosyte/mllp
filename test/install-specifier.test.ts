@@ -43,4 +43,18 @@ describe("the documented install specifier", () => {
     );
     expect(declared.has("@cosyte/mllq")).toBe(false);
   });
+
+  it("AC-ML7: every install command form a reader may copy is read, inline code included", () => {
+    const forms = [
+      "pnpm i @cosyte/mllq",
+      "pnpm install @cosyte/mllq",
+      "npm add @cosyte/mllq",
+      "deno add npm:@cosyte/mllq",
+      "run `npm install @cosyte/mllq` first",
+      "then run npm install @cosyte/mllq.",
+    ];
+    for (const form of forms) expect(installSpecifiers(form), form).toEqual(["@cosyte/mllq"]);
+    expect(installSpecifiers("pnpm install\npnpm install --frozen-lockfile")).toEqual([]);
+    expect(installSpecifiers("pnpm add file:../mllp")).toEqual([]);
+  });
 });

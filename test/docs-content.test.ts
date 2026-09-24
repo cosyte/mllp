@@ -10,7 +10,12 @@ import {
   runSnippet,
 } from "@cosyte/vitest-config/snippets";
 
-import { fences, fixturesByContent, wirePayloadLiteral } from "./_helpers/first-use.js";
+import {
+  compileErrors,
+  fences,
+  fixturesByContent,
+  wirePayloadLiteral,
+} from "./_helpers/first-use.js";
 
 /**
  * Doc/code-agreement gate. Every ```` ```ts runnable ```` block in `docs-content/` is extracted,
@@ -82,6 +87,14 @@ const QUICKSTART_FIRST = fences(QUICKSTART)[0];
 const QUICKSTART_FIRST_RUNNABLE = extractRunnableSnippets(QUICKSTART)[0];
 const FIRST_USE_TMP = join(root, ".cosyte-first-use-snippets");
 const FIXTURE_DIR = join(root, "test", "fixtures", "first-use");
+/**
+ * The harness above strips types without checking them, so compiling is checked separately, the
+ * way a reader's new TypeScript project compiles the block, against the source entry point the
+ * bundler compiles into the published types. A program over the source takes seconds to check, so
+ * these cases state their own budget.
+ */
+const SOURCE_ENTRY = join(root, "src", "index.ts");
+const COMPILE_TIMEOUT = 60_000;
 
 afterAll(() => {
   rmSync(FIRST_USE_TMP, { recursive: true, force: true });
@@ -94,6 +107,29 @@ describe("the quickstart's first example", () => {
     expect(QUICKSTART_FIRST?.tags).not.toContain("throws");
     expect(QUICKSTART_FIRST_RUNNABLE?.code).toBe(QUICKSTART_FIRST?.body);
   });
+
+  it(
+    "AC-ML1: compiles in a new TypeScript project against the package's types",
+    () => {
+      expect(
+        compileErrors(root, "@cosyte/mllp", SOURCE_ENTRY, QUICKSTART_FIRST?.body ?? ""),
+      ).toEqual([]);
+    },
+    COMPILE_TIMEOUT,
+  );
+
+  it(
+    "AC-ML1: a block that does not compile is reported, so it turns this suite red",
+    () => {
+      const code = QUICKSTART_FIRST?.body ?? "";
+      expect(code.split("received[0]?.equals").length - 1).toBe(1);
+      const mutated = code.replace("received[0]?.equals", "received[0].equals");
+      expect(compileErrors(root, "@cosyte/mllp", SOURCE_ENTRY, mutated)).toEqual([
+        expect.stringContaining("TS2532"),
+      ]);
+    },
+    COMPILE_TIMEOUT,
+  );
 
   it("AC-ML1: runs against the built package and every claimed value holds", async () => {
     expect(QUICKSTART_FIRST_RUNNABLE).toBeDefined();

@@ -5,7 +5,13 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { fences, fixturesByContent, section, wirePayloadLiteral } from "./_helpers/first-use.js";
+import {
+  compileErrors,
+  fences,
+  fixturesByContent,
+  section,
+  wirePayloadLiteral,
+} from "./_helpers/first-use.js";
 
 /**
  * The first example under the README's `## Usage` is EXECUTED here, and the output block printed
@@ -70,6 +76,27 @@ describe("the README ## Usage example", () => {
         expect(r.code, attempt).toBe(0);
         expect(r.stdout, attempt).toBe(`${shown?.body ?? ""}\n`);
       }
+    },
+    CASE_TIMEOUT,
+  );
+
+  it(
+    "AC-ML2: compiles in a new TypeScript project against the package's types",
+    () => {
+      expect(compileErrors(root, "@cosyte/mllp", entryPoint, example?.body ?? "")).toEqual([]);
+    },
+    CASE_TIMEOUT,
+  );
+
+  it(
+    "AC-ML2: a block that does not compile is reported, so it turns this suite red",
+    () => {
+      const body = example?.body ?? "";
+      expect(body.split("msa?.[1]").length - 1).toBe(1);
+      const mutated = body.replace("msa?.[1]", "msa[1]");
+      expect(compileErrors(root, "@cosyte/mllp", entryPoint, mutated)).toEqual([
+        expect.stringContaining("TS18048"),
+      ]);
     },
     CASE_TIMEOUT,
   );
