@@ -55,6 +55,8 @@ describe("the documented install specifier", () => {
     ];
     for (const form of forms) expect(installSpecifiers(form), form).toEqual(["@cosyte/mllq"]);
     expect(installSpecifiers("pnpm install\npnpm install --frozen-lockfile")).toEqual([]);
-    expect(installSpecifiers("pnpm add file:../mllp")).toEqual([]);
+    expect(
+      installSpecifiers("pnpm add file:../mllp\nnpm install git+https://x.test/mllp.git"),
+    ).toEqual([]);
   });
 });

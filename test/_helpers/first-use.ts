@@ -144,13 +144,14 @@ export function fixturesByContent(root: string, dir: string): Map<string, string
  * The package names a document tells a reader to install: the first non-flag argument of every
  * `npm install`, `npm i`, `npm add`, `pnpm add`, `pnpm install`, `pnpm i`, `yarn add`, `bun add`
  * or `deno add npm:`, read as a package name, so any `@version` suffix, closing quote or backtick,
- * or sentence-ending full stop is left off. A local path or other protocol (`file:`, `jsr:`) is
- * not a registry specifier and is not read.
+ * or sentence-ending full stop is left off. A local path or a protocol specifier (`file:../pkg`,
+ * `link:`, `git+https:`) installs whatever that path or URL holds rather than resolving a package
+ * name, so it is not a registry specifier and is not read.
  */
 export function installSpecifiers(markdown: string): string[] {
   const out: string[] = [];
   const command =
-    /\b(?:npm (?:install|add|i)|pnpm (?:add|install|i)|yarn add|bun add|deno add)((?:[ \t]+-{1,2}[\w-]+)*)[ \t]+(?:npm:)?(@?\w[\w.-]*(?:\/[\w.-]+)?)(?![\w.:/-])/g;
+    /\b(?:npm (?:install|add|i)|pnpm (?:add|install|i)|yarn add|bun add|deno add)((?:[ \t]+-{1,2}[\w-]+)*)[ \t]+(?:npm:)?(@?\w[\w.-]*(?:\/[\w.-]+)?)(?![\w.:/+-])/g;
   for (const match of markdown.matchAll(command)) {
     const spec = match[2];
     if (spec !== undefined) out.push(spec.replace(/\.+$/, ""));
