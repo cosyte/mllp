@@ -35,10 +35,11 @@ frame[frame.length - 2]; // => 0x1c
 frame[frame.length - 1]; // => 0x0d
 
 // Feed the framed bytes back through a reader; the payload comes out byte-for-byte.
-let received;
-new FrameReader({ onFrame: (p) => (received = p) }).push(frame);
+const received: Buffer[] = [];
+new FrameReader({ onFrame: (p) => received.push(p) }).push(frame);
 
-received.equals(payload); // => true
+received.length; // => 1
+received[0]?.equals(payload); // => true
 ```
 
 The payload round-trips **exactly**. The transport adds and strips three delimiter bytes and

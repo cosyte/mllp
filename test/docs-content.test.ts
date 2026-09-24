@@ -1,9 +1,21 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { beforeAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { docSnippetSuite } from "@cosyte/vitest-config/snippets";
+import {
+  docSnippetSuite,
+  extractRunnableSnippets,
+  runSnippet,
+} from "@cosyte/vitest-config/snippets";
+
+import {
+  compileErrors,
+  fences,
+  fixturesByContent,
+  wirePayloadLiteral,
+} from "./_helpers/first-use.js";
 
 /**
  * Doc/code-agreement gate. Every ```` ```ts runnable ```` block in `docs-content/` is extracted,
@@ -61,4 +73,94 @@ beforeAll(() => {
 docSnippetSuite({
   docsDir: join(root, "docs-content"),
   resolve: resolveSnippetImport,
+});
+
+/**
+ * The quickstart's FIRST example is the first thing a reader runs from the docs site, so it is held
+ * to more than the sweep above: it must be the block the sweep executes, the HL7 payload it puts on
+ * the wire must be a byte-for-byte copy of a committed fixture (the page is public, and `test/` is
+ * the corpus `pnpm phi-scan` reads), and a changed value in it must turn this suite red. Temp
+ * modules for these runs live in their own directory inside the root and are removed afterwards.
+ */
+const QUICKSTART = readFileSync(join(root, "docs-content", "quickstart.md"), "utf8");
+const QUICKSTART_FIRST = fences(QUICKSTART)[0];
+const QUICKSTART_FIRST_RUNNABLE = extractRunnableSnippets(QUICKSTART)[0];
+const FIRST_USE_TMP = join(root, ".cosyte-first-use-snippets");
+const FIXTURE_DIR = join(root, "test", "fixtures", "first-use");
+/**
+ * The harness above strips types without checking them, so compiling is checked separately, the
+ * way a reader's new TypeScript project compiles the block, against the source entry point the
+ * bundler compiles into the published types. A program over the source takes seconds to check, so
+ * these cases state their own budget.
+ */
+const SOURCE_ENTRY = join(root, "src", "index.ts");
+const COMPILE_TIMEOUT = 60_000;
+
+afterAll(() => {
+  rmSync(FIRST_USE_TMP, { recursive: true, force: true });
+});
+
+describe("the quickstart's first example", () => {
+  it("AC-ML1: is a runnable TypeScript block, so the snippet sweep executes it", () => {
+    expect(QUICKSTART_FIRST?.lang).toBe("ts");
+    expect(QUICKSTART_FIRST?.tags).toContain("runnable");
+    expect(QUICKSTART_FIRST?.tags).not.toContain("throws");
+    expect(QUICKSTART_FIRST_RUNNABLE?.code).toBe(QUICKSTART_FIRST?.body);
+  });
+
+  it(
+    "AC-ML1: compiles in a new TypeScript project against the package's types",
+    () => {
+      expect(
+        compileErrors(root, "@cosyte/mllp", SOURCE_ENTRY, QUICKSTART_FIRST?.body ?? ""),
+      ).toEqual([]);
+    },
+    COMPILE_TIMEOUT,
+  );
+
+  it(
+    "AC-ML1: a block that does not compile is reported, so it turns this suite red",
+    () => {
+      const code = QUICKSTART_FIRST?.body ?? "";
+      expect(code.split("received[0]?.equals").length - 1).toBe(1);
+      const mutated = code.replace("received[0]?.equals", "received[0].equals");
+      expect(compileErrors(root, "@cosyte/mllp", SOURCE_ENTRY, mutated)).toEqual([
+        expect.stringContaining("TS2532"),
+      ]);
+    },
+    COMPILE_TIMEOUT,
+  );
+
+  it("AC-ML1: runs against the built package and every claimed value holds", async () => {
+    expect(QUICKSTART_FIRST_RUNNABLE).toBeDefined();
+    if (QUICKSTART_FIRST_RUNNABLE === undefined) return;
+    await runSnippet(QUICKSTART_FIRST_RUNNABLE, {
+      resolve: resolveSnippetImport,
+      tmpDir: FIRST_USE_TMP,
+    });
+  });
+
+  it("AC-ML4: the payload it frames is a byte-for-byte copy of a first-use fixture", () => {
+    const payload = wirePayloadLiteral(QUICKSTART_FIRST_RUNNABLE?.code ?? "");
+    expect(payload).toBeDefined();
+    expect(fixturesByContent(root, FIXTURE_DIR).get(payload ?? "")).toBeDefined();
+  });
+
+  it("AC-ML3: a changed claimed value turns the run red", async () => {
+    const code = QUICKSTART_FIRST_RUNNABLE?.code ?? "";
+    expect(code.split("frame[0]; // => 0x0b").length - 1).toBe(1);
+    const mutated = code.replace("frame[0]; // => 0x0b", "frame[0]; // => 0x0c");
+    await expect(
+      runSnippet(mutated, { resolve: resolveSnippetImport, tmpDir: FIRST_USE_TMP }),
+    ).rejects.toThrow();
+  });
+
+  it("AC-ML3: a changed input value leaves the fixture corpus, so the suite goes red", () => {
+    const code = QUICKSTART_FIRST_RUNNABLE?.code ?? "";
+    expect(code.split("|MSG00001|").length - 1).toBe(1);
+    const mutated = code.replace("|MSG00001|", "|MSG00002|");
+    expect(
+      fixturesByContent(root, FIXTURE_DIR).get(wirePayloadLiteral(mutated) ?? ""),
+    ).toBeUndefined();
+  });
 });
