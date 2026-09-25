@@ -4,7 +4,7 @@ title: Known limitations & non-goals
 description: >-
   What not to trust this transport to do: delivery guarantees, batch acknowledgement, Release 2,
   charsets that collide with the framing bytes, and where the public surface stands today.
-sidebar_position: 9
+sidebar_position: 10
 ---
 
 # Known limitations & non-goals
