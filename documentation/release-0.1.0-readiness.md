@@ -76,6 +76,7 @@ documentation of what already ships and contributor-only tooling, stays `patch`.
 | `plain-owls-supply.md` | not present, added by the Diffie-Hellman parameter change | **minor** | "**`tls.dhParameters` on `ServerTlsOptions`, PEM content, server side only.**" |
 | `first-use-examples-executed.md` | present, unlisted when the examples change found it | patch | "Docs: the README's usage example is now one complete program the test suite runs, and the quickstart's first example is held to a committed synthetic fixture." |
 | `what-0-1-means.md` | not present, added by the change that added `examples/` and the release metadata | **minor** | "`0.1.0` is the first release of `@cosyte/mllp` whose public API we ask you to build on." It adds no symbol; it is the release's own statement of what the `0.1` line covers and promises, and it moves nothing, since the minor rows above already take the release to `0.1.0`. |
+| `quickstart-page-matches-readme.md` | not present, added by the change that made the docs quickstart open with the README's program | patch | "Documentation and test change only." |
 
 **Only the frontmatter bump-type line moved.** Every summary is byte-identical to what it was, and
 the diff for the five corrected files is one line each. A summary is the changelog entry for its

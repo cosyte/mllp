@@ -2,17 +2,69 @@
 id: quickstart
 title: Quickstart
 description: >-
-  Frame an HL7 v2 message and read it back, tolerate a real sender's quirks, then send and receive
-  over a connection with the commit contract in place.
+  Start a server on loopback, send it an HL7 v2 message and read the acknowledgement it built, then
+  frame bytes yourself and tolerate a real sender's quirks.
 sidebar_position: 3
 ---
 
 # Quickstart
 
 `@cosyte/mllp` is **transport, not parsing**: it frames HL7 v2 bytes onto the wire, correlates the
-ACK that comes back, and never inspects the payload. The core primitive is the frame
-(`VT + payload + FS + CR`) and everything else (the client, the server, reconnect, TLS) is built on
-it. This page starts there, then shows the client and server you will actually deploy.
+ACK that comes back, and never inspects the payload. This page starts with the program the README
+opens with, a server and a client on loopback, then goes down to the frame (`VT + payload + FS + CR`)
+that everything else (the client, the server, reconnect, TLS) is built on.
+
+## Send a message and read the acknowledgement
+
+Start a server, send it a message, and read the acknowledgement it built. Auto-ACK is on by default,
+and the server awaits your handler, which is the durable commit step, before it answers. The payload
+API is **Buffer-first** everywhere: HL7 v2 messages are raw bytes with caller-managed charset
+decoding.
+
+```ts runnable
+import { createStarterClient, createStarterServer } from "@cosyte/mllp";
+
+const committed: Buffer[] = [];
+
+// Port 0: the OS picks a free port. The host defaults to loopback, 127.0.0.1.
+const server = await createStarterServer({
+  port: 0,
+  onMessage: async (payload) => {
+    committed.push(payload); // your durable commit: a throw here answers AE, never AA
+  },
+});
+
+const client = await createStarterClient({ host: "127.0.0.1", port: server.getStats().port ?? 0 });
+
+const ack = await client.send(
+  Buffer.from(
+    "MSH|^~\\&|SENDING_APP|SENDING_FAC|RECEIVING_APP|RECEIVING_FAC|20260101120000||ADT^A01|CTRL0001|P|2.5.1\r",
+  ),
+);
+
+// Log the shape of the acknowledgement, never its field values.
+const msa = ack
+  .toString("utf8")
+  .split("\r")
+  .find((segment) => segment.startsWith("MSA|"))
+  ?.split("|");
+console.log("acknowledgement code:", msa?.[1]);
+console.log("MSA-2 echoes the control id sent:", msa?.[2] === "CTRL0001");
+console.log("messages committed:", committed.length);
+
+await client.close();
+await server.close();
+```
+
+```text
+acknowledgement code: AA
+MSA-2 echoes the control id sent: true
+messages committed: 1
+```
+
+`MSA-2` echoes the control id you sent, byte for byte, which is what lets the client match the answer
+to the message. The acknowledgement's own `MSH-7` and `MSH-10` change on every run. A handler that
+throws is answered `AE`, never `AA`: see [ACKs & the commit contract](./acks.md).
 
 ## Frame a message, read it back
 
@@ -133,8 +185,9 @@ This is the page to internalize before you put the package in front of a clinica
 
 > **About runnable examples.** The blocks tagged ` ```ts runnable ` above are extracted by the docs
 > build, executed against the package, and their `// =>` results asserted, so a documented example
-> can never silently drift from the code. They stay at the framing layer because it runs
-> deterministically in-process; the client/server blocks open real sockets, so they are shown as
+> can never silently drift from the code. The first one opens a loopback socket on a port the
+> operating system picks and closes both ends, so it runs as it stands. The two client and server
+> blocks after the framing examples name a fixed port and a database of yours, so they are shown as
 > plain ` ```ts ` illustrations. For socket-free _integration_ tests, the `@cosyte/mllp/testing`
 > subpath's in-memory transport wires a `Connection` end-to-end with no ports and no certs:
 > [Testing & verification](./testing.md).
