@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@cosyte/mllp": ["../src/index.ts"],
+      "@cosyte/mllp/testing": ["../src/testing/index.ts"],
+      "@cosyte/mllp/ack-from-hl7": ["../src/ack-from-hl7/index.ts"]
+    }
+  },
+  "include": ["*.ts"]
+}
