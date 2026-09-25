@@ -41,7 +41,25 @@ packages:
 # 1440 minutes = 24 hours. pnpm's own rationale for the number: "Since malware is
 # usually detected quickly, delaying updates by 24 hours will most likely prevent
 # you from installing a bad version" (https://pnpm.io/supply-chain-security).
+# @cosyte is exempt by operator decision; every third-party package keeps the floor.
 minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  # reason: first-party @cosyte package, exempt from the floor by operator decision
+  - "@cosyte/eslint-config"
+  # reason: first-party @cosyte package, exempt from the floor by operator decision
+  - "@cosyte/hl7"
+  # reason: first-party @cosyte package, exempt from the floor by operator decision
+  - "@cosyte/mllp"
+  # reason: first-party @cosyte package, exempt from the floor by operator decision
+  - "@cosyte/prettier-config"
+  # reason: first-party @cosyte package, exempt from the floor by operator decision
+  - "@cosyte/test-utils"
+  # reason: first-party @cosyte package, exempt from the floor by operator decision
+  - "@cosyte/tsconfig"
+  # reason: first-party @cosyte package, exempt from the floor by operator decision
+  - "@cosyte/tsup-config"
+  # reason: first-party @cosyte package, exempt from the floor by operator decision
+  - "@cosyte/vitest-config"
 
 # Fail the install when a package's trust evidence is weaker than that of an
 # earlier-published version of the same package (a trusted publisher that
