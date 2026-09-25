@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { format } from "node:util";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   docSnippetSuite,
@@ -14,6 +15,7 @@ import {
   compileErrors,
   fences,
   fixturesByContent,
+  section,
   wirePayloadLiteral,
 } from "./_helpers/first-use.js";
 
@@ -24,9 +26,11 @@ import {
  * runners). Blocks tagged ` ```ts runnable throws ` must throw; plain ` ```ts ` blocks are
  * illustrative and are not executed.
  *
- * `@cosyte/mllp` is **transport, not parsing**, so the runnable blocks stay at the framing layer
- * (`encodeFrame` / `FrameReader`), the transport primitive, which runs deterministically
- * in-process. The client/server examples open real sockets and so are illustrative-only.
+ * `@cosyte/mllp` is **transport, not parsing**. The quickstart opens with the README's program, a
+ * server and a client on a loopback port the operating system picks, which closes both ends and so
+ * runs to completion in-process; every other runnable block stays at the framing layer
+ * (`encodeFrame` / `FrameReader`). The client/server examples that name a fixed port and a
+ * database of the reader's are illustrative-only.
  *
  * Snippets import the package the way a consumer does, against the **built** ESM artifact, not the
  * source tree. The harness executes each block as a standalone ES module, so it can't resolve the
@@ -77,14 +81,19 @@ docSnippetSuite({
 
 /**
  * The quickstart's FIRST example is the first thing a reader runs from the docs site, so it is held
- * to more than the sweep above: it must be the block the sweep executes, the HL7 payload it puts on
- * the wire must be a byte-for-byte copy of a committed fixture (the page is public, and `test/` is
- * the corpus `pnpm phi-scan` reads), and a changed value in it must turn this suite red. Temp
- * modules for these runs live in their own directory inside the root and are removed afterwards.
+ * to more than the sweep above: it must be the block the sweep executes, it must be the same program
+ * the README's Usage section opens with (two first-use routes that disagree send a reader two ways
+ * at once), it must print exactly the output shown beside it, the HL7 payload it puts on the wire
+ * must be a byte-for-byte copy of a committed fixture (the page is public, and `test/` is the corpus
+ * `pnpm phi-scan` reads), and a changed value in it must turn this suite red. Temp modules for these
+ * runs live in their own directory inside the root and are removed afterwards.
  */
 const QUICKSTART = readFileSync(join(root, "docs-content", "quickstart.md"), "utf8");
-const QUICKSTART_FIRST = fences(QUICKSTART)[0];
+const QUICKSTART_FENCES = fences(QUICKSTART);
+const QUICKSTART_FIRST = QUICKSTART_FENCES[0];
+const QUICKSTART_FIRST_SHOWN = QUICKSTART_FENCES[1];
 const QUICKSTART_FIRST_RUNNABLE = extractRunnableSnippets(QUICKSTART)[0];
+const README_USAGE = fences(section(readFileSync(join(root, "README.md"), "utf8"), "## Usage"));
 const FIRST_USE_TMP = join(root, ".cosyte-first-use-snippets");
 const FIXTURE_DIR = join(root, "test", "fixtures", "first-use");
 /**
@@ -100,12 +109,36 @@ afterAll(() => {
   rmSync(FIRST_USE_TMP, { recursive: true, force: true });
 });
 
+/**
+ * Run a snippet against the built package and return what it printed, one `console.log` call per
+ * line, formatted the way Node prints it. The snippet runs in this process, so the spy sees it.
+ */
+async function printedBy(code: string): Promise<string> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    lines.push(format(...args));
+  });
+  try {
+    await runSnippet(code, { resolve: resolveSnippetImport, tmpDir: FIRST_USE_TMP });
+  } finally {
+    spy.mockRestore();
+  }
+  return lines.join("\n");
+}
+
 describe("the quickstart's first example", () => {
   it("AC-ML1: is a runnable TypeScript block, so the snippet sweep executes it", () => {
     expect(QUICKSTART_FIRST?.lang).toBe("ts");
     expect(QUICKSTART_FIRST?.tags).toContain("runnable");
     expect(QUICKSTART_FIRST?.tags).not.toContain("throws");
     expect(QUICKSTART_FIRST_RUNNABLE?.code).toBe(QUICKSTART_FIRST?.body);
+    expect(QUICKSTART_FIRST_SHOWN?.lang).toBe("text");
+  });
+
+  it("is the same program, with the same output, as the README's first Usage example", () => {
+    expect(README_USAGE[0]?.lang).toBe("ts");
+    expect(QUICKSTART_FIRST?.body).toBe(README_USAGE[0]?.body);
+    expect(QUICKSTART_FIRST_SHOWN?.body).toBe(README_USAGE[1]?.body);
   });
 
   it(
@@ -122,22 +155,19 @@ describe("the quickstart's first example", () => {
     "AC-ML1: a block that does not compile is reported, so it turns this suite red",
     () => {
       const code = QUICKSTART_FIRST?.body ?? "";
-      expect(code.split("received[0]?.equals").length - 1).toBe(1);
-      const mutated = code.replace("received[0]?.equals", "received[0].equals");
+      expect(code.split("msa?.[1]").length - 1).toBe(1);
+      const mutated = code.replace("msa?.[1]", "msa[1]");
       expect(compileErrors(root, "@cosyte/mllp", SOURCE_ENTRY, mutated)).toEqual([
-        expect.stringContaining("TS2532"),
+        expect.stringContaining("TS18048"),
       ]);
     },
     COMPILE_TIMEOUT,
   );
 
-  it("AC-ML1: runs against the built package and every claimed value holds", async () => {
+  it("AC-ML1: runs against the built package and prints exactly the output shown beside it", async () => {
     expect(QUICKSTART_FIRST_RUNNABLE).toBeDefined();
     if (QUICKSTART_FIRST_RUNNABLE === undefined) return;
-    await runSnippet(QUICKSTART_FIRST_RUNNABLE, {
-      resolve: resolveSnippetImport,
-      tmpDir: FIRST_USE_TMP,
-    });
+    expect(await printedBy(QUICKSTART_FIRST_RUNNABLE.code)).toBe(QUICKSTART_FIRST_SHOWN?.body);
   });
 
   it("AC-ML4: the payload it frames is a byte-for-byte copy of a first-use fixture", () => {
@@ -146,10 +176,24 @@ describe("the quickstart's first example", () => {
     expect(fixturesByContent(root, FIXTURE_DIR).get(payload ?? "")).toBeDefined();
   });
 
-  it("AC-ML3: a changed claimed value turns the run red", async () => {
+  it("AC-ML4: the payload the framing example frames is a byte-for-byte copy of a first-use fixture", () => {
+    const payload = wirePayloadLiteral(extractRunnableSnippets(QUICKSTART)[1]?.code ?? "");
+    expect(payload).toBeDefined();
+    expect(fixturesByContent(root, FIXTURE_DIR).get(payload ?? "")).toBeDefined();
+  });
+
+  it("AC-ML3: a changed input value changes what it prints, so the comparison above goes red", async () => {
     const code = QUICKSTART_FIRST_RUNNABLE?.code ?? "";
-    expect(code.split("frame[0]; // => 0x0b").length - 1).toBe(1);
-    const mutated = code.replace("frame[0]; // => 0x0b", "frame[0]; // => 0x0c");
+    expect(code.split("|CTRL0001|").length - 1).toBe(1);
+    const printed = await printedBy(code.replace("|CTRL0001|", "|CTRL0002|"));
+    expect(printed).not.toBe(QUICKSTART_FIRST_SHOWN?.body);
+    expect(printed).toContain("MSA-2 echoes the control id sent: false");
+  });
+
+  it("AC-ML3: a changed claimed value in the framing example turns the run red", async () => {
+    const framing = extractRunnableSnippets(QUICKSTART)[1]?.code ?? "";
+    expect(framing.split("frame[0]; // => 0x0b").length - 1).toBe(1);
+    const mutated = framing.replace("frame[0]; // => 0x0b", "frame[0]; // => 0x0c");
     await expect(
       runSnippet(mutated, { resolve: resolveSnippetImport, tmpDir: FIRST_USE_TMP }),
     ).rejects.toThrow();
@@ -157,8 +201,8 @@ describe("the quickstart's first example", () => {
 
   it("AC-ML3: a changed input value leaves the fixture corpus, so the suite goes red", () => {
     const code = QUICKSTART_FIRST_RUNNABLE?.code ?? "";
-    expect(code.split("|MSG00001|").length - 1).toBe(1);
-    const mutated = code.replace("|MSG00001|", "|MSG00002|");
+    expect(code.split("|CTRL0001|").length - 1).toBe(1);
+    const mutated = code.replace("|CTRL0001|", "|CTRL0002|");
     expect(
       fixturesByContent(root, FIXTURE_DIR).get(wirePayloadLiteral(mutated) ?? ""),
     ).toBeUndefined();
