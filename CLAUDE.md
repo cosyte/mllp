@@ -182,7 +182,7 @@ Inherited by depending on the published `@cosyte/*` config packages, never by co
 
 ## Standing disciplines (every change)
 
-These bind every change in this repo (mirrored from the cosyte meta-repo's `documentation/conventions.md`):
+These bind every change in this repo (mirrored from the Cosyte meta-repo's `documentation/conventions.md`):
 
 1. **Documentation follows code.** A public-surface / stack / status change isn't done until its docs are: this package's own docs (`docs-content/` + JSDoc), and (in the meta-repo) its
    `documentation/repos/<repo>.md` and the `ecosystem-map.md` status table.

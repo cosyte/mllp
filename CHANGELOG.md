@@ -421,7 +421,7 @@ paragraphs. No entry was reworded.
 
 The entries below follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the generated
 sections above use the format Changesets writes, which is a version heading and a list of the
-changes that release consumed. Versions follow the cosyte pre-alpha ladder, `0.0.x` until first
+changes that release consumed. Versions follow the Cosyte pre-alpha ladder, `0.0.x` until first
 alpha, rather than [Semantic Versioning](https://semver.org/spec/v2.0.0.html) alone, so the API can
 change with no deprecation cycle. **No version literal is written in this preamble, on purpose**:
 what is published is a fact about the registry (`npm view @cosyte/mllp version`) and about
@@ -793,7 +793,7 @@ what is published is a fact about the registry (`npm view @cosyte/mllp version`)
 - **`docs-content/installation.md` publish-status note corrected (README-ORG-SWEEP).** The Status
   callout said the package was "not yet published to npm" and that the install command was "the shape
   it will take at first publish": stale now that `@cosyte/mllp` is published on npm at `0.0.1` and
-  public. Rewritten to state it is published and public, still pre-alpha on the cosyte
+  public. Rewritten to state it is published and public, still pre-alpha on the Cosyte
   `0.0.x`-until-first-alpha ladder (no API-stability promise), and that `npm install @cosyte/mllp` is
   live. Docs only: no runtime or public-API change.
 
@@ -1212,8 +1212,8 @@ what is published is a fact about the registry (`npm view @cosyte/mllp version`)
   *bounds*. Fixed: the scan is now `readMshSegment`, which bounds the MSH at its terminator before
   reading any field out of it. A field that does not exist reads as **absent**, never as the next
   segment's contents.
-- **`ack-from-hl7` could not echo a control ID verbatim, so a cosyte client could not correlate a
-  cosyte server's ACK (MLLP-ACK-UTF8).** `buildMllpAck` decoded the inbound through the peer
+- **`ack-from-hl7` could not echo a control ID verbatim, so a Cosyte client could not correlate a
+  Cosyte server's ACK (MLLP-ACK-UTF8).** `buildMllpAck` decoded the inbound through the peer
   parser's charset machinery and re-encoded the ACK through a hardcoded **`utf8`**. The two are not
   inverses. A control-ID byte `0x8B` (legal under an `MSH-18` of `8859/1`, and the exact case
   `MLLP-CORRELATOR-ASCII` had just fixed on the client) came back out of MSA-2 as the **two** bytes
@@ -1420,7 +1420,7 @@ what is published is a fact about the registry (`npm view @cosyte/mllp version`)
 ### Added
 
 - **Trademark notice (`TRADEMARKS.md`).** This package names third-party systems to describe what it
-  interoperates with; the notice records that cosyte is not affiliated with, endorsed by, or
+  interoperates with; the notice records that Cosyte is not affiliated with, endorsed by, or
   sponsored by any of them, that every reference is descriptive, and that the built-in profiles are
   authored from public sources only. Added to `files` so it ships inside the published tarball, not
   just on GitHub. Documentation only: no runtime or API change.

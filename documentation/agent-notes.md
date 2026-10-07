@@ -910,7 +910,7 @@ section is emptied to its heading, or an anchor is edited on one side of the pai
 other. Twenty repos took the same split. None of them had a check for any of it.
 
 **▶ IT IS NAMED FOR WHAT IT CHECKS AND IT IS NOT A UNIVERSAL, AND THAT IS THE DECISION IN THIS
-SECTION.** The tempting framing is "every cosyte repo has a `CLAUDE.md` plus an
+SECTION.** The tempting framing is "every Cosyte repo has a `CLAUDE.md` plus an
 `agent-notes.md`, so gate the contract". **Measured 2026-08-06 on the umbrella's own checkout:
 `config`, `hl7` and `workflow` have no `documentation/agent-notes.md` at all.** So the
 ecosystem-wide contract is either not universal or is broken in three places, and a gate written

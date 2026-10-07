@@ -27,7 +27,7 @@ Two files in this checkout carried the guidance, and both said the same thing be
 `.changeset/README.md`, as it stood before this change:
 
 > During pre-alpha, pick **patch**: that keeps the package on the `0.0.x` ladder until its first
-> alpha. See the cosyte version ladder in the meta-repo's `documentation/conventions.md`.
+> alpha. See the Cosyte version ladder in the meta-repo's `documentation/conventions.md`.
 
 Both defer to a file that is not in this checkout and was not read for this record. What is in the
 checkout is the instruction to pick `patch` unconditionally, and that instruction is what produced a
