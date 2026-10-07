@@ -22,4 +22,4 @@ Pick the bump type from what the change does to the published package. On the `0
   and the break has to be spelled out in the summary, because the number alone tells a consumer on
   a `0.x` release nothing.
 
-See the cosyte version ladder in the meta-repo's `documentation/conventions.md`.
+See the Cosyte version ladder in the meta-repo's `documentation/conventions.md`.

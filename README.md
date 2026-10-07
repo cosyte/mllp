@@ -350,7 +350,7 @@ commit and is deliberately hard to bypass.
 ## Trademarks
 
 Epic, Cerner, Mirth Connect, NextGen, and Google Cloud Healthcare are trademarks of their respective
-owners. cosyte is not affiliated with, endorsed by, or sponsored by any of them. The names identify
+owners. Cosyte is not affiliated with, endorsed by, or sponsored by any of them. The names identify
 the engines this package is tested against, and those it is not. See
 [TRADEMARKS.md](./TRADEMARKS.md).
 
