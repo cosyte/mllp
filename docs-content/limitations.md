@@ -219,12 +219,13 @@ accumulated bytes (`MLLP_TRAILING_BYTES`) and delivers only the fragment after i
 path downgrades that frame rather than positively acknowledge a destroyed message. Batch ACK is its
 own unbuilt feature.
 
-## The API is not stable yet
+## API stability
 
-`@cosyte/mllp` is on the `0.0.x` ladder and **pre-alpha**. There is no API-stability promise and no
-deprecation cycle: any release may change the public surface. The stable **warning codes** and
-**security-warning codes** are treated as public API within that caveat (renaming one is a breaking
-change) but the ladder itself makes no 1.0-style guarantees. Pin an exact version.
+`@cosyte/mllp` is at `0.1`: it has left the pre-alpha `0.0.x` ladder. The client, the server, the
+framing codec, the in-memory transport and the optional `ack-from-hl7` bridge are the surface we
+keep stable. The stable **warning codes** and **security-warning codes** are part of that surface,
+so renaming or removing one is a breaking change. Below 1.0 a breaking change moves the minor
+version, and the changelog says how to migrate.
 
 ---
 

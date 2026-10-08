@@ -17,7 +17,7 @@ inspects the payload.
 > **Status:** published on npm and public, so the `npm install @cosyte/mllp` command below is live,
 > not aspirational. Where the package sits on the release ladder, and what that means for the
 > stability of its public surface, is stated in one place:
-> [The API is not stable yet](./limitations.md#the-api-is-not-stable-yet). Read it before you pin.
+> [API stability](./limitations.md#api-stability). Read it before you pin.
 
 ## Prerequisites
 
