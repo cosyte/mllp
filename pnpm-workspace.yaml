@@ -1,71 +1,22 @@
-# ---------------------------------------------------------------------------
-# INSTALL HARDENING. The two settings at the bottom of this file are the only
-# defence this repository has against a compromised release during the window
-# between its publication and its removal from the registry. Neither is a pnpm
-# default (`minimumReleaseAge` is 0 before v11, `trustPolicy` is off), so both
-# lines are load-bearing and neither restates something pnpm already does.
+# Install hardening. Both settings are off by default at the pinned pnpm, so they are in force only
+# because this file says so.
 #
-# ▶ NEITHER KEY IS IN FORCE AT THE pnpm THIS REPO PINS, AND THAT IS WRITTEN DOWN
-# RATHER THAN LEFT TO BE INFERRED FROM A GREEN INSTALL. `package.json` pins
-# `packageManager: pnpm@10.0.0`. pnpm added `minimumReleaseAge` in 10.16.0 and
-# `trustPolicy` in 10.21.0, and a pnpm older than the release that added a
-# setting IGNORES the key outright rather than rejecting it. So this file
-# declares the floor and defends nothing here today: each setting takes force
-# the moment the pin is raised past its own release, one at a time. Read a
-# passing install as evidence about the PIN, never as evidence that either
-# setting was applied.
-#
-# Raising `packageManager` is its own decision with its own blast radius, since
-# it is what CI, the pre-commit hook and every developer box run. The two
-# releases these keys wait on are therefore RECORDED here instead of being
-# taken, and "an ignored key is a dead key, delete the file" is the one wrong
-# reading of that.
-# ---------------------------------------------------------------------------
-
-# ▶ `packages` IS HERE BECAUSE pnpm@10.0.0 REFUSES A SETTINGS FILE WITHOUT IT,
-# NOT BECAUSE THIS REPO IS A WORKSPACE. Measured at the pinned version: with the
-# key absent, `pnpm install --frozen-lockfile` exits 1 with `ERROR  packages
-# field missing or empty`, because a `pnpm-workspace.yaml` was still only a
-# WORKSPACE manifest there. It became the home for settings later, in the same
-# 10.16.0 that added the first key below.
-#
-# `.` is the single package, at the repository root, which is what this
-# repository actually contains: it declares no member this tree does not have,
-# and it leaves `pnpm-lock.yaml` byte-identical (measured: install with and
-# without this file produces the same lockfile, `importers:` included). Do not
-# read it as an invitation to add a second entry; a real workspace here would be
-# a package-layout decision, not a settings-file edit.
-packages:
-  - "."
-
-# 1440 minutes = 24 hours. pnpm's own rationale for the number: "Since malware is
-# usually detected quickly, delaying updates by 24 hours will most likely prevent
-# you from installing a bad version" (https://pnpm.io/supply-chain-security).
+# minimumReleaseAge is pnpm's own 24 hours in minutes: malware is usually caught quickly, so refusing
+# a release younger than a day is what stands between a compromised publish and this checkout during
+# the window before it is pulled (https://pnpm.io/supply-chain-security).
 # @cosyte is exempt by operator decision; every third-party package keeps the floor.
+# trustPolicy `no-downgrade` refuses a package whose trust evidence is weaker than that of an
+# earlier-published version of the same package.
+#
+# THE pnpm PIN IS PART OF THE CONTROL, NOT A SEPARATE FACT. minimumReleaseAge arrived in pnpm 10.16.0
+# and trustPolicy in 10.21.0; an older pnpm ignores both keys outright, which is a settings file that
+# decorates rather than defends. So `packageManager` in package.json is pinned above both floors
+# (10.34.5), and lowering it below them disarms this file silently.
+#
+# There is deliberately no `packages:` key: this repository is one package, not a workspace, and at
+# the pinned pnpm this file is the settings file as well as the workspace manifest.
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   # reason: first-party @cosyte package, exempt from the floor by operator decision
-  - "@cosyte/eslint-config"
-  # reason: first-party @cosyte package, exempt from the floor by operator decision
-  - "@cosyte/hl7"
-  # reason: first-party @cosyte package, exempt from the floor by operator decision
-  - "@cosyte/mllp"
-  # reason: first-party @cosyte package, exempt from the floor by operator decision
-  - "@cosyte/prettier-config"
-  # reason: first-party @cosyte package, exempt from the floor by operator decision
-  - "@cosyte/test-utils"
-  # reason: first-party @cosyte package, exempt from the floor by operator decision
-  - "@cosyte/tsconfig"
-  # reason: first-party @cosyte package, exempt from the floor by operator decision
-  - "@cosyte/tsup-config"
-  # reason: first-party @cosyte package, exempt from the floor by operator decision
-  - "@cosyte/vitest-config"
-
-# Fail the install when a package's trust evidence is weaker than that of an
-# earlier-published version of the same package (a trusted publisher that
-# becomes provenance-only, or provenance that becomes nothing at all).
-#
-# No exemption list is carried. An empty list is a place for an entry to appear
-# unremarked, so the key is ABSENT rather than empty, and the first exemption
-# this repo ever needs arrives with a `# reason:` line above it.
+  - "@cosyte/*"
 trustPolicy: no-downgrade
