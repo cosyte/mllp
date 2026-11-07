@@ -4,14 +4,14 @@
  * exact byte fidelity, and encoding must be idempotent.
  *
  * These are the generative analogue of `test/framing/byte-fidelity.test.ts`
- * (which sweeps every single byte value 0x00–0xFF and a 1 MiB corpus). Where that
+ * (which sweeps every single byte value 0x00 to 0xFF and a 1 MiB corpus). Where that
  * file pins fixed corpora, this file generates thousands of arbitrary
  * delimiter-free payloads and proves the codec is a lossless inverse pair.
  *
  * Wiring to the `@cosyte/test-utils` `roundTripProperty` runner: the runner's
  * contract is `serialize: (T) => string` / `parse: (string) => T`. MLLP is a byte
  * transport, so we marshal the frame `Buffer` across that string boundary with
- * `latin1` (a lossless 1:1 byte↔code-unit mapping for 0x00–0xFF). The in-memory
+ * `latin1` (a lossless 1:1 byte↔code-unit mapping for 0x00 to 0xFF). The in-memory
  * value `T` is the payload `Buffer`; `serialize` encodes a frame and stringifies
  * it, `parse` decodes the frame back to the payload. Buffer equality is the
  * structural check.

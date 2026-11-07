@@ -92,7 +92,7 @@ const RELEASE_STATUS_MARKERS: ReadonlyArray<{ readonly label: string; readonly p
 /** The one page allowed to carry a literal version of this package. */
 const VERSION_DECLARING_PAGE = "conformance.md";
 
-/** The dashes banned across the set. `check-no-emdash.sh` covers U+2014 and does not cover U+2013. */
+/** The dashes banned across the set. `check-no-emdash.sh` covers both across the tracked files too. */
 const BANNED_DASHES: ReadonlyArray<{ readonly name: string; readonly codePoint: number }> = [
   { name: "U+2013 (en dash)", codePoint: 0x2013 },
   { name: "U+2014 (em dash)", codePoint: 0x2014 },
@@ -493,8 +493,7 @@ describe("docs-content is a valid set", () => {
             at,
             `${path} carries ${name} at offset ${String(at)}. This set uses ASCII hyphens for ` +
               `ranges and rewrites a dash-joined clause with a period, colon, comma or ` +
-              `parentheses. (\`check-no-emdash.sh\` covers U+2014 across every tracked file; ` +
-              `U+2013 is covered here and nowhere else.)`,
+              `parentheses. (\`check-no-emdash.sh\` covers both across the tracked files too.)`,
           ).toBe(-1);
         }
       }

@@ -29,7 +29,7 @@ import { encodeFrame } from "../../src/framing/encoder.js";
 import { VT, FS, CR, LF } from "../../src/framing/constants.js";
 
 /**
- * An arbitrary payload `Buffer` of 0–256 bytes drawn from the full `0x00`–`0xFF`
+ * An arbitrary payload `Buffer` of 0 to 256 bytes drawn from the full `0x00` to `0xFF`
  * range, so it may contain the framing bytes `VT` (0x0B), `FS` (0x1C), and `CR`
  * (0x0D). Used by the lenient/fuzz invariants where payload bytes are hostile.
  */
@@ -70,7 +70,7 @@ const SAFE_PAYLOAD_BYTE = fc
   .integer({ min: 0x20, max: 0x7e })
   .filter((b) => b !== VT && b !== FS && b !== CR);
 
-/** A short run of safe payload bytes (1–32) for building hand-rolled frames. */
+/** A short run of safe payload bytes (1 to 32) for building hand-rolled frames. */
 function safePayloadBytes(): fc.Arbitrary<number[]> {
   return fc.array(SAFE_PAYLOAD_BYTE, { minLength: 1, maxLength: 32 });
 }
@@ -191,7 +191,7 @@ export function malformedFrame(): fc.Arbitrary<MalformedFrame> {
 }
 
 /**
- * Pure random byte noise as a `Buffer` (0–512 bytes), the most hostile fuzz input
+ * Pure random byte noise as a `Buffer` (0 to 512 bytes), the most hostile fuzz input
  * for the decoder. Includes every byte value, so VT/FS/CR land at random offsets.
  */
 export function randomBytes(): fc.Arbitrary<Buffer> {
@@ -199,7 +199,7 @@ export function randomBytes(): fc.Arbitrary<Buffer> {
 }
 
 /**
- * A list of random byte chunks (1–16 chunks, each 0–64 bytes). Concatenated they
+ * A list of random byte chunks (1 to 16 chunks, each 0 to 64 bytes). Concatenated they
  * are arbitrary noise; fed chunk-by-chunk they stress the decoder's chunk-boundary
  * reassembly (a frame may straddle any number of `push()` calls).
  */

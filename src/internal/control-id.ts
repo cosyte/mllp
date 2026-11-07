@@ -59,7 +59,7 @@ const SEGMENT_SEPARATOR_LF = 0x0a;
  *
  * **`latin1` is the only byte-faithful decode available.** It is not merely the
  * best of several, it is the one that exists. Node's `Buffer` `latin1` codec is
- * true ISO-8859-1: a 1:1 map between the 256 byte values and U+0000–U+00FF, so
+ * true ISO-8859-1: a 1:1 map between the 256 byte values and U+0000 to U+00FF, so
  * `Buffer.from(buf.toString("latin1"), "latin1")` is the identity for *every*
  * byte string. Every alternative loses bytes in exactly the range that matters:
  *
@@ -69,7 +69,7 @@ const SEGMENT_SEPARATOR_LF = 0x0a;
  *   * `TextDecoder("iso-8859-1")`, which is what a charset-driven decode such as
  *     `@cosyte/hl7`'s `parseHL7(buffer, { charset })` uses, is **not** ISO-8859-1
  *     at all. The WHATWG Encoding Standard aliases the label `iso-8859-1` to
- *     **windows-1252**, which maps 0x80–0x9F to typography (`0x8B` → `U+2039`,
+ *     **windows-1252**, which maps 0x80 to 0x9F to typography (`0x8B` → `U+2039`,
  *     `0x9C` → `U+0153`) rather than to `U+008B`/`U+009C`. Re-encoding that back
  *     to bytes does not round-trip. That is precisely the byte range a high-bit
  *     control ID lives in, which is why this package decodes control-ID bytes

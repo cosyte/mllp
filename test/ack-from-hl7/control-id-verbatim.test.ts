@@ -499,7 +499,7 @@ describe("ack-from-hl7, a non-text codec is rejected at the boundary on every in
    * codec (`ascii` masking a high bit) but NOT for a genuinely non-text one: a non-text codec
    * garbles the *inbound* decode so it never parses as `MSH`, routing to the unparseable fallback
    * whose MSA-2 is empty, the NOT_VERBATIM check short-circuits and never runs, and then serializes
-   * that fallback ACK to garbage bytes that ~3–4 % of the time (identically on Node 22 and 24)
+   * that fallback ACK to garbage bytes that ~3 to 4 % of the time (identically on Node 22 and 24)
    * contain a `VT`/`FS` byte and make the strict frame encoder throw a nondeterministic
    * `MllpFramingError`. So it was never the "loud AE" it was documented to be; it was an unreadable
    * frame that sometimes crashed. The legitimate byte-level escape hatch (a *charset* codec on a
