@@ -22,10 +22,10 @@
  * @packageDocumentation
  */
 
-import { createConnection } from "node:net";
+import { createConnection, isIP } from "node:net";
 import type { Socket } from "node:net";
-import { connect as tlsConnect } from "node:tls";
-import type { TLSSocket } from "node:tls";
+import { checkServerIdentity, connect as tlsConnect } from "node:tls";
+import type { ConnectionOptions, PeerCertificate, TLSSocket } from "node:tls";
 import { EventEmitter } from "node:events";
 import { Connection } from "../connection/index.js";
 import type { ConnectionState, StateChangeEvent } from "../connection/index.js";
@@ -103,6 +103,34 @@ const OUTBOUND_WARNING_CONTEXT: AckModeWarningContext = Object.freeze({
   byteOffset: 0,
   elapsedSinceSendMs: 0,
 });
+
+/**
+ * The TLS identity options for a client connection to `host`.
+ *
+ * The identity-check target is the configured `servername`, else `host`. A host name is sent as
+ * the SNI server name, and Node checks the server certificate against it. An IP address is never
+ * sent as SNI: RFC 6066 allows only host names there, and Node 26 rejects an IP `servername` with
+ * `ERR_INVALID_ARG_VALUE`. With no `servername`, Node checks the certificate against `host`, so
+ * an IP target equal to `host` needs nothing more, and an IP target that differs from `host` is
+ * checked through `checkServerIdentity`. Either way the certificate is verified against the
+ * address the caller named.
+ *
+ * @param host - `ClientOptions.host`, the address the socket connects to.
+ * @param servername - `TlsOptions.servername`, when configured.
+ * @returns The `servername` or `checkServerIdentity` entry to spread into `tls.connect`.
+ */
+function identityOptions(
+  host: string,
+  servername: string | undefined,
+): Pick<ConnectionOptions, "servername" | "checkServerIdentity"> {
+  const target = servername ?? host;
+  if (isIP(target) === 0) return { servername: target };
+  if (target === host) return {};
+  return {
+    checkServerIdentity: (_hostname: string, cert: PeerCertificate) =>
+      checkServerIdentity(target, cert),
+  };
+}
 
 /**
  * The `'warning'` payload the client emits for an ACK-correlation deviation
@@ -799,7 +827,9 @@ export class MllpClient extends EventEmitter {
    * `TlsTransport`, verification defaults **on**
    * (`rejectUnauthorized: !allowUnverified`), floor `minVersion: 'TLSv1.2'`
    * (the IHE ATNA ITI-19 BCP195 floor), `servername` defaulting to
-   * `ClientOptions.host`.
+   * `ClientOptions.host`. An IP address is never sent as the SNI server
+   * name (see `identityOptions`); the certificate is still checked
+   * against it.
    */
   private _createSocketAndTransport(): {
     socket: Socket | TLSSocket;
@@ -820,7 +850,7 @@ export class MllpClient extends EventEmitter {
     const socket = tlsConnect({
       host: this._opts.host,
       port: this._opts.port,
-      servername: tlsOpts.servername ?? this._opts.host,
+      ...identityOptions(this._opts.host, tlsOpts.servername),
       ...(tlsOpts.ca !== undefined ? { ca: tlsOpts.ca } : {}),
       ...(tlsOpts.cert !== undefined ? { cert: tlsOpts.cert } : {}),
       ...(tlsOpts.key !== undefined ? { key: tlsOpts.key } : {}),
