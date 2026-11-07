@@ -1,5 +1,5 @@
 /**
- * `@cosyte/mllp`, Production-grade MLLP client and server for Node.js.
+ * `@cosyte/mllp`: an MLLP client and server for Node.js.
  *
  * Transport-only sibling to `@cosyte/hl7`. Handles framing, ACKs, reconnects,
  * backpressure, and TLS without requiring knowledge of the MLLP spec.
