@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+### Patch Changes
+
+- b8a4c59: The published type documentation now writes a byte range with "to" instead of an en dash, for example "0x00 to 0x7F". Nothing a consumer calls changes.
+
 ## 0.1.0
 ### Minor Changes
 
