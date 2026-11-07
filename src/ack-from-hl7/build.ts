@@ -132,7 +132,7 @@ export const MLLP_ACK_CONTROL_ID_NOT_VERBATIM = "MLLP_ACK_CONTROL_ID_NOT_VERBATI
  * The guard cannot be grown to catch that; by the time text arrives the bytes are gone.
  * The API can, and does: rather than let the text path pass a codec-sensitive control ID
  * off as verified, `buildMllpAck` refuses to stay silent about it. Whenever the ACK's MSA-2
- * control ID holds a code unit outside `0x00`–`0x7F` on a text inbound, the range where the
+ * control ID holds a code unit outside `0x00` to `0x7F` on a text inbound, the range where the
  * codec choice is load-bearing, it emits this warning. An all-ASCII control ID round-trips
  * identically under every codec, so the common case stays quiet; a non-ASCII one is flagged as
  * *unverifiable*, not as *known-broken*, because from a decoded string the two are genuinely
@@ -167,7 +167,7 @@ export const MLLP_ACK_CONTROL_ID_UNVERIFIABLE = "MLLP_ACK_CONTROL_ID_UNVERIFIABL
  * Byte-faithful codec for raw-`Buffer` inbound, the default (HL7 v2.5.1 §2.9.2.2).
  *
  * `latin1` is Node's true ISO-8859-1: a 1:1 map between the 256 byte values and
- * U+0000–U+00FF, so `Buffer.from(buf.toString("latin1"), "latin1")` is the identity
+ * U+0000 to U+00FF, so `Buffer.from(buf.toString("latin1"), "latin1")` is the identity
  * for **every** byte string. It is the only codec for which that holds, which makes
  * it the only one under which MSA-2 can echo an arbitrary inbound MSH-10 verbatim.
  * See `src/internal/control-id.ts` for why `ascii`, `utf8`, and a charset-driven
@@ -386,7 +386,7 @@ function resolveEncoding(
  * {@link verifyVerbatimEcho} short-circuits on `inboundId === null` and the NOT_VERBATIM proof
  * *never runs*. The supposed safety net is not reachable. Worse, the fallback ACK is then
  * serialized with that same non-text codec: `Buffer.from(ackText, "base64")` decodes the ACK
- * text to random bytes that, roughly 3–4 % of the time (identically on Node 22 and Node 24,
+ * text to random bytes that, roughly 3 to 4 % of the time (identically on Node 22 and Node 24,
  * this was never a runtime divergence, only a flaky draw of the fallback's generated MSH-10),
  * contain a `VT`/`FS` delimiter byte and make the strict {@link encodeFrame} throw a
  * nondeterministic `MllpFramingError`. So the non-text-codec-on-`Buffer` path is neither the
