@@ -1,13 +1,13 @@
 ---
 id: reliability
-title: Connection, reconnect & backpressure
+title: Connection, reconnect, and backpressure
 description: >-
   The six-state connection machine, auto-reconnect with backoff, dead-peer detection, backpressure,
   and what close() does and does not do for in-flight messages.
 sidebar_position: 6
 ---
 
-# Connection, reconnect & backpressure
+# Connection, reconnect, and backpressure
 
 An MLLP link lives for months and fails in ways a request/response client never sees: the peer
 half-closes and never tells you, a firewall silently evicts the NAT entry, an interface engine gets

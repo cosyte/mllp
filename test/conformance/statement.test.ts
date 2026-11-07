@@ -94,10 +94,10 @@ type Verdict = (typeof VERDICTS)[number];
  */
 const REQUIRED_ACK_MODES = [
   "Original mode",
-  "Enhanced mode, accept acknowledgement",
-  "Enhanced mode, application acknowledgement",
-  "MLLP Release 2 commit acknowledgement",
-  "Batch acknowledgement",
+  "Enhanced mode, accept acknowledgment",
+  "Enhanced mode, application acknowledgment",
+  "MLLP Release 2 commit acknowledgment",
+  "Batch acknowledgment",
 ] as const;
 
 /**
@@ -236,15 +236,15 @@ function declarationBlock(source: string, opener: string, where: string): string
  * the check below refuses if a member named here stops existing, so this list cannot rot quietly.
  */
 const NON_TOLERANCE_DECODER_MEMBERS: Readonly<Record<string, string>> = {
-  onFrame: "a delivery callback, not a framing behaviour",
-  onWarning: "a diagnostic callback, not a framing behaviour",
+  onFrame: "a delivery callback, not a framing behavior",
+  onWarning: "a diagnostic callback, not a framing behavior",
   maxFrameSizeBytes: "a bound that always throws MLLP_FRAME_TOO_LARGE; it tolerates nothing",
   strict: "the escalation rather than a tolerance: it takes every opt-in back to a throw",
 };
 
 /** The same partition for the encoder half. */
 const NON_TOLERANCE_ENCODER_MEMBERS: Readonly<Record<string, string>> = {
-  onWarning: "a diagnostic callback, not a framing behaviour",
+  onWarning: "a diagnostic callback, not a framing behavior",
 };
 
 /** Every member the given options interface declares, tolerance or not. */
@@ -401,7 +401,7 @@ function decodeWith(bytes: readonly number[], options: Partial<FrameReaderOption
 }
 
 // ---------------------------------------------------------------------------
-// Exercising both acknowledgement-building routes against a multi-message frame
+// Exercising both acknowledgment-building routes against a multi-message frame
 // ---------------------------------------------------------------------------
 
 /**
@@ -423,7 +423,7 @@ const CONCATENATED_TWO_MSH =
 /** The two multi-message shapes, in the column order the page's route table declares them. */
 const MULTI_MESSAGE_SHAPES = [BATCH_ENVELOPE, CONCATENATED_TWO_MSH] as const;
 
-/** What one acknowledgement-building route did with a requested positive `AA`. */
+/** What one acknowledgment-building route did with a requested positive `AA`. */
 interface AckOutcome {
   /** The disposition MSA-1 actually carries. */
   readonly code: string;
@@ -445,7 +445,7 @@ function classifyOutcome(outcome: AckOutcome): string {
 }
 
 /**
- * One probe per acknowledgement-building route, keyed by the identifier the page's route table
+ * One probe per acknowledgment-building route, keyed by the identifier the page's route table
  * names it with, so a route the page adds or renames without a probe here reds.
  */
 const ROUTE_PROBES: Readonly<Record<string, (payload: Buffer) => AckOutcome>> = {
@@ -530,7 +530,7 @@ describe("conformance statement", () => {
     });
 
     it("has a fixture for every declared tolerance", () => {
-      // Without this the two behavioural cases below would silently skip a new opt-in.
+      // Without this the two behavioral cases below would silently skip a new opt-in.
       expect(Object.keys(TOLERANCE_FIXTURES).sort()).toStrictEqual(
         declared.map((d) => d.option).sort(),
       );
@@ -674,11 +674,11 @@ describe("conformance statement", () => {
     });
   });
 
-  describe("acknowledgement modes", () => {
-    const table = tableUnder("Acknowledgement modes");
+  describe("acknowledgment modes", () => {
+    const table = tableUnder("Acknowledgment modes");
 
     it("records a separate client and server verdict for each mode", () => {
-      expect(table.header).toStrictEqual(["Acknowledgement mode", "Client role", "Server role"]);
+      expect(table.header).toStrictEqual(["Acknowledgment mode", "Client role", "Server role"]);
       for (const row of table.rows) {
         const [mode, client, server] = row;
         expect(VERDICTS, `client verdict for "${mode ?? ""}"`).toContain(client);
@@ -686,7 +686,7 @@ describe("conformance statement", () => {
       }
     });
 
-    it("covers every acknowledgement mode a reviewer asks about", () => {
+    it("covers every acknowledgment mode a reviewer asks about", () => {
       const covered = table.rows.map((row) => plain(row[0] ?? ""));
       for (const mode of REQUIRED_ACK_MODES) {
         expect(
@@ -696,24 +696,24 @@ describe("conformance statement", () => {
       }
     });
 
-    it("records the enhanced-mode application acknowledgement asymmetrically", () => {
+    it("records the enhanced-mode application acknowledgment asymmetrically", () => {
       const row = table.rows.find(
-        (r) => plain(r[0] ?? "") === "Enhanced mode, application acknowledgement",
+        (r) => plain(r[0] ?? "") === "Enhanced mode, application acknowledgment",
       );
       expect(row).toBeDefined();
-      // The client waits for and settles on the second acknowledgement; this package's server emits
-      // exactly one acknowledgement per inbound message, so the second exchange is the consumer's.
+      // The client waits for and settles on the second acknowledgment; this package's server emits
+      // exactly one acknowledgment per inbound message, so the second exchange is the consumer's.
       expect(row?.[1]).toBe("Supported");
       expect(row?.[2]).toBe("Not supported");
       expect(
         STATEMENT,
-        "the statement must say that the server emits exactly one acknowledgement per inbound " +
-          "message, which is why the application acknowledgement is the consumer's to orchestrate.",
-      ).toContain("exactly one acknowledgement per inbound message");
+        "the statement must say that the server emits exactly one acknowledgment per inbound " +
+          "message, which is why the application acknowledgment is the consumer's to orchestrate.",
+      ).toContain("exactly one acknowledgment per inbound message");
     });
 
-    it("keeps MLLP Release 2 and batch acknowledgement recorded as not supported on both roles", () => {
-      for (const mode of ["MLLP Release 2 commit acknowledgement", "Batch acknowledgement"]) {
+    it("keeps MLLP Release 2 and batch acknowledgment recorded as not supported on both roles", () => {
+      for (const mode of ["MLLP Release 2 commit acknowledgment", "Batch acknowledgment"]) {
         const row = table.rows.find((r) => plain(r[0] ?? "") === mode);
         expect(row, `no row for "${mode}"`).toBeDefined();
         expect(row?.[1], `client verdict for "${mode}"`).toBe("Not supported");
@@ -721,7 +721,7 @@ describe("conformance statement", () => {
       }
     });
 
-    it("declares the automatic acknowledgement as opt-in, with the starter default the code sets", () => {
+    it("declares the automatic acknowledgment as opt-in, with the starter default the code sets", () => {
       // "The server answers every inbound message" is true only where `autoAck` is set. With it
       // unset the server sends nothing of its own and the handler owns the response, and only the
       // starter server supplies a default. An unqualified sentence here tells a reviewer the
@@ -754,16 +754,16 @@ describe("conformance statement", () => {
   describe("batch and concatenated frames", () => {
     const table = tableUnder("Batch and concatenated frames, route by route");
 
-    it("records an outcome for every acknowledgement-building route, on both shapes", () => {
+    it("records an outcome for every acknowledgment-building route, on both shapes", () => {
       expect(table.header.map(plain)).toStrictEqual([
-        "Acknowledgement route",
+        "Acknowledgment route",
         "An FHS/BHS batch envelope",
         "A second MSH in the same frame",
       ]);
       const routes = table.rows.map((row) => backticked(row[0] ?? "") ?? "").sort();
       expect(
         routes,
-        "the route table must name exactly the acknowledgement-building routes this gate can " +
+        "the route table must name exactly the acknowledgment-building routes this gate can " +
           "exercise. A route added to the page with no probe here is a declaration nothing checks, " +
           "and a route dropped from the page is a route a reviewer is never told about.",
       ).toStrictEqual(Object.keys(ROUTE_PROBES).sort());
@@ -786,7 +786,7 @@ describe("conformance statement", () => {
       // THE CHECK THIS WHOLE SUBSECTION EXISTS FOR. The two routes do not agree, and the page said
       // they did. A reviewer who reads "refused" does not add a concatenation guard above the
       // library, so a refusal claimed for a route that does not perform one is the overstatement on
-      // this page with a clinical failure mode: a positive acknowledgement for messages nobody read.
+      // this page with a clinical failure mode: a positive acknowledgment for messages nobody read.
       for (const row of table.rows) {
         const route = backticked(row[0] ?? "") ?? "";
         const probe = ROUTE_PROBES[route];
@@ -997,12 +997,12 @@ describe("conformance statement", () => {
     });
   });
 
-  describe("unverified behaviours", () => {
-    const unverified = tableUnder("Behaviours recorded as unverified");
+  describe("unverified behaviors", () => {
+    const unverified = tableUnder("Behaviors recorded as unverified");
 
     it("records each one as unverified, with a reason", () => {
       expect(unverified.header).toStrictEqual([
-        "Behaviour",
+        "Behavior",
         "Verdict",
         "Why it is unverified rather than absent",
       ]);
@@ -1021,9 +1021,9 @@ describe("conformance statement", () => {
         const name = row[2] ?? "";
         if (row[4] !== "Unverified" && row[5] !== "Unverified") continue;
         expect(
-          reasons.some((behaviour) => behaviour.includes(name)),
+          reasons.some((behavior) => behavior.includes(name)),
           `"${name}" is recorded Unverified in the IHE options table but has no entry under ` +
-            `"Behaviours recorded as unverified", so the reason is nowhere.`,
+            `"Behaviors recorded as unverified", so the reason is nowhere.`,
         ).toBe(true);
       }
     });
@@ -1037,7 +1037,7 @@ describe("conformance statement", () => {
   });
 
   describe("publication", () => {
-    it("declares the version of the package whose behaviour it describes", () => {
+    it("declares the version of the package whose behavior it describes", () => {
       const matches = [...STATEMENT.matchAll(/^\*\*Version declared:\*\* `([^`\n]+)`$/gm)];
       expect(
         matches.length,
