@@ -1,18 +1,18 @@
 ---
 id: acks
-title: ACKs & the commit contract
+title: ACKs and the commit contract
 description: >-
   The commit contract, the Table 0008 code the auto-ACK path selects, ACK correlation on the
   client, both halves of the enhanced-mode exchange, and the ack-from-hl7 builder.
 sidebar_position: 5
 ---
 
-# ACKs & the commit contract
+# ACKs and the commit contract
 
-This is the page that matters most. MLLP framing is trivial; **acknowledgement is where a transport
+This is the page that matters most. MLLP framing is trivial; **acknowledgment is where a transport
 can hurt a patient.**
 
-A positive acknowledgement (`AA`) means one thing to the sender: _"you may forget this message: I
+A positive acknowledgment (`AA`) means one thing to the sender: _"you may forget this message: I
 have it."_ A well-behaved sending system deletes its copy, or marks the message delivered and never
 retries. So if a receiver says `AA` for a message it then drops (because the database was down,
 because the handler threw, because the process was killed between "bytes received" and "row
@@ -79,9 +79,9 @@ delivered, or resends it as a duplicate. The same downgrade guards `buildRawAck`
 ### The auto-ACK answers in the half of Table 0008 the sender asked for
 
 HL7 Table 0008 has two halves: the application-mode `AA`/`AE`/`AR`, and the accept-mode `CA`/`CE`/`CR`
-of the enhanced acknowledgement protocol (v2.5.1 §2.9). Which half a responder answers in is not its
+of the enhanced acknowledgment protocol (v2.5.1 §2.9). Which half a responder answers in is not its
 own choice. **MSH-15** (accept acknowledgment type, HL7 Table 0155) states the conditions under which
-the sender wants an accept acknowledgement, and it is a _condition_, not a switch: `AL` always, `NE`
+the sender wants an accept acknowledgment, and it is a _condition_, not a switch: `AL` always, `NE`
 never, `ER` on an error or reject only, `SU` on a successful completion only. So the request can only
 be evaluated once the disposition is known.
 
@@ -97,7 +97,7 @@ contract above reached; the cell is what goes on the wire:
 | `SU`               | **`CA`**         | `AE`           | `AR`                                            |
 | outside Table 0155 | `AA` + warning   | `AE` + warning | `AR` + warning                                  |
 
-`CR` for a rejected message is what a commit acknowledgement is required to carry for an unrecognised
+`CR` for a rejected message is what a commit acknowledgment is required to carry for an unrecognized
 message type or trigger event.
 
 Two inbound shapes leave that table and keep the answer they always had: a **batch or concatenated
@@ -108,7 +108,7 @@ adding no new failure.
 
 A value in MSH-15 that is not one of the four Table 0155 codes is **read as if the field were absent,
 reported, and never fatal**. The server emits an `'ackModeWarning'` event carrying
-`MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED`, and the acknowledgement itself is not downgraded, negated or
+`MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED`, and the acknowledgment itself is not downgraded, negated or
 otherwise changed for that reason. Reading a field is not validating it, and answering a message your
 handler committed with anything but a positive code would make a discharged sender resend a message
 that is already in storage.
@@ -117,11 +117,11 @@ that is already in storage.
 server.on("ackModeWarning", ({ code }) => metrics.increment("mllp.ack_mode", { code }));
 ```
 
-The server still sends **exactly one** acknowledgement per inbound message, in every mode. The later
-application acknowledgement of the two-part protocol is the consumer's to send; this package selects
-the code, it does not orchestrate the second exchange. Every acknowledgement mode is recorded with a
+The server still sends **exactly one** acknowledgment per inbound message, in every mode. The later
+application acknowledgment of the two-part protocol is the consumer's to send; this package selects
+the code, it does not orchestrate the second exchange. Every acknowledgment mode is recorded with a
 separate client verdict and server verdict on the
-[Conformance statement](./conformance.md#acknowledgement-modes).
+[Conformance statement](./conformance.md#acknowledgment-modes).
 
 ## Full control
 
@@ -167,15 +167,15 @@ peer's response budget.
 committed by the receiver and the ACK lost on the way back. This is the at-least-once boundary; see
 [Limitations](./limitations.md).
 
-### Enhanced mode: one send, two acknowledgements
+### Enhanced mode: one send, two acknowledgments
 
-HL7 v2.5.1 §2.9 separates the two things an acknowledgement can mean. The **accept** acknowledgement
+HL7 v2.5.1 §2.9 separates the two things an acknowledgment can mean. The **accept** acknowledgment
 is the one that discharges the sender: the receiver has the bytes in safe storage and you may stop
-resending. The **application** acknowledgement is a later, separate exchange saying what the
+resending. The **application** acknowledgment is a later, separate exchange saying what the
 receiving application actually did with the message. A message asks for that protocol by carrying a
 non-null **MSH-15** or **MSH-16**, and §2.9 states the equivalence that ties the two protocols
 together: the original protocol _is_ the enhanced protocol with MSH-15 = `NE` and MSH-16 = `AL`. The
-single ACK this package has always correlated is, in that framing, the application acknowledgement.
+single ACK this package has always correlated is, in that framing, the application acknowledgment.
 
 So on an interface that runs enhanced mode, `client.send()` gives you both:
 
@@ -192,29 +192,29 @@ const applicationAck = await client.send(payload, {
 - A **`CA`** reports the commit disposition through `onCommitAck` and leaves the send pending. The
   report is scoped to your own send, which is how you know which message it belongs to. Nothing is
   logged to tell you.
-- The later **`AA`, `AE` or `AR`** settles the send, and all three settle it _successfully_, with the
-  acknowledgement handed to you. `AE` and `AR` are the receiving application's clinical verdict on a
+- The later **`AA`, `AE`, or `AR`** settles the send, and all three settle it _successfully_, with the
+  acknowledgment handed to you. `AE` and `AR` are the receiving application's clinical verdict on a
   message it did take custody of, and
   [judging that verdict is not this package's job](./limitations.md#it-does-not-decide-clinical-acceptance).
   Read MSA-1 off the buffer you are given.
 - A **`CE` or `CR`** rejects the send at once with `MllpCommitRejectedError` (`err.commitCode`). The
-  peer refused custody of the bytes, so no application acknowledgement is coming, and waiting out the
+  peer refused custody of the bytes, so no application acknowledgment is coming, and waiting out the
   second window would report the same failure later and less precisely.
 - MSH-15 `AL` with MSH-16 `NE` is a legal pair: it asks for the commit and nothing after it, so a
   single `CA` settles such a send.
-- An acknowledgement whose MSA-1 is **empty or outside Table 0008 is not guessed**. The send stays
-  pending until its wait expires and the acknowledgement is surfaced with a stable code
+- An acknowledgment whose MSA-1 is **empty or outside Table 0008 is not guessed**. The send stays
+  pending until its wait expires and the acknowledgment is surfaced with a stable code
   (`MLLP_ACK_MSA1_ABSENT`, `MLLP_ACK_MSA1_UNCLASSIFIABLE`), so it is reported rather than resolved
   into a success. A repeat `CA` for a send already reported is surfaced the same way
   (`MLLP_ACK_COMMIT_ALREADY_REPORTED`) and does not restart the wait.
-- A further acknowledgement for a send that is already settled or failed draws
+- A further acknowledgment for a send that is already settled or failed draws
   `MLLP_ACK_SEND_ALREADY_DISPOSED`, for as long as that send is remembered, however many arrive.
 
 **Two-phase correlation requires `correlateByControlId: true`.** MSA-2 is the only thing that can
-attribute a second acknowledgement to a send, and the default is FIFO. An enhanced-mode send on a
-FIFO client keeps the ordinary single-acknowledgement behaviour and emits
+attribute a second acknowledgment to a send, and the default is FIFO. An enhanced-mode send on a
+FIFO client keeps the ordinary single-acknowledgment behavior and emits
 `MLLP_ACK_TWO_PHASE_UNAVAILABLE`; it is not refused, and it is never left pending on an
-acknowledgement that would otherwise have settled it.
+acknowledgment that would otherwise have settled it.
 
 **A value in MSH-15 or MSH-16 that is not one of the four Table 0155 codes is warned and defaulted,
 never refused.** The field reads as its default (MSH-15 as `NE`, MSH-16 as `AL`), a
@@ -223,31 +223,31 @@ field it was, and your bytes go to the wire unaltered. This is a transport: no s
 delayed or altered over the _value_ of a field.
 
 Both fields empty is an original-mode send, and nothing above applies to it. It behaves exactly as it
-always has: one acknowledgement, settled by the first match, on the same timeout with the same error.
+always has: one acknowledgment, settled by the first match, on the same timeout with the same error.
 
 #### The two waits
 
-| wait                        | starts at                  | bounded by                | ends with                 |
-| --------------------------- | -------------------------- | ------------------------- | ------------------------- |
-| first acknowledgement       | the socket write-flush     | `ackTimeoutMs`            | `MllpTimeoutError`        |
-| application acknowledgement | the accept acknowledgement | `applicationAckTimeoutMs` | `MllpApplicationAckError` |
+| wait                       | starts at                 | bounded by                | ends with                 |
+| -------------------------- | ------------------------- | ------------------------- | ------------------------- |
+| first acknowledgment       | the socket write-flush    | `ackTimeoutMs`            | `MllpTimeoutError`        |
+| application acknowledgment | the accept acknowledgment | `applicationAckTimeoutMs` | `MllpApplicationAckError` |
 
 The second window defaults to whatever `ackTimeoutMs` is in force for that send, and takes a global
-or a per-send override. It is measured from the accept acknowledgement, not from the send: with both
+or a per-send override. It is measured from the accept acknowledgment, not from the send: with both
 windows at 10 s, a `CA` at 9 s and an `AA` at 12 s settles the send successfully at 12 s, and the
-same send with no application acknowledgement fails at 19 s. Receiving the accept acknowledgement
+same send with no application acknowledgment fails at 19 s. Receiving the accept acknowledgment
 **stops** the first timer, so it can no longer expire against a send the peer has already answered.
 
 `MllpApplicationAckError` carries `commitCode` (the disposition you did receive) and a `reason` of
 `'timeout'` or `'connection-lost'`. It is a distinct type from `MllpTimeoutError` on purpose: that
-one means no acknowledgement arrived at all, and this one means the peer said in writing that it
+one means no acknowledgment arrived at all, and this one means the peer said in writing that it
 holds your message and then never reported what it did with it. A send waiting in that state when the
 link drops is **failed, not re-sent**: the peer already has the message, so putting it back on the
 wire is how one clinical message becomes two.
 
 A conditional application condition that is never met ends at that expiry. MSH-16 `SU` whose peer
 applies the message unsuccessfully, or `ER` whose peer applies it successfully, never draws a second
-acknowledgement, and the sender cannot know in advance which way it will go. That is the shape of the
+acknowledgment, and the sender cannot know in advance which way it will go. That is the shape of the
 protocol, not a defect in this client.
 
 ### Correlation diagnostics report lengths, not control IDs
@@ -260,7 +260,7 @@ error reporter ships off the box.
 
 The `'warning'` event carries three kinds, so narrow before reading any of their fields: a framing
 warning is a plain `MllpWarning` and has none of them; a correlation warning is an
-`AckCorrelationWarning`; an acknowledgement-mode warning is an `AckModeWarning`, whose `code` is an
+`AckCorrelationWarning`; an acknowledgment-mode warning is an `AckModeWarning`, whose `code` is an
 `AckModeCode` rather than a `WarningCode` and whose text comes from `ackModeDiagnosticMessage(code)`.
 An `AckModeWarning` is deliberately **not** counted in `getStats().warningsByCode`, whose keys are the
 decoder's own codes.
@@ -285,14 +285,14 @@ do not already have: the outbound bytes are the payload you passed to `send()`, 
 ACK frame reaches you on the `'message'` event, both under your own PHI handling rather than your
 logger's.
 
-The same rule binds every acknowledgement-mode surface, in **both** correlation modes. An
+The same rule binds every acknowledgment-mode surface, in **both** correlation modes. An
 `AckModeWarning` carries stable codes, byte counts, byte offsets, elapsed times, and an MSA-1 value
 drawn from the closed six-code Table 0008 set, and nothing else: an MSA-1 the reader could not
 classify is reported by its **byte length** only (`msa1Bytes`), never by its bytes, because the whole
 reason a value is unclassifiable is that nobody knows what it is. `MllpApplicationAckError` and
 `MllpCommitRejectedError` report `messageControlIdBytes` for the same reason `MllpTimeoutError` does.
 The per-send `onCommitAck` report is not a diagnostic surface and is not restricted here: it hands
-you the accept acknowledgement for your own send, the same way `send()` already resolves with the
+you the accept acknowledgment for your own send, the same way `send()` already resolves with the
 whole ACK.
 
 ## Building spec-correct ACKs: `ack-from-hl7`
@@ -458,7 +458,7 @@ a non-text codec there garbles the _inbound_ decode so it never
 parses as `MSH` (routing to the unparseable fallback whose MSA-2 is empty, so the
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check never runs) and then serializes that fallback ACK to
 garbage bytes that intermittently contain a framing delimiter and trip the strict frame encoder
-(`MllpFramingError`, ~3-4 % of calls, identically on Node 22 and 24). It was never the "loud AE" it
+(`MllpFramingError`, about 3 to 4 percent of calls, identically on Node 22 and 24). It was never the "loud AE" it
 was once documented to be. The legitimate byte-level escape hatch is unchanged: a **charset** codec
 on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that is still caught loudly by
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`) is exactly what serves a receiving system that demands a specific
@@ -491,13 +491,13 @@ impossible. Split the batch and ACK each message yourself, or handle it with `au
   is the parser's canonical re-serialization, not a byte copy; `buildRawAck` is the byte copy.
 - **It does not ACK a batch.** An `FHS`/`BHS` envelope is refused with a warned, non-positive `AE`.
   A frame carrying two concatenated messages is a different shape and this builder does not detect
-  it; which multi-message shape each acknowledgement route refuses is recorded route by route on the
+  it; which multi-message shape each acknowledgment route refuses is recorded route by route on the
   [Conformance statement](./conformance.md#batch-and-concatenated-frames-route-by-route).
 - **It builds one ACK, it does not orchestrate an exchange.** The helpers build any of the six codes,
   and the server picks the right half of Table 0008 for the message it is answering
   ([above](#the-auto-ack-answers-in-the-half-of-table-0008-the-sender-asked-for)). _Sending_ a later
-  application acknowledgement of your own, as the responding system in an enhanced-mode exchange, is
+  application acknowledgment of your own, as the responding system in an enhanced-mode exchange, is
   still your orchestration: this package's server emits exactly one ACK per inbound message. The
   client side of that exchange is built, and correlates both halves; see
-  [Enhanced mode](#enhanced-mode-one-send-two-acknowledgements).
+  [Enhanced mode](#enhanced-mode-one-send-two-acknowledgments).
 - **No MLLP Release 2 commit-ack bytes.** See [Limitations](./limitations.md).

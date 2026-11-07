@@ -270,7 +270,7 @@ What to know:
   selection, and `atnaTransportSecurity` is this package's way of asking for it.
 - **Parameters that cannot be used reject `listen()`,** with `MLLP_TLS_DH_PARAMETERS_REJECTED` (see
   the table below). Nothing binds, and nothing falls back to a server running without them. That
-  check exists because the TLS library's own behaviour for parameters it cannot read is to
+  check exists because the TLS library's own behavior for parameters it cannot read is to
   **discard them in silence**, which leaves a listener that answers no DHE handshake and says
   nothing about why.
 - **The armour has to survive the trip.** The TLS library reads PEM a line at a time and wants each
@@ -352,7 +352,7 @@ the error's message and code are surfaced, never payload bytes, never a certific
 
 ### Cipher-suite configuration errors
 
-A cipher-suite list this package cannot honour is refused **before** a socket exists, so nothing is
+A cipher-suite list this package cannot honor is refused **before** a socket exists, so nothing is
 left connected and nothing is left bound. `connect()` and `listen()` reject with
 `MllpTlsConfigurationError`, identified by `instanceof` plus a stable `code`, never by matching on
 the message text:
@@ -373,7 +373,7 @@ try {
 }
 ```
 
-The list is validated on its own, with no certificate, key or passphrase in scope, so the error
+The list is validated on its own, with no certificate, key, or passphrase in scope, so the error
 cannot carry credential material. Its `message` is a fixed registry entry per code. A server
 constructed with a refused configuration stays refused: every `listen()` on it rejects the same way,
 and it never serves on some other list.

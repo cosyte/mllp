@@ -1,13 +1,13 @@
 ---
 id: limitations
-title: Known limitations & non-goals
+title: Known limitations and non-goals
 description: >-
-  What not to trust this transport to do: delivery guarantees, batch acknowledgement, Release 2,
+  What not to trust this transport to do: delivery guarantees, batch acknowledgment, Release 2,
   charsets that collide with the framing bytes, and where the public surface stands today.
 sidebar_position: 10
 ---
 
-# Known limitations & non-goals
+# Known limitations and non-goals
 
 The honest list. A transport that oversells what it guarantees is how messages get lost, so this page
 is a deliverable, not a footnote. **Do not rely on `@cosyte/mllp` to do any of the following.**
@@ -56,12 +56,12 @@ Tell them apart with `instanceof`, never by reading an error message.
 **A drain cannot make delivery certain, and this one does not pretend to.** A commit whose ACK is
 lost in flight is indistinguishable from a message never received, and always will be: that is what
 the unknown-fate report says out loud. Nothing is retried automatically, because the accept
-acknowledgement is what releases a sender from resending, and the standard puts the retransmission
+acknowledgment is what releases a sender from resending, and the standard puts the retransmission
 decision on the application and on its peer's duplicate detection (`MSH-10` + `MSH-7`). There is
-still no write-ahead log, queue or replay in this package.
+still no write-ahead log, queue, or replay in this package.
 
 `destroy()` is the other half of the pair and is unchanged: it settles every pending send at once,
-awaits no ACK and honours no drain timeout. Use it when you need the socket gone now. See
+awaits no ACK and honors no drain timeout. Use it when you need the socket gone now. See
 [Connection, reconnect & backpressure](./reliability.md).
 
 ## A fatal framing error drops the connection, and is not retried
@@ -82,22 +82,22 @@ expected, use the tolerance opt-ins so the bytes are a warning rather than a fat
 
 The client half is built: an enhanced-mode send correlated by control ID draws both its commit
 disposition and its later application disposition, and neither is dropped
-([ACKs](./acks.md#enhanced-mode-one-send-two-acknowledgements)). Three bounds on that:
+([ACKs](./acks.md#enhanced-mode-one-send-two-acknowledgments)). Three bounds on that:
 
-- **This package's own server never sends the second acknowledgement.** It emits exactly one ACK per
+- **This package's own server never sends the second acknowledgment.** It emits exactly one ACK per
   inbound message and picks the right half of Table 0008 for it. Pointing this client at this server
-  with both MSH-15 and MSH-16 asking for acknowledgement therefore ends at the
-  application-acknowledgement timeout. A consumer that needs the second exchange owns it.
+  with both MSH-15 and MSH-16 asking for acknowledgment therefore ends at the
+  application-acknowledgment timeout. A consumer that needs the second exchange owns it.
 - **Two-phase correlation needs `correlateByControlId: true`.** MSA-2 is the only thing that can
-  attribute a second acknowledgement to a send, and the default is FIFO. On FIFO an enhanced-mode
-  send gets the ordinary single-acknowledgement behaviour plus a warning.
+  attribute a second acknowledgment to a send, and the default is FIFO. On FIFO an enhanced-mode
+  send gets the ordinary single-acknowledgment behavior plus a warning.
 - **A conditional application condition that is never met ends at that timeout.** MSH-16 `SU` whose
   peer applies the message unsuccessfully, or `ER` whose peer applies it successfully, never draws a
-  second acknowledgement. The failure carries the commit disposition you did receive, so you know the
+  second acknowledgment. The failure carries the commit disposition you did receive, so you know the
   peer took custody; what its application did is unknown and unknowable from here.
 
 Enhanced mode over a **batch** frame stays refused, and no sequence-number protocol (MSH-13/MSA-4),
-retransmission, queueing or replay is implemented here or planned for here.
+retransmission, queueing, or replay is implemented here or planned for here.
 
 ## It does not decide clinical acceptance
 
@@ -108,7 +108,7 @@ call, from your own processing outcome. See [the commit contract](./acks.md).
 ## It does not speak MLLP Release 2
 
 Only **Release 1** (framing, with reliability delegated to the HL7 v2 ACK) is implemented: the
-universal default for HL7 v2. The R2 commit-acknowledgement blocks (`<SB><ACK 0x06><EB><CR>` /
+universal default for HL7 v2. The R2 commit-acknowledgment blocks (`<SB><ACK 0x06><EB><CR>` /
 `<SB><NAK 0x15><EB><CR>`) and R2's synchronous "no new content until ack" discipline are **not
 supported**. R2 is used mainly with HL7 v3 and is rarely needed for v2; if it ships, it will be
 opt-in and off by default, and R1 framing will never silently downgrade to it.
@@ -202,7 +202,7 @@ cannot parse. Because a garbage frame is a caller mistake rather than a runtime 
 (`"utf8"`/`"ascii"`/`"latin1"`/`"binary"`) are accepted. This includes a
 `Buffer` inbound: a non-text codec there garbles the _inbound_ decode into the unparseable fallback
 (empty MSA-2, so the `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof never runs) and then serializes the
-fallback ACK to garbage bytes that ~3-4 % of the time (identically on Node 22 and 24) contain a
+fallback ACK to garbage bytes that about 3 to 4 percent of the time (identically on Node 22 and 24) contain a
 `VT`/`FS` byte and trip the strict frame encoder with a nondeterministic `MllpFramingError`. It was
 never the "loud AE" escape hatch it was documented to be. The legitimate byte-level escape hatch is
 untouched: a **charset** codec on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that
@@ -222,7 +222,7 @@ own unbuilt feature.
 ## API stability
 
 `@cosyte/mllp` is at `0.1`: it has left the pre-alpha `0.0.x` ladder. The client, the server, the
-framing codec, the in-memory transport and the optional `ack-from-hl7` bridge are the surface we
+framing codec, the in-memory transport, and the optional `ack-from-hl7` bridge are the surface we
 keep stable. The stable **warning codes** and **security-warning codes** are part of that surface,
 so renaming or removing one is a breaking change. Below 1.0 a breaking change moves the minor
 version, and the changelog says how to migrate.
@@ -236,4 +236,4 @@ version, and the changelog says how to migrate.
 Everything above is a bound on what the transport promises. That single failure mode is the one it
 refuses to allow, by construction: the commit contract makes a positive ACK structurally unable to
 precede a durable commit, and an inbound message that cannot be understood can never produce a
-positive acknowledgement. The rest of the package hardens the transport around that guarantee.
+positive acknowledgment. The rest of the package hardens the transport around that guarantee.

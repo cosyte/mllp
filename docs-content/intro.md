@@ -2,14 +2,14 @@
 id: intro
 title: Getting started
 description: >-
-  A production-grade MLLP client and server for Node.js, with canonical framing, ACK correlation,
-  reconnect, backpressure and TLS, and no runtime dependencies.
+  An MLLP client and server for Node.js, with canonical framing, ACK correlation, reconnect,
+  backpressure, and TLS, and no runtime dependencies.
 sidebar_position: 1
 ---
 
 # @cosyte/mllp
 
-A production-grade MLLP client and server for Node.js: the transport-only sibling to
+An MLLP client and server for Node.js: the transport-only sibling to
 `@cosyte/hl7`. It moves HL7 v2 messages over TCP and gives you the parts the spec leaves to you:
 canonical framing (`VT + payload + FS + CR`), ACK correlation, auto-reconnect with backoff,
 backpressure, TLS, and an in-memory transport so your tests never open a socket. Zero runtime
@@ -69,7 +69,7 @@ callback always fire **before** any ACK is sent.
 
 ## Fail-safe ACKs: the commit contract
 
-A positive acknowledgement (`AA`) tells the sender "you may forget this message. I have it." So a
+A positive acknowledgment (`AA`) tells the sender "you may forget this message. I have it." So a
 server must **never** emit `AA` before the message is durably handled. `@cosyte/mllp` makes that
 structural: pair `autoAck: 'AA'` with an `onMessage` handler, and the server **awaits your handler
 (the durable-commit step) and only then ACKs**: `AA` on success, a **negative** code on failure,
@@ -174,7 +174,7 @@ than the inbound's original bytes, and there is no enhanced-mode sequencing) are
 - **[Known limitations & non-goals](./limitations.md)**: what _not_ to trust this package to do.
   Read it before you depend on it.
 - **[Conformance statement](./conformance.md)**: the single document to hand a conformance reviewer,
-  declaring the framing tolerances, the per-role acknowledgement verdicts and the IHE options in
+  declaring the framing tolerances, the per-role acknowledgment verdicts, and the IHE options in
   actor-and-option terms.
 - The **API reference** for every export, generated from source.
 - For parsing the payloads this transport carries, see **`@cosyte/hl7`**.
