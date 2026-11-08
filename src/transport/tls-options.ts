@@ -64,6 +64,8 @@ export interface TlsOptions {
   /**
    * SNI hostname and the identity-check target (matched against the server
    * certificate's Subject/SAN). Defaults to `ClientOptions.host` when unset.
+   * An IP address, set here or as the host, is checked against the
+   * certificate but never sent as SNI, which RFC 6066 reserves for host names.
    */
   readonly servername?: string;
   /**

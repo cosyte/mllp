@@ -2,7 +2,7 @@
 id: quickstart
 title: Quickstart
 description: >-
-  Start a server on loopback, send it an HL7 v2 message and read the acknowledgement it built, then
+  Start a server on loopback, send it an HL7 v2 message and read the acknowledgment it built, then
   frame bytes yourself and tolerate a real sender's quirks.
 sidebar_position: 3
 ---
@@ -14,9 +14,9 @@ ACK that comes back, and never inspects the payload. This page starts with the p
 opens with, a server and a client on loopback, then goes down to the frame (`VT + payload + FS + CR`)
 that everything else (the client, the server, reconnect, TLS) is built on.
 
-## Send a message and read the acknowledgement
+## Send a message and read the acknowledgment
 
-Start a server, send it a message, and read the acknowledgement it built. Auto-ACK is on by default,
+Start a server, send it a message, and read the acknowledgment it built. Auto-ACK is on by default,
 and the server awaits your handler, which is the durable commit step, before it answers. The payload
 API is **Buffer-first** everywhere: HL7 v2 messages are raw bytes with caller-managed charset
 decoding.
@@ -63,7 +63,7 @@ messages committed: 1
 ```
 
 `MSA-2` echoes the control id you sent, byte for byte, which is what lets the client match the answer
-to the message. The acknowledgement's own `MSH-7` and `MSH-10` change on every run. A handler that
+to the message. The acknowledgment's own `MSH-7` and `MSH-10` change on every run. A handler that
 throws is answered `AE`, never `AA`: see [ACKs & the commit contract](./acks.md).
 
 ## Frame a message, read it back

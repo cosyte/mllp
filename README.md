@@ -7,14 +7,14 @@
 
 # @cosyte/mllp
 
-> HL7 v2 over MLLP for Node.js, with framing, ACK correlation and reconnects handled for you.
+> HL7 v2 over MLLP for Node.js, with framing, ACK correlation, and reconnects handled for you.
 
 [![npm version](https://img.shields.io/npm/v/@cosyte/mllp.svg)](https://www.npmjs.com/package/@cosyte/mllp)
 [![CI](https://img.shields.io/github/actions/workflow/status/cosyte/mllp/ci.yml?branch=main&label=CI)](https://github.com/cosyte/mllp/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/cosyte/mllp/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](https://nodejs.org)
 
-Production-grade MLLP client and server for Node.js, transport-only sibling to @cosyte/hl7
+An MLLP client and server for Node.js: the transport-only sibling to @cosyte/hl7.
 
 ## Contents
 
@@ -33,26 +33,26 @@ Production-grade MLLP client and server for Node.js, transport-only sibling to @
 
 HL7 v2 interfaces still move over MLLP, and the protocol stops at the frame: `VT + payload + FS + CR`
 and nothing else. Everything that decides whether an interface survives a bad night is left to the
-integrator, so every team writes the same acknowledgement correlator, the same reconnect loop and the
+integrator, so every team writes the same acknowledgment correlator, the same reconnect loop, and the
 same backpressure guard, and one of them is subtly wrong. The nearest alternative is a full
-integration engine such as Mirth Connect, which brings a runtime, a database and a deployment story
+integration engine such as Mirth Connect, which brings a runtime, a database, and a deployment story
 you may not want inside a Node.js service. `@cosyte/mllp` is that transport on its own: a library you
 import, with zero runtime dependencies, an in-memory transport so your tests never open a socket, and
-one guarantee it will not trade away, which is that a positive acknowledgement cannot precede a
+one guarantee it will not trade away, which is that a positive acknowledgment cannot precede a
 durable commit.
 
 ## Status
 
-**This README describes `0.1.0`.** The public API is settled and safe to depend on: the client, the
-server, the framing codec, the in-memory transport and the optional `ack-from-hl7` bridge are what
+**This README describes the 0.1 line.** The public API is settled and safe to depend on: the client, the
+server, the framing codec, the in-memory transport, and the optional `ack-from-hl7` bridge are what
 this release commits to. The stable warning codes and security-warning codes are part of that
 surface, so renaming or removing one is a breaking change.
 
 Named rather than implied, here is what is still moving:
 
-- **Batch acknowledgement is not built.** An HL7 batch envelope (`FHS`/`BHS`, HL7 v2.5.1 §2.10.3) or
+- **Batch acknowledgment is not built.** An HL7 batch envelope (`FHS`/`BHS`, HL7 v2.5.1 §2.10.3) or
   a frame carrying more than one `MSH` yields a warned, non-positive `AE`. That is deliberate, since
-  a positive acknowledgement correlated to the first message would tell the sender a whole batch was
+  a positive acknowledgment correlated to the first message would tell the sender a whole batch was
   accepted while the rest went unread, but it means the surface that would carry batch support does
   not exist yet.
 - **Verified engine coverage is a growing list, not a complete one.** The differential harness runs
@@ -63,7 +63,7 @@ Named rather than implied, here is what is still moving:
 ## Install
 
 ```bash
-# engines.node: >=22.0.0    packageManager: pnpm@10.0.0
+# Node.js 22 or later, tested on 22 and 24
 # published dual: ESM (import) and CJS (require), each with its own type declarations
 pnpm add @cosyte/mllp
 
@@ -73,7 +73,7 @@ pnpm add @cosyte/hl7
 
 ## Usage
 
-Start a server, send it a message, and read the acknowledgement it built. Auto-ACK is on by default,
+Start a server, send it a message, and read the acknowledgment it built. Auto-ACK is on by default,
 and the server awaits your handler, which is the durable commit step, before it answers. The payload
 API is **Buffer-first** everywhere: HL7 v2 messages are raw bytes with caller-managed charset decoding.
 
@@ -119,7 +119,7 @@ messages committed: 1
 ```
 
 `MSA-2` echoes the control id you sent, byte for byte, which is what lets the client match the answer
-to the message. The acknowledgement's own `MSH-7` and `MSH-10` change on every run.
+to the message. The acknowledgment's own `MSH-7` and `MSH-10` change on every run.
 
 ### Framing on its own
 
@@ -158,15 +158,15 @@ difference between 105 and 102.
 
 ### The commit contract
 
-A positive acknowledgement (`AA`) tells the sender _"you may forget this message. I have it."_ So a
+A positive acknowledgment (`AA`) tells the sender _"you may forget this message. I have it."_ So a
 receiver must never send one before the message is durably handled, or the message is silently lost.
 `@cosyte/mllp` makes that structural: pair `autoAck: 'AA'` with an `onMessage` handler and the server
 **awaits your handler and only then acknowledges**.
 
 Handler resolves, you get `AA`, **unless the inbound could not carry a correlatable positive
-acknowledgement** (no readable `MSH`, an empty `MSH-10`, a batch or concatenated payload, or trailing
-bytes the framer discarded). In that case the commit still happened, but the acknowledgement is
-downgraded to `AE` and a `nack` event names the reason, because a positive acknowledgement the sender
+acknowledgment** (no readable `MSH`, an empty `MSH-10`, a batch or concatenated payload, or trailing
+bytes the framer discarded). In that case the commit still happened, but the acknowledgment is
+downgraded to `AE` and a `nack` event names the reason, because a positive acknowledgment the sender
 cannot match is one it will resend. Handler throws, you get `AE`, or `AR` via `MllpAckError`.
 `autoAck: 'AA'` _without_ a handler is documented as a transport-accept: "received and framed", not
 "processed".
@@ -206,7 +206,7 @@ footnote.
 
 **What it does with your payload.** It moves the buffer you hand it to the peer and hands the peer's
 bytes back to your handler. It holds a message in memory only while that message is in flight: from
-`send()` until its acknowledgement is correlated, or until `close()` drains it or reports it
+`send()` until its acknowledgment is correlated, or until `close()` drains it or reports it
 unresolved. On the receive side your handler is given a copy, and the decoder then reuses its
 internal accumulator for the next frame rather than zeroing it, so those bytes stay in that private
 buffer until a later frame overwrites them, for as long as that reader lives. That is buffer reuse
@@ -215,15 +215,15 @@ rather than storage, and no public API hands the buffer out, but it is not a scr
 **The reads the transport performs, and where they stop.** The transport does not parse HL7, but it
 is not blind to the payload either, and the bound is worth more to you than the slogan. To answer a
 message it has to correlate the answer, so it locates the `MSH` segment and reads the header fields
-an acknowledgement is built from and answered with: `MSH-10`, echoed byte for byte into `MSA-2`, the
+an acknowledgment is built from and answered with: `MSH-10`, echoed byte for byte into `MSA-2`, the
 sending and receiving application and facility, which swap sides in the reply, the declared
-delimiters, processing id and version, and the acknowledgement mode in `MSH-15` and `MSH-16`.
+delimiters, processing id and version, and the acknowledgment mode in `MSH-15` and `MSH-16`.
 **That scan is bounded at the `MSH` segment's own terminator**, so it reaches nothing past the
 header: on the transport path `PID`, and every other segment carrying clinical content, is never
-read, never decoded and never echoed. Reading an inbound acknowledgement adds one segment and no
-more, `MSA`, for its acknowledgement code and the control id it echoes back, decoded under the same
+read, never decoded, and never echoed. Reading an inbound acknowledgment adds one segment and no
+more, `MSA`, for its acknowledgment code and the control id it echoes back, decoded under the same
 bound at that segment's own terminator. Those two are the whole of it, in one place, shared by the
-client's correlator and both acknowledgement builders. Separately, the leading identifier of each
+client's correlator and both acknowledgment builders. Separately, the leading identifier of each
 segment is checked so that a batch envelope or a second `MSH` can be refused rather than falsely
 acknowledged; no field of those segments is read.
 
@@ -234,12 +234,12 @@ whole message, later segments included, and gives it to the optional
 `PID` among them. That decode is this package's own code and it ships in this package's tarball, so
 count it as yours rather than the peer's. Nothing reaches it by default: the client, the server and
 `buildRawAck` never import that subpath, and the peer is an optional dependency you install
-deliberately. If your data-flow boundary turns on later segments never being materialised as decoded
+deliberately. If your data-flow boundary turns on later segments never being materialized as decoded
 text, that is the subpath to leave out.
 
 **What it does not do.** Outside that subpath it does not parse the message, and outside the two
 bounded segment reads above it does not inspect it. It writes nothing to disk: there is no queue, no
-write-ahead log, no replay store and no cache anywhere in this package. Library code calls no logger
+write-ahead log, no replay store, and no cache anywhere in this package. Library code calls no logger
 and no `console` method.
 
 **What its diagnostics can carry.** Shape rather than content: no error, warning, event payload or
@@ -247,16 +247,16 @@ stats object ever echoes a run of message content.
 
 - A **framing error** carries at most the single byte at the structural violation, plus that byte's
   offset.
-- A **warning message** carries structural facts: byte offsets, counts and accumulated sizes. Two
+- A **warning message** carries structural facts: byte offsets, counts, and accumulated sizes. Two
   framing codes are the exception worth knowing about. `MLLP_MISSING_LEADING_VT` and
   `MLLP_FS_WITHOUT_CR` render the hex of the single byte found where a framing byte was expected,
   and on a stream that omits its leading `VT` that byte is the first byte of the unframed content.
   One byte, never a run, the same bound a framing error carries. If that is more than your threat
   model allows, log `code` and `byteOffset` rather than `message`.
-- The **acknowledgement-correlation diagnostics** are stricter. Their text comes from a frozen
+- The **acknowledgment-correlation diagnostics** are stricter. Their text comes from a frozen
   registry keyed on the code alone, with no value parameter anywhere in it, so a control id cannot
   reach one; they report byte lengths instead of bytes.
-- `getStats()` returns plain JSON-serialisable counters, and the two security warnings raised
+- `getStats()` returns plain JSON-serializable counters, and the two security warnings raised
   through `process.emitWarning` carry their code and a fixed description. The wildcard-bind warning
   names the address you bound, which is your own configuration, never message content.
 
@@ -264,16 +264,16 @@ stats object ever echoes a run of message content.
 
 - **Encryption in transit.** A plain MLLP connection is cleartext on the wire. TLS is built in, but
   you have to turn it on and supply the material.
-- **Logging and retention.** The moment you log a payload, an acknowledgement body or a control id,
+- **Logging and retention.** The moment you log a payload, an acknowledgment body, or a control id,
   it is yours to protect. Nothing here stores a message, so nothing here can delete one on request
   either.
-- **Idempotency.** MLLP plus an acknowledgement is at-least-once at best. De-duplicate on `MSH-10`
+- **Idempotency.** MLLP plus an acknowledgment is at-least-once at best. De-duplicate on `MSH-10`
   plus `MSH-7` in your application.
 - **Exposure.** The `127.0.0.1` default and the wildcard-bind opt-in are guardrails, not a network
   policy. Widening either is your decision.
 
 Every example on this page uses placeholder application and facility names and a synthetic control
-id. No sample here carries a name, a date of birth, an identifier or an address, and none should.
+id. No sample here carries a name, a date of birth, an identifier, or an address, and none should.
 
 ## API
 
@@ -284,12 +284,12 @@ Three code subpaths ship, plus `@cosyte/mllp/package.json`:
   errors, and the differential harness (`runDifferential`).
 - **`@cosyte/mllp/testing`** is `InMemoryTransport`, a deterministic socket-free test double. Every
   test that can run over it should.
-- **`@cosyte/mllp/ack-from-hl7`** builds acknowledgements from a parsed message, or from raw bytes it
+- **`@cosyte/mllp/ack-from-hl7`** builds acknowledgments from a parsed message, or from raw bytes it
   parses through the peer, and is the one place the optional `@cosyte/hl7` peer is needed.
 
 What comes with them:
 
-- **Strict framing** (`VT + payload + FS + CR`), acknowledgement correlation, auto-reconnect with
+- **Strict framing** (`VT + payload + FS + CR`), acknowledgment correlation, auto-reconnect with
   backoff, and backpressure.
 - **A lenient decoder and a strict encoder** (Postel's Law) with **11 stable warning codes** carrying
   byte offsets. Tolerance is opt-in per flag; the server ships tolerant defaults.
@@ -305,10 +305,10 @@ Full reference: [the documentation](https://github.com/cosyte/mllp/tree/main/doc
 
 ## Compatibility
 
-- **Node.js 22 and 24.** `engines.node` is `>=22.0.0` and CI runs both.
+- **Node.js 22 or later, tested on 22 and 24.** `engines.node` is `>=22.0.0`.
 - **HL7 v2 payloads are bytes here, and the exceptions are named.** The transport does not parse
-  HL7: it reads the `MSH` header its acknowledgement is built from, and the `MSA` of an inbound
-  acknowledgement, each bounded at that segment's own terminator. The opt-in `ack-from-hl7` subpath
+  HL7: it reads the `MSH` header its acknowledgment is built from, and the `MSA` of an inbound
+  acknowledgment, each bounded at that segment's own terminator. The opt-in `ack-from-hl7` subpath
   is the one place a whole message is parsed. [PHI and safety](#phi-and-safety) sets all of that out
   in full. For actual parsing, pair this with [`@cosyte/hl7`](https://github.com/cosyte/hl7), which
   is exactly what that subpath does.
@@ -317,17 +317,18 @@ Full reference: [the documentation](https://github.com/cosyte/mllp/tree/main/doc
   claim about either is made here. `runDifferential` ships in the published artifact, so you can aim
   it at your own test or staging endpoint and get a per-exchange frame-parity and `MSA-2` correlation
   report for the engine you actually integrate with.
-- **Known gaps, stated rather than hidden.** No batch acknowledgement, no MLLP Release 2, no queue or
+- **Known gaps, stated rather than hidden.** No batch acknowledgment, no MLLP Release 2, no queue or
   replay of unacknowledged messages, no clinical acceptance decision, and no PKI. The
   [known limitations](https://github.com/cosyte/mllp/blob/main/docs-content/limitations.md) page is
   the full list. Read it before you depend on this.
 
 ## Contributing
 
-Questions, bug reports and interoperability findings belong in
-[GitHub issues](https://github.com/cosyte/mllp/issues). Pull requests are welcome, and there is a gap
-worth naming: this repository carries no contributor guide yet, so open an issue before a large
-change so the approach can be agreed first.
+Questions, bug reports, and interoperability findings belong in
+[GitHub issues](https://github.com/cosyte/mllp/issues). Pull requests are welcome. The organization's
+[contributing guide](https://github.com/cosyte/.github/blob/main/CONTRIBUTING.md) and
+[code of conduct](https://github.com/cosyte/.github/blob/main/CODE_OF_CONDUCT.md) apply here. Open an
+issue before a large change so the approach can be agreed first.
 
 A contribution must clear every gate this repository ships, all of them scripts you can run yourself:
 
@@ -352,8 +353,8 @@ commit and is deliberately hard to bypass.
 Epic, Cerner, Mirth Connect, NextGen, and Google Cloud Healthcare are trademarks of their respective
 owners. Cosyte is not affiliated with, endorsed by, or sponsored by any of them. The names identify
 the engines this package is tested against, and those it is not. See
-[TRADEMARKS.md](./TRADEMARKS.md).
+[TRADEMARKS.md](https://github.com/cosyte/mllp/blob/main/TRADEMARKS.md).
 
 ## License
 
-MIT, Copyright (c) 2026 Cosyte. See [LICENSE](./LICENSE).
+MIT, Copyright (c) 2026 Cosyte LLC. See [LICENSE](https://github.com/cosyte/mllp/blob/main/LICENSE).

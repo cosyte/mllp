@@ -19,7 +19,7 @@ thing a rule guards, or when you are tempted to relax one. Every paragraph here 
   bind), and Phase 9 (real-world interop: differential harness vs the Google Cloud MLLP adapter +
   Mirth/NextGen (`test/differential/`, `MLLP_DIFF_ADAPTER`-gated live tier), the §3 quirk corpus
   (`test/conformance/`), and a PHI/observability audit that closed the `MLLP_FRAME_TOO_LARGE`
-  `snippet` payload-slice leak) done. Next: see `operations/roadmaps/mllp.md` for what follows Phase 9.
+  `snippet` payload-slice leak) done. What comes next is in the umbrella's `plans/`.
 - **The vendored tarball is GONE. The `@cosyte/hl7` peer installs from npm** at `^0.0.N` (ADR 0032,
   which superseded the interim ADR 0008 five weeks after its own `PUB-FLIP` trigger fired).
   **Why you never re-vendor one.** The tarball pinned dev/test to `0.0.0` while `@cosyte/hl7`
@@ -455,10 +455,10 @@ target, so there is nothing left for a per-target mutation to corrupt. It takes 
 157-entry index (through `GIT_INDEX_FILE`, the real index untouched) is reported at exit 1, so the
 clean result is a clearance and not a detector zero. **That was a hand measurement, not a committed
 case**: nothing in the suite runs the scanner against this repo's own index. What regression-locks
-it is CI running `pnpm phi-scan` on the real tree, which is the same thing `verify.sh` now does.
+it is CI running `pnpm phi-scan` on the real tree, which is the same thing the gate in `CLAUDE.md` does.
 **That last clause is UNVERIFIED FROM INSIDE THIS REPO and is stated as such**: `.github/workflows/ci.yml`
 is a thin caller of the `cosyte/.github` reusable workflows, which cannot be read from here, so the
-`run-phi-scan: true` input is trusted rather than confirmed. `verify.sh` running it locally IS
+`run-phi-scan: true` input is trusted rather than confirmed. Running it locally through that gate IS
 confirmed.
 **Also unpinned, and fail-safe rather than silent:** the blob-budget ceiling, the `--batch-check`
 short-answer guard, the three unrecognized-record refusals, the short-content guard and the
@@ -801,8 +801,8 @@ tolerate.
   after argv). `--config-path` is refused too, but **by inference, not measurement**.
   **`--profile node16` is deliberate here and is forwarded, not dropped** (this repo does not support
   the node10 resolution); a fixture that is red under the default profile and green under `node16`
-  pins that through the wrapper, so dropping the flag reds the suite. `scripts/verify.sh` in the
-  meta-repo needs no change and must not be touched for this. The test file also pins **the upstream
+  pins that through the wrapper, so dropping the flag reds the suite. Nothing outside this
+  repository needs a change for this. The test file also pins **the upstream
   exit-0 itself**, so an `attw` upgrade that reworks the wording or fixes the exit code reds the suite
   instead of letting the net go quietly slack, plus a **negative control** on a well-formed package
   and that a **real `attw` failure still fails**: a gate that only ever fails is not a gate, and one
@@ -815,7 +815,7 @@ tolerate.
    JSDoc their editor renders on hover) says what the software does and what changed. Item
    identifiers (`MLLP-9`, `CLIENT-04`, `D-23`, `T-05-04-09`), phase and plan language, ADR numbers,
    meta-repo paths and "how this got built" commentary belong in the changeset, `CHANGELOG.md`, the
-   commit, the PR and the roadmap. It is a **translation** at the boundary, not a deletion, and
+   commit, the PR and the umbrella's `plans/`. It is a **translation** at the boundary, not a deletion, and
    when you strip an identifier off the front of a line, repair the head: a fragment reads worse
    than the text it replaced. Gated by `pnpm check:no-internal-refs`
    (`.github/workflows/no-internal-refs.yml`, check-run context **`no-internal-refs`**).
@@ -1019,8 +1019,7 @@ quoted with the tree it was taken on, per `check-no-internal-refs.sh` residual (
 
 **What it deliberately does not do**, restated here because a disclosure that lives only in a
 script header gets read once: it does not assert anything about a sibling repo, it does not check
-any byte budget (the umbrella's `.claude/hooks/doc-budget.mjs` holds that table and a second copy
-of a number here would go stale), it does not check pointers at any other file's anchors, and **it
+any byte budget (a second copy of a budget number here would go stale), it does not check pointers at any other file's anchors, and **it
 cannot prove the prose a pointer lands on grounds the rule that cited it.** A section with a body
 is not a section with the right body. That half stays human.
 

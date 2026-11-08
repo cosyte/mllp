@@ -1,8 +1,10 @@
 name: Release
 
-# Thin caller of the shared release pipeline: Changesets -> npm publish (provenance auto-enables when
-# this repo is public) -> docs artifacts -> GitHub release -> repository_dispatch to cosyte/docs.
-# Requires the NPM_TOKEN and DOCS_REPO_DISPATCH_TOKEN secrets (passed via `secrets: inherit`).
+# Thin caller of the shared release pipeline: Changesets -> npm publish through trusted publishing
+# (OIDC, with provenance) -> docs artifacts -> GitHub release -> repository_dispatch to cosyte/docs.
+# No npm token exists: the package's trusted publisher on npmjs.com names this repository and this
+# file, and npm exchanges the job's `id-token: write` grant for a short-lived publish token.
+# `secrets: inherit` passes DOCS_REPO_DISPATCH_TOKEN, and RELEASE_PR_TOKEN when one is set.
 
 on:
   push:
@@ -19,7 +21,7 @@ jobs:
       contents: write # create tags / the GitHub release
       id-token: write # npm provenance
       pull-requests: write # open the "Version Packages" PR
-    uses: cosyte/.github/.github/workflows/release.yml@main
+    uses: cosyte/.github/.github/workflows/release.yml@498c7c13c8869bf11b67fa8324684ec2dc691ec6 # workflows-2026-11-07-498c7c13c886
     with:
       package-name: "@cosyte/mllp"
     secrets: inherit

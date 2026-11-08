@@ -4,6 +4,8 @@ An MLLP client and server for HL7 v2 in Node.js and TypeScript, published on npm
 transport sibling of the Cosyte parsers, with zero runtime dependencies and Buffers on every public surface. Parsing
 belongs to the optional peer `@cosyte/hl7`, which only the `@cosyte/mllp/ack-from-hl7` subpath uses.
 
+@AGENTS.md
+
 ## Gate
 
 Run these from the repo root, in this order, with the pnpm that `packageManager` pins first on PATH: pnpm 12 ignores
