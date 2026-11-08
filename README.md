@@ -12,7 +12,7 @@
 [![npm version](https://img.shields.io/npm/v/@cosyte/mllp.svg)](https://www.npmjs.com/package/@cosyte/mllp)
 [![CI](https://img.shields.io/github/actions/workflow/status/cosyte/mllp/ci.yml?branch=main&label=CI)](https://github.com/cosyte/mllp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/cosyte/mllp/blob/main/LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org)
 
 An MLLP client and server for Node.js: the transport-only sibling to @cosyte/hl7.
 
@@ -22,9 +22,11 @@ An MLLP client and server for Node.js: the transport-only sibling to @cosyte/hl7
 - [Status](#status)
 - [Install](#install)
 - [Usage](#usage)
-- [PHI and safety](#phi-and-safety)
 - [API](#api)
 - [Compatibility](#compatibility)
+- [Documentation](#documentation)
+- [Support](#support)
+- [Security](#security)
 - [Contributing](#contributing)
 - [Trademarks](#trademarks)
 - [License](#license)
@@ -63,13 +65,15 @@ Named rather than implied, here is what is still moving:
 ## Install
 
 ```bash
-# Node.js 22 or later, tested on 22 and 24
-# published dual: ESM (import) and CJS (require), each with its own type declarations
 pnpm add @cosyte/mllp
 
 # optional peer, needed only for the ack-from-hl7 subpath
 pnpm add @cosyte/hl7
 ```
+
+Node.js 22 or later, tested on 22, 24, and 26 (`engines.node` is `>=22.0.0`). The package ships
+dual ESM (`import`) and CommonJS (`require`) builds, each with its own type declarations, and has
+zero runtime dependencies.
 
 ## Usage
 
@@ -198,7 +202,87 @@ The [TLS guide](https://github.com/cosyte/mllp/blob/main/docs-content/tls.md) ha
 table, the TLS 1.2 floor (IHE ATNA ITI-19), the typed failure modes (`tls-verify` against
 `tls-handshake`), and the bind-safety details.
 
-## PHI and safety
+## API
+
+Three code subpaths ship, plus `@cosyte/mllp/package.json`:
+
+- **`@cosyte/mllp`** is the whole transport: `createServer` and `createStarterServer`, `createClient`
+  and `createStarterClient`, `encodeFrame` and `FrameReader`, `Connection`, `buildRawAck`, the typed
+  errors, and the differential harness (`runDifferential`).
+- **`@cosyte/mllp/testing`** is `InMemoryTransport`, a deterministic socket-free test double. Every
+  test that can run over it should.
+- **`@cosyte/mllp/ack-from-hl7`** builds acknowledgments from a parsed message, or from raw bytes it
+  parses through the peer, and is the one place the optional `@cosyte/hl7` peer is needed.
+
+What comes with them:
+
+- **Strict framing** (`VT + payload + FS + CR`), acknowledgment correlation, auto-reconnect with
+  backoff, and backpressure.
+- **A lenient decoder and a strict encoder** (Postel's Law) with **11 stable warning codes** carrying
+  byte offsets. Tolerance is opt-in per flag; the server ships tolerant defaults.
+- **An explicit 6-state connection machine**
+  (`CONNECTING | CONNECTED | DRAINING | RECONNECTING | DISCONNECTED | CLOSED`) with `stateChange`
+  events, never socket flags.
+- **`AbortSignal` on every awaitable** and `Symbol.asyncDispose` on every closeable.
+- **A drain on `close()`** that tells a message which was never written apart from one whose fate is
+  unknown, because only one of those is safe to resend.
+- **Zero runtime dependencies.** Node stdlib only.
+
+The full reference is on [docs.cosyte.com/mllp](https://docs.cosyte.com/mllp); see [Documentation](#documentation).
+
+## Compatibility
+
+- **Node.js 22 or later, tested on 22, 24, and 26.** `engines.node` is `>=22.0.0`.
+- **HL7 v2 payloads are bytes here, and the exceptions are named.** The transport does not parse
+  HL7: it reads the `MSH` header its acknowledgment is built from, and the `MSA` of an inbound
+  acknowledgment, each bounded at that segment's own terminator. The opt-in `ack-from-hl7` subpath
+  is the one place a whole message is parsed. [PHI and safety](#phi-and-safety) sets all of that out
+  in full. For actual parsing, pair this with [`@cosyte/hl7`](https://github.com/cosyte/hl7), which
+  is exactly what that subpath does.
+- **Differentially verified against freely available engines**: Mirth Connect from NextGen, and the
+  Google Cloud Healthcare MLLP adapter. **Epic and Cerner are not part of that harness**, and no
+  claim about either is made here. `runDifferential` ships in the published artifact, so you can aim
+  it at your own test or staging endpoint and get a per-exchange frame-parity and `MSA-2` correlation
+  report for the engine you actually integrate with.
+- **Known gaps, stated rather than hidden.** No batch acknowledgment, no MLLP Release 2, no queue or
+  replay of unacknowledged messages, no clinical acceptance decision, and no PKI. The
+  [known limitations](https://github.com/cosyte/mllp/blob/main/docs-content/limitations.md) page is
+  the full list. Read it before you depend on this.
+
+## Documentation
+
+The full reference lives at [docs.cosyte.com/mllp](https://docs.cosyte.com/mllp), built from this
+repository's [`docs-content/`](https://github.com/cosyte/mllp/tree/main/docs-content). Start with
+these pages:
+
+- [Framing and tolerance](https://github.com/cosyte/mllp/blob/main/docs-content/framing.md): the
+  wire format, the opt-in tolerance flags, the stable warning codes, and what throws.
+- [ACKs and the commit contract](https://github.com/cosyte/mllp/blob/main/docs-content/acks.md):
+  the code auto-ACK selects, correlation on the client, enhanced mode, and the ack-from-hl7 builder.
+- [Connection, reconnect, and backpressure](https://github.com/cosyte/mllp/blob/main/docs-content/reliability.md):
+  the six-state connection machine, backoff, dead-peer detection, and what `close()` does.
+- [MLLPS / TLS](https://github.com/cosyte/mllp/blob/main/docs-content/tls.md): mutual TLS,
+  verification, bind safety, the TLS 1.2 floor, and the typed failure modes.
+- [Testing and verification](https://github.com/cosyte/mllp/blob/main/docs-content/testing.md): the
+  in-memory transport, and the differential harness for the engine you integrate with.
+- [Known limitations and non-goals](https://github.com/cosyte/mllp/blob/main/docs-content/limitations.md):
+  what not to trust this transport to do.
+
+## Support
+
+Questions, bug reports, and interoperability findings start on the
+[issue tracker](https://github.com/cosyte/mllp/issues), and so does any change large enough to want
+agreement on the approach before a pull request. The organization's
+[support page](https://github.com/cosyte/.github/blob/main/SUPPORT.md) covers questions that span our
+libraries.
+
+## Security
+
+Report a vulnerability privately, as the
+[security policy](https://github.com/cosyte/.github/blob/main/SECURITY.md) describes, never in a
+public issue.
+
+### PHI and safety
 
 An MLLP frame carries an HL7 v2 message, and an HL7 v2 message carries patient data. This package is
 the transport under that traffic, so what it does with those bytes is a safety property rather than a
@@ -275,60 +359,11 @@ stats object ever echoes a run of message content.
 Every example on this page uses placeholder application and facility names and a synthetic control
 id. No sample here carries a name, a date of birth, an identifier, or an address, and none should.
 
-## API
-
-Three code subpaths ship, plus `@cosyte/mllp/package.json`:
-
-- **`@cosyte/mllp`** is the whole transport: `createServer` and `createStarterServer`, `createClient`
-  and `createStarterClient`, `encodeFrame` and `FrameReader`, `Connection`, `buildRawAck`, the typed
-  errors, and the differential harness (`runDifferential`).
-- **`@cosyte/mllp/testing`** is `InMemoryTransport`, a deterministic socket-free test double. Every
-  test that can run over it should.
-- **`@cosyte/mllp/ack-from-hl7`** builds acknowledgments from a parsed message, or from raw bytes it
-  parses through the peer, and is the one place the optional `@cosyte/hl7` peer is needed.
-
-What comes with them:
-
-- **Strict framing** (`VT + payload + FS + CR`), acknowledgment correlation, auto-reconnect with
-  backoff, and backpressure.
-- **A lenient decoder and a strict encoder** (Postel's Law) with **11 stable warning codes** carrying
-  byte offsets. Tolerance is opt-in per flag; the server ships tolerant defaults.
-- **An explicit 6-state connection machine**
-  (`CONNECTING | CONNECTED | DRAINING | RECONNECTING | DISCONNECTED | CLOSED`) with `stateChange`
-  events, never socket flags.
-- **`AbortSignal` on every awaitable** and `Symbol.asyncDispose` on every closeable.
-- **A drain on `close()`** that tells a message which was never written apart from one whose fate is
-  unknown, because only one of those is safe to resend.
-- **Zero runtime dependencies.** Node stdlib only.
-
-Full reference: [the documentation](https://github.com/cosyte/mllp/tree/main/docs-content).
-
-## Compatibility
-
-- **Node.js 22 or later, tested on 22 and 24.** `engines.node` is `>=22.0.0`.
-- **HL7 v2 payloads are bytes here, and the exceptions are named.** The transport does not parse
-  HL7: it reads the `MSH` header its acknowledgment is built from, and the `MSA` of an inbound
-  acknowledgment, each bounded at that segment's own terminator. The opt-in `ack-from-hl7` subpath
-  is the one place a whole message is parsed. [PHI and safety](#phi-and-safety) sets all of that out
-  in full. For actual parsing, pair this with [`@cosyte/hl7`](https://github.com/cosyte/hl7), which
-  is exactly what that subpath does.
-- **Differentially verified against freely available engines**: Mirth Connect from NextGen, and the
-  Google Cloud Healthcare MLLP adapter. **Epic and Cerner are not part of that harness**, and no
-  claim about either is made here. `runDifferential` ships in the published artifact, so you can aim
-  it at your own test or staging endpoint and get a per-exchange frame-parity and `MSA-2` correlation
-  report for the engine you actually integrate with.
-- **Known gaps, stated rather than hidden.** No batch acknowledgment, no MLLP Release 2, no queue or
-  replay of unacknowledged messages, no clinical acceptance decision, and no PKI. The
-  [known limitations](https://github.com/cosyte/mllp/blob/main/docs-content/limitations.md) page is
-  the full list. Read it before you depend on this.
-
 ## Contributing
 
-Questions, bug reports, and interoperability findings belong in
-[GitHub issues](https://github.com/cosyte/mllp/issues). Pull requests are welcome. The organization's
+Pull requests are welcome. The organization's
 [contributing guide](https://github.com/cosyte/.github/blob/main/CONTRIBUTING.md) and
-[code of conduct](https://github.com/cosyte/.github/blob/main/CODE_OF_CONDUCT.md) apply here. Open an
-issue before a large change so the approach can be agreed first.
+[code of conduct](https://github.com/cosyte/.github/blob/main/CODE_OF_CONDUCT.md) apply here.
 
 A contribution must clear every gate this repository ships, all of them scripts you can run yourself:
 

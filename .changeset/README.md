@@ -12,14 +12,16 @@ Add a changeset for every meaningful change:
 pnpm changeset
 ```
 
-Pick the bump type from what the change does to the published package. On the `0.1.x` ladder:
+Every changeset is a **patch**, whatever the change: a fix, documentation, contributor-only
+tooling, or a new export, option, event, stable code or artifact a consumer can use. We decided on
+2026-11-07 that our versions move by patch only until we say otherwise, so a minor or a major waits
+for the maintainer's explicit okay. The summary carries what the number no longer does: say what a
+consumer gains, and spell out any break, because on a `0.x` release the version alone tells a
+consumer nothing.
 
-- **minor** for anything a consumer gains: a newly exported symbol, a new option, a new event, a
-  new stable code, or a new published artifact they can use. It takes `0.1.x` to `0.2.0`.
-- **patch** for a fix, for documentation of a surface that already ships, and for contributor-only
-  tooling. It takes `0.1.x` to `0.1.1`.
-- **major** only when you mean to declare `1.0.0`. Before that, a breaking change is a **minor**,
-  and the break has to be spelled out in the summary, because the number alone tells a consumer on
-  a `0.x` release nothing.
+Once a minor is approved, the ladder is the one this file used to state: **minor** for anything a
+consumer gains (a newly exported symbol, a new option, a new event, a new stable code, or a new
+published artifact), **patch** for a fix, for documentation of a surface that already ships, and for
+contributor-only tooling, and **major** only to declare `1.0.0`.
 
 The standards every Cosyte repository follows are in `plans/standards.md` in the umbrella repository.
