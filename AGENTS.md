@@ -31,6 +31,7 @@ pnpm attw
 pnpm examples
 pnpm check:no-emdash
 pnpm check:no-internal-refs
+pnpm check:documents
 ```
 
 ## Rules

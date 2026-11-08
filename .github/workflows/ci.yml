@@ -53,3 +53,25 @@ jobs:
         run: pnpm build
       - name: Run every example
         run: pnpm examples
+
+  # The repository's documents, each checked by the shared checker in @cosyte/script-utils: the
+  # README against the house skeleton and npm's size limit, CLAUDE.md against the card spec, every
+  # pointer into documentation/agent-notes.md, and the package.json description against the
+  # catalog. `pnpm check:documents` runs the same four locally.
+  documents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:readme
+      - run: pnpm check:claude-card
+      - run: pnpm check:agent-notes
+      - run: pnpm check:catalog

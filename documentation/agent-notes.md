@@ -32,6 +32,13 @@ thing a rule guards, or when you are tempted to relax one. Every paragraph here 
 
 ## The em-dash brand gate
 
+**Since the gate moved to `@cosyte/script-utils`.** `pnpm check:no-emdash` runs the one shared
+implementation from `node_modules`, and `no-emdash.yml` calls the installing form of the shared gate
+workflow so the install happens first. This repository keeps only `scripts/check-no-emdash.exclude`,
+which today lists `CHANGELOG.md` whole: the shared gate excludes by path, so the frozen archive is no
+longer read for em dashes, which the copy below did. The rest of this section describes that copy;
+its measurements are history, and its reasoning about tracked binaries still holds.
+
 - **Em-dash brand gate armed.** `scripts/check-no-emdash.sh` (`pnpm check:no-emdash`) plus
   `.github/workflows/no-emdash.yml` enforce the founder directive banning `U+2014` outright
   (`knowledgebase/06-brand/voice-and-tone.md`, "No em dashes. Ever."). It scans **both** halves the
@@ -779,6 +786,11 @@ tolerate.
 
 ## The attw wrapper, and why the bare CLI is not a gate
 
+**Since the gate moved to `@cosyte/script-utils`.** `pnpm attw` runs the shared gate's command-line
+form, which carries every net described below, and `scripts/attw.exclude` holds `node10`, which
+selects attw's `node16` profile as `--profile node16` did. The wrapper and its tests left this
+repository with that move; the bullets below are the measurements behind it, kept as history.
+
 - **▶ `attw` SAYS "does not contain types" AND EXITS 0, SO THE `attw` SCRIPT IS A WRAPPER, NOT THE
   BARE CLI.** `getExitCode.js` in `@arethetypeswrong/cli@0.18.4` opens with `if (!analysis.types)
   return 0`, so the problem list is never consulted and no `--profile`, `--ignore-rules` or config
@@ -892,6 +904,12 @@ tolerate.
    under GNU grep 3.8.
 
 ## The two-file contract, and why this gate is not universal
+
+**Since the check moved to `@cosyte/script-utils`.** `pnpm check:agent-notes` runs the shared
+agent-notes checker, in CI's `documents` job with the README, card and catalog checks. It keeps
+what this section asks for (every pointer resolves to a heading GitHub would mint, no section is
+empty) and adds the one pointer form, `documentation/agent-notes.md#<anchor>`, in `CLAUDE.md`. The
+repository's own script and its tests left with that move; what follows is their history.
 
 **`scripts/check-agent-notes.ts` (`pnpm check:agent-notes`) checks the pair this file is half
 of.** Three things, and nothing else: that `documentation/agent-notes.md` is tracked, that every

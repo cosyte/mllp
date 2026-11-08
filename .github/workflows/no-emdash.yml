@@ -6,31 +6,18 @@ name: Em-dash gate
 # every Cosyte surface, and names commit messages explicitly. This workflow is the CI
 # half of that rule for mllp: the tracked files, and the text that is not a file.
 #
-# mllp WAS already clean when this landed, and the measurement behind that claim is
-# the whole tree rather than a sample: all 152 tracked files were read byte by byte
-# and none carries U+2014, as the literal character or in any encoded form. That
-# distinction matters because a markdown-only count is exactly what wrongly cleared
-# dicom, which turned out to hold six live em dashes in four non-markdown files. So
-# this gate changed no content here and exists purely to stop a regression. A green
-# run on a clean tree proves nothing on its own, which is why the script it calls
-# refuses to print OK from a scan that did not read everything it was handed.
+# WHAT ACTUALLY SCANS, AND WHERE THE RULE LIVES. `pnpm check:no-emdash`, which runs the
+# one shared implementation in `@cosyte/script-utils`, installed from this repository's
+# lockfile. The jobs below call the shared INSTALLING gate workflow for that reason: it
+# installs from the committed lockfile, runs the command, and lets the command's exit
+# status decide the job, with no pattern or allow-list of its own. What this repository
+# leaves out of the scan is `scripts/check-no-emdash.exclude`, which the gate reads
+# itself: today only CHANGELOG.md, for the reason written there.
 #
-# WHAT ACTUALLY SCANS, AND WHERE THE RULE LIVES. `pnpm check:no-emdash`, which is this
-# repository's own `scripts/check-no-emdash.sh`. The jobs below delegate the plumbing
-# (checkout, pnpm, Node) to the shared gate workflow, and that workflow carries no
-# pattern, no allow-list and no file selection of its own: it prepares the tree, runs
-# the command, and lets the command's exit status decide the job. So the rule, the
-# variant and every measurement behind them stay in this repository.
-#
-# mllp used to track ONE binary, `vendor/cosyte-hl7-0.0.0.tgz` (the packed `@cosyte/hl7`
-# devDependency, 472,097 bytes, 1,774 NUL bytes). It is why this repo runs website's
-# NUL-exclusion variant of the script rather than the text-only one hl7, fhir,
-# knowledgebase, pathways, x12, ncpdp and dicom run. The reasoning, the cost, and the
-# measurements behind that choice are in the script header; the short version is that
-# a compressed stream can contain the em dash bytes by coincidence, and that red would
-# have no fix. The tarball left on 2026-08-10 (`@cosyte/hl7` installs from npm) and the
-# VARIANT STAYS: the argument is about tracked binaries as a class, and the script header
-# says why the specimen's departure does not retire it.
+# This repository ran its own copy of the scanner until the shared one carried a
+# command-line form. The copy read the frozen CHANGELOG archive for em dashes only and
+# excluded NUL-bearing files as binary; the shared gate excludes by path instead, and
+# this tree tracks no NUL-bearing file. The banned forms are the same twelve.
 #
 # TWO CONTEXTS, NOT ONE, AND THE JOB ID IS LOAD-BEARING. A called job's check run is
 # named `<caller job id> / <inner job id>`, so the job id `no-emdash` below publishes
@@ -49,14 +36,7 @@ name: Em-dash gate
 # WHY A SEPARATE WORKFLOW, and not a job in ci.yml:
 #
 #   mllp's `ci` job calls the shared ci.yml pipeline, which runs a fixed ladder and no
-#   arbitrary repo script. Adding the gate there would also flip crew, config, iac,
-#   and assets red on their next run: all four violate the ban wholesale today, and
-#   remediating them is separate, founder-gated work. A shared pipeline is the wrong
-#   place to land a rule several of its callers cannot yet satisfy. The correct
-#   variant of the script also differs per repo (repos with no binaries take
-#   knowledgebase's text-only shape, repos tracking undeclared binaries take website's
-#   NUL-partition one, which is this repo), so the scanner stays per-repo and only the
-#   harness is shared.
+#   arbitrary repo script, and the message half needs triggers of its own.
 #
 #   Within mllp, the deciding factor is the trigger. The message half needs the
 #   `edited` activity type, which is not a default: without it, a title or body edited
@@ -91,7 +71,7 @@ jobs:
     # deleted by anyone who gains write access to the workflow's repository, so a tag is
     # not an immutable reference and is not a pin. The trailing comment is the published
     # reference that commit was released as, so the release note stays findable from here.
-    uses: cosyte/.github/.github/workflows/gate-no-emdash.yml@498c7c13c8869bf11b67fa8324684ec2dc691ec6 # workflows-2026-11-07-498c7c13c886
+    uses: cosyte/.github/.github/workflows/gate-no-emdash-install.yml@498c7c13c8869bf11b67fa8324684ec2dc691ec6 # workflows-2026-11-07-498c7c13c886
     # No more than the scan needs. A called workflow's GITHUB_TOKEN can only be
     # downgraded by its caller, and this gate reads the tree and nothing else.
     permissions:
