@@ -352,8 +352,7 @@ export interface ServerOptions {
    * `conn.send()` in `onMessage` when `autoAck` is set, this results in two ACKs.
    */
   autoAck?:
-    | "AA"
-    | ((payload: Buffer, meta: MessageMeta, conn: Connection) => Buffer | Promise<Buffer>);
+    "AA" | ((payload: Buffer, meta: MessageMeta, conn: Connection) => Buffer | Promise<Buffer>);
 
   /**
    * TCP keepalive probe interval in ms.

@@ -33,12 +33,7 @@ import type { ConnectionErrorPhase } from "./error.js";
  * are silently ignored to preserve FSM integrity.
  */
 export type ConnectionState =
-  | "CONNECTING"
-  | "CONNECTED"
-  | "DRAINING"
-  | "RECONNECTING"
-  | "DISCONNECTED"
-  | "CLOSED";
+  "CONNECTING" | "CONNECTED" | "DRAINING" | "RECONNECTING" | "DISCONNECTED" | "CLOSED";
 
 /**
  * Payload for the 'stateChange' event. Always `Object.freeze`'d.
