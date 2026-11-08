@@ -62,16 +62,13 @@ name: Em-dash gate
 #   `edited` activity type, which is not a default: without it, a title or body edited
 #   after the last push is never re-checked. What makes that matter is exactly what a
 #   squash merge lands here, which is a repo setting and was read rather than assumed:
-#   `squash_merge_commit_title: COMMIT_OR_PR_TITLE` and
-#   `squash_merge_commit_message: COMMIT_MESSAGES`, with squash the only merge method
-#   enabled. So the subject on main comes from the PR title (or from the lone commit's
-#   subject, when the branch has exactly one), and the body is the branch commit
-#   messages concatenated. The PR BODY does not land. It is scanned anyway,
-#   deliberately: it is a Cosyte surface in its own right and it costs nothing to
-#   cover. But ci.yml's triggers drive the shared pipeline over the Node 22 + 24
-#   matrix (typecheck, lint, format, PHI scan, test, coverage, build, attw, dual
-#   ESM/CJS smoke). Re-running all of that every time someone fixes a typo in a PR
-#   description is a large cost for no extra safety.
+#   since 2026-11-07, `squash_merge_commit_title: PR_TITLE` and
+#   `squash_merge_commit_message: PR_BODY`, with squash the only merge method enabled.
+#   So the commit on main IS the PR title and the PR body, and an edit to either after
+#   the last push changes what lands. But ci.yml's triggers drive the shared pipeline
+#   over the Node 22, 24 and 26 matrix (typecheck, lint, format, PHI scan, test,
+#   coverage, build, attw, dual ESM/CJS smoke). Re-running all of that every time
+#   someone fixes a typo in a PR description is a large cost for no extra safety.
 #
 # Run the file half locally with `pnpm check:no-emdash`.
 
@@ -94,7 +91,7 @@ jobs:
     # deleted by anyone who gains write access to the workflow's repository, so a tag is
     # not an immutable reference and is not a pin. The trailing comment is the published
     # reference that commit was released as, so the release note stays findable from here.
-    uses: cosyte/.github/.github/workflows/gate-no-emdash.yml@84ecccd771cbc9c1ece003a3f8ff61415360395b # workflows-2026-09-18-84ecccd771cb
+    uses: cosyte/.github/.github/workflows/gate-no-emdash.yml@498c7c13c8869bf11b67fa8324684ec2dc691ec6 # workflows-2026-11-07-498c7c13c886
     # No more than the scan needs. A called workflow's GITHUB_TOKEN can only be
     # downgraded by its caller, and this gate reads the tree and nothing else.
     permissions:

@@ -19,11 +19,13 @@ permissions:
 
 jobs:
   # Universal gates from the shared pipeline (typecheck, lint, format, test, coverage, build, attw,
-  # dual ESM/CJS smoke, actionlint) on the standard Node matrix. mllp ships a PHI scanner (it
-  # transports HL7 v2 payloads, so its fixtures carry the same PHI shapes hl7's do), so the shared
-  # pipeline's optional PHI-scan step is switched on.
+  # dual ESM/CJS smoke, actionlint) on the reference's default Node matrix, 22, 24 and 26: the
+  # README claims only the lines CI runs. mllp ships a PHI scanner (it transports HL7 v2 payloads,
+  # so its fixtures carry the same PHI shapes hl7's do), so the shared pipeline's optional PHI-scan
+  # step is switched on. Every call to cosyte/.github names one published reference, pinned by its
+  # commit, and the workflows in this repository move to the next one together.
   ci:
-    uses: cosyte/.github/.github/workflows/ci.yml@main
+    uses: cosyte/.github/.github/workflows/ci.yml@498c7c13c8869bf11b67fa8324684ec2dc691ec6 # workflows-2026-11-07-498c7c13c886
     with:
       run-phi-scan: true
 
@@ -36,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["22", "24"]
+        node: ["22", "24", "26"]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
