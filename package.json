@@ -138,6 +138,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "fuzz": "vitest run test/property/fuzz.property.test.ts test/property/transport-fuzz.property.test.ts test/property/ack-fuzz.property.test.ts",
     "examples": "tsx scripts/run-examples.ts",
     "certs:gen": "node scripts/generate-test-certs.mjs",
     "clean": "rm -rf dist coverage",

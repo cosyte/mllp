@@ -1,0 +1,40 @@
+name: Nightly fuzz
+
+# Continuous fuzzing of the receive path. Every night, and on demand, this calls the shared
+# nightly-fuzz.yml at the published reference the other callers here name, and that workflow runs
+# `pnpm fuzz`: the three fuzz suites under test/property/ (random noise into the decoder, mutated
+# MLLP streams through the decoder and the connection, and mutated HL7 v2 payloads through the
+# ACK readers and builders, the client's correlation, and ack-from-hl7). Here each target
+# generates hostile inputs for a time budget instead of its committed run count, from a seed that
+# changes with every run, so each night explores a different slice of the input space.
+#
+# The pull-request smoke run is `pnpm test`: the shared CI job runs the same targets on every pull
+# request at their base counts against a pinned seed. This run is the deep search that would make
+# a pull request slow.
+#
+# A crash, hang, or runaway allocation fails the run. The log prints the counterexample, the seed,
+# and the path. The seed is this run's id: `MLLP_FUZZ_SEED=<run id> pnpm fuzz` replays it, and
+# test/property/_fuzz-config.ts says how to step straight to the shrunk case.
+#
+# The shared job sets no timeout at this reference, and a job that calls a reusable workflow
+# cannot set one, so the command bounds itself: `timeout` fails a run that hangs, which is the one
+# failure the per-case budget cannot see (a synchronous loop that never returns to it).
+
+on:
+  schedule:
+    # 06:47 UTC daily. An odd minute: GitHub delays scheduled runs at the start of every hour.
+    - cron: "47 6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    uses: cosyte/.github/.github/workflows/nightly-fuzz.yml@498c7c13c8869bf11b67fa8324684ec2dc691ec6 # workflows-2026-11-07-498c7c13c886
+    with:
+      fuzz-cmd: MLLP_FUZZ_SEED="$GITHUB_RUN_ID" MLLP_FUZZ_SECONDS=120 timeout --kill-after=1m 40m pnpm fuzz
