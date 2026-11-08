@@ -1,0 +1,4 @@
+# What attw leaves out of its analysis of this package, one resolution per line. node10 alone
+# selects attw's node16 profile: this package does not support the node10 resolution, whose
+# package.json "exports" it cannot read (the old script passed --profile node16).
+node10

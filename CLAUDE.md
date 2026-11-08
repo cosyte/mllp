@@ -15,11 +15,11 @@ first on PATH: pnpm 12 refuses the frozen install, and tests spawn a bare `pnpm`
 pnpm install --frozen-lockfile
 pnpm typecheck && pnpm lint && pnpm format:check && pnpm phi-scan
 pnpm test && pnpm test:coverage && pnpm build && pnpm attw && pnpm examples
-pnpm check:no-emdash && pnpm check:no-internal-refs
+pnpm check:no-emdash && pnpm check:no-internal-refs && pnpm check:documents
 ```
 
 Lines 2 and 3 are the shared `ci / verify` job (Node 22, 24 and 26) and the `examples` job; line 4
-is `no-emdash.yml` (it also reads the PR text) and `no-internal-refs.yml`. CI adds actionlint.
+is `no-emdash.yml` (it also reads the PR text), `no-internal-refs.yml` and the `documents` job.
 
 ## Hazard
 
