@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+### Patch Changes
+
+- c9dd905: The README's contributing section now says what `pnpm check:documents` checks: the README, `CLAUDE.md` and the catalog line. No code changes.
+
 ## 0.1.3
 ### Patch Changes
 
