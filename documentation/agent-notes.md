@@ -841,6 +841,15 @@ repository with that move; the bullets below are the measurements behind it, kep
 
 ## No internal bookkeeping on a public surface, and the WORD-N trap
 
+**Since the gate moved to `@cosyte/script-utils` (0.1.5).** `pnpm check:no-internal-refs` runs the
+shared gate, `cosyte-internal-refs`, over the axes in `scripts/internal-refs.json`, and
+`no-internal-refs.yml` calls the installing form of the shared gate workflow. The shared phase rule
+carries the two guards this repository's copy had (the compound-word lookbehind, so "two-phase" and
+"connect-phase" pass, and the `where|are|was|were|during|at` lookahead), and mllp's item ids, plan
+numbers and the roadmap citation with its section-sign arm ride along as extra rules with their
+samples. A seeded line carrying all four classes reds the shared gate. The rest of this section is
+the history of the copy that left.
+
 4. **No internal project bookkeeping on a public surface** (founder directive, 2026-07-27). What a
    consumer reads (`README.md`, `docs-content/`, the npm `description`, a release body, and the
    JSDoc their editor renders on hover) says what the software does and what changed. Item

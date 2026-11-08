@@ -11,6 +11,7 @@
     "overrides": {
       "brace-expansion@>=4.0.0 <5.0.12": "5.0.12",
       "esbuild@>=0.27.3 <0.28.1": "0.28.1",
+      "js-yaml@>=3.0.0 <3.15.2": "3.15.2",
       "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
       "minimatch@>=7.0.0 <11.0.1": "11.0.1"
     }
@@ -99,7 +100,7 @@
     "@cosyte/eslint-config": "^0.1",
     "@cosyte/hl7": "^0.1.0",
     "@cosyte/prettier-config": "^0.1",
-    "@cosyte/script-utils": "^0.1.4",
+    "@cosyte/script-utils": "^0.1.5",
     "@cosyte/test-utils": "^0.1",
     "@cosyte/tsconfig": "^0.1",
     "@cosyte/tsup-config": "^0.1",
@@ -129,7 +130,7 @@
     "check:claude-card": "cosyte-claude-card",
     "check:documents": "pnpm check:readme && pnpm check:claude-card && pnpm check:agent-notes && pnpm check:catalog",
     "check:no-emdash": "cosyte-no-emdash",
-    "check:no-internal-refs": "bash scripts/check-no-internal-refs.sh",
+    "check:no-internal-refs": "cosyte-internal-refs",
     "check:readme": "cosyte-readme",
     "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\" \"test/**/*.ts\" \"examples/**/*.ts\" --max-warnings=0 --no-error-on-unmatched-pattern",
     "lint:fix": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\" \"test/**/*.ts\" \"examples/**/*.ts\" --fix --no-error-on-unmatched-pattern",
