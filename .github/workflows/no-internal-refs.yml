@@ -29,14 +29,16 @@ name: Public-surface gate
 # script's own residual (xii) says it plainly: A COUNT IS A FUNCTION OF THE RULE SET, so
 # quote a count with the tree AND the rules it was taken under, or not at all.
 #
-# WHAT ACTUALLY SCANS, AND WHERE THE RULE LIVES. `pnpm check:no-internal-refs`, which is
-# this repository's own `scripts/check-no-internal-refs.sh`. The job below delegates the
-# plumbing (checkout, pnpm, Node) to the shared gate workflow, which carries no pattern,
-# no allow-list and no file selection of its own: it prepares the tree, runs the command,
-# and lets the command's exit status decide the job. The detection rules, the self-tests,
-# the known project prefixes and the standards-designation exemptions all stay in that
-# script, which self-tests before it reports and refuses to print OK from a scan that did
-# not read all of its input.
+# WHAT ACTUALLY SCANS, AND WHERE THE RULE LIVES. `pnpm check:no-internal-refs`, which runs
+# the one shared implementation in `@cosyte/script-utils` (`cosyte-internal-refs`) with this
+# repository's axes from `scripts/internal-refs.json`: the known project prefixes, the
+# standards designations that collide with them, the public surface, the source doc comments
+# that compile into `dist/*.d.ts`, and three rules of mllp's own as extra rules (its item ids,
+# plan numbers, and the roadmap citation with its section-sign arm), each with its self-test
+# samples. The job below calls the shared INSTALLING gate workflow, since the gate lives in
+# node_modules: it installs from the committed lockfile, runs the command, and lets the
+# command's exit status decide the job. This repository ran its own copy of the scanner until
+# the shared phase rule carried mllp's two guards (script-utils 0.1.5).
 #
 # WHY A SEPARATE WORKFLOW, and not a job in ci.yml: the same reasoning as
 # `no-emdash.yml` in this repo. mllp's `ci` job calls the shared ci.yml pipeline, a
@@ -80,7 +82,7 @@ jobs:
     # deleted by anyone who gains write access to the workflow's repository, so a tag is
     # not an immutable reference and is not a pin. The trailing comment is the published
     # reference that commit was released as, so the release note stays findable from here.
-    uses: cosyte/.github/.github/workflows/gate-no-internal-refs.yml@498c7c13c8869bf11b67fa8324684ec2dc691ec6 # workflows-2026-11-07-498c7c13c886
+    uses: cosyte/.github/.github/workflows/gate-no-internal-refs-install.yml@498c7c13c8869bf11b67fa8324684ec2dc691ec6 # workflows-2026-11-07-498c7c13c886
     # No more than the scan needs. A called workflow's GITHUB_TOKEN can only be
     # downgraded by its caller, and this gate reads the tree and nothing else.
     permissions:

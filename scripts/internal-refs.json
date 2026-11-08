@@ -1,0 +1,112 @@
+{
+  "$comment": "The public-surface gate's axes for @cosyte/mllp, read by `node node_modules/@cosyte/script-utils/internal-refs.js` (pnpm check:no-internal-refs). The rule set is the shared one in @cosyte/script-utils; this file adds mllp's own detection and never subtracts. Each extra rule is a pattern the shared rules lack, carried over from this repository's former scripts/check-no-internal-refs.sh with its self-test samples.",
+  "projectPrefixes": [
+    "PARSERS-PUBLIC",
+    "DOCS-CONTENT",
+    "KNOWLEDGEBASE",
+    "TERMINOLOGY",
+    "PATHWAYS",
+    "TRANSFORM",
+    "WEBSITE",
+    "STAGING",
+    "SUPPLY",
+    "NCPDP",
+    "ASSETS",
+    "EMDASH",
+    "README",
+    "CONFIG",
+    "DICOM",
+    "DEID",
+    "CCDA",
+    "ASTM",
+    "MLLP",
+    "FHIR",
+    "CREW",
+    "DOCS",
+    "PERF",
+    "SYNC",
+    "VERSION",
+    "PUBLIC",
+    "SYNTH",
+    "HL7",
+    "X12",
+    "IAC",
+    "CLI",
+    "KB",
+    "PW",
+    "PUB",
+    "CI",
+    "REAL",
+    "TERM",
+    "WF",
+    "VERIFY"
+  ],
+  "standardsDesignations": [
+    "HL7-(?:V2|V3|CDA|FHIR|OMG)",
+    "FHIR-R\\d[A-Z]?",
+    "DICOM-(?:SR|RT|SEG|DIR|PS\\d)",
+    "X12-\\d{3}[A-Z]?",
+    "X12-\\d{6}",
+    "CCDA-R\\d(?:\\.\\d)?",
+    "ASTM-E\\d+",
+    "NCPDP-(?:SCRIPT|TELECOM|D\\.\\d|F\\d)"
+  ],
+  "surfacePaths": [
+    "README.md",
+    "TRADEMARKS.md",
+    "LICENSE",
+    "docs-content"
+  ],
+  "accountedTarballFiles": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "sourceDocComments": {
+    "enabled": true,
+    "paths": [
+      "src/*.ts",
+      "src/**/*.ts"
+    ]
+  },
+  "extraRules": [
+    {
+      "id": "mllp-local-identifier",
+      "name": "internal project identifier (mllp's own item ids)",
+      "pattern": "\\b(?:PLAN|CLIENT|SERVER|FRAME|LIFE|OBS|WARN|SC)-\\d{1,2}\\b|\\bERR-0\\d\\b|\\bD-CR-\\d{2}\\b|\\b[DWBT]-\\d{2}(?:-\\d{2})*\\b",
+      "positives": [
+        "CLIENT-04, SERVER-12, FRAME-11, LIFE-02, OBS-01, WARN-06, ERR-02, PLAN-06, SC-5, D-23, D-CR-01, W-07, B-05 and T-05-04-09 all track it"
+      ],
+      "negatives": [
+        "MSH-10 and MSA-2 and MSH-1 and MSH-2 and MSH-7 and MSH-9 and MSH-15 and MSH-18 and MSA-1 and MSA-3 and PID-3 and BTS-1 and the range MSH-3..6, the HL7 error segment fields ERR-3 and ERR-4, IHE ITI-19 and ITI TF-2, UTF-8 and UTF-16 and UTF-32 and ISO-8859-1, the internal branch names FRAME-FATAL and ACCEPT-SAFE and FAIL-SAFE and POST-BIND and PRE-ENCODE and SINGLE-FLIGHT and OS-NORMALIZED, MLLP-framed bytes and HL7-defined tables and TLS-terminated sockets, legacy SNOMED RT D-13000 and T-32000 and M-80003, ICD-10-CM P00-P96, FHIR-bridge stability, docs-content/ layout, HL7-V2 and HL7-CDA, FHIR-R4, DICOM-SR, X12-837P and X12-005010, NCPDP-SCRIPT"
+      ]
+    },
+    {
+      "id": "plan-number",
+      "name": "plan language",
+      "pattern": {
+        "source": "\\bplans? \\d+\\b",
+        "flags": "i"
+      },
+      "positives": [
+        "Plan 04 and plan 05 preceded it"
+      ],
+      "negatives": [
+        "a migration plan, the plan is to reconnect, and plans for TLS"
+      ]
+    },
+    {
+      "id": "roadmap-citation",
+      "name": "internal roadmap citation",
+      "pattern": {
+        "source": "\\b(?:mllp|hl7|fhir|cli|dicom|x12|ccda|ncpdp|astm|transform|terminology|synth|deid|pathways|docs|website|iac|crew|knowledgebase|config|the|this|our) roadmap(?:'s)?\\b|\\broadmaps?(?:'s)?[ ]?§|\\broadmaps?[ ]+[A-Z]{1,8}-\\d",
+        "flags": "i"
+      },
+      "positives": [
+        "See the mllp roadmap, our roadmap, roadmap §4 and ROADMAP SC-5"
+      ],
+      "negatives": [
+        "A product roadmap, the vendor roadmap page, and a section simply headed Roadmap"
+      ]
+    }
+  ]
+}
