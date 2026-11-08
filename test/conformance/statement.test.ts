@@ -65,7 +65,7 @@
  * second `MSH`", and neither needs a message body to exist.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -323,13 +323,15 @@ function shippedServerFramingDefaults(): Map<string, boolean> {
 function shippedPropertyNames(): Set<string> {
   const out = new Set<string>();
   const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir).sort()) {
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
+    // The entry types come with the listing, so no path is checked and then read separately.
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
         walk(full);
         continue;
       }
-      if (!entry.endsWith(".ts")) continue;
+      if (!entry.name.endsWith(".ts")) continue;
       const source = readFileSync(full, "utf8");
       for (const m of source.matchAll(/^ {2,6}(?:readonly )?([A-Za-z_$][\w$]*)\??: /gm)) {
         out.add(m[1] ?? "");
