@@ -21,7 +21,7 @@ inspects the payload.
 
 ## Prerequisites
 
-- **Node.js 22 or later, tested on 22 and 24.** The whole `@cosyte/*` suite targets ES2023. This package leans on
+- **Node.js 22 or later, tested on 22, 24, and 26.** The whole `@cosyte/*` suite targets ES2023. This package leans on
   `Symbol.asyncDispose` and `AbortSignal` on its public surface, both 2026 Node baseline.
 - A package manager: `pnpm`, `npm`, or `yarn`.
 - **No runtime dependencies.** The client, server, and framing are Node stdlib only (`net`, `tls`,

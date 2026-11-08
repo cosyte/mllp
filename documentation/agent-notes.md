@@ -618,6 +618,25 @@ version is not the warning, the changelog entry is, and the changelog entry is t
 defers to, `CLAUDE.md` names it rather than paraphrasing it for that reason, and the failure mode
 being avoided is two files carrying two ladders again.
 
+**Revised 2026-11-07: every changeset is a patch (D56 in the umbrella's `plans/decisions.md`).** The
+operator decided that the versions we publish move by patch only until they say otherwise, and that
+a minor needs their okay. The ladder above is what a minor would be for once they give it. The
+lesson of the ten patches still binds, in a new place: the bump no longer says what a consumer
+gains, so the summary has to, and a break is spelled out there. `.changeset/README.md`, `CLAUDE.md`
+and this section were changed together, so the two files do not carry two rules again.
+
+## Running the gate locally
+
+The card lists the gate in CI's order. `pnpm --version` must print the version `packageManager`
+pins: pnpm 12 ignores `pnpm.overrides` and refuses the frozen install, and the tests spawn a bare
+`pnpm`, so whichever pnpm is first on PATH is the one they run. Where it prints another version, run
+`corepack enable --install-directory <dir> pnpm` and put `<dir>` first on PATH; where corepack is
+not installed, `npm install --global --prefix <dir> pnpm@<pinned version>` and put `<dir>/bin` first.
+
+CI alone adds three checks no script here runs: the dual ESM/CJS import smoke of `dist/`,
+actionlint over every workflow file, and the shared pre-publish checks (the manifest lint, and a
+packed tarball installed into a clean directory), all inside the shared `ci` workflow.
+
 ## Changelog generation
 
 **`CHANGELOG.md` is written by the release, and the changeset summary is the entry.** This section
@@ -1060,4 +1079,4 @@ new place.
 
 **Never clear a red here by deleting the pointer or the heading.** The remedy is to fix the anchor
 or restore the narrative. Deleting the pointer removes the grounding for the rule that cited it,
-which is the trap-deletion move `ADR 0023` exists to refuse, arriving through a different door.
+which is deleting a rule's reason while keeping the rule, arriving through a different door.
