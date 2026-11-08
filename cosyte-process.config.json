@@ -1,0 +1,15 @@
+{
+  "lint": {
+    "globs": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "examples/**/*.ts"]
+  },
+  "format": {
+    "globs": [
+      "src/**/*.{ts,md}",
+      "test/**/*.ts",
+      "scripts/**/*.{ts,mjs}",
+      "examples/**/*.{ts,json}",
+      "docs-content/**/*.{md,json}",
+      "*.{json,md,yml}"
+    ]
+  }
+}

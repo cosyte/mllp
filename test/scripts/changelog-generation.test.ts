@@ -116,6 +116,8 @@ import { join } from "node:path";
 
 import { describe, it, expect, afterAll } from "vitest";
 
+import { processToolDir } from "../_helpers/process-tools.js";
+
 const REPO_ROOT = process.cwd();
 const CHANGELOG_PATH = join(REPO_ROOT, "CHANGELOG.md");
 const CONFIG_PATH = join(REPO_ROOT, ".changeset", "config.json");
@@ -211,7 +213,7 @@ function runVersion(opts: {
   // exercise a formatter no release ever uses. Links rather than copies: pnpm's own
   // `node_modules` entries are links already.
   mkdirSync(join(dir, "node_modules", "@cosyte"), { recursive: true });
-  symlinkSync(join(REPO_ROOT, "node_modules", "prettier"), join(dir, "node_modules", "prettier"));
+  symlinkSync(processToolDir(REPO_ROOT, "prettier"), join(dir, "node_modules", "prettier"));
   symlinkSync(
     join(REPO_ROOT, "node_modules", "@cosyte", "prettier-config"),
     join(dir, "node_modules", "@cosyte", "prettier-config"),
