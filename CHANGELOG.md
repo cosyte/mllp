@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+### Patch Changes
+
+- 43f3779: The README follows our shared layout: it adds Support and Security sections, names the Node.js versions CI tests on (22, 24, and 26), and links the full documentation on docs.cosyte.com. No code changes.
+
 ## 0.1.2
 ### Patch Changes
 
