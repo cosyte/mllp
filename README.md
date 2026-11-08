@@ -374,7 +374,7 @@ pnpm test
 pnpm format:check
 pnpm check:no-emdash
 pnpm check:no-internal-refs
-pnpm check:documents   # the README, CLAUDE.md, agent notes and catalog line
+pnpm check:documents   # the README, CLAUDE.md and catalog line
 pnpm phi-scan
 pnpm build
 pnpm changeset   # every meaningful change carries one

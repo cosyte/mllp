@@ -391,8 +391,7 @@ prose and identifiers (`ack-from-hl7`, `ERR_MODULE_NOT_FOUND`,
 over English words. **No match count is recorded here, deliberately: that figure
 was wrong four times and is not reproducible by an independent reader, because raw
 anchor matches are an upper bound on extractor runs rather than the same
-quantity.** The derivation command lives in `documentation/agent-notes.md`; run it
-rather than trusting a number. On today's corpus every recovered id is a real
+quantity.** On today's corpus every recovered id is a real
 segment id, **which is an observation about the tree and not a property of the
 rule**: the recogniser cannot tell a comment from a
 literal, and a clean `\rZDS|1|<surname>^<given>` written in a comment does red.
@@ -443,9 +442,7 @@ a commit. What it fixes is the gate answering a question it cannot answer when
 `all` mode reads the bytes git carries at every path in the index, as a **union** with the walk over
 `test/` and `src/`. Before this, the walk was the only thing the sweep asked, so every state in
 which the working tree stopped standing for the committed corpus reported `OK, no hits` at exit 0.
-**Eight were measured on `6eb1615` and all eight are now caught or refused**; the list, the controls,
-the mutants that kill each control and the full reasoning live at
-`documentation/agent-notes.md#phi-scan-index-corpus-the-bytes-git-carries`.
+**Eight were measured on `6eb1615` and all eight are now caught or refused.**
 
 **The contract, stated once here so a reader does not have to infer it from the code:**
 
@@ -505,9 +502,7 @@ leak.
 **Nothing that ends in a clean verdict. It refuses the run (exit 2).** A scan that did not open a
 file has no clean verdict about it, and this flag was the one route that reached a clean report by
 not opening one: it subtracted a target and let the run report on what was left, so the same argv
-over a corpus whose ONLY violator was withdrawn printed `OK, no hits` at exit 0. The reasoning, the
-scope and the residual live at
-`documentation/agent-notes.md#phi-scan-allow-fixture-withdrawal-a-target-the-bypass-never-read`.
+over a corpus whose ONLY violator was withdrawn printed `OK, no hits` at exit 0.
 
 **The contract, stated once here so a reader does not have to infer it from the code:**
 

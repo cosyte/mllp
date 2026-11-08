@@ -37,10 +37,8 @@ record. `CLAUDE.md` was not: it was outside that change's scope, so its item 2 w
 on `0.0.x` until first alpha" and disagreed with `.changeset/README.md` in writing.
 
 **That residual is now closed.** Item 2 of the standing disciplines states the same `0.1.x` ladder
-`.changeset/README.md` states, with no surviving instruction to stay on `0.0.x`, and the narrative
-behind it is at `documentation/agent-notes.md#the-version-ladder-and-the-pre-alpha-instruction-it-replaced`,
-which is the gated pair the pointer resolves through. The two blockquotes above are kept as the
-record of what the files said, not as live guidance.
+`.changeset/README.md` states, with no surviving instruction to stay on `0.0.x`. The two
+blockquotes above are kept as the record of what the files said, not as live guidance.
 
 **The ecosystem-wide release frequency policy this batch depends on had not landed when this record
 was written.** It is owned by the shared workflow repository, not by this one, and at the time of
