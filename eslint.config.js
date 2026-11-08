@@ -1,6 +1,8 @@
 import cosyte from "@cosyte/eslint-config";
 
 export default [
+  // The shared defaults plus `examples/`, so the runnable examples are linted with the same
+  // type-checked rules as the source they demonstrate.
   ...cosyte(import.meta.dirname, {
     files: ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "examples/**/*.ts", "*.config.ts"],
   }),

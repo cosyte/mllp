@@ -28,6 +28,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { CR, FS, VT } from "../../src/framing/constants.js";
 import { canonicalExchanges } from "../../src/differential/corpus.js";
+import { processToolDir } from "../_helpers/process-tools.js";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const SOURCE_CORPUS = canonicalExchanges();
@@ -118,7 +119,9 @@ beforeAll(async () => {
 
   // A consumer's installation directory: only what `files` publishes ever lands here.
   installDir = mkdtempSync(join(tmpdir(), "mllp-published-"));
-  execFileSync("pnpm", ["exec", "tsup", "--out-dir", join(installDir, "dist")], {
+  // The tsup `pnpm build` runs, from @cosyte/process, with only the output directory moved.
+  const tsup = join(processToolDir(ROOT, "tsup"), "dist", "cli-default.js");
+  execFileSync(process.execPath, [tsup, "--out-dir", join(installDir, "dist")], {
     cwd: ROOT,
     stdio: "inherit",
   });

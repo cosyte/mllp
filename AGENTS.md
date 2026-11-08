@@ -6,7 +6,8 @@ only the `@cosyte/mllp/ack-from-hl7` subpath uses.
 
 ## Build and test
 
-Use Node.js 22 or later and the pnpm that `packageManager` in `package.json` pins.
+Use Node.js 22.22.2 or later (the shared tooling in `@cosyte/process` needs it; the published
+package itself runs on any Node.js 22) and the pnpm that `packageManager` in `package.json` pins.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -32,6 +33,7 @@ pnpm examples
 pnpm check:no-emdash
 pnpm check:no-internal-refs
 pnpm check:documents
+pnpm check:process
 ```
 
 ## Rules

@@ -8,7 +8,7 @@
  * lives on a different page, one sibling link written extensionless while the rest carry `.md`, and
  * no page carrying a `description`, so every page on the docs site rendered with no meta
  * description. Each was true here and none of them is visible from inside a single page. The set is
- * shipped whole (`scripts/build-docs-artifacts.sh` tars `docs-content/` into the release artifact
+ * shipped whole (`pnpm pack:docs` tars `docs-content/` into the release artifact
  * `cosyte/docs` ingests), so it is checked whole.
  *
  * THE PAGE CONTRACT. Every tracked `.md` file under `docs-content/`:
