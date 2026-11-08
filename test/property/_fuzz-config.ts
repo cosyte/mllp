@@ -22,8 +22,6 @@
  * @module
  */
 
-import { performance } from "node:perf_hooks";
-
 import type fc from "fast-check";
 
 /** A whole number from the environment, or `undefined` when it is unset or not one. */
@@ -86,9 +84,12 @@ export function fuzzTimeout(baseMs: number): number {
 }
 
 /**
- * The wall-clock budget for one case, in milliseconds: a fixed floor for scheduling noise and a
- * garbage collection, plus one millisecond per 64 bytes of input. A linear parse of 256 KiB takes
- * a few milliseconds, so a case over this budget is a hang or a super-linear path.
+ * The CPU-time budget for one case, in milliseconds: a fixed floor for a garbage collection, plus
+ * one millisecond per 64 bytes of input. A linear pass over 256 KiB takes a few milliseconds, so a
+ * case over this budget is a hang or a super-linear path. It is CPU time, not wall-clock time: on
+ * a busy machine a case waits for a core without using one, and that wait is not the code's. The
+ * pool Vitest uses here (`forks`) runs each worker as its own process, so the process's CPU time is
+ * this case's.
  */
 export function caseBudgetMs(inputLength: number): number {
   return 250 + inputLength / 64;
@@ -108,6 +109,12 @@ function heapAndBuffers(): number {
   return usage.heapUsed + usage.arrayBuffers;
 }
 
+/** CPU time this process has used, user and system, in milliseconds. */
+function cpuMs(): number {
+  const { user, system } = process.cpuUsage();
+  return (user + system) / 1000;
+}
+
 /** The first bytes of an input as hex, so a failure message names the case. */
 export function preview(input: Buffer | string): string {
   const bytes = typeof input === "string" ? Buffer.from(input, "utf8") : input;
@@ -116,9 +123,9 @@ export function preview(input: Buffer | string): string {
 }
 
 /**
- * How many times a case runs before an overrun fails it. A garbage collection or a busy machine
- * can stall one run of a case; a hang or a super-linear path is over budget on every run. Cases
- * are deterministic, so running one again is the same case.
+ * How many times a case runs before an overrun fails it. A garbage collection can land in one run
+ * of a case; a hang or a super-linear path is over budget on every run. Cases are deterministic,
+ * so running one again is the same case.
  */
 const CONFIRMING_RUNS = 3;
 
@@ -134,15 +141,15 @@ export function withinBudget(input: Buffer | string, run: () => void): void {
   let leanest = Number.POSITIVE_INFINITY;
   for (let attempt = 0; attempt < CONFIRMING_RUNS; attempt++) {
     const before = heapAndBuffers();
-    const started = performance.now();
+    const started = cpuMs();
     run();
-    fastest = Math.min(fastest, performance.now() - started);
+    fastest = Math.min(fastest, cpuMs() - started);
     leanest = Math.min(leanest, heapAndBuffers() - before);
     if (fastest <= budget && leanest <= CASE_ALLOCATION_BYTES) return;
   }
   if (fastest > budget) {
     throw new Error(
-      `fuzz: the case took ${fastest.toFixed(1)} ms at best of ${String(CONFIRMING_RUNS)} runs, over its ${budget.toFixed(0)} ms budget (a hang or a super-linear path): ${preview(input)}`,
+      `fuzz: the case used ${fastest.toFixed(1)} ms of CPU at best of ${String(CONFIRMING_RUNS)} runs, over its ${budget.toFixed(0)} ms budget (a hang or a super-linear path): ${preview(input)}`,
     );
   }
   throw new Error(
