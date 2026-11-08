@@ -75,6 +75,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # The check-run context prefix. See the note above before touching this id.
   no-internal-refs:
