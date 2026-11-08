@@ -1652,8 +1652,8 @@ function readBlobs(oids: string[]): Map<string, Buffer> {
  * ▶ THE `.md` RULE IS `walk()`'s, COPIED RATHER THAN INVENTED, and it is the one
  * reason an index entry is not read here. Markdown may legitimately describe
  * violator values; that judgement does not change with the route that reaches
- * the file. It is also why `documentation/agent-notes.md`, `phi-scan-overrides.md`
- * and `docs-content/*.md` stay out of this corpus. Widening it is a separate
+ * the file. It is also why `phi-scan-overrides.md` and `docs-content/*.md` stay
+ * out of this corpus. Widening it is a separate
  * question with its own argument, and it is NOT this slice's.
  *
  * ▶ THE MODE REFUSAL IS PERMANENT, NOT TRANSIENT, AND THAT MATTERS HERE. A
@@ -1859,9 +1859,8 @@ function isTypeScriptSource(relPath: string): boolean {
  * WRITTEN HERE, DELIBERATELY: that figure was wrong four times and is not
  * reproducible by an independent reader, because raw anchor matches are an UPPER
  * BOUND on extractor runs (this function advances past each consumed run) rather
- * than the same quantity. The derivation command is in
- * `documentation/agent-notes.md`; run it rather than trusting a number. A gate that reds on prose is a gate someone
- * turns off, which is the same failure mode this file names elsewhere.
+ * than the same quantity. A gate that reds on prose is a gate someone turns off,
+ * which is the same failure mode this file names elsewhere.
  *
  * ▶ THE `|` NARROWS THE ANCHOR, IT DOES NOT MAKE A RECOVERED RUN TRUSTWORTHY,
  * AND THE DIFFERENCE MATTERS. On THIS corpus every recovered id happens to be a
