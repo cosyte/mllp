@@ -6,8 +6,8 @@
 # package description) describes what the software does and what changed. It must never
 # carry our internal bookkeeping: item identifiers (`MLLP-9`, `CLIENT-04`, `D-23`), "Phase
 # 8" / "Plan 05" / "roadmap SC-5", ADR numbers, internal repo paths, or process commentary
-# about how the artifact came to exist. Source of truth: the meta-repo's
-# `documentation/conventions.md`, "No internal project bookkeeping on a public surface".
+# about how the artifact came to exist. Recorded in this repository's
+# `documentation/agent-notes.md`, "No internal bookkeeping on a public surface".
 # The founder's words: "The releases should also not speak on anything regarding phases,
 # etc. That has no relevance to the user consuming it. This goes for readmes and
 # documentation as well."
@@ -917,8 +917,8 @@ fail_with_hits() {
   echo "       Leaving the fragment behind is worse than the text it replaced." >&2
   echo "       And CUT THE CLAIM, NOT THE QUALIFIER THAT BOUNDS IT: deleting a pointer can" >&2
   echo "       upgrade a bounded statement into a guarantee the code does not provide." >&2
-  echo "       Rule: documentation/conventions.md, 'No internal project bookkeeping on a" >&2
-  echo "       public surface'." >&2
+  echo "       Rule: documentation/agent-notes.md, 'No internal bookkeeping on a public" >&2
+  echo "       surface, and the WORD-N trap'." >&2
   exit 1
 }
 
