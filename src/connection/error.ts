@@ -67,11 +67,7 @@ export type ConnectionErrorPhase = "connect" | "send" | "receive" | "close" | "r
  * ```
  */
 export type ConnectionErrorCause =
-  | "fifo-unsafe"
-  | "in-flight-orphan"
-  | "tls-verify"
-  | "tls-handshake"
-  | "framing-fatal";
+  "fifo-unsafe" | "in-flight-orphan" | "tls-verify" | "tls-handshake" | "framing-fatal";
 
 /**
  * Thrown (or emitted via `onError`) for socket-layer problems such as

@@ -63,7 +63,8 @@ describe("property: verbatim echo for delimiter-bearing control ids", () => {
   // them (upstream D-02); requires at least one alphanumeric so the id is
   // never all-empty structure.
   const quirkyControlId = fc
-    .stringOf(fc.constantFrom(..."ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789^&~".split("")), {
+    .string({
+      unit: fc.constantFrom(..."ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789^&~".split("")),
       minLength: 1,
       maxLength: 20,
     })

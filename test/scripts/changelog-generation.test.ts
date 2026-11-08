@@ -505,12 +505,19 @@ describe("the shape that makes generated output land correctly", () => {
         `## ${result.version}`,
       ]);
       expect(archivedHistory(result.changelog)).not.toBe(archivedHistory(changelog));
-      // Named concretely rather than left as "something moved": a bold span containing an
-      // inline code literal that ends in `**` comes back with the spaces around it eaten,
+      // Named concretely rather than left as "something moved": a wrapped entry line that
+      // opens with `+ ` ("dashed-SSN + email pass") comes back as a nested `- ` list item,
       // which is text corruption inside a published tarball, not a formatting preference.
-      expect(archivedHistory(changelog)).toContain("`test/tls/**` is not a test budget at all.");
+      // Prettier 3.8 also ate the spaces around a bold span ending in `test/tls/**`; 3.9
+      // fixed that one, so the control names the corruption that is still there.
+      expect(archivedHistory(changelog)).toContain(
+        "\n  + email pass: no crash, no false positive.",
+      );
       expect(archivedHistory(result.changelog)).not.toContain(
-        "`test/tls/**` is not a test budget at all.",
+        "\n  + email pass: no crash, no false positive.",
+      );
+      expect(archivedHistory(result.changelog)).toContain(
+        "\n  - email pass: no crash, no false positive.",
       );
     },
   );

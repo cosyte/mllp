@@ -145,10 +145,7 @@ export interface DifferentialExchangeReport {
  * ```
  */
 export type DifferentialRunResult =
-  | "parity-observed"
-  | "deviations-observed"
-  | "no-observation"
-  | "skipped";
+  "parity-observed" | "deviations-observed" | "no-observation" | "skipped";
 
 /**
  * Why a run was skipped, when it was.
