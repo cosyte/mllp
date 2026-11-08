@@ -68,6 +68,13 @@
       "src/**/*.ts"
     ]
   },
+  "sourceStringLiterals": {
+    "enabled": true,
+    "paths": [
+      "src/*.ts",
+      "src/**/*.ts"
+    ]
+  },
   "extraRules": [
     {
       "id": "mllp-local-identifier",

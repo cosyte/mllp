@@ -1,10 +1,10 @@
 # What the shared em and en dash gate (@cosyte/script-utils) leaves out of its scan of this
 # repository: one tracked path per line, anchored at the repository root.
 
-# THE CHANGELOG. Every entry above "Released before this file was generated" is written by the
-# release tool from a changeset, and every changeset passes this same scan before it can merge, so
-# new text is already covered. Below that heading is the frozen archive of releases before the tool,
-# which is never hand-edited and holds en dashes in its history. The shared gate excludes by exact
-# path, not by heading, so the whole file is listed. The former repository gate read the archive
-# for em dashes and the rest for both; that reading is what this exclusion gives up.
-CHANGELOG.md
+# THE CHANGELOG'S ARCHIVE, read for the em dash alone. Every entry above "Released before this file
+# was generated" is written by the release tool from a changeset and is read for both dashes like
+# any other file. From that heading down is the frozen archive of releases before the tool, which is
+# never hand-edited and holds en dashes in old ranges, so it is read for the em dash in every form
+# and an en dash there passes. This is the reading the former repository gate gave the file. A
+# heading the file no longer carries is refused, so this cannot outlive its subject.
+CHANGELOG.md em-only below ## Released before this file was generated

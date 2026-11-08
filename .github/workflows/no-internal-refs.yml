@@ -33,7 +33,8 @@ name: Public-surface gate
 # the one shared implementation in `@cosyte/script-utils` (`cosyte-internal-refs`) with this
 # repository's axes from `scripts/internal-refs.json`: the known project prefixes, the
 # standards designations that collide with them, the public surface, the source doc comments
-# that compile into `dist/*.d.ts`, and three rules of mllp's own as extra rules (its item ids,
+# that compile into `dist/*.d.ts`, the `src/` string literals a consumer reads as warning and error
+# text, and three rules of mllp's own as extra rules (its item ids,
 # plan numbers, and the roadmap citation with its section-sign arm), each with its self-test
 # samples. The job below calls the shared INSTALLING gate workflow, since the gate lives in
 # node_modules: it installs from the committed lockfile, runs the command, and lets the

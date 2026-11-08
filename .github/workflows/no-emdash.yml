@@ -12,12 +12,13 @@ name: Em-dash gate
 # installs from the committed lockfile, runs the command, and lets the command's exit
 # status decide the job, with no pattern or allow-list of its own. What this repository
 # leaves out of the scan is `scripts/check-no-emdash.exclude`, which the gate reads
-# itself: today only CHANGELOG.md, for the reason written there.
+# itself: today nothing, and the frozen CHANGELOG archive is read for the em dash only,
+# for the reason written there.
 #
 # This repository ran its own copy of the scanner until the shared one carried a
-# command-line form. The copy read the frozen CHANGELOG archive for em dashes only and
-# excluded NUL-bearing files as binary; the shared gate excludes by path instead, and
-# this tree tracks no NUL-bearing file. The banned forms are the same twelve.
+# command-line form. The copy read the frozen CHANGELOG archive for em dashes only, as the
+# shared gate's archive boundary now does, and excluded NUL-bearing files as binary; this
+# tree tracks no NUL-bearing file. The shared gate matches every form the copy did, and more.
 #
 # TWO CONTEXTS, NOT ONE, AND THE JOB ID IS LOAD-BEARING. A called job's check run is
 # named `<caller job id> / <inner job id>`, so the job id `no-emdash` below publishes
