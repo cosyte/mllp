@@ -276,6 +276,9 @@ agreement on the approach before a pull request. The organization's
 [support page](https://github.com/cosyte/.github/blob/main/SUPPORT.md) covers questions that span our
 libraries.
 
+Need an MLLP integration built, or hosted and run for you? See our
+[integration services](https://cosyte.com/integration-services).
+
 ## Security
 
 Report a vulnerability privately, as the
