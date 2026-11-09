@@ -32,8 +32,8 @@ jobs:
   # The programs under examples/, run against the BUILT package the way a consumer imports it:
   # `pnpm examples` (scripts/run-examples.ts) fails when any example exits non-zero, and each
   # example checks its own output. Added on top of the shared caller above, never instead of it.
-  # `examples` is a new check-run context and deliberately not a required one yet: let it run on
-  # main first, then read the real names off a live check run before adding them to a ruleset.
+  # Its contexts, `examples (22)`, `examples (24)` and `examples (26)`, are required by the
+  # ci-required-checks ruleset.
   examples:
     strategy:
       fail-fast: false
