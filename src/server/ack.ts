@@ -25,7 +25,11 @@
 
 import { randomUUID } from "node:crypto";
 
-import { containsBatchOrExtraMessage, readMshSegment } from "../internal/control-id.js";
+import {
+  containsBatchOrExtraMessage,
+  readMshSegment,
+  type MshSegment,
+} from "../internal/control-id.js";
 
 /**
  * HL7 Table 0008, Acknowledgment Code. A **stable public API**.
@@ -225,11 +229,48 @@ const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
  * ```
  */
 export function rawAckUncorrelatable(payload: Buffer): boolean {
-  const msh = readMshSegment(payload);
+  return uncorrelatable(readInbound(payload));
+}
+
+/**
+ * What the acknowledgement path reads of one inbound message, each part at most once: the MSH
+ * segment, read when this is made, and whether the payload is a batch or holds a second MSH,
+ * scanned the first time it is asked and remembered. The server's auto-ACK path makes one per
+ * message and hands it to every step that used to read the payload again.
+ *
+ * @internal
+ */
+export interface InboundRead {
+  /** The MSH segment, as {@link readMshSegment} reads it; `null` for none readable. */
+  readonly msh: MshSegment | null;
+  /** {@link containsBatchOrExtraMessage} of the payload, scanned once. */
+  readonly batch: () => boolean;
+}
+
+/**
+ * Read an inbound message's MSH segment now, and its batch shape when first asked.
+ *
+ * @internal
+ */
+export function readInbound(payload: Buffer): InboundRead {
+  let batch: boolean | undefined;
+  return {
+    msh: readMshSegment(payload),
+    batch: () => (batch ??= containsBatchOrExtraMessage(payload)),
+  };
+}
+
+/**
+ * {@link rawAckUncorrelatable} off a message already read.
+ *
+ * @internal
+ */
+export function uncorrelatable(inbound: InboundRead): boolean {
+  const { msh } = inbound;
   if (msh === null) return true; // (1) no readable MSH
   const controlId = msh.fields[9];
   if (controlId === undefined || controlId === "") return true; // (2) empty MSH-10
-  return containsBatchOrExtraMessage(payload); // (3) batch / concatenated messages
+  return inbound.batch(); // (3) batch / concatenated messages
 }
 
 /** Non-positive counterpart of a positive HL7 Table 0008 code: `AA`→`AE`, `CA`→`CE`. @internal */
@@ -323,10 +364,20 @@ function downgradePositiveAck(code: AckCode): AckCode {
  * ```
  */
 export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
+  return buildRawAckFrom(readInbound(payload), code);
+}
+
+/**
+ * {@link buildRawAck} off a message already read, so a caller that has read it once (the server's
+ * auto-ACK path) builds the same bytes without reading it again.
+ *
+ * @internal
+ */
+export function buildRawAckFrom(inbound: InboundRead, code: AckCode): Buffer {
   // THE shared read (see the docblock). `latin1`, MSH-1 taken from the message, scan bounded
   // at the segment terminator. `null` means "this package cannot read this message", and it
   // means that for the correlator too, which is exactly the agreement we need.
-  const msh = readMshSegment(payload);
+  const { msh } = inbound;
 
   // FAIL-SAFE: never emit a positive disposition (`AA`/`CA`) for a message we cannot correlate.
   // A positive ACK the sender cannot match → timeout → resend → duplicate clinical message.
@@ -334,7 +385,7 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
   // even if it never touched the server), and the server's auto-ACK path applies the SAME
   // predicate so it can emit a `'nack'` observability signal alongside. See
   // {@link rawAckUncorrelatable}. A requested negative code passes through unchanged.
-  if ((code === "AA" || code === "CA") && rawAckUncorrelatable(payload)) {
+  if ((code === "AA" || code === "CA") && uncorrelatable(inbound)) {
     code = downgradePositiveAck(code);
   }
 

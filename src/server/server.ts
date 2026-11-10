@@ -38,9 +38,14 @@ import { MllpTlsConfigurationError } from "../transport/error.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
-import { buildRawAck, rawAckUncorrelatable, resolveNackCode } from "./ack.js";
+import {
+  buildRawAckFrom,
+  readInbound,
+  resolveNackCode,
+  uncorrelatable,
+  type InboundRead,
+} from "./ack.js";
 import type { AckCode, NegativeAckCode } from "./ack.js";
-import { containsBatchOrExtraMessage, readMshSegment } from "../internal/control-id.js";
 import {
   acceptAckRequested,
   acceptModeCounterpart,
@@ -1396,16 +1401,20 @@ export class MllpServer extends EventEmitter {
     conn: Connection,
   ): Promise<void> {
     const handler = this._opts.onMessage;
+    // Read the MSH header ONCE per message, as it arrived, and hand that one reading to every step
+    // below: the mode selection, the correlation check and the ACK builder. Each used to read the
+    // payload again, about four header reads and two whole-payload batch scans per message.
+    const inbound = readInbound(payload);
     // Read MSH-15 ONCE per message, before any disposition is reached, so the same reading
     // decides every branch below and any report about it is made exactly once.
-    const selectCode = this._ackModeSelector(payload, conn);
+    const selectCode = this._ackModeSelector(inbound, conn);
 
     // No commit handler: 'AA' is a transport-accept (received+framed only), but still
     // fail-safe-downgraded if the message cannot carry a correlatable positive ACK.
     if (handler === undefined) {
       this._dispatchAck(
         conn,
-        buildRawAck(payload, this._resolveAutoAckPositive(payload, meta, conn, selectCode)),
+        buildRawAckFrom(inbound, this._resolveAutoAckPositive(inbound, meta, conn, selectCode)),
       );
       return;
     }
@@ -1414,7 +1423,7 @@ export class MllpServer extends EventEmitter {
     try {
       await handler(payload, meta, conn); // durable-commit step
       // Commit succeeded, but only answer `AA` if the message is one we could correlate.
-      code = this._resolveAutoAckPositive(payload, meta, conn, selectCode);
+      code = this._resolveAutoAckPositive(inbound, meta, conn, selectCode);
     } catch (err: unknown) {
       const nack: NegativeAckCode = resolveNackCode(err);
       code = selectCode(nack);
@@ -1437,7 +1446,7 @@ export class MllpServer extends EventEmitter {
     }
 
     // Unconditional: reached whether the handler committed or threw, and no subscriber can skip it.
-    this._dispatchAck(conn, buildRawAck(payload, code));
+    this._dispatchAck(conn, buildRawAckFrom(inbound, code));
   }
 
   /**
@@ -1468,14 +1477,13 @@ export class MllpServer extends EventEmitter {
    * asked for; it is the identity for a message that asked for nothing.
    */
   private _resolveAutoAckPositive(
-    payload: Buffer,
+    inbound: InboundRead,
     meta: MessageMeta,
     conn: Connection,
     selectCode: (disposition: AckCode) => AckCode,
   ): AckCode {
     const discarded = meta.warnings.some((w) => w.code === "MLLP_TRAILING_BYTES");
-    const uncorrelatable = rawAckUncorrelatable(payload);
-    if (!discarded && !uncorrelatable) return selectCode("AA");
+    if (!discarded && !uncorrelatable(inbound)) return selectCode("AA");
 
     const reason: NackReason = discarded ? "discarded-bytes" : "uncorrelatable-inbound";
     const code = selectCode("AE");
@@ -1521,9 +1529,12 @@ export class MllpServer extends EventEmitter {
    *     Downgrading a message the handler committed would make a discharged sender resend a
    *     message already in storage.
    */
-  private _ackModeSelector(payload: Buffer, conn: Connection): (disposition: AckCode) => AckCode {
+  private _ackModeSelector(
+    inbound: InboundRead,
+    conn: Connection,
+  ): (disposition: AckCode) => AckCode {
     const identity = (disposition: AckCode): AckCode => disposition;
-    const msh = readMshSegment(payload);
+    const { msh } = inbound;
     if (msh === null) return identity;
     const accept = readAcceptCondition(msh);
     if (accept.kind === "unrecognised") {
@@ -1531,7 +1542,7 @@ export class MllpServer extends EventEmitter {
       return identity;
     }
     if (accept.kind === "null") return identity;
-    if (containsBatchOrExtraMessage(payload)) return identity;
+    if (inbound.batch()) return identity;
     return (disposition) =>
       acceptAckRequested(accept, disposition) ? acceptModeCounterpart(disposition) : disposition;
   }
