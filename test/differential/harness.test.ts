@@ -455,16 +455,15 @@ describe("differential harness: failure paths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A delivered payload that carries a framing byte
+// A stray framing byte where the response frame was due
 // ---------------------------------------------------------------------------
 
-describe("differential harness: a payload carrying a framing byte", () => {
-  it("names it MLLP_PAYLOAD_CONTAINS_FS rather than throwing out of the encoder", async () => {
-    // Reachable exactly as this package's own control-ID reader documents: with no leading
-    // `VT`, an `FS` byte is neither `VT` nor whitespace, so it becomes payload byte 0 and
-    // the DELIVERED payload carries a framing byte. Re-encoding that payload canonically is
-    // how parity is judged, and the strict encoder throws on it, so the harness encodes
-    // tolerantly and names the byte instead.
+describe("differential harness: a stray FS before an unframed response", () => {
+  it("reports the empty frame the FS ends as a deviation, rather than throwing", async () => {
+    // With no leading `VT`, the reader reads the stray `FS` as the end of an empty frame
+    // (`MLLP_MISSING_LEADING_VT`, then `MLLP_EMPTY_PAYLOAD`), never as a payload byte, so no
+    // delivered payload carries a framing byte and re-encoding one for the parity check
+    // cannot throw. That empty frame is the response the exchange judges.
     const report = await run(
       peerThat((framed) =>
         Buffer.concat([
@@ -479,14 +478,15 @@ describe("differential harness: a payload carrying a framing byte", () => {
     expect(first?.outcome).toBe("answered");
     expect(first?.byteParity).toBe("deviation");
     expect(first?.warningCodes).toContain("MLLP_MISSING_LEADING_VT");
-    expect(first?.warningCodes).toContain("MLLP_PAYLOAD_CONTAINS_FS");
+    expect(first?.warningCodes).toContain("MLLP_EMPTY_PAYLOAD");
+    expect(first?.warningCodes).not.toContain("MLLP_PAYLOAD_CONTAINS_FS");
     // Still located by offset, every one of them.
     for (const deviation of first?.deviations ?? []) {
       expect(typeof deviation.byteOffset).toBe("number");
     }
-    // And correlation is reported honestly as ABSENT rather than as a mismatch: the framing
-    // byte sits where the segment id would be, so the delivered payload has no readable MSH
-    // at all and there is no acknowledged control ID to compare. Reporting a mismatch here
+    // And correlation is reported honestly as ABSENT rather than as a mismatch: the frame
+    // judged is empty, so it has no readable MSA at all and there is no acknowledged control
+    // ID to compare. Reporting a mismatch here
     // would claim the peer echoed the wrong id when it echoed nothing this reader could find.
     expect(first?.correlation).toBe("absent");
     expect(first?.warningCodes).toContain("MLLP_ACK_UNMATCHED_CONTROL_ID");
