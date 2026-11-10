@@ -101,6 +101,8 @@ if (values.serve) {
       peaks.sample();
     },
   });
+  // The parent may die before it sends "stop" (a throw in main): leave with it, never keep listening.
+  process.on("disconnect", () => process.exit(0));
   process.on("message", (request) => {
     const reply = (body) => process.send({ id: request.id, ...body });
     if (request.type === "settle") void settle().then(reply);
