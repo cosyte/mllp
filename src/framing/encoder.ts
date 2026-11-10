@@ -91,39 +91,22 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
   const allow = opts?.allowDelimiterBytesInPayload === true;
   const onWarning = opts?.onWarning;
 
-  // Scan for delimiter bytes, O(n) but required to ensure correct framing (FRAME-03).
-  for (let i = 0; i < payload.length; i++) {
-    const byte = payload[i];
-    /* v8 ignore next -- i < payload.length, so the index is always in range */
-    if (byte === undefined) break; // noUncheckedIndexedAccess guard
-
-    if (byte === VT || byte === FS) {
-      const code = byte === VT ? "MLLP_PAYLOAD_CONTAINS_VT" : "MLLP_PAYLOAD_CONTAINS_FS";
-
-      if (!allow) {
-        // PHI: the snippet must NOT carry the surrounding payload bytes, that is a
-        // field-body slice of clinical content on a public error field (MLLP-9 PHI
-        // audit, mirroring the decoder's MLLP_FRAME_TOO_LARGE fix). The offending byte
-        // is itself a framing delimiter (VT/FS, a control byte, never PHI); the `code`
-        // already names which and the offset is on the error, so the snippet is just
-        // that one boundary byte.
-        throw new MllpFramingError(code, i, Buffer.from([byte]));
-      }
-
-      // Tolerant path: emit warning and continue, bytes pass through verbatim.
-      if (onWarning !== undefined) {
-        const byteHex = byte === VT ? "0x0B" : "0x1C";
-        const warning = createWarning(
-          code,
-          i,
-          `Payload contains ${byte === VT ? "VT" : "FS"} byte (${byteHex}) at offset ${i}; frame will be ambiguous`,
-        );
-        try {
-          onWarning(warning);
-        } catch {
-          // WARN-06: a throwing handler must not interrupt encoding.
-        }
-      }
+  // Scan for delimiter bytes, required to ensure correct framing (FRAME-03). A byte array is
+  // searched natively for each delimiter; anything else a JavaScript caller passes is read one
+  // element at a time, as every payload always was, so even that misuse behaves as before.
+  if (!(payload instanceof Uint8Array)) {
+    scanEachByte(payload, allow, onWarning);
+  } else if (!allow || onWarning !== undefined) {
+    // Each delimiter's next position, visited in payload order: the strict path stops at the
+    // first, the tolerant path warns for every one. Tolerant with no handler reads nothing.
+    let vt = payload.indexOf(VT);
+    let fs = payload.indexOf(FS);
+    while (vt !== -1 || fs !== -1) {
+      const isVt = fs === -1 || (vt !== -1 && vt < fs);
+      const i = isVt ? vt : fs;
+      delimiterAt(isVt ? VT : FS, i, allow, onWarning);
+      if (isVt) vt = payload.indexOf(VT, i + 1);
+      else fs = payload.indexOf(FS, i + 1);
     }
   }
 
@@ -135,4 +118,54 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
   frame[payload.length + 1] = FS;
   frame[payload.length + 2] = CR;
   return frame;
+}
+
+/** The byte-at-a-time scan, for a payload that is not a byte array. */
+function scanEachByte(
+  payload: ArrayLike<unknown>,
+  allow: boolean,
+  onWarning: ((w: MllpWarning) => void) | undefined,
+): void {
+  for (let i = 0; i < payload.length; i++) {
+    const byte = payload[i];
+    if (byte === VT || byte === FS) delimiterAt(byte, i, allow, onWarning);
+  }
+}
+
+/**
+ * A delimiter byte at payload offset `i`: refused with `MllpFramingError` on the strict path,
+ * passed through with a warning on the tolerant one.
+ */
+function delimiterAt(
+  byte: typeof VT | typeof FS,
+  i: number,
+  allow: boolean,
+  onWarning: ((w: MllpWarning) => void) | undefined,
+): void {
+  const code = byte === VT ? "MLLP_PAYLOAD_CONTAINS_VT" : "MLLP_PAYLOAD_CONTAINS_FS";
+
+  if (!allow) {
+    // PHI: the snippet must NOT carry the surrounding payload bytes, that is a
+    // field-body slice of clinical content on a public error field (MLLP-9 PHI
+    // audit, mirroring the decoder's MLLP_FRAME_TOO_LARGE fix). The offending byte
+    // is itself a framing delimiter (VT/FS, a control byte, never PHI); the `code`
+    // already names which and the offset is on the error, so the snippet is just
+    // that one boundary byte.
+    throw new MllpFramingError(code, i, Buffer.from([byte]));
+  }
+
+  // Tolerant path: emit warning and continue, bytes pass through verbatim.
+  if (onWarning !== undefined) {
+    const byteHex = byte === VT ? "0x0B" : "0x1C";
+    const warning = createWarning(
+      code,
+      i,
+      `Payload contains ${byte === VT ? "VT" : "FS"} byte (${byteHex}) at offset ${i}; frame will be ambiguous`,
+    );
+    try {
+      onWarning(warning);
+    } catch {
+      // WARN-06: a throwing handler must not interrupt encoding.
+    }
+  }
 }
