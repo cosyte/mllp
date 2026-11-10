@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.7
+### Patch Changes
+
+- 772368f: New `@cosyte/mllp/arbitraries` entry point: fast-check generators for MLLP, so you can property-test your own code on generated frames and byte streams. `payload()` gives payloads the encoder accepts (any bytes, text, or synthetic HL7 v2 messages); `frame()` gives a canonical frame with its payload; `stream()` gives canonical frames back to back, split into random reads, with the payloads a reader must deliver; `messyStream()` gives the framing quirks real senders produce, limited to the tolerances you name, with the payloads and warning codes a reader must report; `hostileInput()` gives random, framing-heavy and mangled streams in random reads; and `chunked(bytes)` splits bytes of your own into random reads. Every generated value is synthetic and random, and a failing case reports the value as it was generated even if your code changed its bytes. `fast-check` (4.x) is an optional peer dependency: install it to use this entry point. The main entry point never loads it, so nothing changes for code that only imports `@cosyte/mllp`.
+- b75745f: `close()` now resolves as soon as its connections are gone. A second `MllpServer.close()` with a
+  shorter `drainTimeoutMs` already destroyed a straggling connection at its own deadline, but its
+  promise, and the first call's, stayed pending until the first call's longer drain timed out. The
+  same held for `Connection.close()`: a `destroy()` or a peer close during a slow drain ended the
+  connection at once, yet `close()` waited out the drain timeout anyway. Every pending `close()` now
+  resolves the moment its connection leaves `DRAINING`, by whatever route, so a shutdown with a short
+  budget ends within that budget.
+- 945a934: The documentation follows our docs-content standard: goal-named how-to guides for sending and receiving messages, tolerating framing quirks and building ACKs with `@cosyte/hl7`; a reference page of every warning and error code; troubleshooting; testing and performance pages; and an API reference generated from the doc comments. Every runnable sample is type-checked and run against the built package. The doc comments in the published types now use bold lines where they used Markdown headings. No API or behavior changes.
+- b75745f: `Connection.notifyConnect()` on a connection that was already closed kept it `CLOSED` and emitted
+  no `stateChange`, yet still emitted `'connect'` and recorded a peer address and connect time, so a
+  subscriber could count a connection that never opened. It now does nothing unless the connection is
+  `CONNECTING`: a closed connection emits nothing, and a connect reported twice emits `'connect'`
+  once.
+- 772368f: With `allowMissingLeadingVt` on, a stray `FS` where a frame was due (a sender repeating its `FS CR` trailer) is now read as an empty frame, with `MLLP_MISSING_LEADING_VT` and `MLLP_EMPTY_PAYLOAD`, instead of arriving as the first byte of the next message's payload, where it broke that message and could not be framed again. A frame that opens without a `VT` is now also held to `maxFrameSizeBytes` from its first byte.
+
 ## 0.1.6
 ### Patch Changes
 

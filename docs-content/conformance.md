@@ -11,7 +11,7 @@ This page is the one document to hand a conformance reviewer. It declares, in th
 recorded in, which framing behaviors, acknowledgment modes, and transport-security options
 `@cosyte/mllp` implements, and which it does not.
 
-**Version declared:** `0.1.6`
+**Version declared:** `0.1.7`
 
 Everything below describes that release. A conformance behavior cannot move in this package without
 this page moving in the same change: the declared tolerance sets on both halves of the codec, the
