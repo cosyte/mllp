@@ -7,7 +7,7 @@
  * handed a value cannot interpolate one, regardless of what arrives on the
  * wire.
  *
- * ## What this replaces, and why the shape matters more than the wording
+ * **What this replaces, and why the shape matters more than the wording**
  *
  * The `correlateByControlId` path used to build its diagnostics by
  * interpolation, and both ends of it were consumer-controlled and unbounded.
@@ -22,7 +22,7 @@
  * PID-3, a patient's medical record number, as the "control ID" of a truncated
  * MSH. Withholding the bytes is the defence that survives the next such bug.
  *
- * ## What a correlation diagnostic says instead
+ * **What a correlation diagnostic says instead**
  *
  * That a control id did not match, plus **numbers**: a byte length, a stream
  * offset, an elapsed time. A number is a shape, not content. A truncated id is

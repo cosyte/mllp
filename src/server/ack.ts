@@ -5,7 +5,7 @@
  * path, the HL7 Table 0008 acknowledgement-code union, and the error type a message
  * handler throws to request a specific negative acknowledgement.
  *
- * ## Why this is safety-critical
+ * **Why this is safety-critical**
  *
  * A positive acknowledgement (`AA`) tells the sender "you may forget this message, I
  * have it." If a server emits `AA` *before* the message is durably handled and then the
@@ -253,7 +253,7 @@ function downgradePositiveAck(code: AckCode): AckCode {
  * negative codes, adds a **static, PHI-free** MSA-3 reason. A fresh control ID fills the
  * ACK's own MSH-10.
  *
- * ## Why the delimiters are read, not assumed
+ * **Why the delimiters are read, not assumed**
  *
  * MSH-1 **is** the field separator (HL7 v2.5.1 §2.5.4): the byte at offset 3 of the MSH
  * segment *defines* it for the whole message. `|` is overwhelmingly common but it is a
@@ -272,7 +272,7 @@ function downgradePositiveAck(code: AckCode): AckCode {
  *      single component rather than two. Echoing MSH-1 and MSH-2 keeps the content and
  *      the delimiters that define it together.
  *
- * ## It reads the MSH through the SHARED scanner
+ * **It reads the MSH through the SHARED scanner**
  *
  * The MSH read is `readMshSegment` from `src/internal/control-id.ts`, the same call the
  * client's correlator makes to derive the key it will later match this ACK against. That
@@ -292,7 +292,7 @@ function downgradePositiveAck(code: AckCode): AckCode {
  * is not the goal; agreeing on the *correct*, *tolerant* answer is. A lenient reader may
  * never drop data that is there (Postel's Law, CLAUDE.md).
  *
- * ## The fail-safe downgrade: never a positive `AA`/`CA` it cannot correlate
+ * **The fail-safe downgrade: never a positive `AA`/`CA` it cannot correlate**
  *
  * A positive acknowledgement is a promise the sender may forget the message. If it names a
  * control ID the sender cannot match, or names one message out of several it never read,

@@ -2,7 +2,7 @@
  * The differential run: send each canonical message at a peer, read what comes back, and
  * report what was observed.
  *
- * ## What it does, exchange by exchange
+ * **What it does, exchange by exchange**
  *
  * One connection per exchange, opened, used and closed. That is deliberate: a peer that
  * refuses or drops one connection then costs one exchange rather than the whole run, which
@@ -15,14 +15,14 @@
  * that deviates from the block is described by the stable warning code for that deviation
  * rather than killing the run with an opaque error.
  *
- * ## What byte parity means here
+ * **What byte parity means here**
  *
  * The MLLP **envelope** the peer emitted, compared against the canonical Release 1 block
  * this package emits for the same payload. It is not equality of message content, which
  * can never hold: an acknowledgement carries the peer's own control ID, its own timestamp
  * and its own sending application, and it is supposed to.
  *
- * ## Aim it with care
+ * **Aim it with care**
  *
  * A run sends real bytes into whatever engine it is pointed at. Those bytes are synthetic
  * patients, so an engine that accepts them stores synthetic patients. Point it at a test
