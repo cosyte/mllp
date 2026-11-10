@@ -841,9 +841,6 @@ export class MllpClient extends EventEmitter {
     const tlsOpt = this._opts.tls;
     if (tlsOpt === undefined) {
       const socket = createConnection({ host: this._opts.host, port: this._opts.port });
-      // Nagle off: MLLP is request and response, and a frame held back for the peer's delayed
-      // ACK of the one before it waits on a timer, not on the network.
-      socket.setNoDelay(true);
       return { socket, transport: new NetTransport(socket) };
     }
     const tlsOpts: TlsOptions = tlsOpt === true ? {} : tlsOpt;
@@ -866,8 +863,6 @@ export class MllpClient extends EventEmitter {
       ...cipherPolicy,
       rejectUnauthorized: tlsOpts.allowUnverified !== true,
     });
-    // Nagle off, as on the plaintext socket above.
-    socket.setNoDelay(true);
     return { socket, transport: new TlsTransport(socket) };
   }
 

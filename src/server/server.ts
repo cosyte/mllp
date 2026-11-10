@@ -1191,10 +1191,6 @@ export class MllpServer extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   private _onSocketAccepted(socket: Socket | TLSSocket): void {
-    // Nagle off: an ACK is one small write answering one frame, and held back it waits for the
-    // sender's delayed ACK, a timer, before it leaves.
-    socket.setNoDelay(true);
-
     // TCP keepalive, must be set on the raw socket BEFORE passing to NetTransport (D-10)
     if (this._opts.keepaliveIntervalMs !== undefined) {
       socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
