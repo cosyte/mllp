@@ -107,7 +107,7 @@ const decodeOptions: ScalingGateOptions<Buffer[], Buffer[]> = {
   name: "@cosyte/mllp FrameReader",
   parse: (chunks) => decode(chunks),
   weigh: (payloads) => payloads.length,
-  count: { n: 16_000, generate: (i) => arriving(adtMessage(i)) },
+  count: { n: 48_000, generate: (i) => arriving(adtMessage(i)) },
   size: { inputs: 2_000, size: 8, generate: (i, size) => arriving(documentOf(i, size)) },
 };
 
@@ -131,7 +131,7 @@ const roundTripOptions: ScalingGateOptions<Buffer, string> = {
   name: "@cosyte/mllp Connection, send then ACK",
   parse: (payload) => msa(exchange(payload)),
   weigh: (answer) => answer.length,
-  count: { n: 1_000, generate: (i) => adtMessage(i) },
+  count: { n: 4_000, generate: (i) => adtMessage(i) },
   size: { inputs: 1_000, size: 16, generate: (i, size) => documentOf(i, size) },
 };
 
