@@ -27,9 +27,12 @@ and [`MllpFramingError`](./api/src.md#mllpframingerror). Every code is listed in
 | `allowMissingLeadingVt`  | a frame with no leading `VT`        | `MLLP_MISSING_LEADING_VT` | off                   | off            |
 
 With a flag off, the deviation is not tolerated: `FrameReader.push()` throws `MllpFramingError`
-with that code, and a connection that meets it is closed. With the flag on, the payload is
+with that code, and a connection that meets it is closed. Leading whitespace is the exception: it is
+refused with the code `MLLP_MISSING_LEADING_VT`, so `MLLP_LEADING_WHITESPACE` only ever arrives as a
+warning. With the flag on, the payload is
 recovered and the code is reported as a warning. `strict: true` turns all four off again, whatever
-the individual flags say.
+the individual flags say, and strict leading whitespace is refused with `MLLP_MISSING_LEADING_VT`
+as well.
 
 ## On a standalone reader
 
@@ -59,6 +62,36 @@ new FrameReader({
 
 frames; // => ["A"]
 codes; // => ["MLLP_LF_AFTER_FS"]
+```
+
+Leading whitespace is refused under a different code from the one it warns with:
+
+```ts runnable
+import { FrameReader, MllpFramingError } from "@cosyte/mllp";
+
+// A space, then <VT> "A" <FS> <CR>.
+const padded = Buffer.from([0x20, 0x0b, 0x41, 0x1c, 0x0d]);
+
+const refusedCode = (options: { allowLeadingWhitespace?: boolean; strict?: boolean }): string => {
+  try {
+    new FrameReader({ onFrame: () => {}, ...options }).push(padded);
+    return "accepted";
+  } catch (err) {
+    return err instanceof MllpFramingError ? err.code : "other";
+  }
+};
+
+refusedCode({}); // => "MLLP_MISSING_LEADING_VT"
+refusedCode({ allowLeadingWhitespace: true, strict: true }); // => "MLLP_MISSING_LEADING_VT"
+
+const warned: string[] = [];
+new FrameReader({
+  onFrame: () => {},
+  onWarning: (warning) => warned.push(warning.code),
+  allowLeadingWhitespace: true,
+}).push(padded);
+
+warned; // => ["MLLP_LEADING_WHITESPACE"]
 ```
 
 ## On a server

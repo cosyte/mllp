@@ -16,21 +16,26 @@ in the [API reference](./api/src.md).
 
 The decoder's and the encoder's codes, of type [`WarningCode`](./api/src.md#warningcode). Each
 reaches you as an [`MllpWarning`](./api/src.md#mllpwarning) with a `byteOffset`, or, where it is
-fatal, as an [`MllpFramingError`](./api/src.md#mllpframingerror) with the same `code`.
+fatal, as an [`MllpFramingError`](./api/src.md#mllpframingerror) with the same `code`. The one
+exception is leading whitespace: when it is refused, the error's `code` is `MLLP_MISSING_LEADING_VT`,
+so `MLLP_LEADING_WHITESPACE` only ever arrives as a warning.
 
-| Code                       | Raised when                                                                               | Warning or error                                          |
-| -------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `MLLP_MISSING_LEADING_VT`  | a frame begins without `VT`                                                               | warning with `allowMissingLeadingVt`, otherwise an error  |
-| `MLLP_FS_WITHOUT_CR`       | a frame ends `FS` with no `CR`                                                            | warning with `allowFsOnly`, otherwise an error            |
-| `MLLP_LF_AFTER_FS`         | a line feed follows `FS`                                                                  | warning with `allowLfAfterFs`, otherwise an error         |
-| `MLLP_LEADING_WHITESPACE`  | padding precedes `VT`                                                                     | warning with `allowLeadingWhitespace`, otherwise an error |
-| `MLLP_TRAILING_BYTES`      | a `VT` arrives inside a payload: the bytes before it are discarded and a new frame starts | always a warning; the auto-ACK path never answers it `AA` |
-| `MLLP_EMPTY_PAYLOAD`       | nothing lies between `VT` and `FS`                                                        | always a warning                                          |
-| `MLLP_FRAME_TOO_LARGE`     | a frame grows past `maxFrameSizeBytes` (16 MiB by default)                                | always an error                                           |
-| `MLLP_PAYLOAD_CONTAINS_VT` | the encoder is given a payload holding `0x0B`                                             | an error; a warning with `allowDelimiterBytesInPayload`   |
-| `MLLP_PAYLOAD_CONTAINS_FS` | the encoder is given a payload holding `0x1C`                                             | an error; a warning with `allowDelimiterBytesInPayload`   |
+| Code                       | Raised when                                                                               | Warning or error                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `MLLP_MISSING_LEADING_VT`  | a frame begins without `VT`                                                               | warning with `allowMissingLeadingVt`, otherwise an error       |
+| `MLLP_FS_WITHOUT_CR`       | a frame ends `FS` with no `CR`                                                            | warning with `allowFsOnly`, otherwise an error                 |
+| `MLLP_LF_AFTER_FS`         | a line feed follows `FS`                                                                  | warning with `allowLfAfterFs`, otherwise an error              |
+| `MLLP_LEADING_WHITESPACE`  | padding precedes `VT`                                                                     | warning with `allowLeadingWhitespace`; never thrown, see below |
+| `MLLP_TRAILING_BYTES`      | a `VT` arrives inside a payload: the bytes before it are discarded and a new frame starts | always a warning; the auto-ACK path never answers it `AA`      |
+| `MLLP_EMPTY_PAYLOAD`       | nothing lies between `VT` and `FS`                                                        | always a warning                                               |
+| `MLLP_FRAME_TOO_LARGE`     | a frame grows past `maxFrameSizeBytes` (16 MiB by default)                                | always an error                                                |
+| `MLLP_PAYLOAD_CONTAINS_VT` | the encoder is given a payload holding `0x0B`                                             | an error; a warning with `allowDelimiterBytesInPayload`        |
+| `MLLP_PAYLOAD_CONTAINS_FS` | the encoder is given a payload holding `0x1C`                                             | an error; a warning with `allowDelimiterBytesInPayload`        |
 
-`strict: true` makes the first four errors whatever their flags say. A framing error on a server or
+Without `allowLeadingWhitespace`, padding before `VT` is refused with an `MllpFramingError` whose
+`code` is `MLLP_MISSING_LEADING_VT`, not `MLLP_LEADING_WHITESPACE`. `strict: true` makes the first
+four errors whatever their flags say, and strict leading whitespace is refused with
+`MLLP_MISSING_LEADING_VT` too. A framing error on a server or
 a client closes that one connection, with `connectionCause: "framing-fatal"`, and a client does not
 reconnect into it. [Framing and tolerance](./framing.md) explains why.
 
