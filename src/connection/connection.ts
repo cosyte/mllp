@@ -300,7 +300,9 @@ export class Connection extends EventEmitter {
    * Notify the connection that the transport handshake has completed.
    *
    * Transitions `CONNECTING → CONNECTED` and emits the `'connect'` event.
-   * Called externally by Server/Client after the socket connects.
+   * Called externally by Server/Client after the socket connects. In any other state it does
+   * nothing: a connection closed before its socket connected stays `CLOSED` and emits no
+   * `'connect'`, and a second call on a `CONNECTED` connection emits no second one.
    *
    * @param remoteAddress - Remote peer IP address, or `null` if unavailable.
    * @param remotePort - Remote peer port, or `null` if unavailable.
@@ -313,6 +315,10 @@ export class Connection extends EventEmitter {
    * ```
    */
   notifyConnect(remoteAddress: string | null, remotePort: number | null): void {
+    // `CONNECTING` is the only state with a path to `CONNECTED`. Anywhere else (a connection
+    // closed before its socket connected, or a connect reported twice) there is no transition,
+    // so there is no 'connect' to announce and no peer address or connect time to record.
+    if (this._state !== "CONNECTING") return;
     this._remoteAddress = remoteAddress;
     this._remotePort = remotePort;
     this._connectedAt = new Date();

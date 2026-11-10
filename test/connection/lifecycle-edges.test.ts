@@ -159,6 +159,54 @@ describe("Connection: a late connect after close", () => {
     expect(conn.state).toBe("CLOSED");
     expect(states).toEqual([]);
   });
+
+  it("emits no 'connect' and leaves the peer address unset", () => {
+    const [local] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: local });
+    conn.destroy();
+    const connects: unknown[] = [];
+    conn.on("connect", (e: unknown) => connects.push(e));
+
+    conn.notifyConnect("127.0.0.1", 2575);
+
+    expect(connects).toEqual([]);
+    const stats = conn.getStats();
+    expect(stats.remoteAddress).toBeNull();
+    expect(stats.remotePort).toBeNull();
+    expect(stats.connectedAt).toBeNull();
+  });
+
+  it("emits 'connect' once when the connect is reported twice", () => {
+    const [local] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: local });
+    const connects: unknown[] = [];
+    conn.on("connect", (e: unknown) => connects.push(e));
+
+    conn.notifyConnect("127.0.0.1", 2575);
+    conn.notifyConnect("127.0.0.2", 2576);
+
+    expect(connects).toHaveLength(1);
+    expect(conn.getStats().remoteAddress).toBe("127.0.0.1");
+  });
+});
+
+describe("Connection: an 'error' subscriber that destroys the connection", () => {
+  it("stays CLOSED: the transport error's own DISCONNECTED is not applied on top", () => {
+    const { conn, local } = connected();
+    const states: StateChangeEvent[] = [];
+    const disconnects: unknown[] = [];
+    conn.on("stateChange", (e: StateChangeEvent) => states.push(e));
+    conn.on("disconnect", (e: unknown) => disconnects.push(e));
+    conn.on("error", () => {
+      conn.destroy(new Error("subscriber gave up"));
+    });
+
+    local.destroy(new Error("ECONNRESET"));
+
+    expect(conn.state).toBe("CLOSED");
+    expect(states.map((e) => e.to)).toEqual(["CLOSED"]);
+    expect(disconnects).toEqual([]);
+  });
 });
 
 describe("Connection: the internal receive backstop", () => {
