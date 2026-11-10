@@ -396,15 +396,15 @@ describe("docs-content is a valid set", () => {
   });
 
   describe("frontmatter", () => {
-    it("carries a non-empty id, title, description and sidebar_position on every page", () => {
+    it("carries a non-empty id, title, sidebar_label and description on every page", () => {
       for (const page of PAGES) {
         for (const field of REQUIRED_FRONTMATTER) {
           expect(
             page.frontmatter.get(field) ?? "",
             `docs-content/${page.filename} carries no non-empty \`${field}\` in its frontmatter. ` +
               `Every page needs all four: a missing \`description\` renders the page on the docs ` +
-              `site with no meta description, and a missing \`sidebar_position\` leaves its place ` +
-              `in the navigation to chance.`,
+              `site with no meta description, and a missing \`sidebar_label\` leaves the sidebar ` +
+              `to show the whole title.`,
           ).not.toBe("");
         }
       }
