@@ -27,6 +27,7 @@ pnpm format:check
 pnpm phi-scan
 pnpm test
 pnpm test:coverage
+pnpm test:perf
 pnpm build
 pnpm attw
 pnpm examples
@@ -35,6 +36,23 @@ pnpm check:no-internal-refs
 pnpm check:documents
 pnpm check:process
 ```
+
+## Benchmarks
+
+`bench/mllp.bench.mjs` is the suite on `@cosyte/bench`: the frame decoder (whole frames, and frames
+split across reads), the encoder, and a round trip through two connections, each on a stream of
+280 byte ADT^A01 messages, a 32 KiB ORU^R01, and a 1 MiB and a 4 MiB base64 document. Every input
+is synthetic and built in code by `bench/corpus.mjs`. After `pnpm build`:
+
+```sh
+pnpm bench:reading --out bench-results/reading.json   # throughput, latency, memory, import cost
+pnpm bench:socket                                      # the same traffic over a 127.0.0.1 socket
+pnpm bench:profile                                     # CPU and heap profiles of the hot paths
+```
+
+`pnpm test:perf` is the scaling gate (`test/perf/scaling-gate.perf.ts`), never run under coverage.
+CI runs it, and an advisory base against head timing, on every pull request; `bench.yml` takes the
+full reading on a hosted runner on demand and when `bench/` changes.
 
 ## Rules
 

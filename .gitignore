@@ -11,6 +11,7 @@ coverage/
 *.tsbuildinfo
 examples/tls/certs/
 bench/results/
+bench-results/
 dist-artifacts/
 
 # Agent worktrees. When committed these become orphan gitlinks (mode 160000 with no .gitmodules

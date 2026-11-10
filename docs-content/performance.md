@@ -2,7 +2,7 @@
 id: performance
 title: Performance
 sidebar_label: Performance
-description: "What we will measure on @cosyte/mllp and how, the settings that shape its throughput and memory today, and why no benchmark figures are published yet."
+description: "What we measure on @cosyte/mllp and how, the settings that shape its throughput and memory, and where the published figures come from."
 ---
 
 # Performance
@@ -16,17 +16,36 @@ The numbers for the current release are in [Current numbers](#current-numbers) b
 
 ## What we measure
 
-This package does not have a benchmark of its own yet, so no figure on this page comes from one.
-When it does, it will measure what the performance standard names, for a transport:
+The benchmarks live in the repository's `bench/` directory and run against the built package, the
+way you import it. Every message they send is synthetic and built in code: a stream of 280 byte
+ADT^A01 messages, a 32 KiB ORU^R01, and an MDM^T02 carrying a 1 MiB or a 4 MiB base64 document.
+They measure what the performance standard names, for a transport:
 
-- **Throughput**: messages a second through a client and a server on loopback, from small to very
-  large messages.
-- **Latency**: from `send()` to the acknowledgment, at p50, p95 and p99.
-- **Memory**: peak heap and allocations over a long run, which should stay flat.
-- **Import time and bundle size** of each entry point.
+- **Throughput**: messages and bytes a second through the frame decoder, the encoder and a round
+  trip through two connections, and through a client and a server over a real 127.0.0.1 socket.
+- **Latency**: per call, and from `send()` to the acknowledgment over the socket, at p50, p95 and
+  p99.
+- **Memory**: allocations per operation, the peak of one message on each side of the socket as a
+  multiple of its size (the bytes of a frame sit outside the JavaScript heap, so both are counted),
+  and a long run that checks memory stays flat.
+- **Import time and bundle size** of the root entry point.
 
-Until then, the [Current numbers](#current-numbers) section says "not measured for this release"
-for each of them, with the reason. We do not publish a figure measured once on one machine.
+Frames are decoded whole and split across reads the way a socket delivers them: small messages many
+to a 1,460 byte TCP segment, a large message in 64 KiB reads.
+
+To take a reading yourself, after `pnpm build`:
+
+```sh
+pnpm bench:reading --out bench-results/reading.json
+pnpm bench:socket
+pnpm bench:profile
+```
+
+On every pull request CI runs a scaling gate, which fails when the decoder's or a round trip's cost
+grows faster than its input, and an advisory timing comparison of the change against `main`. Until
+the numbers below are filled in at a release, the [Current numbers](#current-numbers) section says
+"not measured for this release" for each of them. We do not publish a figure measured once on one
+machine.
 
 ## What shapes performance in your deployment
 

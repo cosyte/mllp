@@ -24,10 +24,21 @@ jobs:
   # so its fixtures carry the same PHI shapes hl7's do), so the shared pipeline's optional PHI-scan
   # step is switched on. Every call to cosyte/.github names one published reference, pinned by its
   # commit, and the workflows in this repository move to the next one together.
+  #
+  # Two jobs of the performance standard run beside `verify`, never after it, so a pull request
+  # waits for the slowest job rather than their sum:
+  # - `scaling-gate`: `pnpm test:perf`, the scaling gate on the receive path and on a round trip
+  #   through a connection, with its self-checks, never under coverage;
+  # - `bench-compare` (pull requests only): bench/mllp.bench.mjs timed on the base build and the
+  #   head build, interleaved on one runner. Advisory: it never fails, so never require it.
+  # A skipped job satisfies a required check, so require `scaling-gate` only while its input below
+  # stays on. The full reading, the socket reading and the profile are bench.yml.
   ci:
-    uses: cosyte/.github/.github/workflows/ci.yml@c0db8d8e5927269820de4401b3b5ad6141854b76 # workflows-2026-11-08-c0db8d8e5927
+    uses: cosyte/.github/.github/workflows/ci.yml@0be6757a773885cbd5165dbfa0f93772d907b3e8 # workflows-2026-11-10-0be6757a7738
     with:
       run-phi-scan: true
+      run-scaling-gate: true
+      run-bench-compare: true
 
   # The programs under examples/, run against the BUILT package the way a consumer imports it:
   # `pnpm examples` (scripts/run-examples.ts) fails when any example exits non-zero, and each
