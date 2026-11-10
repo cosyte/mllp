@@ -176,6 +176,7 @@ function findMshSegment(buf: Buffer): { start: number; end: number } | null {
     ) {
       next++;
     }
+    /* v8 ignore next -- the loop always advances: a non-terminator byte extends the segment and a terminator byte is skipped */
     if (next === segStart) return null; // no progress, malformed
     segStart = next;
   }
@@ -249,6 +250,7 @@ export function containsBatchOrExtraMessage(buf: Buffer): boolean {
     ) {
       next++;
     }
+    /* v8 ignore next -- the loop always advances: a non-terminator byte extends the segment and a terminator byte is skipped */
     if (next === segStart) return false; // no progress, malformed
     segStart = next;
   }
@@ -506,6 +508,7 @@ export function readMsaSegment(buf: Buffer): MshSegment | null {
     ) {
       segEnd++;
     }
+    /* v8 ignore next -- the loop always advances: a non-terminator byte extends the segment and a terminator byte is skipped */
     if (segEnd === segStart) return null; // no progress, malformed
     segStart = segEnd;
   }

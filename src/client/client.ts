@@ -787,6 +787,7 @@ export class MllpClient extends EventEmitter {
       };
 
       const onSocketConnect = (): void => {
+        /* v8 ignore next -- cleanup() removes this listener before an abort settles, so it never runs after one */
         if (aborted) return;
         // TLS and plaintext behave identically here: 'secureConnect' (TLS)
         // or 'connect' (plaintext) immediately arms the Connection and
@@ -796,6 +797,7 @@ export class MllpClient extends EventEmitter {
         // CONNECTED/DRAINING (a silent inbound-frame drop). See the
         // TLS 1.3 note in the method JSDoc for what this means for mTLS.
         cleanup();
+        /* v8 ignore next -- a socket that has just emitted its connect event always has a remote address and port */
         conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
         this._emitInsecureWarningIfNeeded();
         this._emitNegotiatedTlsParameters(socket);
@@ -803,6 +805,7 @@ export class MllpClient extends EventEmitter {
       };
 
       const onSocketError = (err: Error): void => {
+        /* v8 ignore next -- cleanup() removes this listener before an abort settles, so it never runs after one */
         if (aborted) return;
         cleanup();
         // Surface the OS error wrapped in MllpConnectionError (Connection's
@@ -937,6 +940,7 @@ export class MllpClient extends EventEmitter {
       ackCode: ctx.ackCode,
       controlIdBytes: ctx.controlIdBytes,
       elapsedSinceSendMs: ctx.elapsedSinceSendMs,
+      /* v8 ignore next -- send() refuses before any warning when no connection is attached, so one always is here */
       connectionId: this._connection?.connectionId ?? conn?.connectionId,
       timestamp: new Date(),
     });
@@ -954,6 +958,7 @@ export class MllpClient extends EventEmitter {
     elapsedMs: number,
     detail: string,
   ): MllpApplicationAckError {
+    /* v8 ignore next -- both callers pass only sends whose commit was reported, so commitReceivedAt is set */
     const commitReceivedAt = entry.twoPhase?.commitReceivedAt ?? 0;
     return new MllpApplicationAckError(
       `commit accepted (CA); no application acknowledgement ${detail}`,
@@ -977,6 +982,7 @@ export class MllpClient extends EventEmitter {
    */
   private _failCommitPendingSends(cause: string): PendingAck[] {
     const corr = this._correlator;
+    /* v8 ignore next -- the one caller checks the correlator first */
     if (corr === null) return [];
     const stranded: PendingAck[] = [];
     for (const entry of corr.liveEntries()) {
@@ -985,6 +991,7 @@ export class MllpClient extends EventEmitter {
     const now = Date.now();
     for (const entry of stranded) {
       corr.dispose(entry.key);
+      /* v8 ignore next -- only sends whose commit was reported are collected above, so commitReceivedAt is set */
       const commitReceivedAt = entry.twoPhase?.commitReceivedAt ?? now;
       entry.reject(
         this._applicationAckError(entry, "connection-lost", now - commitReceivedAt, cause),
@@ -1035,6 +1042,7 @@ export class MllpClient extends EventEmitter {
   private _emitNegotiatedTlsParameters(socket: Socket | TLSSocket): void {
     if (this._opts.tls === undefined) return;
     const params = readNegotiatedTlsParameters(socket, this._opts.host, this._opts.port);
+    /* v8 ignore next -- a completed TLS handshake always reports its protocol and suite */
     if (params === null) return;
     // Contained: reached from the socket's 'secureConnect' listener, exactly like the insecure
     // warning above. A throwing subscriber (a conformance auditor, the natural consumer of this
@@ -1078,6 +1086,7 @@ export class MllpClient extends EventEmitter {
             message: ackDiagnosticMessage(code),
             controlIdBytes: ctx.controlIdBytes,
             elapsedSinceSendMs: ctx.elapsedSinceSendMs,
+            /* v8 ignore next -- correlator callbacks run only after attach has stored this connection */
             connectionId: this._connection?.connectionId ?? conn.connectionId,
             timestamp: new Date(),
           });
@@ -1098,6 +1107,7 @@ export class MllpClient extends EventEmitter {
           safeEmitError(
             this,
             Object.freeze({
+              /* v8 ignore next -- correlator callbacks run only after attach has stored this connection */
               connectionId: this._connection?.connectionId ?? conn.connectionId,
               error: err,
               // The peer's MSA-2 byte LENGTH. The bytes themselves used to be
@@ -1114,6 +1124,7 @@ export class MllpClient extends EventEmitter {
             new MllpTimeoutError(`ACK timeout after ${elapsedMs}ms`, {
               messageControlIdBytes: entry.controlId?.length,
               elapsedMs,
+              /* v8 ignore next -- only flushed sends can time out, so sentAt is set */
               sentAt: entry.sentAt ?? 0,
             }),
           );
@@ -1152,6 +1163,7 @@ export class MllpClient extends EventEmitter {
             safeEmitError(
               this,
               Object.freeze({
+                /* v8 ignore next -- correlator callbacks run only after attach has stored this connection */
                 connectionId: this._connection?.connectionId ?? conn.connectionId,
                 error: err instanceof Error ? err : new Error(String(err)),
               }),
@@ -1226,7 +1238,9 @@ export class MllpClient extends EventEmitter {
       // The Connection emits frozen `{ connectionId, error: MllpConnectionError }`
       // payloads. We unwrap to the original transport error so the CLIENT-18
       // classifier (which inspects `err.code`) receives the OS-level code.
+      /* v8 ignore next -- Connection emits a frozen { connectionId, error } payload, never a bare Error */
       const wrapper = e instanceof Error ? e : (e as { error?: unknown })?.error;
+      /* v8 ignore else -- Connection always puts an Error in its error payload */
       if (wrapper instanceof Error) {
         // If the wrapper has a `.cause` Error (MllpConnectionError pattern),
         // prefer the inner cause for classification.
@@ -1255,6 +1269,7 @@ export class MllpClient extends EventEmitter {
     // (test seam path: _attachExistingConnection called after notifyConnect).
     // The state-change branch arms it for the normal path
     // (CONNECTING → CONNECTED transition).
+    /* v8 ignore if -- reached only through the internal attach seam; every public path attaches before CONNECTED */
     if (conn.state === "CONNECTED") {
       this._armDeadPeerTimer();
     }
@@ -1305,9 +1320,11 @@ export class MllpClient extends EventEmitter {
    * coordinates first-disconnect vs subsequent-within-cycle behavior.
    */
   private _handleDisconnect(err: Error): void {
+    /* v8 ignore next -- both callers return earlier when the client was closed: _onStateChange checks first, and the reconnect catch sees only a throw from socket setup, which cannot close the client */
     if (this._userClosed) return;
 
     // CLIENT-17 hybrid: handle queued + in-flight sends per mode.
+    /* v8 ignore else -- the correlator is torn down only on paths that also stop reconnecting (close, destroy, a disabled autoReconnect, an aborted connect) */
     if (this._correlator !== null) {
       if (this._correlateByControlId) {
         // Hold sends for resend after reconnect, DO NOT clear or reject.
@@ -1413,6 +1430,7 @@ export class MllpClient extends EventEmitter {
         safeEmitError(
           this,
           Object.freeze({
+            /* v8 ignore next -- a disconnect always arrives from an attached connection, so one is stored */
             connectionId: this._connection?.connectionId ?? "<none>",
             error: this._lastError,
           }),
@@ -1438,6 +1456,7 @@ export class MllpClient extends EventEmitter {
     this._emitContained(
       "reconnecting",
       Object.freeze({
+        /* v8 ignore next -- a disconnect always arrives from an attached connection, so one is stored */
         connectionId: this._connection?.connectionId ?? "<none>",
         attempt: this._attempt,
         delayMs: delay,
@@ -1483,6 +1502,7 @@ export class MllpClient extends EventEmitter {
    *   can re-enter `_handleDisconnect` cleanly.
    */
   private _beginReconnectAttempt(): void {
+    /* v8 ignore next -- close(), destroy() and an aborted connect signal all clear the backoff timer that calls this */
     if (this._userClosed) return;
     try {
       let conn: Connection;
@@ -1506,6 +1526,7 @@ export class MllpClient extends EventEmitter {
         }
         conn = new Connection(connOpts);
         arm = (): void => {
+          /* v8 ignore next -- a socket that has just emitted its connect event always has a remote address and port */
           conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
           this._emitInsecureWarningIfNeeded();
           this._emitNegotiatedTlsParameters(socket);
@@ -1519,6 +1540,7 @@ export class MllpClient extends EventEmitter {
           // codes (ERR_SSL_*, EPROTO with an SSL alert) are still visible
           // to the classifier and correctly permanent (never reconnect-loop
           // into a misconfigured or MITM'd endpoint).
+          /* v8 ignore if -- the Connection's own listener on this socket runs first and has already stored this same error */
           if (this._lastError === null || this._lastError.message !== sErr.message) {
             this._lastError = sErr;
           }
@@ -1608,6 +1630,7 @@ export class MllpClient extends EventEmitter {
    * No parallel listener is registered.
    */
   private _onAckPayload(ackPayload: Buffer, byteOffset: number): void {
+    /* v8 ignore next -- frames are delivered only in CONNECTED or DRAINING, and every teardown runs after the connection has left them or in the same synchronous step */
     if (this._correlator === null) return;
     // HOOK_EXTENSION_POINT: ack-payload
     const ackControlId: string | null = this._correlateByControlId
@@ -1663,9 +1686,11 @@ export class MllpClient extends EventEmitter {
     // it was waiting for lands, rather than sitting out the rest of the timeout.
     this._drainWaiter?.();
     const corr = this._correlator;
+    /* v8 ignore next -- called only from correlator callbacks and the ACK match path, both with a live correlator */
     if (corr === null) return;
     const belowCount = corr.size < this._hwmCount;
     const belowBytes = corr.queueBytes < this._hwmBytes;
+    /* v8 ignore else -- the high-water gate in send() keeps the queue within both caps, so removing an entry always leaves it below them */
     if (belowCount && belowBytes) {
       this._emitContained(
         "drain",
@@ -1721,6 +1746,7 @@ export class MllpClient extends EventEmitter {
       (e.from === "CONNECTING" || e.from === "RECONNECTING") &&
       (e.to === "CLOSED" || e.to === "DISCONNECTED");
     if (isPostConnectedDrop || isReconnectAttemptFailure) {
+      /* v8 ignore next -- every transition that reaches here carries a reason */
       const cause = this._lastError ?? new Error(e.reason ?? "disconnect");
       if (this._userClosed) return;
       if (!this._autoReconnect) {
@@ -1879,6 +1905,7 @@ export class MllpClient extends EventEmitter {
         // Nothing is on the wire for this send while it waits here, so it is registered as a
         // parked send: a shutdown must fail it with the never-delivered report rather than
         // leave its promise pending forever, which is what an unregistered park did.
+        /* v8 ignore next -- a placeholder, replaced before the parked send is registered */
         const parked: ParkedSend = { cancel: (): void => undefined };
         const neverDelivered = (): MllpNeverDeliveredError =>
           new MllpNeverDeliveredError({
@@ -2020,6 +2047,7 @@ export class MllpClient extends EventEmitter {
     return new Promise<Buffer>((resolve, reject) => {
       const ackTimeoutMs = opts?.ackTimeoutMs ?? this._ackTimeoutMs;
       let abortListener: (() => void) | null = null;
+      /* v8 ignore next -- a placeholder, replaced before the parked send is registered */
       const parked: ParkedSend = { cancel: (): void => undefined };
       const cleanup = (): void => {
         this._parkedSends.delete(parked);
@@ -2124,6 +2152,7 @@ export class MllpClient extends EventEmitter {
    * clinical shutdown's timeout waiting for an answer that cannot come.
    */
   private _outstandingAckCount(): number {
+    /* v8 ignore next -- the drain wait runs only while the correlator is alive; teardown comes after it ends */
     return this._correlator?.getStats().inFlight ?? 0;
   }
 
@@ -2255,6 +2284,7 @@ export class MllpClient extends EventEmitter {
     return new Promise<void>((resolve) => {
       let done = false;
       const finish = (): void => {
+        /* v8 ignore next -- finish() clears both hooks that call it, so it runs once */
         if (done) return;
         done = true;
         this._drainWaiter = null;
@@ -2378,6 +2408,7 @@ export class MllpClient extends EventEmitter {
     try {
       await Promise.race([conn.close(closeOpts), abortPromise]);
     } finally {
+      /* v8 ignore else -- the promise executor above always assigns the abort handler */
       if (abortHandler !== undefined) {
         signal.removeEventListener("abort", abortHandler);
       }

@@ -81,10 +81,12 @@ function isWildcardHost(host: string): boolean {
     let canonical: string;
     try {
       canonical = new SocketAddress({ address: host, family: "ipv6" }).address;
+      /* v8 ignore start -- SocketAddress accepts every address isIP reports as IPv6 on the Node.js versions we support */
     } catch {
       // isIP said valid IPv6 but SocketAddress refused, treat as non-wildcard
       // (the bind itself will fail downstream with the OS error).
       return false;
+      /* v8 ignore stop */
     }
     return canonical === "::" || canonical === "::ffff:0.0.0.0";
   }
@@ -566,6 +568,7 @@ export class MllpServer extends EventEmitter {
       try {
         cipherPolicy = resolveTlsCipherPolicy(opts.tls, "server");
       } catch (err) {
+        /* v8 ignore next -- resolveTlsCipherPolicy throws only MllpTlsConfigurationError */
         if (!(err instanceof MllpTlsConfigurationError)) throw err;
         this._tlsConfigError = err;
       }
@@ -772,6 +775,7 @@ export class MllpServer extends EventEmitter {
         outcome: { ok: true } | { ok: false; error: Error },
         opts?: { closeServer?: boolean },
       ): void => {
+        /* v8 ignore next -- every caller is detached inside settle, so none can reach it twice */
         if (settled) return;
         settled = true;
         this._pendingListenSettle = null;
@@ -833,6 +837,7 @@ export class MllpServer extends EventEmitter {
       };
 
       const onListening = () => {
+        /* v8 ignore next -- settle removes this listener, so it never runs after a settle */
         if (settled) return;
         // The bind outcome is now known and this handler settles the promise
         // synchronously below, drop the close()-settle hook AND the abort
@@ -1356,11 +1361,13 @@ export class MllpServer extends EventEmitter {
     }
     const asCn = (value: string | string[] | undefined): string | null => {
       if (value === undefined) return null;
+      /* v8 ignore next -- Node.js reports a repeated name as an array of at least two entries, never an empty one */
       return Array.isArray(value) ? (value[0] ?? null) : value;
     };
     return Object.freeze({
       subjectCN: asCn(cert.subject?.CN),
       issuerCN: asCn(cert.issuer?.CN),
+      /* v8 ignore next -- Node.js always reports valid_to for a parsed certificate */
       validTo: cert.valid_to ?? null,
       // Verification outcome, under 'WANT' a certificate can be present yet
       // UNVERIFIED (see PeerCertificateSummary.authorized JSDoc).
@@ -1620,6 +1627,7 @@ export class MllpServer extends EventEmitter {
     try {
       framed = encodeFrame(ackPayload);
     } catch (err: unknown) {
+      /* v8 ignore next -- encodeFrame throws only MllpFramingError */
       const cause = err instanceof Error ? err : new Error(String(err));
       safeEmitError(
         conn,

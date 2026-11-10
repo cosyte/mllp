@@ -175,7 +175,10 @@ function assertUsableDhParameters(dhParameters: string | Buffer): void {
     createSecureContext({ dhparam: dhParameters });
   } catch (err) {
     throw new MllpTlsConfigurationError(MLLP_TLS_DH_PARAMETERS_REJECTED, {
-      cause: err instanceof Error ? err : new Error(String(err)),
+      cause:
+        err instanceof Error
+          ? err
+          : /* v8 ignore next -- createSecureContext throws only Error */ new Error(String(err)),
     });
   }
 }
@@ -237,7 +240,10 @@ export function resolveTlsCipherPolicy(
       createSecureContext({ ciphers });
     } catch (err) {
       throw new MllpTlsConfigurationError(MLLP_TLS_CIPHER_LIST_REJECTED, {
-        cause: err instanceof Error ? err : new Error(String(err)),
+        cause:
+          err instanceof Error
+            ? err
+            : /* v8 ignore next -- createSecureContext throws only Error */ new Error(String(err)),
       });
     }
   }

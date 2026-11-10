@@ -233,11 +233,13 @@ async function runExchange(
       } catch (err) {
         // A fatal decoder throw is still a deviation of the peer's block, so it is named
         // by its stable code rather than escaping as an opaque error.
+        /* v8 ignore else -- FrameReader throws only MllpFramingError, and neither callback above throws */
         if (err instanceof MllpFramingError) {
           deviations.push(Object.freeze({ code: err.code, byteOffset: err.byteOffset }));
           settle({ kind: "framing-error", code: err.code, byteOffset: err.byteOffset });
           return;
         }
+        /* v8 ignore next -- FrameReader throws only MllpFramingError, and neither callback above throws */
         settle({ kind: "error", error: err instanceof Error ? err : new Error(String(err)) });
       }
     });

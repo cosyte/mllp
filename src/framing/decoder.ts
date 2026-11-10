@@ -171,6 +171,7 @@ export class FrameReader {
   push(chunk: Buffer): void {
     for (let i = 0; i < chunk.length; i++, this._byteOffset++) {
       const byte = chunk[i];
+      /* v8 ignore next -- i < chunk.length, so the index is always in range */
       if (byte === undefined) break; // noUncheckedIndexedAccess guard
 
       this._processByte(byte);

@@ -158,6 +158,7 @@ function readDerElement(der: Buffer, offset: number): DerElement | null {
   if (offset + 2 > der.length) return null;
   const tag = der[offset];
   const first = der[offset + 1];
+  /* v8 ignore next -- offset + 2 <= der.length was checked above, so both bytes exist */
   if (tag === undefined || first === undefined) return null;
 
   let contentStart: number;
@@ -174,6 +175,7 @@ function readDerElement(der: Buffer, offset: number): DerElement | null {
     length = 0;
     for (let i = 0; i < lengthBytes; i += 1) {
       const byte = der[offset + 2 + i];
+      /* v8 ignore next -- the length field was bounds-checked above, so every byte exists */
       if (byte === undefined) return null;
       length = length * 256 + byte;
     }
@@ -211,6 +213,7 @@ function readsAsInt32(der: Buffer, element: DerElement): boolean {
 
   const first = der[element.contentStart];
   const second = der[element.contentStart + 1];
+  /* v8 ignore next -- readDerElement keeps contentEnd within der, and octets >= 2 here */
   if (first === undefined || second === undefined) return false;
   const secondIsNegative = (second & 0x80) !== 0;
   if (first === 0x00 && !secondIsNegative) return false;
