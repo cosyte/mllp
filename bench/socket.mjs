@@ -240,11 +240,17 @@ async function main() {
   ];
 
   // The floor of the peak measure: what each side reads with nothing sent at all, over as long as
-  // one small send takes. A peak near it is the measuring, not the package.
-  await peaks.start();
-  await ask("peak-start");
-  await new Promise((done) => setTimeout(done, 2));
-  const floor = { sender: peaks.stop(), receiver: await ask("peak-stop") };
+  // one small send takes, the median of eight windows each settled first. A peak near it is the
+  // measuring, not the package.
+  const idle = { sender: [], receiver: [] };
+  for (let k = 0; k < 8; k++) {
+    await peaks.start();
+    await ask("peak-start");
+    await new Promise((done) => setTimeout(done, 2));
+    idle.sender.push(peaks.stop().total);
+    idle.receiver.push((await ask("peak-stop")).total);
+  }
+  const floor = { sender: median(idle.sender), receiver: median(idle.receiver) };
 
   const results = [];
   let beforeLarge = null;
@@ -254,7 +260,9 @@ async function main() {
     );
     const payloads = Array.from({ length: c.count }, (_, i) => distinct[i % distinct.length]);
     const size = distinct[0].length;
-    if (size >= MIB && beforeLarge === null) beforeLarge = await ask("settle");
+    // The receiver's settled memory before the first document message (a 1 MiB one is a few bytes
+    // under 1 MiB), to read what it still holds after the last.
+    if (size > MIB / 2 && beforeLarge === null) beforeLarge = await ask("settle");
     await run(payloads.slice(0, Math.max(1, Math.floor(payloads.length / 4))), c.window); // warm
     const rates = [];
     const latencies = [];
@@ -345,7 +353,7 @@ async function main() {
     machine: { runner, cpu, logicalCpus: cpus().length },
     date: new Date().toISOString(),
     cases: results,
-    peakFloor: { sender: floor.sender.total, receiver: floor.receiver.total },
+    peakFloor: floor,
     retainedAfterLargeMessages: {
       receiverHeapBytes: afterLarge.heapUsed - beforeLarge.heapUsed,
       receiverOutsideHeapBytes: afterLarge.arrayBuffers - beforeLarge.arrayBuffers,
@@ -358,9 +366,8 @@ async function main() {
   const times = (r, side) => {
     const peak = r.peak[side];
     const split = `${bytes(peak.heapUsed)} + ${bytes(peak.arrayBuffers)}`;
-    return r.peak.per === "message"
-      ? `${split} (${(peak.total / r.messageBytes).toFixed(2)}x)`
-      : `${split} (a round)`;
+    if (r.peak.per !== "message") return `${split} (a round)`;
+    return `${split} (${(peak.total / r.messageBytes).toFixed(2)}x)`;
   };
   const lines = [
     `### Reading: ${document.suite}`,
@@ -376,7 +383,7 @@ async function main() {
         `| ${r.label} | ${String(r.messages)} | ${r.opsPerSec.toFixed(0)} | ${bytes(r.bytesPerSec)}/s | ${ms(r.latencyMs.p50)} | ${ms(r.latencyMs.p95)} | ${ms(r.latencyMs.p99)} | ${times(r, "sender")} | ${times(r, "receiver")} |`,
     ),
     "",
-    `The peak measure's floor, nothing sent: sender ${bytes(floor.sender.total)}, receiver ${bytes(floor.receiver.total)}.`,
+    `The peak measure's floor, nothing sent, median of eight windows: sender ${bytes(floor.sender)}, receiver ${bytes(floor.receiver)}.`,
     "",
     `Receiver memory still held, settled, after the large messages, with the connection open: ${bytes(document.retainedAfterLargeMessages.receiverHeapBytes)} heap, ${bytes(document.retainedAfterLargeMessages.receiverOutsideHeapBytes)} outside the heap.`,
     "",
