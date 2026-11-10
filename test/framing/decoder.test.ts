@@ -236,6 +236,38 @@ describe("FrameReader, FRAME-09: allowMissingLeadingVt (MLLP_MISSING_LEADING_VT)
     expect(frames[0]).toEqual(Buffer.from([0x41, 0x42]));
     expect(warnCodes).toContain("MLLP_MISSING_LEADING_VT");
   });
+
+  it("reads a stray FS where a VT was due as an empty frame, never as payload", () => {
+    const frames: Buffer[] = [];
+    const codes: string[][] = [];
+    const r = new FrameReader({
+      onFrame: (p, _offset, warnings) => {
+        frames.push(p);
+        codes.push(warnings.map((w) => w.code));
+      },
+      allowMissingLeadingVt: true,
+    });
+    // A sender that repeats its trailer: VT A FS CR, FS CR, then B FS CR with no leading VT.
+    r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x0d, 0x1c, 0x0d, 0x42, 0x1c, 0x0d]));
+    expect(frames).toEqual([Buffer.from([0x41]), Buffer.alloc(0), Buffer.from([0x42])]);
+    expect(codes).toEqual([
+      [],
+      ["MLLP_MISSING_LEADING_VT", "MLLP_EMPTY_PAYLOAD"],
+      ["MLLP_MISSING_LEADING_VT"],
+    ]);
+    for (const frame of frames) expect(frame.includes(0x1c)).toBe(false);
+  });
+
+  it("holds the size cap on a frame that opens without a VT", () => {
+    const r = new FrameReader({
+      onFrame: () => {},
+      allowMissingLeadingVt: true,
+      maxFrameSizeBytes: 0,
+    });
+    expect(() => r.push(Buffer.from([0x41, 0x1c, 0x0d]))).toThrow(
+      expect.objectContaining({ code: "MLLP_FRAME_TOO_LARGE" }),
+    );
+  });
 });
 
 describe("FrameReader, FRAME-10: allowLeadingWhitespace (MLLP_LEADING_WHITESPACE)", () => {

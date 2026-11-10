@@ -316,11 +316,13 @@ function classifyFrame(
     correlation: DifferentialCorrelationOutcome,
   ) => DifferentialExchangeReport,
 ): DifferentialExchangeReport {
-  // Tolerant on purpose: a delivered payload can carry an `FS` byte, and the strict
-  // encoder throws on one. Encoding tolerantly names that as its own deviation instead of
-  // turning the peer's quirk into an exception here.
+  // Tolerant as a backstop. The reader never delivers a payload holding `VT` or `FS` (a
+  // stray `FS` where a frame was due ends an empty frame), so the strict encoder would not
+  // throw here; encoding tolerantly keeps any delimiter byte that did arrive a named
+  // deviation in the report rather than an exception out of the run.
   const canonical = encodeFrame(payload, {
     allowDelimiterBytesInPayload: true,
+    /* v8 ignore next 3 -- no delivered payload holds VT or FS, so the encoder never warns here */
     onWarning: (w) => {
       recordWarning(deviations, w, frameStart + 1);
     },

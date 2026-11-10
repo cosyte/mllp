@@ -12,7 +12,8 @@
         "tolerate-sender-quirks",
         "tls",
         "build-acks-from-hl7",
-        "testing"
+        "testing",
+        "property-test-your-code"
       ]
     },
     {

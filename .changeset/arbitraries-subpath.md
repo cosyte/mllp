@@ -1,0 +1,5 @@
+---
+"@cosyte/mllp": patch
+---
+
+New `@cosyte/mllp/arbitraries` entry point: fast-check generators for MLLP, so you can property-test your own code on generated frames and byte streams. `payload()` gives payloads the encoder accepts (any bytes, text, or synthetic HL7 v2 messages); `frame()` gives a canonical frame with its payload; `stream()` gives canonical frames back to back, split into random reads, with the payloads a reader must deliver; `messyStream()` gives the framing quirks real senders produce, limited to the tolerances you name, with the payloads and warning codes a reader must report; `hostileInput()` gives random, framing-heavy and mangled streams in random reads; and `chunked(bytes)` splits bytes of your own into random reads. Every generated value is synthetic and random, and a failing case reports the value as it was generated even if your code changed its bytes. `fast-check` (4.x) is an optional peer dependency: install it to use this entry point. The main entry point never loads it, so nothing changes for code that only imports `@cosyte/mllp`.

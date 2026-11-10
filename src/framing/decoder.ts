@@ -292,7 +292,11 @@ export class FrameReader {
       );
       this._frameStartOffset = this._byteOffset;
       this._state = "READING_PAYLOAD";
-      this._appendByte(byte);
+      // Read this byte as a frame's first byte, as if the missing VT had come before it. An FS
+      // here ends an empty frame, and the size cap holds. Appending it unread delivered a stray
+      // FS (a sender repeating its `FS CR` trailer) as the first byte of the next payload, a
+      // framing byte the encoder refuses to write.
+      this._readPayload(byte);
       return;
     }
 

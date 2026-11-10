@@ -45,7 +45,7 @@ import {
  * `dist/` on demand here rather than assuming build order.
  *
  * THE RESOLVER REFUSES A SUBPATH IT DOES NOT MAP, AND THAT REFUSAL IS THE LOAD-BEARING PART. This
- * package publishes three entry points, and a snippet that imports one the map does not cover would
+ * package publishes four entry points, and a snippet that imports one the map does not cover would
  * otherwise be judged by whether the raw specifier happens to resolve at test time. For a plain
  * block the import simply rejects and the case reds, which is fine. For a block tagged
  * ` ```ts runnable throws ` it is not: the harness treats ANY rejection as the expected throw
@@ -61,6 +61,7 @@ const SUBPATH_ENTRIES: Readonly<Record<string, string>> = {
   "@cosyte/mllp": join(root, "dist", "index.mjs"),
   "@cosyte/mllp/testing": join(root, "dist", "testing", "index.mjs"),
   "@cosyte/mllp/ack-from-hl7": join(root, "dist", "ack-from-hl7", "index.mjs"),
+  "@cosyte/mllp/arbitraries": join(root, "dist", "arbitraries", "index.mjs"),
 };
 
 /** Published subpath -> the source file the bundler compiles into that entry point's types. */
@@ -68,6 +69,7 @@ const SUBPATH_SOURCES: Readonly<Record<string, string>> = {
   "@cosyte/mllp": join(root, "src", "index.ts"),
   "@cosyte/mllp/testing": join(root, "src", "testing", "index.ts"),
   "@cosyte/mllp/ack-from-hl7": join(root, "src", "ack-from-hl7", "index.ts"),
+  "@cosyte/mllp/arbitraries": join(root, "src", "arbitraries", "index.ts"),
 };
 
 function resolveSnippetImport(specifier: string): string | undefined {
