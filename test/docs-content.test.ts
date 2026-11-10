@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { format } from "node:util";
 
@@ -13,6 +13,7 @@ import {
 
 import {
   compileErrors,
+  compileSamples,
   fences,
   fixturesByContent,
   section,
@@ -20,17 +21,22 @@ import {
 } from "./_helpers/first-use.js";
 
 /**
- * Doc/code-agreement gate. Every ```` ```ts runnable ```` block in `docs-content/` is extracted,
- * compiled, and executed, and its inline `// =>` assertions are checked, so a documented example
- * can never silently drift from the shipped code (the documentation analog of the conformance
- * runners). Blocks tagged ` ```ts runnable throws ` must throw; plain ` ```ts ` blocks are
- * illustrative and are not executed.
+ * Doc/code-agreement gate. Every TypeScript and JavaScript sample on a hand-written page of
+ * `docs-content/` is extracted and executed, and its inline `// =>` assertions are checked, so a
+ * documented example can never silently drift from the shipped code (the documentation analog of
+ * the conformance runners). Blocks tagged ` ```ts runnable throws ` must throw. A sample that cannot
+ * run says why in its fence (` ```ts no-run <reason> `), and the test below the suite refuses a
+ * sample that does neither. The runner strips types without checking them, so every runnable
+ * TypeScript sample is also compiled against the package's types, below.
  *
- * `@cosyte/mllp` is **transport, not parsing**. The quickstart opens with the README's program, a
- * server and a client on a loopback port the operating system picks, which closes both ends and so
- * runs to completion in-process; every other runnable block stays at the framing layer
- * (`encodeFrame` / `FrameReader`). The client/server examples that name a fixed port and a
- * database of the reader's are illustrative-only.
+ * The pages under `docs-content/api/` are generated from the TSDoc comments in `src/`, and their
+ * `@example` blocks are fragments written for an editor's tooltip, so they are not part of this
+ * suite: only the top-level pages are passed in.
+ *
+ * `@cosyte/mllp` is **transport, not parsing**. The samples that need a peer start one on a
+ * loopback port the operating system picks and close both ends, so they run to completion
+ * in-process. A sample that needs certificates, a real engine or a fixed public bind says so in its
+ * fence and is not run.
  *
  * Snippets import the package the way a consumer does, against the **built** ESM artifact, not the
  * source tree. The harness executes each block as a standalone ES module, so it can't resolve the
@@ -54,6 +60,14 @@ const root = join(import.meta.dirname, "..");
 const SUBPATH_ENTRIES: Readonly<Record<string, string>> = {
   "@cosyte/mllp": join(root, "dist", "index.mjs"),
   "@cosyte/mllp/testing": join(root, "dist", "testing", "index.mjs"),
+  "@cosyte/mllp/ack-from-hl7": join(root, "dist", "ack-from-hl7", "index.mjs"),
+};
+
+/** Published subpath -> the source file the bundler compiles into that entry point's types. */
+const SUBPATH_SOURCES: Readonly<Record<string, string>> = {
+  "@cosyte/mllp": join(root, "src", "index.ts"),
+  "@cosyte/mllp/testing": join(root, "src", "testing", "index.ts"),
+  "@cosyte/mllp/ack-from-hl7": join(root, "src", "ack-from-hl7", "index.ts"),
 };
 
 function resolveSnippetImport(specifier: string): string | undefined {
@@ -74,9 +88,78 @@ beforeAll(() => {
   execFileSync("pnpm", ["build"], { cwd: root, stdio: "inherit" });
 }, 120_000);
 
-docSnippetSuite({
-  docsDir: join(root, "docs-content"),
-  resolve: resolveSnippetImport,
+const DOCS_DIR = join(root, "docs-content");
+
+/** The hand-written pages: every `.md` file at the top of `docs-content/`, not the generated `api/`. */
+const PAGES = readdirSync(DOCS_DIR)
+  .filter((name) => name.endsWith(".md"))
+  .sort()
+  .map((name) => join(DOCS_DIR, name));
+
+/**
+ * `every` runs each TypeScript and JavaScript sample whether or not it is tagged `runnable`, and
+ * lists a `no-run` sample as skipped with its reason. It reaches the runner as a variable rather
+ * than a literal so the line compiles against a `@cosyte/vitest-config` that predates the option;
+ * such a runner ignores it and runs the `runnable` blocks, which is every sample here that can run,
+ * as the test below holds.
+ */
+const suiteOptions = { files: PAGES, every: true, resolve: resolveSnippetImport };
+docSnippetSuite(suiteOptions);
+
+/** The fence languages that make a block a code sample. */
+const SAMPLE_LANGS = new Set(["ts", "typescript", "tsx", "js", "javascript", "mjs"]);
+
+/** Every sample on the hand-written pages, with the page it is on. */
+const SAMPLES = PAGES.flatMap((path) =>
+  fences(readFileSync(path, "utf8"))
+    .filter((fence) => SAMPLE_LANGS.has(fence.lang))
+    .map((fence) => ({ page: path.slice(DOCS_DIR.length + 1), fence })),
+);
+
+/** A program over the package's source takes seconds to check, so these cases state their budget. */
+const SAMPLE_COMPILE_TIMEOUT = 120_000;
+
+describe("every sample on a hand-written page", () => {
+  it("runs, or names in its fence why it cannot", () => {
+    const unaccounted = SAMPLES.filter(({ fence }) => {
+      const noRun = fence.tags.indexOf("no-run");
+      const reason = noRun === -1 ? "" : fence.tags.slice(noRun + 1).join(" ");
+      return fence.tags.includes("runnable") ? noRun !== -1 : reason === "";
+    }).map(({ page, fence }) => `${page}: ${fence.lang} ${fence.tags.join(" ")}`);
+    expect(unaccounted).toEqual([]);
+  });
+
+  it(
+    "compiles against the package's types, when it is a runnable TypeScript sample",
+    () => {
+      const typed = SAMPLES.filter(
+        ({ fence }) => fence.lang === "ts" && fence.tags.includes("runnable"),
+      );
+      const errors = compileSamples(
+        root,
+        SUBPATH_SOURCES,
+        typed.map(({ fence }) => fence.body),
+      );
+      const failures = typed.flatMap(({ page }, index) =>
+        (errors[index] ?? []).map((error) => `${page}: ${error}`),
+      );
+      expect(failures).toEqual([]);
+    },
+    SAMPLE_COMPILE_TIMEOUT,
+  );
+
+  it(
+    "a sample that does not compile is reported, so the case above turns red",
+    () => {
+      const [clean, broken] = compileSamples(root, SUBPATH_SOURCES, [
+        'import { encodeFrame } from "@cosyte/mllp";\nencodeFrame(Buffer.from("A"));\n',
+        'import { encodeFrame } from "@cosyte/mllp";\nencodeFrame("A");\n',
+      ]);
+      expect(clean).toEqual([]);
+      expect(broken).toEqual([expect.stringContaining("TS2345")]);
+    },
+    SAMPLE_COMPILE_TIMEOUT,
+  );
 });
 
 /**

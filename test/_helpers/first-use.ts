@@ -41,31 +41,52 @@ const READER_OPTIONS: ts.CompilerOptions = {
  * into the published entry point and its types. Only the example's own errors are returned.
  */
 export function compileErrors(root: string, pkg: string, entry: string, code: string): string[] {
-  const file = join(root, "first-use-example.mts");
+  return compileSamples(root, { [pkg]: entry }, [code])[0] ?? [];
+}
+
+/**
+ * Every TypeScript error a reader's new project reports for each of several examples, in the
+ * order given; an empty list for an example that compiles. Each example is compiled as its own ES
+ * module in the repository root, all in one program so the package's source is checked once, with
+ * each specifier in `entries` resolved to the source file the bundler compiles into that published
+ * entry point. Any other import (a Node.js built-in, an installed peer) resolves as it would for
+ * the reader.
+ */
+export function compileSamples(
+  root: string,
+  entries: Readonly<Record<string, string>>,
+  samples: readonly string[],
+): string[][] {
+  const files = samples.map((_, index) => join(root, `docs-sample-${String(index)}.mts`));
+  const byFile = new Map(files.map((file, index) => [file, samples[index] ?? ""]));
   const options: ts.CompilerOptions = {
     ...READER_OPTIONS,
     typeRoots: [join(root, "node_modules", "@types")],
-    paths: { [pkg]: [entry] },
+    paths: Object.fromEntries(Object.entries(entries).map(([pkg, entry]) => [pkg, [entry]])),
   };
   const host = ts.createCompilerHost(options, true);
   const getSourceFile = host.getSourceFile.bind(host);
-  host.getSourceFile = (name, language, onError, create) =>
-    name === file
-      ? ts.createSourceFile(name, code, language, true)
-      : getSourceFile(name, language, onError, create);
+  host.getSourceFile = (name, language, onError, create) => {
+    const text = byFile.get(name);
+    return text === undefined
+      ? getSourceFile(name, language, onError, create)
+      : ts.createSourceFile(name, text, language, true);
+  };
   const fileExists = host.fileExists.bind(host);
-  host.fileExists = (name) => name === file || fileExists(name);
+  host.fileExists = (name) => byFile.has(name) || fileExists(name);
   const readFile = host.readFile.bind(host);
-  host.readFile = (name) => (name === file ? code : readFile(name));
-  const program = ts.createProgram([file], options, host);
-  return ts
-    .getPreEmitDiagnostics(program, program.getSourceFile(file))
-    .filter((d) => d.file?.fileName === file)
-    .map((d) => {
-      const line = d.file?.getLineAndCharacterOfPosition(d.start ?? 0).line ?? 0;
-      const text = ts.flattenDiagnosticMessageText(d.messageText, " ");
-      return `line ${String(line + 1)}: TS${String(d.code)} ${text}`;
-    });
+  host.readFile = (name) => byFile.get(name) ?? readFile(name);
+  const program = ts.createProgram(files, options, host);
+  return files.map((file) =>
+    ts
+      .getPreEmitDiagnostics(program, program.getSourceFile(file))
+      .filter((d) => d.file?.fileName === file)
+      .map((d) => {
+        const line = d.file?.getLineAndCharacterOfPosition(d.start ?? 0).line ?? 0;
+        const text = ts.flattenDiagnosticMessageText(d.messageText, " ");
+        return `line ${String(line + 1)}: TS${String(d.code)} ${text}`;
+      }),
+  );
 }
 
 /** One fenced code block: its info string split into language and tags, and its body. */

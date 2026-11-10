@@ -11,17 +11,23 @@
  * shipped whole (`pnpm pack:docs` tars `docs-content/` into the release artifact
  * `cosyte/docs` ingests), so it is checked whole.
  *
- * THE PAGE CONTRACT. Every tracked `.md` file under `docs-content/`:
+ * THE PAGE CONTRACT, after the docs-content standard in cosyte/config's decision records. Every
+ * tracked `.md` file at the top of `docs-content/`:
  *
- *   1. carries frontmatter with non-empty `id`, `title`, `description` and `sidebar_position`;
+ *   1. carries frontmatter with non-empty `id`, `title`, `sidebar_label` and `description`, one
+ *      `key: value` line each, the description at most 160 characters;
  *   2. has an `id` equal to its own filename stem;
  *   3. is named exactly once in `docs-content/sidebars.json`, and every id `sidebars.json` names
  *      has a file;
- *   4. has a `sidebar_position` unique across the set, ascending in the order `sidebars.json` lists
- *      the ids, starting at 1;
- *   5. links to a sibling page as `./<id>.md`, never extensionless and never bare `<id>`;
- *   6. links only to fragments that exist as a heading in the page the link targets;
+ *   4. carries no `sidebar_position`: the sidebar alone sets the order, in the standard's shape;
+ *   5. links to a sibling page as `./<id>.md`, never extensionless and never bare `<id>`, and into
+ *      the generated reference as `./api/<page>.md`;
+ *   6. links only to fragments that exist as a heading in the page the link targets, the generated
+ *      reference pages included, slugged the way the docs site slugs them;
  *   7. contains no U+2013 and no U+2014.
+ *
+ * The pages under `docs-content/api/` are generated from the TSDoc comments by the reference
+ * generator and are not held to the contract; they are only resolved as link targets.
  *
  * Two set-wide properties are checked beside the contract, because neither is visible from one page
  * either. THE COVERAGE ONE: the published `@cosyte/mllp/testing` subpath and the exported
@@ -62,7 +68,33 @@ const SIDEBARS_FILE = "sidebars.json";
 const ENTRY_PAGE_ID = "intro";
 
 /** Frontmatter keys every page must carry, non-empty. */
-const REQUIRED_FRONTMATTER = ["id", "title", "description", "sidebar_position"] as const;
+const REQUIRED_FRONTMATTER = ["id", "title", "sidebar_label", "description"] as const;
+
+/** The longest description a search result shows, which the standard holds every page to. */
+const MAX_DESCRIPTION = 160;
+
+/** The generated reference, inside the docs directory. */
+const REFERENCE_DIR = "api";
+
+/** The sidebar's categories, in the only order the standard allows. */
+const CATEGORY_ORDER = [
+  "Installation",
+  "Quickstart",
+  "Tutorials",
+  "How-to guides",
+  "Explanation",
+  "Reference",
+  "Troubleshooting",
+] as const;
+
+/** The categories every library has; Tutorials and Reference appear when there are such pages. */
+const REQUIRED_CATEGORIES = [
+  "Installation",
+  "Quickstart",
+  "How-to guides",
+  "Explanation",
+  "Troubleshooting",
+] as const;
 
 /**
  * What a page documenting the published testing surface has to name, all three.
@@ -352,7 +384,8 @@ describe("docs-content is a valid set", () => {
   it("checks exactly the corpus the documentation gates scan", () => {
     const tracked = trackedDocsPaths()
       .filter((path) => path.endsWith(".md"))
-      .map((path) => path.replace(/^docs-content\//, ""));
+      .map((path) => path.replace(/^docs-content\//, ""))
+      .filter((path) => !path.includes("/"));
     const onDisk = PAGES.map((page) => page.filename);
     expect(
       tracked,
@@ -414,23 +447,54 @@ describe("docs-content is a valid set", () => {
     });
   });
 
-  describe("sidebar_position", () => {
-    it("ascends in sidebar order, starting at 1, with no value used twice", () => {
-      const declared = SIDEBAR_IDS.map((id) => {
-        const page = PAGE_BY_ID.get(id);
-        if (page === undefined)
-          throw new Error(`docs-content/sidebars.json names unknown id ${id}`);
-        return { id, position: Number(page.frontmatter.get("sidebar_position")) };
-      });
+  describe("the standard's shape", () => {
+    it("carries no sidebar_position, and one key: value line per frontmatter key", () => {
+      for (const page of PAGES) {
+        expect(
+          page.frontmatter.has("sidebar_position"),
+          `docs-content/${page.filename} carries sidebar_position. The sidebar sets the order; a ` +
+            `second statement of it is one more thing to keep in agreement.`,
+        ).toBe(false);
+        const lines = page.raw.split("\n");
+        const block = lines.slice(1, lines.indexOf("---", 1));
+        const loose = block.filter((line) => !/^[A-Za-z_][A-Za-z0-9_]*: \S/.test(line));
+        expect(
+          loose,
+          `docs-content/${page.filename} has frontmatter lines that are not one \`key: value\`.`,
+        ).toStrictEqual([]);
+      }
+    });
 
-      const expected = SIDEBAR_IDS.map((_, index) => index + 1);
-      expect(
-        declared.map((entry) => entry.position),
-        `the sidebar lists ${SIDEBAR_IDS.join(", ")}, so their sidebar_position values must read ` +
-          `${expected.join(", ")}. They read ` +
-          `${declared.map((entry) => `${entry.id}=${String(entry.position)}`).join(", ")}. A ` +
-          `repeated or absent position leaves the rendered order to the theme's tie-break.`,
-      ).toStrictEqual(expected);
+    it(`gives every page a description of at most ${String(MAX_DESCRIPTION)} characters`, () => {
+      const long = PAGES.filter(
+        (page) => (page.frontmatter.get("description") ?? "").length > MAX_DESCRIPTION,
+      ).map((page) => page.filename);
+      expect(long).toStrictEqual([]);
+    });
+
+    it("lays the sidebar out as intro, the categories in order, then the two quality pages", () => {
+      const parsed = JSON.parse(readPage(SIDEBARS_FILE)) as { docs: unknown[] };
+      const entries = parsed.docs;
+      expect(Object.keys(parsed)).toStrictEqual(["docs"]);
+      expect(entries[0]).toBe("intro");
+      expect(entries.slice(-2)).toStrictEqual(["testing-and-quality", "performance"]);
+      const categories = entries.slice(1, -2).map((entry) => {
+        const record = entry as { type?: unknown; label?: unknown; items?: unknown };
+        expect(record.type).toBe("category");
+        return { label: String(record.label), items: record.items as unknown[] };
+      });
+      const labels = categories.map((category) => category.label);
+      expect(labels).toStrictEqual(CATEGORY_ORDER.filter((label) => labels.includes(label)));
+      for (const label of REQUIRED_CATEGORIES) expect(labels).toContain(label);
+      const opens: Record<string, string> = {
+        Installation: "installation",
+        Quickstart: "quickstart",
+        Troubleshooting: "troubleshooting",
+      };
+      for (const category of categories) {
+        const first = opens[category.label];
+        if (first !== undefined) expect(category.items[0]).toBe(first);
+      }
     });
   });
 
@@ -441,6 +505,24 @@ describe("docs-content is a valid set", () => {
           if (isExternal(target)) continue;
 
           const [pathPart = "", fragment] = splitTarget(target);
+          const reference = REFERENCE_LINK.exec(pathPart);
+          if (reference !== null) {
+            const anchors = referenceAnchors(reference[1] ?? "");
+            expect(
+              anchors,
+              `docs-content/${page.filename} links "${target}", and no such page exists under ` +
+                `docs-content/${REFERENCE_DIR}/. Regenerate the reference, or fix the link.`,
+            ).not.toBeNull();
+            if (fragment !== undefined) {
+              expect(
+                anchors?.has(fragment) ?? false,
+                `docs-content/${page.filename} links "${target}", but that reference page has no ` +
+                  `heading with the anchor "${fragment}". An export renamed or removed breaks ` +
+                  `exactly these links.`,
+              ).toBe(true);
+            }
+            continue;
+          }
           const destination =
             pathPart === ""
               ? page
@@ -473,9 +555,10 @@ describe("docs-content is a valid set", () => {
           const [pathPart = ""] = splitTarget(target);
           if (pathPart === "") continue;
           expect(
-            /^\.\/[a-z0-9-]+\.md$/.test(pathPart),
+            /^\.\/[a-z0-9-]+\.md$/.test(pathPart) || REFERENCE_LINK.test(pathPart),
             `docs-content/${page.filename} links "${target}". An in-set link is written ` +
-              `\`./<id>.md\`, never extensionless and never bare: the extensionless form resolves ` +
+              `\`./<id>.md\` (or \`./api/<page>.md\` into the reference), never extensionless and ` +
+              `never bare: the extensionless form resolves ` +
               `on the docs site and breaks everywhere the markdown is read directly.`,
           ).toBe(true);
         }
@@ -647,4 +730,49 @@ function packageVersion(): string {
   const { version } = parsed;
   if (typeof version !== "string") throw new Error("package.json `version` is not a string");
   return version;
+}
+
+/**
+ * A link into the generated reference: `./api/`, then any folders, then a page ending in `.md`. A
+ * folder may not be `.` or `..`, so a target cannot climb out of the reference.
+ */
+const REFERENCE_LINK = /^\.\/api\/((?:(?!\.\.?\/)[^/#]+\/)*[^/#]+\.md)$/;
+
+/**
+ * The anchor the docs site gives a heading, as github-slugger computes it for the text the
+ * generator writes: lower-cased, every character that is not a letter, a digit, `_`, a space or a
+ * hyphen dropped (code ticks and escapes included), and each space turned into a hyphen.
+ */
+function siteSlug(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_ -]/gu, "")
+    .replace(/ /g, "-");
+}
+
+/**
+ * Every anchor a generated reference page offers, or null when there is no such page: one per
+ * heading outside fenced code, a repeated slug numbered from `-1` in document order, as the site
+ * numbers it.
+ */
+function referenceAnchors(path: string): Set<string> | null {
+  const file = join(DOCS_DIR, REFERENCE_DIR, path);
+  if (!existsSync(file)) return null;
+  const anchors = new Set<string>();
+  const counts = new Map<string, number>();
+  let inFence = false;
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (/^(?:```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const heading = /^#{1,6} (.*)/.exec(line);
+    if (heading === null) continue;
+    const base = siteSlug(heading[1] ?? "");
+    const seen = counts.get(base) ?? 0;
+    counts.set(base, seen + 1);
+    anchors.add(seen === 0 ? base : `${base}-${String(seen)}`);
+  }
+  return anchors;
 }
