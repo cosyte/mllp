@@ -36,12 +36,19 @@ import * as mllp from "../../src/index.js";
 
 const FS = 0x1c;
 
-/** Every payload a fresh FrameReader delivers for these reads, in order. */
+/**
+ * One reader for every input, as one connection reads message after message. A fresh reader per
+ * input also allocates its 4 KiB buffer outside the heap each time, and on the count axis that
+ * churn, not the decoding, set the pace: the warmup never settled.
+ */
+let delivered: Buffer[] = [];
+const reader = new mllp.FrameReader({ onFrame: (payload) => delivered.push(payload) });
+
+/** Every payload the reader delivers for these reads, in order. */
 function decode(chunks: readonly Buffer[]): Buffer[] {
-  const out: Buffer[] = [];
-  const reader = new mllp.FrameReader({ onFrame: (payload) => out.push(payload) });
+  delivered = [];
   for (const chunk of chunks) reader.push(chunk);
-  return out;
+  return delivered;
 }
 
 /**
