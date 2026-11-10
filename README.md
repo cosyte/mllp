@@ -239,13 +239,14 @@ The full reference is on [docs.cosyte.com/mllp](https://docs.cosyte.com/mllp); s
   is the one place a whole message is parsed. [PHI and safety](#phi-and-safety) sets all of that out
   in full. For actual parsing, pair this with [`@cosyte/hl7`](https://github.com/cosyte/hl7), which
   is exactly what that subpath does.
-- **Differentially verified against freely available engines**: Mirth Connect from NextGen, and the
-  Google Cloud Healthcare MLLP adapter. **Epic and Cerner are not part of that harness**, and no
-  claim about either is made here. `runDifferential` ships in the published artifact, so you can aim
+- **Framing checked against canonical frames for freely available engines**: Mirth Connect from
+  NextGen, and the Google Cloud Healthcare MLLP adapter. The frames are written from the
+  specification, not captured from a running engine, and no live engine runs in our CI. **Epic and
+  Cerner are not part of that harness**, and no claim about either is made here. `runDifferential` ships in the published artifact, so you can aim
   it at your own test or staging endpoint and get a per-exchange frame-parity and `MSA-2` correlation
   report for the engine you actually integrate with.
-- **Known gaps, stated rather than hidden.** No batch acknowledgment, no MLLP Release 2, no queue or
-  replay of unacknowledged messages, no clinical acceptance decision, and no PKI. The
+- **Known gaps, stated rather than hidden.** No batch acknowledgment, no MLLP Release 2, no persistent
+  queue of unacknowledged messages, no clinical acceptance decision, and no PKI. The
   [known limitations](https://github.com/cosyte/mllp/blob/main/docs-content/limitations.md) page is
   the full list. Read it before you depend on this.
 
@@ -255,16 +256,20 @@ The full reference lives at [docs.cosyte.com/mllp](https://docs.cosyte.com/mllp)
 repository's [`docs-content/`](https://github.com/cosyte/mllp/tree/main/docs-content). Start with
 these pages:
 
-- [Framing and tolerance](https://github.com/cosyte/mllp/blob/main/docs-content/framing.md): the
-  wire format, the opt-in tolerance flags, the stable warning codes, and what throws.
+- [Send messages](https://github.com/cosyte/mllp/blob/main/docs-content/send-messages.md) and
+  [Receive and acknowledge messages](https://github.com/cosyte/mllp/blob/main/docs-content/receive-messages.md): the two everyday tasks.
 - [ACKs and the commit contract](https://github.com/cosyte/mllp/blob/main/docs-content/acks.md):
   the code auto-ACK selects, correlation on the client, enhanced mode, and the ack-from-hl7 builder.
-- [Connection, reconnect, and backpressure](https://github.com/cosyte/mllp/blob/main/docs-content/reliability.md):
+- [Framing and tolerance](https://github.com/cosyte/mllp/blob/main/docs-content/framing.md): the
+  wire format, the opt-in tolerance flags, the stable warning codes, and what throws.
+- [Connection, reconnect and backpressure](https://github.com/cosyte/mllp/blob/main/docs-content/reliability.md):
   the six-state connection machine, backoff, dead-peer detection, and what `close()` does.
-- [MLLPS / TLS](https://github.com/cosyte/mllp/blob/main/docs-content/tls.md): mutual TLS,
+- [Secure a link with TLS](https://github.com/cosyte/mllp/blob/main/docs-content/tls.md): mutual TLS,
   verification, bind safety, the TLS 1.2 floor, and the typed failure modes.
-- [Testing and verification](https://github.com/cosyte/mllp/blob/main/docs-content/testing.md): the
-  in-memory transport, and the differential harness for the engine you integrate with.
+- [Test your code and verify an engine](https://github.com/cosyte/mllp/blob/main/docs-content/testing.md):
+  the in-memory transport, and the differential harness for the engine you integrate with.
+- [Warning and error codes](https://github.com/cosyte/mllp/blob/main/docs-content/warning-and-error-codes.md)
+  and [Troubleshooting](https://github.com/cosyte/mllp/blob/main/docs-content/troubleshooting.md): every stable code, and what to do when a link fails.
 - [Known limitations and non-goals](https://github.com/cosyte/mllp/blob/main/docs-content/limitations.md):
   what not to trust this transport to do.
 

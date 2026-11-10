@@ -1,10 +1,8 @@
 ---
 id: limitations
 title: Known limitations and non-goals
-description: >-
-  What not to trust this transport to do: delivery guarantees, batch acknowledgment, Release 2,
-  charsets that collide with the framing bytes, and where the public surface stands today.
-sidebar_position: 10
+sidebar_label: Known limitations and non-goals
+description: "What not to trust this transport to do: delivery guarantees, batch acknowledgment, Release 2, colliding charsets, and where the public surface stands today."
 ---
 
 # Known limitations and non-goals
@@ -15,7 +13,7 @@ is a deliverable, not a footnote. **Do not rely on `@cosyte/mllp` to do any of t
 ## It does not parse or validate HL7 v2
 
 `@cosyte/mllp` moves bytes. It never inspects the payload, never validates a segment, never checks a
-code system. Pair it with [`@cosyte/hl7`](https://github.com/cosyte/hl7). The one exception is the
+code system. Pair it with [`@cosyte/hl7`](https://docs.cosyte.com/hl7). The one exception is the
 optional [`ack-from-hl7`](./acks.md) subpath, which delegates the parsing to `@cosyte/hl7` anyway.
 
 ## It cannot guarantee delivery
@@ -25,9 +23,12 @@ commits your message and the ACK is lost on the way back, the sender cannot tell
 receiver never having got it. Both look like a timeout.
 
 **The application owns idempotency and de-duplication**: key on `MSH-10` (message control ID) plus
-`MSH-7` (timestamp). `@cosyte/mllp` surfaces unacked messages to you; it does **not** store them,
-queue them, or replay them. There is no write-ahead log in this package. If you need one, it lives in
-your application, not here.
+`MSH-7` (timestamp). `@cosyte/mllp` surfaces unacknowledged messages to you. It holds a send in
+memory only until it settles, and nothing survives a restart: there is no write-ahead log in this
+package. If you need one, it lives in your application, not here. The one case in which the client
+writes a message again by itself is a reconnect while correlating by control ID, described in
+[What happens to pending sends when the link drops](./reliability.md#what-happens-to-pending-sends-when-the-link-drops);
+that resend is exactly why the receiver's de-duplication matters.
 
 ## It drains in-flight messages on `close()`, and still cannot make delivery certain
 
@@ -55,14 +56,14 @@ Tell them apart with `instanceof`, never by reading an error message.
 
 **A drain cannot make delivery certain, and this one does not pretend to.** A commit whose ACK is
 lost in flight is indistinguishable from a message never received, and always will be: that is what
-the unknown-fate report says out loud. Nothing is retried automatically, because the accept
+the unknown-fate report says out loud. Nothing is retried at shutdown, because the accept
 acknowledgment is what releases a sender from resending, and the standard puts the retransmission
 decision on the application and on its peer's duplicate detection (`MSH-10` + `MSH-7`). There is
 still no write-ahead log, queue, or replay in this package.
 
 `destroy()` is the other half of the pair and is unchanged: it settles every pending send at once,
 awaits no ACK and honors no drain timeout. Use it when you need the socket gone now. See
-[Connection, reconnect & backpressure](./reliability.md).
+[Connection, reconnect and backpressure](./reliability.md).
 
 ## A fatal framing error drops the connection, and is not retried
 
@@ -76,7 +77,7 @@ classified `framing-fatal`, i.e. **permanent**, so a client does not reconnect i
 deliberate (a peer speaking the wrong protocol would otherwise be retried forever), but it means a
 client facing a peer that emits _occasional_ junk will **stop**, not heal. If a peer's quirk is
 expected, use the tolerance opt-ins so the bytes are a warning rather than a fatal. See
-[Framing & tolerance](./framing.md).
+[Framing and tolerance](./framing.md).
 
 ## It does not complete an enhanced-mode exchange on the server side
 
@@ -96,8 +97,8 @@ disposition and its later application disposition, and neither is dropped
   second acknowledgment. The failure carries the commit disposition you did receive, so you know the
   peer took custody; what its application did is unknown and unknowable from here.
 
-Enhanced mode over a **batch** frame stays refused, and no sequence-number protocol (MSH-13/MSA-4),
-retransmission, queueing, or replay is implemented here or planned for here.
+Enhanced mode over a **batch** frame stays refused, and the sequence-number protocol
+(MSH-13/MSA-4) is not implemented.
 
 ## It does not decide clinical acceptance
 
@@ -115,17 +116,19 @@ opt-in and off by default, and R1 framing will never silently downgrade to it.
 
 ## It is not differentially verified against Epic or Cerner, so verify your own engine
 
-Interop is proven here against **freely available** engines only: the Google Cloud Healthcare MLLP
-adapter and Mirth/NextGen Connect (byte-parity on canonical R1 frames). Neither Epic nor Cerner is
-part of that. Their behavior is inferred from the spec, not observed, and this package will never
-tell you otherwise.
+Our tests compare this package's framing, byte for byte, with canonical Release 1 frames written
+from the specification for two freely available engines, the Google Cloud Healthcare MLLP adapter
+and Mirth/NextGen Connect. Those frames are derived from the specification, not captured from a
+running engine, and no live engine runs in our CI; a developer can point the same tests at one they
+run locally. Neither Epic nor Cerner is part of any of it. Their behavior is inferred from the spec,
+not observed, and this package will never tell you otherwise.
 
 **What it gives you instead is the harness, so you can observe your own engine before go-live.**
 `runDifferential` ships in the package. Point it at an engine you name and it reports, per exchange,
 whether the frame that came back was byte-identical to the canonical Release 1 block
 (`VT` + payload + `FS` + `CR`) and whether its `MSA-2` echoed the `MSH-10` of the message it
 answered. What the report carries, what it deliberately does not, and how to aim a run safely are on
-[Testing & verification](./testing.md#verify-your-own-engine-rundifferential).
+[Test your code and verify an engine](./testing.md#verify-your-own-engine-rundifferential).
 
 That harness does not soften the non-goal above. A run is evidence **you** hold about **your** peer,
 gathered by a corpus of synthetic messages; it is not a conformance verdict, and this package issues
@@ -134,7 +137,7 @@ none about an engine it has never met.
 ## It ships no PKI
 
 TLS verifies **caller-supplied** certificates. This package bundles no CA, issues nothing, rotates
-nothing, and has no opinion about your certificate lifecycle. See [MLLPS / TLS](./tls.md).
+nothing, and has no opinion about your certificate lifecycle. See [Secure a link with TLS](./tls.md).
 
 ## It cannot claim an IHE option on your behalf
 
@@ -144,7 +147,7 @@ and evidence, and it is as far as a transport library can go: an IHE option is c
 **actor**, in a conformance statement, and that statement is yours to make. With the option left
 off, the offered suites are not this package's at all: they are the runtime's, which a Node
 distribution can configure at build time and an operator can replace from outside the process. See
-[MLLPS / TLS](./tls.md).
+[Secure a link with TLS](./tls.md).
 
 What this package _does_ declare about itself, in the actor-and-option wording a Product Registry
 entry or a Connectathon test is recorded in, is on one page: the
@@ -202,9 +205,8 @@ cannot parse. Because a garbage frame is a caller mistake rather than a runtime 
 (`"utf8"`/`"ascii"`/`"latin1"`/`"binary"`) are accepted. This includes a
 `Buffer` inbound: a non-text codec there garbles the _inbound_ decode into the unparseable fallback
 (empty MSA-2, so the `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof never runs) and then serializes the
-fallback ACK to garbage bytes that about 3 to 4 percent of the time (identically on Node 22 and 24) contain a
-`VT`/`FS` byte and trip the strict frame encoder with a nondeterministic `MllpFramingError`. It was
-never the "loud AE" escape hatch it was documented to be. The legitimate byte-level escape hatch is
+fallback ACK to garbage bytes that, depending on the bytes, can contain a `VT`/`FS` byte and trip
+the strict frame encoder with an `MllpFramingError`. The legitimate byte-level escape hatch is
 untouched: a **charset** codec on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that
 still surfaces as the loud `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` proof) is what serves a peer that
 demands a specific byte-level codec.

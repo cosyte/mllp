@@ -1,13 +1,11 @@
 ---
 id: reliability
-title: Connection, reconnect, and backpressure
-description: >-
-  The six-state connection machine, auto-reconnect with backoff, dead-peer detection, backpressure,
-  and what close() does and does not do for in-flight messages.
-sidebar_position: 6
+title: Connection, reconnect and backpressure
+sidebar_label: Connection, reconnect and backpressure
+description: "The six-state connection machine, reconnect with backoff, dead-peer detection, backpressure, and what close() does and does not do for messages in flight."
 ---
 
-# Connection, reconnect, and backpressure
+# Connection, reconnect and backpressure
 
 An MLLP link lives for months and fails in ways a request/response client never sees: the peer
 half-closes and never tells you, a firewall silently evicts the NAT entry, an interface engine gets
@@ -41,7 +39,7 @@ Every transition emits a frozen `'stateChange'` event with `{ from, to, reason }
 put on a dashboard. Like every public event payload in this package, it is `Object.freeze`'d;
 subscribers cannot mutate shared state.
 
-```ts
+```ts no-run a fragment: client and logger stand for your own objects
 client.on("stateChange", ({ from, to, reason }) => logger.info({ from, to, reason }));
 ```
 
@@ -57,7 +55,7 @@ tells you a retry is in progress. Dashboard on that, not on a `RECONNECTING` sta
 turns it on for you** (it is the batteries-included path), so if you started from the quickstart you
 already have it.
 
-```ts
+```ts no-run a fragment that shows the reconnect options and their defaults
 const client = createClient({
   host: "mllp.example.com",
   port: 2575,
@@ -93,6 +91,22 @@ retried: Postel's Law, applied to peer behavior.
 Supply `retryStrategy` for full control. It receives a frozen `RetryContext` and returns the next
 delay, or `null` to stop retrying.
 
+### What happens to pending sends when the link drops
+
+What an auto-reconnecting client does with sends that have no acknowledgment yet depends on how it
+correlates:
+
+- **FIFO (the default).** Order cannot be resumed safely on a new session, so each pending send is
+  rejected with an `MllpConnectionError` whose `connectionCause` says which kind it was:
+  `in-flight-orphan` for one already written (it may have been committed), `fifo-unsafe` for one
+  still queued (it was never written). Deciding whether to send either again is yours.
+- **`correlateByControlId: true`.** Pending sends are kept, and once the new connection is up every
+  one of them is written again and its acknowledgment wait restarts. A message written before the
+  drop may therefore reach the peer twice, so this mode relies on the peer's de-duplication on
+  `MSH-10`. The one exception is an enhanced-mode send whose accept acknowledgment (`CA`) already
+  arrived: the peer holds it, so it is failed with `MllpApplicationAckError` instead of being sent
+  again.
+
 ## Detecting a peer that is gone but not closed
 
 Two independent, complementary mechanisms, both off by default, and they are not substitutes:
@@ -112,7 +126,7 @@ healthy connection will be torn down all night.
 If a peer stops ACKing but the socket still accepts writes, an unbounded client buffers every message
 your application hands it until the process dies. `@cosyte/mllp` bounds the in-flight + queued set.
 
-```ts
+```ts no-run a fragment that shows the backpressure options; host and port stand for your peer
 const client = createClient({
   host,
   port,
@@ -163,7 +177,7 @@ library. Nothing is retried for you.
 If you would rather see none of these reports at all, **await your sends yourself** before calling
 `close()`:
 
-```ts
+```ts no-run a fragment: client and messages stand for your own objects
 const inFlight = messages.map((m) => client.send(m));
 await Promise.allSettled(inFlight); // settle first,
 await client.close(); //                 then close
@@ -171,7 +185,7 @@ await client.close(); //                 then close
 
 Every closeable implements `Symbol.asyncDispose`, and every awaitable takes an `AbortSignal`:
 
-```ts
+```ts no-run a fragment: host, port and payload stand for your own values
 await using client = await createStarterClient({ host, port });
 await client.send(payload, { signal: AbortSignal.timeout(5_000) });
 // disposed on scope exit (including on throw), which closes, and so drains
@@ -186,9 +200,15 @@ your handler's job, and it must not depend on the process staying alive to finis
 `getStats()` returns **plain JSON-serializable objects** (no Buffers, no class instances) so they
 go straight into a log pipeline or a metrics exporter.
 
-```ts
+```ts no-run a fragment: client and logger stand for your own objects
 logger.info(client.getStats());
 ```
 
 Nothing in the stats, the warnings, or the frozen event payloads carries message content. See
 [Framing](./framing.md) for the PHI contract on diagnostics.
+
+## Guides that apply this
+
+- [Send messages](./send-messages.md): timeouts, a full queue and a clean shutdown on a client.
+- [Receive and acknowledge messages](./receive-messages.md): the server side of the same link.
+- [Troubleshooting](./troubleshooting.md): what each failure looks like and what to do about it.

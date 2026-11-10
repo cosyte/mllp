@@ -1,10 +1,8 @@
 ---
 id: framing
 title: Framing and tolerance
-description: >-
-  The MLLP wire format, the opt-in tolerance flags, the stable warning codes, what throws and what
-  happens when it does, and the PHI contract on diagnostics.
-sidebar_position: 4
+sidebar_label: Framing and tolerance
+description: "The MLLP wire format, why the encoder is strict and the decoder tolerant only by opt-in, what throws and what then happens, and why diagnostics hold no payload."
 ---
 
 # Framing and tolerance
@@ -21,7 +19,9 @@ whether it should be resent) belongs to the HL7 v2 message inside, not to MLLP. 
 carries the bytes and never inspects them.
 
 MLLP is **not byte-transparent**: the delimiters are literal byte values, so a payload must not
-contain `0x0B` or `0x1C`. See [Limitations](./limitations.md) for what that means for charsets.
+contain `0x0B` or `0x1C`. See
+[Known limitations](./limitations.md#it-cannot-carry-charsets-that-collide-with-the-framing-bytes)
+for what that means for charsets.
 
 ## Postel's Law: strict encoder, liberal decoder
 
@@ -40,7 +40,7 @@ The decoder is **liberal, but only where you opt in.** This is the part most eas
 > ships a tolerant default (it enables three of the four flags below), because it is the side that
 > has to accept whatever a real-world sender emits.
 
-```ts
+```ts no-run a fragment: handle, logger and chunk stand for your own code and data
 import { FrameReader } from "@cosyte/mllp";
 
 const reader = new FrameReader({
@@ -93,6 +93,9 @@ a code is a breaking change. Log pipelines and dashboards key on them.
 | `MLLP_ACK_UNMATCHED_CONTROL_ID` | An inbound ACK's MSA-2 matched no pending send.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `MLLP_ACK_AFTER_TIMEOUT`        | A late ACK arrived after its send had already timed out.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
+[Tolerate a sender's framing quirks](./tolerate-sender-quirks.md) shows the flags in use, and
+[Warning and error codes](./warning-and-error-codes.md) lists every code the package reports.
+
 `MLLP_EMPTY_PAYLOAD` and `MLLP_TRAILING_BYTES` remain _warnings_ (never throws) even under
 `strict: true`. Do not read `MLLP_TRAILING_BYTES` as cosmetic, though: its mid-payload `<VT>` case
 means a message was **truncated**, and it is worth alerting on.
@@ -108,9 +111,9 @@ in `MllpAck.warnings`, not in the framing registry.
 1. **`MLLP_FRAME_TOO_LARGE`**: the accumulator crossed `maxFrameSizeBytes`. A decoder that buffers
    until it sees `<FS>` is otherwise a memory-exhaustion vector: a peer that opens a socket, sends
    `<VT>`, and then streams forever would grow your process until it died. The default cap is
-   **16 MB**.
+   **16 MiB**.
 
-   ```ts
+   ```ts no-run a fragment: onFrame stands for your own frame handler
    new FrameReader({ onFrame, maxFrameSizeBytes: 4 * 1024 * 1024 }); // 4 MiB
    ```
 
@@ -145,7 +148,7 @@ how a clinical message gets silently mis-split.
 
 `framing-fatal` is classified **permanent**, so a client does **not** auto-reconnect into it. A peer
 speaking something that is not MLLP (an HTTP probe on the wrong port, a health check) would otherwise
-be retried forever. See [Connection, reconnect & backpressure](./reliability.md).
+be retried forever. See [Connection, reconnect and backpressure](./reliability.md).
 
 If a peer's quirk is _expected_ (it pads with junk, omits the leading `<VT>`, sends bare `<FS>`)
 the tolerance opt-ins above are the supported answer. They turn the throw into a warning and recover
@@ -183,3 +186,9 @@ the `'message'` event.
 
 Correlate on `code` + `byteOffset`, and if you need the field values themselves, log them
 deliberately through your own PHI-aware channel.
+
+## Guides that apply this
+
+- [Tolerate a sender's framing quirks](./tolerate-sender-quirks.md)
+- [Receive and acknowledge messages](./receive-messages.md)
+- [Test your code and verify an engine](./testing.md)

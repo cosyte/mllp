@@ -1,18 +1,25 @@
 ---
 id: tls
-title: MLLPS / TLS
-description: >-
-  TLS-wrapped MLLP on the client and the server: mutual TLS, verification on by default, bind
-  safety, the TLS 1.2 floor and cipher suites, and the typed failure modes.
-sidebar_position: 7
+title: Secure a link with TLS
+sidebar_label: Secure a link with TLS
+description: "Run MLLP over TLS on the client and the server: verification, mutual TLS, bind safety, the TLS 1.2 floor and cipher suites, and the typed failures."
 ---
 
-# MLLPS / TLS
+# Secure a link with TLS
 
 `@cosyte/mllp` supports TLS-wrapped MLLP ("MLLPS") on both the client and the server, built on
-Node's `node:tls`: no bundled TLS implementation, no extra dependency. This page covers enabling
+Node's `node:tls`: no bundled TLS implementation, no extra dependency. This guide covers enabling
 TLS, mutual TLS (mTLS), the verification-on-by-default posture, bind safety, the TLS 1.2 floor, and
 the typed failure modes.
+
+The samples that open a TLS link need certificate and key material of your own (PEM text in
+variables such as `caPem`, `certPem` and `keyPem`), so they are shown and not run; the ones that
+need none run in our tests. The reference entries used here are
+[`TlsOptions`](./api/src.md#tlsoptions), [`ServerTlsOptions`](./api/src.md#servertlsoptions),
+[`MllpConnectionError`](./api/src.md#mllpconnectionerror),
+[`MllpTlsConfigurationError`](./api/src.md#mllptlsconfigurationerror) and
+[`ATNA_CIPHER_SUITES`](./api/src.md#atna_cipher_suites); every code is listed in
+[Warning and error codes](./warning-and-error-codes.md#tls-and-bind-codes).
 
 Spec anchor: IHE ATNA, **ITI-19 Authenticate Node**
 (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html), the "STX: TLS 1.2 floor using BCP195 Option"
@@ -25,7 +32,7 @@ against that option, and what stays yours, is declared on the
 **Client**: pass `tls: true` for all-defaults (verification **on**), or a `TlsOptions` object to
 customize:
 
-```ts
+```ts no-run needs a TLS server and its certificate authority
 import { createClient } from "@cosyte/mllp";
 
 const client = createClient({
@@ -38,7 +45,7 @@ await client.connect();
 
 **Server**: `ServerOptions.tls` requires `cert` + `key`:
 
-```ts
+```ts no-run needs a certificate and key of your own
 import { createServer } from "@cosyte/mllp";
 
 const server = createServer({
@@ -61,7 +68,7 @@ to `'secureConnect'` (handshake complete) rather than the raw TCP `'connect'`.
 | `'WANT'`           | Requested, not required | An absent or untrusted client cert does **not** reject the connection; the peer certificate (if any) is surfaced on the `'connection'` event as `peerCertificate`. |
 | `'MUST'`           | Requested and required  | ATNA mutual node authentication. A missing or untrusted client certificate rejects the handshake; the server never accepts the connection.                         |
 
-```ts
+```ts no-run needs a certificate, a key and a client certificate authority of your own
 const server = createServer({
   tls: { cert: certPem, key: keyPem, ca: clientCaPem, clientAuth: "MUST" },
 });
@@ -71,7 +78,7 @@ server.on("connection", ({ peerCertificate }) => {
 });
 ```
 
-```ts
+```ts no-run needs a TLS server, a client certificate and keys of your own
 const client = createClient({
   host: "mllp.example.com",
   port: 2575,
@@ -103,7 +110,7 @@ guarantee:** `send()` never resolves without its ACK, so a rejected session can 
 Certificate verification defaults to **on** for every client connection. `tls: true` does not
 relax it. The only opt-out is the explicit, loud `allowUnverified` flag:
 
-```ts
+```ts no-run turns certificate verification off; never point it at an untrusted network
 const client = createClient({
   host: "127.0.0.1",
   port: 2575,
@@ -136,13 +143,21 @@ Two independent hardening changes apply to **every** `MllpServer`, TLS or plaint
   behind, and no `'listening'` event is emitted. Whatever the spelling, a wildcard bind never
   survives without `ServerOptions.allowWildcardBind: true`:
 
-```ts
-await server.listen(2575, "0.0.0.0");
-// rejects: MllpConnectionError, "refusing to bind wildcard host '0.0.0.0'.
-// Set ServerOptions.allowWildcardBind: true to bind all interfaces"
+```ts runnable
+import { createServer, MllpConnectionError } from "@cosyte/mllp";
+
+const server = createServer();
+let refused = false;
+try {
+  await server.listen(0, "0.0.0.0");
+} catch (err) {
+  refused = err instanceof MllpConnectionError;
+}
+refused; // => true
+server.getStats().listening; // => false
 ```
 
-```ts
+```ts no-run binds every network interface of the machine it runs on
 const server = createServer({ allowWildcardBind: true });
 await server.listen(2575, "0.0.0.0"); // binds; also emits a securityWarning
 ```
@@ -187,7 +202,7 @@ a property of the deployment, not of this package.
 Set `atnaTransportSecurity: true` on either side and the offered list becomes those four suites and
 nothing else, from this package rather than from the runtime:
 
-```ts
+```ts no-run needs a certificate and key of your own
 const server = createServer({
   tls: { cert: certPem, key: keyPem, atnaTransportSecurity: true },
 });
@@ -234,7 +249,7 @@ Two of the four suites are DHE, and **a server with no ephemeral Diffie-Hellman 
 offer a DHE suite at all**: it advertises the suite and then fails every handshake in it.
 `ServerTlsOptions.dhParameters` is how you hand it a group.
 
-```ts
+```ts no-run needs a certificate, a key and a parameter file of your own
 import { readFileSync } from "node:fs";
 
 const server = createServer({
@@ -335,7 +350,7 @@ the permanence classification below still applies to them, but they do not carry
   same shape as plaintext connect failures and stay **transient**. A network blip during a
   handshake still auto-heals.
 
-```ts
+```ts no-run needs a TLS server to connect to
 try {
   await client.connect();
 } catch (err) {
@@ -363,14 +378,26 @@ the message text:
 | `MLLP_TLS_CIPHER_OPTION_CONFLICT` | `atnaTransportSecurity` and `ciphers` both declare the offered list. Set exactly one.                                                                                                                                      |
 | `MLLP_TLS_DH_PARAMETERS_REJECTED` | `ServerTlsOptions.dhParameters` is not usable: not PEM, not a `DH PARAMETERS` block, or a group the TLS library refuses. Nothing is bound and there is **no fallback to a server running without them**. Server side only. |
 
-```ts
+```ts runnable
+import {
+  createServer,
+  MLLP_TLS_CIPHER_LIST_REJECTED,
+  MllpTlsConfigurationError,
+} from "@cosyte/mllp";
+
+// The list is checked before any certificate is read, so placeholders are enough here.
+const server = createServer({
+  tls: { cert: "certificate PEM", key: "key PEM", ciphers: "NO-SUCH-SUITE" },
+});
+
+let code = "";
 try {
-  await server.listen(2575);
+  await server.listen(0);
 } catch (err) {
-  if (err instanceof MllpTlsConfigurationError && err.code === MLLP_TLS_CIPHER_LIST_REJECTED) {
-    // A configuration problem, not a network one. Nothing is listening.
-  }
+  // A configuration problem, not a network one. Nothing is listening.
+  if (err instanceof MllpTlsConfigurationError) code = err.code;
 }
+code === MLLP_TLS_CIPHER_LIST_REJECTED; // => true
 ```
 
 The list is validated on its own, with no certificate, key, or passphrase in scope, so the error
@@ -389,7 +416,7 @@ Both the client and the server emit a frozen `'tlsNegotiated'` event once per co
 handshake, carrying the protocol version and cipher suite that link agreed on. That is what turns a
 conformance claim into something a deployment can evidence from its own logs rather than assert.
 
-```ts
+```ts no-run needs a TLS client and server to observe
 client.on("tlsNegotiated", ({ protocolVersion, cipherSuite, host, port }) => {
   logger.info({ tls: protocolVersion, suite: cipherSuite, host, port });
   // e.g. { tls: 'TLSv1.2', suite: 'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256', ... }

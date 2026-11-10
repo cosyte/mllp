@@ -1,10 +1,8 @@
 ---
 id: acks
 title: ACKs and the commit contract
-description: >-
-  The commit contract, the Table 0008 code the auto-ACK path selects, ACK correlation on the
-  client, both halves of the enhanced-mode exchange, and the ack-from-hl7 builder.
-sidebar_position: 5
+sidebar_label: ACKs and the commit contract
+description: "Why a positive ACK must never precede a commit, how the server picks its Table 0008 code, how the client correlates both answers, and the verbatim MSA-2 rule."
 ---
 
 # ACKs and the commit contract
@@ -28,7 +26,7 @@ allergy update, a discharge order: acknowledged and lost.
 Pair `autoAck: 'AA'` with an `onMessage` handler and the server treats your handler _as_ the commit
 step: it **awaits** it, and only then acknowledges.
 
-```ts
+```ts no-run a fragment: db stands for your own durable store
 import { createServer } from "@cosyte/mllp";
 
 const server = createServer({
@@ -41,11 +39,11 @@ const server = createServer({
 await server.listen(2575, "127.0.0.1");
 ```
 
-| Handler outcome                              | ACK the sender receives                                                        |
-| -------------------------------------------- | ------------------------------------------------------------------------------ |
-| Resolves                                     | **`AA`**: application accept. MSA-2 echoes the inbound MSH-10.                 |
-| Throws / rejects                             | **`AE`**: application error. The sender **may resend**; a retry could succeed. |
-| Throws `new MllpAckError({ ackCode: "AR" })` | **`AR`**: application reject. Do not resend unchanged.                         |
+| Handler outcome                                       | ACK the sender receives                                                        |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Resolves                                              | **`AA`**: application accept. MSA-2 echoes the inbound MSH-10.                 |
+| Throws / rejects                                      | **`AE`**: application error. The sender **may resend**; a retry could succeed. |
+| Throws `new MllpAckError(message, { ackCode: "AR" })` | **`AR`**: application reject. Do not resend unchanged.                         |
 
 `AE` is the default on failure precisely because it is the _safe_ failure: it invites a retry. Use
 `AR` only when a retry of the identical bytes is guaranteed to fail again (a malformed message, an
@@ -57,7 +55,7 @@ acknowledging, and you would emit two ACKs for one message.
 
 ## `autoAck: 'AA'` with no handler is a _transport_-accept
 
-```ts
+```ts no-run a fragment that shows one option
 const server = createServer({ autoAck: "AA" }); // ⚠️ read this before using it
 ```
 
@@ -88,14 +86,14 @@ be evaluated once the disposition is known.
 The auto-ACK path evaluates exactly that. Rows are MSH-15; columns are the disposition the commit
 contract above reached; the cell is what goes on the wire:
 
-| MSH-15             | handler resolved | handler threw  | handler threw `MllpAckError({ ackCode: 'AR' })` |
-| ------------------ | ---------------- | -------------- | ----------------------------------------------- |
-| absent / empty     | `AA`             | `AE`           | `AR`                                            |
-| `NE`               | `AA`             | `AE`           | `AR`                                            |
-| `AL`               | **`CA`**         | **`CE`**       | **`CR`**                                        |
-| `ER`               | `AA`             | **`CE`**       | **`CR`**                                        |
-| `SU`               | **`CA`**         | `AE`           | `AR`                                            |
-| outside Table 0155 | `AA` + warning   | `AE` + warning | `AR` + warning                                  |
+| MSH-15             | handler resolved | handler threw  | handler threw `MllpAckError` with `ackCode: "AR"` |
+| ------------------ | ---------------- | -------------- | ------------------------------------------------- |
+| absent / empty     | `AA`             | `AE`           | `AR`                                              |
+| `NE`               | `AA`             | `AE`           | `AR`                                              |
+| `AL`               | **`CA`**         | **`CE`**       | **`CR`**                                          |
+| `ER`               | `AA`             | **`CE`**       | **`CR`**                                          |
+| `SU`               | **`CA`**         | `AE`           | `AR`                                              |
+| outside Table 0155 | `AA` + warning   | `AE` + warning | `AR` + warning                                    |
 
 `CR` for a rejected message is what a commit acknowledgment is required to carry for an unrecognized
 message type or trigger event.
@@ -113,7 +111,7 @@ otherwise changed for that reason. Reading a field is not validating it, and ans
 handler committed with anything but a positive code would make a discharged sender resend a message
 that is already in storage.
 
-```ts
+```ts no-run a fragment: server and metrics stand for your own objects
 server.on("ackModeWarning", ({ code }) => metrics.increment("mllp.ack_mode", { code }));
 ```
 
@@ -143,7 +141,7 @@ that failed to write. Nothing from the failure reaches the wire beyond the ACK c
 `'uncorrelatable-inbound'` (no readable `MSH`, empty MSH-10, or a batch/concatenated frame), or
 `'discarded-bytes'` (a mid-frame `VT` made the decoder discard bytes and deliver only a fragment).
 
-```ts
+```ts no-run a fragment: server and metrics stand for your own objects
 server.on("nack", ({ connectionId, ackCode, reason }) =>
   metrics.increment("mllp.nack", { ackCode, reason }),
 );
@@ -179,7 +177,7 @@ single ACK this package has always correlated is, in that framing, the applicati
 
 So on an interface that runs enhanced mode, `client.send()` gives you both:
 
-```ts
+```ts no-run a fragment: host, port, payload and logger stand for your own values
 const client = createClient({ host, port, correlateByControlId: true });
 
 const applicationAck = await client.send(payload, {
@@ -265,7 +263,7 @@ warning is a plain `MllpWarning` and has none of them; a correlation warning is 
 An `AckModeWarning` is deliberately **not** counted in `getStats().warningsByCode`, whose keys are the
 decoder's own codes.
 
-```ts
+```ts no-run a fragment: client and logger stand for your own objects
 import { ackDiagnosticMessage } from "@cosyte/mllp";
 
 client.on("warning", (w) => {
@@ -299,10 +297,10 @@ whole ACK.
 
 Framing an ACK means building a real HL7 v2 `ACK^` message. That is _parsing_ work, and this package
 does not parse, so the optional `@cosyte/mllp/ack-from-hl7` subpath is a thin adapter over
-[`@cosyte/hl7`](https://github.com/cosyte/hl7)'s `buildAck`. It is the only place the two packages
+[`@cosyte/hl7`](https://docs.cosyte.com/hl7)'s `buildAck`. It is the only place the two packages
 touch, and the peer is loaded lazily on first call.
 
-```ts
+```ts no-run a fragment: payload and conn stand for an inbound message and its connection
 import { buildAckAA, buildAckAE } from "@cosyte/mllp/ack-from-hl7";
 
 // Only after your handler durably committed (the commit contract):
@@ -347,7 +345,7 @@ withholds the field values: MSH-10 is inbound payload content, a warning goes to
 not a place PHI may reach. You already hold both byte strings: your inbound `payload`, and the
 returned `MllpAck.payload`. **Check your warnings.**
 
-```ts
+```ts no-run a fragment: payload and conn stand for an inbound message and its connection
 import { buildAckAA, MLLP_ACK_CONTROL_ID_NOT_VERBATIM } from "@cosyte/mllp/ack-from-hl7";
 
 const ack = buildAckAA(payload);
@@ -396,7 +394,7 @@ Hand it a `string` (or an already-parsed `Hl7Message`) and the wire bytes are **
 re-encodes your text with the same codec it decodes it with, so the codec cancels on both sides and
 the verbatim proof cannot run:
 
-```ts
+```ts no-run pseudo-code: the inbound bytes are described in a comment, not written out
 const wire = /* MSH-10 = A <0x8B> B, legal under MSH-18 = 8859/1 */;
 
 buildAckAA(wire);                        // MSA-2 = A <0x8B> B         ✅ verbatim, verified
@@ -419,7 +417,7 @@ ASCII byte range (`0x53`, `'S'`). An emitted-byte proxy would fall silent on exa
 the code units carry the high bit whatever the codec did to the byte,
 so the strongly-discouraged text-plus-override path is flagged for the same reason the default is.
 
-```ts
+```ts no-run a fragment: decodedText stands for an inbound message you already decoded
 import { buildAckAA, MLLP_ACK_CONTROL_ID_UNVERIFIABLE } from "@cosyte/mllp/ack-from-hl7";
 
 const ack = buildAckAA(decodedText);
@@ -447,7 +445,7 @@ A **non-text** codec is not:
 Either way the emitted frame is wholesale garbage the receiver cannot parse, so `buildMllpAck`
 **throws a `TypeError` at the boundary** rather than hand back an unusable ACK:
 
-```ts
+```ts no-run a fragment: decodedText and wireBuffer stand for an inbound message
 buildAckAA(decodedText, { encoding: "base64" }); // ❌ throws TypeError, not a serializable ACK codec
 buildAckAA(wireBuffer, { encoding: "base64" }); // ❌ throws too, same reason, on a Buffer
 buildAckAA(wireBuffer, { encoding: "latin1" }); // ✅ charset codec: the byte-level escape hatch
@@ -457,9 +455,9 @@ This is a caller mistake, caught loudly and immediately. It applies to a **`Buff
 a non-text codec there garbles the _inbound_ decode so it never
 parses as `MSH` (routing to the unparseable fallback whose MSA-2 is empty, so the
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` check never runs) and then serializes that fallback ACK to
-garbage bytes that intermittently contain a framing delimiter and trip the strict frame encoder
-(`MllpFramingError`, about 3 to 4 percent of calls, identically on Node 22 and 24). It was never the "loud AE" it
-was once documented to be. The legitimate byte-level escape hatch is unchanged: a **charset** codec
+garbage bytes that can contain a framing delimiter and trip the strict frame encoder with an
+`MllpFramingError`, depending on the bytes. Refusing the codec at the boundary makes the outcome the
+same every time. The legitimate byte-level escape hatch is unchanged: a **charset** codec
 on a `Buffer` (`"latin1"` byte-verbatim, or a lossy `"ascii"` that is still caught loudly by
 `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`) is exactly what serves a receiving system that demands a specific
 byte-level codec.
@@ -501,3 +499,12 @@ impossible. Split the batch and ACK each message yourself, or handle it with `au
   client side of that exchange is built, and correlates both halves; see
   [Enhanced mode](#enhanced-mode-one-send-two-acknowledgments).
 - **No MLLP Release 2 commit-ack bytes.** See [Limitations](./limitations.md).
+
+## Guides that apply this
+
+- [Receive and acknowledge messages](./receive-messages.md): the commit contract and the `nack`
+  event in a server.
+- [Send messages](./send-messages.md): correlation, timeouts and both enhanced-mode
+  acknowledgments on a client.
+- [Build ACKs with @cosyte/hl7](./build-acks-from-hl7.md): the `ack-from-hl7` builders and their
+  warnings.
