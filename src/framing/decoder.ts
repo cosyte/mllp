@@ -31,8 +31,11 @@ import type { MllpWarning, WarningCode } from "./registry.js";
 /** Internal FSM states. */
 type ReaderState = "SCANNING_FOR_VT" | "READING_PAYLOAD" | "EXPECTING_CR";
 
-/** Initial accumulator buffer size (4 KiB). Grows by doubling as needed. */
-const INITIAL_ACCUMULATOR_SIZE = 4096;
+/**
+ * The accumulator's size (4 KiB). It never grows: a frame longer than one block is kept as a list
+ * of parts and joined once, on delivery.
+ */
+const BLOCK_SIZE = 4096;
 
 /**
  * Shared empty snippet for framing errors whose anomaly is not a specific byte (e.g.
@@ -132,9 +135,17 @@ export class FrameReader {
   private readonly _maxFrameSize: number;
 
   private _state: ReaderState = "SCANNING_FOR_VT";
-  /** Reusable accumulator buffer, grown by doubling as needed. */
-  private _accumulator: Buffer = Buffer.allocUnsafe(INITIAL_ACCUMULATOR_SIZE);
-  /** Number of payload bytes written to accumulator in current frame. */
+  /** Reusable 4 KiB block the current frame's latest bytes are gathered in. */
+  private _accumulator: Buffer = Buffer.allocUnsafe(BLOCK_SIZE);
+  /** Number of the current frame's bytes in `_accumulator`. */
+  private _blockUsed = 0;
+  /**
+   * The current frame's earlier bytes, in order, once it outgrew one block: full blocks, and
+   * exact copies of runs longer than a block. Dropped with the frame, so a reader holds no more
+   * than the frame it is part way through.
+   */
+  private _parts: Buffer[] = [];
+  /** Number of payload bytes in the current frame, `_parts` and `_accumulator` together. */
   private _writePos = 0;
   /** Monotonic absolute stream byte offset across the entire connection lifetime. */
   private _byteOffset = 0;
@@ -169,6 +180,59 @@ export class FrameReader {
    * ```
    */
   push(chunk: Buffer): void {
+    // Anything but a byte array (TypeScript says Buffer; JavaScript lets a caller pass anything)
+    // is read one element at a time, as every chunk always was, so even that behaves as before.
+    if (!(chunk instanceof Uint8Array)) {
+      this._pushEachByte(chunk);
+      return;
+    }
+    const end = chunk.length;
+    // The next FS and VT at or after `i`, found by a native search and kept until `i` passes
+    // them, so no byte of the chunk is searched twice for the same delimiter. `-1`: none left.
+    let nextFs = -2;
+    let nextVt = -2;
+    let i = 0;
+    while (i < end) {
+      if (this._state === "READING_PAYLOAD") {
+        if (nextFs !== -1 && nextFs < i) nextFs = chunk.indexOf(FS, i);
+        if (nextVt !== -1 && nextVt < i) nextVt = chunk.indexOf(VT, i);
+        // The run of ordinary payload bytes from `i`: up to the next FS or VT, or the chunk end.
+        let stop = nextFs === -1 ? end : nextFs;
+        if (nextVt !== -1 && nextVt < stop) stop = nextVt;
+        if (stop > i) {
+          if (
+            this._writePos === 0 &&
+            stop === nextFs &&
+            stop + 1 < end &&
+            chunk[stop + 1] === CR &&
+            stop - i <= this._room()
+          ) {
+            // A whole payload and its `FS CR` in this chunk: deliver a copy straight from the
+            // chunk, the accumulator untouched. At the callback the state and the offset are what
+            // the byte-at-a-time reading had there: past the FS, at the CR, `EXPECTING_CR`.
+            const payload = Buffer.from(chunk.subarray(i, stop));
+            this._byteOffset += stop - i + 1;
+            this._state = "EXPECTING_CR";
+            this._deliver(payload);
+            this._state = "SCANNING_FOR_VT";
+            this._byteOffset++;
+            i = stop + 2;
+            continue;
+          }
+          this._appendRun(chunk, i, stop);
+          i = stop;
+          continue;
+        }
+      }
+      // A delimiter, or a byte outside a payload: one byte, read exactly as always.
+      this._processByte(chunk[i] as number);
+      i++;
+      this._byteOffset++;
+    }
+  }
+
+  /** The byte-at-a-time reading, for a chunk that is not a byte array. */
+  private _pushEachByte(chunk: ArrayLike<number>): void {
     for (let i = 0; i < chunk.length; i++, this._byteOffset++) {
       const byte = chunk[i];
       /* v8 ignore next -- i < chunk.length, so the index is always in range */
@@ -176,6 +240,81 @@ export class FrameReader {
 
       this._processByte(byte);
     }
+  }
+
+  /**
+   * How many more payload bytes the size cap admits. A byte is admitted while
+   * `writePos < maxFrameSizeBytes`, so a fractional cap admits up to its ceiling, a cap already
+   * reached admits none, and a `NaN` cap, which that comparison never refuses, admits any number.
+   */
+  private _room(): number {
+    const room = this._maxFrameSize - this._writePos;
+    if (Number.isNaN(room)) return Infinity;
+    return room > 0 ? Math.ceil(room) : 0;
+  }
+
+  /**
+   * Append the ordinary payload bytes `chunk[start, stop)`, none of them FS or VT, in one copy.
+   * The size cap holds as it did byte by byte: every byte it admits is appended, and the first it
+   * refuses throws at that byte's offset.
+   */
+  private _appendRun(chunk: Uint8Array, start: number, stop: number): void {
+    const length = stop - start;
+    const take = Math.min(length, this._room());
+    if (take > 0) {
+      this._gather(chunk, start, start + take);
+      this._byteOffset += take;
+    }
+    if (take < length) this._throwTooLarge();
+  }
+
+  /** Refuse the payload byte at the current offset: the frame has reached its size cap. */
+  private _throwTooLarge(): never {
+    // PHI: the snippet must NOT carry a run of accumulated payload bytes, that is a
+    // field-body slice of clinical content (the too-large frame is a full HL7 message).
+    // The anomaly here is the size, not any specific byte, so the snippet is empty; the
+    // structural facts (cap, byte offset) live in the message. (MLLP-9 PHI audit.)
+    throw new MllpFramingError(
+      "MLLP_FRAME_TOO_LARGE",
+      this._byteOffset,
+      EMPTY_SNIPPET,
+      `Frame payload exceeded maxFrameSizeBytes (${this._maxFrameSize}) at offset ${this._byteOffset}`,
+    );
+  }
+
+  /**
+   * Add `src[start, end)` to the current frame: into the block while it has room; then the full
+   * block becomes a part, a run of a block or more is copied as one part of its own, and what is
+   * left starts a fresh block.
+   */
+  private _gather(src: Uint8Array, start: number, end: number): void {
+    let at = start;
+    const fill = Math.min(end - at, BLOCK_SIZE - this._blockUsed);
+    if (fill > 0) {
+      this._accumulator.set(src.subarray(at, at + fill), this._blockUsed);
+      this._blockUsed += fill;
+      at += fill;
+    }
+    if (at < end) {
+      this._parts.push(this._accumulator);
+      this._accumulator = Buffer.allocUnsafe(BLOCK_SIZE);
+      const rest = end - at;
+      if (rest >= BLOCK_SIZE) {
+        this._parts.push(Buffer.from(src.subarray(at, end)));
+        this._blockUsed = 0;
+      } else {
+        this._accumulator.set(src.subarray(at, end), 0);
+        this._blockUsed = rest;
+      }
+    }
+    this._writePos += end - start;
+  }
+
+  /** Forget the current frame's bytes: the block is kept for the next frame, the parts dropped. */
+  private _discard(): void {
+    this._writePos = 0;
+    this._blockUsed = 0;
+    if (this._parts.length > 0) this._parts = [];
   }
 
   /**
@@ -191,7 +330,7 @@ export class FrameReader {
    */
   reset(): void {
     this._state = "SCANNING_FOR_VT";
-    this._writePos = 0;
+    this._discard();
     this._byteOffset = 0;
     this._wsStart = 0;
     this._wsCount = 0;
@@ -337,25 +476,14 @@ export class FrameReader {
         this._byteOffset,
         `Unexpected VT (0x0B) mid-payload at offset ${this._byteOffset}; discarding ${this._writePos} accumulated bytes`,
       );
-      this._writePos = 0;
+      this._discard();
       // Remain in READING_PAYLOAD, the VT starts a new frame payload accumulation
       this._state = "READING_PAYLOAD";
       return;
     }
 
     // Regular payload byte, enforce size cap BEFORE appending
-    if (this._writePos >= this._maxFrameSize) {
-      // PHI: the snippet must NOT carry a run of accumulated payload bytes, that is a
-      // field-body slice of clinical content (the too-large frame is a full HL7 message).
-      // The anomaly here is the size, not any specific byte, so the snippet is empty; the
-      // structural facts (cap, byte offset) live in the message. (MLLP-9 PHI audit.)
-      throw new MllpFramingError(
-        "MLLP_FRAME_TOO_LARGE",
-        this._byteOffset,
-        EMPTY_SNIPPET,
-        `Frame payload exceeded maxFrameSizeBytes (${this._maxFrameSize}) at offset ${this._byteOffset}`,
-      );
-    }
+    if (this._writePos >= this._maxFrameSize) this._throwTooLarge();
 
     this._appendByte(byte);
   }
@@ -473,15 +601,15 @@ export class FrameReader {
     );
   }
 
-  /** Grow the internal accumulator by doubling and write one byte. */
+  /** Add one byte to the current frame, starting a fresh block when this one is full. */
   private _appendByte(byte: number): void {
-    if (this._writePos >= this._accumulator.length) {
-      const newSize = this._accumulator.length * 2;
-      const grown = Buffer.allocUnsafe(newSize);
-      this._accumulator.subarray(0, this._writePos).copy(grown);
-      this._accumulator = grown;
+    if (this._blockUsed === BLOCK_SIZE) {
+      this._parts.push(this._accumulator);
+      this._accumulator = Buffer.allocUnsafe(BLOCK_SIZE);
+      this._blockUsed = 0;
     }
-    this._accumulator[this._writePos++] = byte;
+    this._accumulator[this._blockUsed++] = byte;
+    this._writePos++;
   }
 
   /**
@@ -489,8 +617,21 @@ export class FrameReader {
    * The copy isolates callers from internal accumulator reuse.
    */
   private _deliverFrame(): void {
-    const payload = Buffer.from(this._accumulator.subarray(0, this._writePos));
-    this._writePos = 0;
+    const block = this._accumulator.subarray(0, this._blockUsed);
+    if (this._parts.length === 0) {
+      this._deliver(Buffer.from(block));
+      return;
+    }
+    this._parts.push(block);
+    this._deliver(Buffer.concat(this._parts, this._writePos));
+  }
+
+  /**
+   * Deliver `payload` via `onFrame` with this frame's start offset and warnings, the frame's
+   * bytes forgotten first.
+   */
+  private _deliver(payload: Buffer): void {
+    this._discard();
     const frameStart = this._frameStartOffset;
     const frameWarnings: readonly MllpWarning[] = this._frameWarnings;
     this._frameWarnings = []; // reset for next frame

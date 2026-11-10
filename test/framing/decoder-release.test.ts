@@ -19,9 +19,11 @@ const CR = 0x0d;
 /** The 4 KiB a reader starts with. */
 const INITIAL = 4096;
 
-/** The bytes a reader is holding for frames, read through its private field. */
+/** The bytes a reader is holding for frames, read through its private fields. */
 function held(reader: FrameReader): number {
-  return (reader as unknown as { _accumulator: Buffer })._accumulator.length;
+  const inside = reader as unknown as { _accumulator: Buffer; _parts?: Buffer[] };
+  const parts = inside._parts ?? [];
+  return inside._accumulator.length + parts.reduce((n, part) => n + part.length, 0);
 }
 
 /** `bytes` in reads of `size`. */
@@ -60,6 +62,17 @@ describe("FrameReader releases a large frame's buffer", () => {
     expect(held(reader)).toBeLessThanOrEqual(INITIAL);
     reader.push(Buffer.from([0x4d, FS, CR]));
     expect(got.map((p) => p.toString("latin1"))).toEqual(["M"]);
+  });
+
+  it("holding no more than the partial frame and one block while a frame is part way", () => {
+    const reader = new FrameReader({ onFrame: () => undefined });
+    const partial = Buffer.concat([Buffer.from([VT]), LARGE.subarray(0, 600 * 1024)]);
+    for (const chunk of reads(partial, 1460)) reader.push(chunk);
+    expect(held(reader)).toBeLessThanOrEqual(600 * 1024 + INITIAL);
+    for (const chunk of reads(LARGE.subarray(600 * 1024, 700 * 1024), 64 * 1024)) {
+      reader.push(chunk);
+    }
+    expect(held(reader)).toBeLessThanOrEqual(700 * 1024 + INITIAL);
   });
 
   it("on reset() with a large partial frame pending", () => {
