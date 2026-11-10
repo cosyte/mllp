@@ -1,15 +1,18 @@
 ---
 id: testing
-title: Testing and verification
-description: >-
-  Test against @cosyte/mllp without opening a socket using the in-memory transport, then verify the
-  interface engine you are integrating with before go-live using the differential harness.
-sidebar_position: 8
+title: Test your code and verify an engine
+sidebar_label: Test your code and verify an engine
+description: "Test code that uses @cosyte/mllp without opening a socket, using the in-memory transport, and observe an engine you integrate with using runDifferential."
 ---
 
-# Testing and verification
+# Test your code and verify an engine
 
-Two shipped tools, aimed at two different questions.
+Two shipped tools, aimed at two different questions. This page is about testing your own code; how
+we test this package is on [Testing and quality](./testing-and-quality.md).
+
+The reference entries used here are [`InMemoryTransport`](./api/src/testing.md#inmemorytransport),
+[`Connection`](./api/src.md#connection), [`runDifferential`](./api/src.md#rundifferential) and
+[`DifferentialReport`](./api/src.md#differentialreport).
 
 `@cosyte/mllp/testing` answers **"does my code drive this library correctly?"** It gives you a
 socket-free transport, so a test that exercises framing, acknowledgment correlation, backpressure or
@@ -35,7 +38,7 @@ import { InMemoryTransport } from "@cosyte/mllp/testing";
 const [clientSide, serverSide] = InMemoryTransport.pair();
 
 // Stand a de-framer up on the receiving end, the way a server would.
-const received = [];
+const received: Buffer[] = [];
 const reader = new FrameReader({ onFrame: (payload) => received.push(payload) });
 serverSide.onData((chunk) => reader.push(chunk));
 
@@ -45,7 +48,7 @@ clientSide.write(encodeFrame(message));
 
 // Already through, with nothing awaited.
 received.length; // => 1
-received[0].equals(message); // => true
+received[0]?.equals(message); // => true
 ```
 
 ### Simulating the conditions a real link produces
@@ -72,7 +75,7 @@ import { InMemoryTransport } from "@cosyte/mllp/testing";
 const [clientSide, serverSide] = InMemoryTransport.pair();
 serverSide.split(1); // one byte per read: the worst a real socket can do
 
-const frames = [];
+const frames: Buffer[] = [];
 const reader = new FrameReader({ onFrame: (payload) => frames.push(payload) });
 serverSide.onData((chunk) => reader.push(chunk));
 
@@ -80,7 +83,7 @@ clientSide.write(encodeFrame(Buffer.from("A")));
 
 // Four separate reads, one reassembled frame.
 frames.length; // => 1
-frames[0].toString(); // => "A"
+frames[0]?.toString(); // => "A"
 ```
 
 ### Driving a whole `Connection` over it
@@ -88,27 +91,40 @@ frames[0].toString(); // => "A"
 A pair is a `Transport`, so it goes straight into a `Connection` and you get the state machine,
 acknowledgment correlation and the warning stream with no network underneath:
 
-```ts
-import { Connection, encodeFrame } from "@cosyte/mllp";
+```ts runnable
+import { buildRawAck, Connection, encodeFrame, FrameReader } from "@cosyte/mllp";
 import { InMemoryTransport } from "@cosyte/mllp/testing";
 
 const [clientSide, serverSide] = InMemoryTransport.pair();
 
+const inbound: Buffer[] = [];
 const conn = new Connection({
   transport: clientSide,
-  onMessage: (payload) => handle(payload), // framing already stripped
-  onWarning: (w) => logger.warn({ code: w.code, byteOffset: w.byteOffset }),
+  onMessage: (payload) => inbound.push(payload), // framing already stripped
 });
+conn.notifyConnect(null, null); // stands in for the socket finishing its connect
 
-// The other end is your test double: answer, stay silent, or drop, whichever the case needs.
-serverSide.onData(() => serverSide.write(encodeFrame(ackBytes)));
+// The other end is your test double: here it answers every message with AA.
+const peer = new FrameReader({
+  onFrame: (payload) => serverSide.write(encodeFrame(buildRawAck(payload, "AA"))),
+});
+serverSide.onData((chunk) => peer.push(chunk));
+
+conn.send(
+  encodeFrame(
+    Buffer.from("MSH|^~\\&|APP|FAC|RECV|RFAC|20260101120000||ADT^A01|CTRL0501|P|2.5.1\r"),
+  ),
+);
+
+conn.state; // => "CONNECTED"
+inbound.length; // => 1
+inbound[0]?.toString("latin1").includes("MSA|AA|CTRL0501"); // => true
 ```
 
 Answering nothing is how you exercise an acknowledgment timeout without waiting on a real peer;
 `serverSide.destroy()` is how you exercise a reset; `serverSide.pause()` is how you exercise
-backpressure. This package holds itself to the same rule: every test here that can run over the pair
-does, and real sockets are reserved for integration smoke tests. See
-[Connection, reconnect & backpressure](./reliability.md) for the states and events you will observe.
+backpressure. See [Connection, reconnect and backpressure](./reliability.md) for the states and
+events you will observe.
 
 One thing the pair deliberately refuses: writing to a peer from inside that peer's own `onData`
 handler throws. Re-entrant delivery would either recurse without end or reorder frames, and a
@@ -116,9 +132,9 @@ transport that silently reordered frames would make every test above prove the w
 
 ## Verify your own engine: `runDifferential`
 
-Interoperability is proven in this repository against freely available engines only. Whatever you are
-integrating with is very probably not one of them, and its behavior is not something this package
-will claim to know. See
+Our own tests check this package's framing against canonical Release 1 frames written from the
+specification, and no live engine runs in our CI. Whatever engine you integrate with, its behavior
+is not something this package claims to know. See
 [It is not differentially verified against Epic or Cerner](./limitations.md#it-is-not-differentially-verified-against-epic-or-cerner-so-verify-your-own-engine).
 
 What ships instead is the harness, so you can observe your own engine before go-live.
@@ -127,7 +143,25 @@ reports for each exchange whether the frame that came back was byte-identical to
 Release 1 block (`VT` + payload + `FS` + `CR`) and whether its `MSA-2` echoed the `MSH-10` of the
 message it answered.
 
-```ts
+```ts runnable
+import { createStarterServer, runDifferential } from "@cosyte/mllp";
+
+// Stands in for your engine. Against a real one, pass its "host:port", for example from
+// process.env["MLLP_DIFF_PEER"].
+const engine = await createStarterServer({ port: 0, onMessage: () => {} });
+
+const report = await runDifferential({ peer: `127.0.0.1:${engine.getStats().port ?? 0}` });
+
+report.result; // => "parity-observed"
+report.exchanges.map((exchange) => exchange.outcome); // => ["answered", "answered"]
+
+await engine.close();
+```
+
+Run from the command line against an engine you name, the same call reads its address from the
+environment:
+
+```ts no-run sends synthetic messages to the engine named in MLLP_DIFF_PEER
 // differential.ts
 import { runDifferential } from "@cosyte/mllp";
 
@@ -153,7 +187,8 @@ Four things about the report, so you know what you are holding:
 - **A deviation is named, not guessed at.** Each one carries a stable warning code and a byte offset:
   `MLLP_MISSING_LEADING_VT`, `MLLP_FS_WITHOUT_CR`, `MLLP_LF_AFTER_FS`, `MLLP_LEADING_WHITESPACE` and
   `MLLP_FRAME_TOO_LARGE` for the block, and `MLLP_ACK_UNMATCHED_CONTROL_ID` when an acknowledgment
-  does not echo the control ID it answered. See [Framing & tolerance](./framing.md).
+  does not echo the control ID it answered. See
+  [Warning and error codes](./warning-and-error-codes.md).
 - **It carries no payload content, by construction.** A code, a byte offset, and structural counts.
   Not a run of the peer's bytes, not the acknowledged control ID, not a truncation of either, so a
   report is safe to attach to a ticket. That matters, because the engine you aim this at may hold
@@ -180,10 +215,11 @@ control ID, its own timestamp, and its own sending application, and it is suppos
 Point it at something you can reach over TLS by supplying your own `connect`, which is handed the
 resolved peer and returns a transport that is not connected yet:
 
-```ts
+```ts no-run needs a reachable TLS engine and its certificate authority
 import tls from "node:tls";
 import { runDifferential, TlsTransport } from "@cosyte/mllp";
 
+const ca = process.env["MLLP_DIFF_CA"] ?? "";
 const report = await runDifferential({
   peer: process.env["MLLP_DIFF_PEER"],
   connect: (peer) => new TlsTransport(tls.connect({ host: peer.host, port: peer.port, ca })),
@@ -192,8 +228,8 @@ const report = await runDifferential({
 
 ## Next
 
-- [Framing & tolerance](./framing.md): the wire format and every warning code a report can name.
-- [Connection, reconnect & backpressure](./reliability.md): the states and events a pair-driven
+- [Warning and error codes](./warning-and-error-codes.md): every code a report can name.
+- [Connection, reconnect and backpressure](./reliability.md): the states and events a pair-driven
   `Connection` walks through.
 - [Known limitations & non-goals](./limitations.md): what an observation is evidence of, and what it
   is not.

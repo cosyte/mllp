@@ -1,31 +1,32 @@
 {
   "docs": [
     "intro",
+    { "type": "category", "label": "Installation", "items": ["installation"] },
+    { "type": "category", "label": "Quickstart", "items": ["quickstart"] },
     {
       "type": "category",
-      "label": "Installation",
-      "items": ["installation"]
+      "label": "How-to guides",
+      "items": [
+        "send-messages",
+        "receive-messages",
+        "tolerate-sender-quirks",
+        "tls",
+        "build-acks-from-hl7",
+        "testing"
+      ]
     },
     {
       "type": "category",
-      "label": "Quickstart",
-      "items": ["quickstart"]
+      "label": "Explanation",
+      "items": ["acks", "framing", "reliability", "limitations"]
     },
     {
       "type": "category",
-      "label": "Core concepts",
-      "collapsed": false,
-      "items": ["framing", "acks"]
+      "label": "Reference",
+      "items": ["warning-and-error-codes", "conformance"]
     },
-    {
-      "type": "category",
-      "label": "Guides",
-      "items": ["reliability", "tls", "testing", "conformance"]
-    },
-    {
-      "type": "category",
-      "label": "Troubleshooting",
-      "items": ["limitations"]
-    }
+    { "type": "category", "label": "Troubleshooting", "items": ["troubleshooting"] },
+    "testing-and-quality",
+    "performance"
   ]
 }

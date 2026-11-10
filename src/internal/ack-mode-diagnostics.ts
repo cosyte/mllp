@@ -7,7 +7,7 @@
  * regardless of what arrives on the wire. It is the same shape, and for the same reason, as
  * the correlation registry beside it.
  *
- * ## What these diagnostics may carry
+ * **What these diagnostics may carry**
  *
  * Stable codes, byte counts, byte offsets, elapsed times, and an acknowledgement code drawn
  * from the closed six-code Table 0008 set. Nothing else. A control ID is payload content, a

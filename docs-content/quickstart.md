@@ -1,10 +1,8 @@
 ---
 id: quickstart
 title: Quickstart
-description: >-
-  Start a server on loopback, send it an HL7 v2 message and read the acknowledgment it built, then
-  frame bytes yourself and tolerate a real sender's quirks.
-sidebar_position: 3
+sidebar_label: Quickstart
+description: "Start a server on loopback, send it an HL7 v2 message and read the acknowledgment, then frame bytes yourself and tolerate a sender's quirks."
 ---
 
 # Quickstart
@@ -16,8 +14,8 @@ that everything else (the client, the server, reconnect, TLS) is built on.
 
 ## Send a message and read the acknowledgment
 
-Start a server, send it a message, and read the acknowledgment it built. Auto-ACK is on by default,
-and the server awaits your handler, which is the durable commit step, before it answers. The payload
+Start a server, send it a message, and read the acknowledgment it built. The starter server turns
+auto-ACK on, and it awaits your handler, which is the durable commit step, before it answers. The payload
 API is **Buffer-first** everywhere: HL7 v2 messages are raw bytes with caller-managed charset
 decoding.
 
@@ -64,7 +62,7 @@ messages committed: 1
 
 `MSA-2` echoes the control id you sent, byte for byte, which is what lets the client match the answer
 to the message. The acknowledgment's own `MSH-7` and `MSH-10` change on every run. A handler that
-throws is answered `AE`, never `AA`: see [ACKs & the commit contract](./acks.md).
+throws is answered `AE`, never `AA`: see [ACKs and the commit contract](./acks.md).
 
 ## Frame a message, read it back
 
@@ -110,7 +108,7 @@ import { FrameReader } from "@cosyte/mllp";
 // A sender padded the frame with a leading space before <VT>.
 const padded = Buffer.from([0x20, 0x0b, 0x41, 0x1c, 0x0d]); // SP, VT, "A", FS, CR
 
-const codes = [];
+const codes: string[] = [];
 const reader = new FrameReader({
   onFrame: () => {},
   onWarning: (w) => codes.push(w.code),
@@ -123,7 +121,8 @@ codes.includes("MLLP_LEADING_WHITESPACE"); // => true
 
 The warning codes are a **public, versioned contract**. Log pipelines key on them, so renaming one
 is a breaking change. `MllpServer` ships tolerant defaults because it is the side that must accept
-what real senders emit; see [Framing & tolerance](./framing.md) for the flag-by-flag table.
+what real senders emit; see [Tolerate a sender's framing quirks](./tolerate-sender-quirks.md) for
+the flag-by-flag table.
 
 ## The encoder refuses an unframable payload
 
@@ -142,63 +141,14 @@ That is why a payload's charset matters to the transport: UTF-16/UTF-32 put thos
 ordinary characters. Use a single-byte encoding, UTF-8, or Shift_JIS. See
 [Known limitations](./limitations.md).
 
-## Send a message over a connection
-
-On a real link, `createStarterClient` is the batteries-included path (auto-reconnect on, sensible
-backoff and backpressure). `send()` resolves with **the ACK correlated to your message**, not with
-whatever bytes arrive next:
-
-```ts
-import { createStarterClient } from "@cosyte/mllp";
-
-await using client = await createStarterClient({ host: "127.0.0.1", port: 2575 });
-
-const ack = await client.send(Buffer.from(rawHl7)); // resolves on the correlated ACK frame
-// Pass an AbortSignal to bound any await; the client is disposed on scope exit.
-```
-
-`send` never resolves without its ACK, so a message can never silently "deliver". Reconnects,
-backoff, and backpressure are handled for you. See
-[Connection, reconnect & backpressure](./reliability.md).
-
-## Receive messages: with the commit contract
-
-Server-side, pair `autoAck: 'AA'` with an `onMessage` handler and the server treats your handler
-**as** the durable-commit step: it awaits it, and only then acknowledges: `AA` on success, a
-**negative** code if your handler throws. A positive ACK can never precede a successful commit:
-
-```ts
-import { createServer } from "@cosyte/mllp";
-
-const server = createServer({
-  autoAck: "AA",
-  onMessage: async (payload, meta) => {
-    // `payload` is a raw Buffer. Charset decoding stays with you.
-    await db.commit(payload); // throw here ⇒ AE (a resend may succeed), never AA
-  },
-});
-await server.listen(2575, "127.0.0.1");
-```
-
-This is the page to internalize before you put the package in front of a clinical system. Read
-[ACKs & the commit contract](./acks.md) next.
-
-> **About runnable examples.** The blocks tagged ` ```ts runnable ` above are extracted by the docs
-> build, executed against the package, and their `// =>` results asserted, so a documented example
-> can never silently drift from the code. The first one opens a loopback socket on a port the
-> operating system picks and closes both ends, so it runs as it stands. The two client and server
-> blocks after the framing examples name a fixed port and a database of yours, so they are shown as
-> plain ` ```ts ` illustrations. For socket-free _integration_ tests, the `@cosyte/mllp/testing`
-> subpath's in-memory transport wires a `Connection` end-to-end with no ports and no certs:
-> [Testing & verification](./testing.md).
-
 ## Next
 
-- [Framing & tolerance](./framing.md): the wire format, the opt-in tolerance flags, and the stable
-  warning-code registry.
-- [ACKs & the commit contract](./acks.md): the page to read before a clinical deployment.
-- [Connection, reconnect & backpressure](./reliability.md): the 6-state machine, backoff, and load
-  shedding.
-- [Testing & verification](./testing.md): the socket-free in-memory transport, and the differential
-  harness for checking a real engine before go-live.
-- [Known limitations & non-goals](./limitations.md): what _not_ to trust this transport to do.
+- [Send messages](./send-messages.md): a client for a real link, with timeouts, reconnect and a
+  clean shutdown.
+- [Receive and acknowledge messages](./receive-messages.md): a server that commits each message
+  before it answers.
+- [Tolerate a sender's framing quirks](./tolerate-sender-quirks.md): the four tolerance flags and
+  where to set them.
+- [Test your code and verify an engine](./testing.md): the socket-free in-memory transport, and
+  the differential harness for checking a real engine before go-live.
+- [ACKs and the commit contract](./acks.md): why the server answers the way it does.

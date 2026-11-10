@@ -139,7 +139,7 @@ function segmentEnd(buf: Buffer, i: number): number {
  * first three bytes are `MSH` and whose 4th byte is a usable field separator. Returns
  * its `[start, end)` bounds, or `null` if the payload has no such segment.
  *
- * ## Why we search rather than demand `MSH` at byte 0
+ * **Why we search rather than demand `MSH` at byte 0**
  *
  * §2.5.1 does make `MSH` the first segment of a *message*, and it is tempting to read
  * that as "byte 0 or it is not HL7", that is what an earlier version of this module
@@ -211,7 +211,7 @@ function isBatchEnvelopeSegmentAt(buf: Buffer, i: number): boolean {
  * envelope (`FHS`/`BHS`/`BTS`/`FTS`, §2.10.3) or a **second `MSH` segment** (two or more
  * messages concatenated in one frame, a documented real-world quirk).
  *
- * ## Why this is a fail-safe refusal signal, not tolerance
+ * **Why this is a fail-safe refusal signal, not tolerance**
  *
  * A single MSA-2 can echo exactly **one** MSH-10. A batch is a *sequence* of messages with
  * a `BTS-1` count; a concatenated frame is N messages back to back. Either way, a positive
@@ -284,7 +284,7 @@ export interface MshSegment {
  *   * decodes only that segment, as `latin1` (see {@link CONTROL_ID_ENCODING}), so a
  *     high-bit byte survives and a 16 MB payload is not decoded to read its header.
  *
- * ## The segment terminator is load-bearing, not a detail
+ * **The segment terminator is load-bearing, not a detail**
  *
  * An earlier version of this scan counted field separators without ever stopping at
  * the segment terminator. On a **truncated MSH**, `MSH|^~\&|EPIC|HOSP|MIRTH|LAB\r`,
@@ -334,7 +334,7 @@ export function readMshSegment(buf: Buffer): MshSegment | null {
  * `CR`/`LF` is pure segment-terminator noise: it carries **no data**, so dropping it
  * cannot hide anything.
  *
- * ## What this deliberately does NOT do: skip an `FHS`/`BHS` batch header
+ * **What this deliberately does NOT do: skip an `FHS`/`BHS` batch header**
  *
  * An earlier version of this function re-based on the *located `MSH`*, which also skipped
  * a batch envelope. That was a serious mistake. A batch (§2.10.3) is

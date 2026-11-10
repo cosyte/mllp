@@ -116,7 +116,7 @@ export const MLLP_ACK_CONTROL_ID_NOT_VERBATIM = "MLLP_ACK_CONTROL_ID_NOT_VERBATI
  * carries a **non-ASCII** control ID, a combination whose byte-verbatim echo
  * (HL7 v2.5.1 §2.9.2.2) `buildMllpAck` **cannot verify**, and may silently be breaking.
  *
- * ## Why a distinct code from {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM}
+ * **Why a distinct code from {@link MLLP_ACK_CONTROL_ID_NOT_VERBATIM}**
  *
  * `MLLP_ACK_CONTROL_ID_NOT_VERBATIM` is a *proof of failure*: on a `Buffer` inbound the
  * wire bytes are in hand, the check compares MSA-2 against them, and it fires only when
@@ -374,7 +374,7 @@ function resolveEncoding(
  * discover broken a round trip later. So this throws a `TypeError` here, exactly as
  * {@link assertKnownAckCode} does for a bad `code`.
  *
- * ## Why this applies to the `Buffer` path too
+ * **Why this applies to the `Buffer` path too**
  *
  * An earlier iteration scoped this to the text path, reasoning
  * that a lossy override on a `Buffer` was *already* caught loudly by the byte-level
@@ -440,7 +440,7 @@ function inboundBytes(
  * correlation assertion: if it passes, a `@cosyte/mllp` sender will match this
  * ACK to its send.
  *
- * ## Its reach is bounded by what the caller gave us, and that bound is REAL
+ * **Its reach is bounded by what the caller gave us, and that bound is REAL**
  *
  * `inboundBytes` re-encodes a `string`/`Hl7Message` inbound with the *same* codec the
  * ACK is encoded with, so on that path the codec **cancels on both sides** and this
@@ -462,7 +462,7 @@ function inboundBytes(
  * carries no MSH-10 (the peer's own no-correlation fail-safe already warns about that).
  * We never warn on a comparison we could not actually perform.
  *
- * ## The message names NO field content, deliberately
+ * **The message names NO field content, deliberately**
  *
  * An earlier version hex-encoded both control IDs into the warning text, reasoning that
  * a control ID is routing metadata rather than clinical content and that an operator
@@ -705,7 +705,7 @@ function buildUnparseableFallback(
  * `.toString()`, cheap, and the wire format is the one true interchange
  * boundary between two copies of the same library.
  *
- * ## Why a `Buffer` is decoded here rather than handed to `parseHL7`
+ * **Why a `Buffer` is decoded here rather than handed to `parseHL7`**
  *
  * `parseHL7(buffer)` does its own charset resolution (MSH-18 discovery, or an
  * `options.charset` override) and decodes through a WHATWG `TextDecoder`. That is

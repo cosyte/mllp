@@ -1,31 +1,22 @@
 ---
 id: installation
 title: Installation
-description: >-
-  Install @cosyte/mllp and the optional @cosyte/hl7 peer, meet the Node and module-system
-  prerequisites, and confirm the install with a smoke test.
-sidebar_position: 2
+sidebar_label: Installation
+description: "Install @cosyte/mllp and the optional @cosyte/hl7 peer, check the Node.js version, and confirm the install with a smoke test."
 ---
 
 # Installation
 
-`@cosyte/mllp` is a **zero-dependency** TypeScript MLLP client + server for Node.js. It ships dual
-**ESM + CJS** builds with per-condition type declarations, so it works from either module system
-without configuration. It is **transport, not parsing**. It moves HL7 v2 bytes over TCP and never
-inspects the payload.
-
-> **Status:** published on npm and public, so the `npm install @cosyte/mllp` command below is live,
-> not aspirational. Where the package sits on the release ladder, and what that means for the
-> stability of its public surface, is stated in one place:
-> [API stability](./limitations.md#api-stability). Read it before you pin.
+> **Status:** published on npm and public, so the `npm install @cosyte/mllp` command below is live.
+> Where the package sits on the release ladder, and what that means for the stability of its public
+> surface, is stated in one place: [API stability](./limitations.md#api-stability). Read it before
+> you pin.
 
 ## Prerequisites
 
-- **Node.js 22 or later, tested on 22, 24, and 26.** The whole `@cosyte/*` suite targets ES2023. This package leans on
-  `Symbol.asyncDispose` and `AbortSignal` on its public surface, both 2026 Node baseline.
-- A package manager: `pnpm`, `npm`, or `yarn`.
-- **No runtime dependencies.** The client, server, and framing are Node stdlib only (`net`, `tls`,
-  `stream`, `events`, `buffer`, `timers`).
+- **Node.js 22 or later.** CI runs every pull request on Node.js 22, 24 and 26. The public surface
+  uses `Symbol.asyncDispose` and `AbortSignal`, both available on every supported line.
+- A package manager: `npm`, `pnpm` or `yarn`.
 
 ## Install
 
@@ -33,23 +24,26 @@ inspects the payload.
 npm install @cosyte/mllp
 ```
 
+The package has no runtime dependencies. The client, the server and the framing codec use Node.js
+built-ins only (`net`, `tls`, `events` and `crypto`).
+
 ### The optional `@cosyte/hl7` peer
 
-`@cosyte/hl7` is an **optional** peer dependency, needed **only** if you use the
-[`ack-from-hl7`](./acks.md) subpath (which builds spec-correct ACKs by delegating the parsing to
-`@cosyte/hl7`). Everything else (framing, the client, the server, TLS, the in-memory transport)
-works without it. Install it only if you reach for that subpath:
+`@cosyte/hl7` is an optional peer dependency, needed only for the `@cosyte/mllp/ack-from-hl7`
+subpath, which builds acknowledgments by parsing the inbound message with it. Everything else
+(framing, the client, the server, TLS and the in-memory transport) works without it.
 
 ```bash
 npm install @cosyte/hl7
 ```
 
-Calling `ack-from-hl7` without the peer installed throws a typed `MllpPeerMissingError`, not a bare
-module-not-found.
+Calling into `ack-from-hl7` without the peer installed throws a typed `MllpPeerMissingError`, not a
+bare module-not-found error. The peer is loaded on first use, so importing the subpath alone does
+not need it.
 
 ## Smoke test
 
-Confirm the package resolves and its version symbol is present:
+Confirm the package resolves and its version marker is present:
 
 ```ts runnable
 import { VERSION } from "@cosyte/mllp";
@@ -57,24 +51,26 @@ import { VERSION } from "@cosyte/mllp";
 typeof VERSION; // => "string"
 ```
 
-If that resolves, the install is good. Head to the [Quickstart](./quickstart.md).
+If that runs, the install is good. Continue with the [Quickstart](./quickstart.md).
 
 ## Module systems
 
-`@cosyte/mllp` is `"type": "module"` and exposes both conditions, so both of these resolve to the
-right build without extra configuration:
+`@cosyte/mllp` is an ES module package that also ships a CommonJS build, and each condition carries
+its own type declarations (`.d.ts` for `import`, `.d.cts` for `require`), on all three entry points:
+the root, `/testing` and `/ack-from-hl7`.
 
-```ts
-// ESM / TypeScript
+```ts runnable
+// ES modules and TypeScript
 import { MllpClient, MllpServer } from "@cosyte/mllp";
+
+typeof MllpClient; // => "function"
+typeof MllpServer; // => "function"
 ```
 
-```js
+```js no-run CommonJS needs require, and the sample runner loads every sample as an ES module
 // CommonJS
 const { MllpClient, MllpServer } = require("@cosyte/mllp");
 ```
 
-The types are published per-condition (`.d.ts` for `import`, `.d.cts` for `require`) and gated by
-`attw` on every release, across all three subpaths (root, `/testing`, `/ack-from-hl7`), so editor
-IntelliSense matches the build you actually load. A build that would publish a tarball without those
-declarations fails the release rather than shipping.
+Every release is checked with `attw` (Are the Types Wrong) across the three entry points, so the
+types an editor shows match the build that loads.

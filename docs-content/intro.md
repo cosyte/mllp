@@ -1,180 +1,70 @@
 ---
 id: intro
-title: Getting started
-description: >-
-  An MLLP client and server for Node.js, with canonical framing, ACK correlation, reconnect,
-  backpressure, and TLS, and no runtime dependencies.
-sidebar_position: 1
+title: Overview
+sidebar_label: Overview
+description: "An MLLP client and server for HL7 v2 in Node.js: framing, acknowledgment correlation, reconnect, backpressure and TLS, with no runtime dependencies."
 ---
 
 # @cosyte/mllp
 
-An MLLP client and server for Node.js: the transport-only sibling to
-`@cosyte/hl7`. It moves HL7 v2 messages over TCP and gives you the parts the spec leaves to you:
-canonical framing (`VT + payload + FS + CR`), ACK correlation, auto-reconnect with backoff,
-backpressure, TLS, and an in-memory transport so your tests never open a socket. Zero runtime
-dependencies; Node stdlib only.
+`@cosyte/mllp` is our MLLP client and server for HL7 v2 in Node.js and TypeScript. MLLP (the
+Minimal Lower Layer Protocol) is how HL7 v2 messages travel over TCP: each message is wrapped in
+three framing bytes, and the receiver answers with an acknowledgment. This package carries those
+bytes and gives you the parts the protocol leaves to you:
 
-This package is transport, not parsing. It carries bytes and never inspects the payload. Pair it
-with `@cosyte/hl7` (or any parser) when you need to read fields. The `ack-from-hl7` subpath is the
-one optional bridge between the two.
+- **Framing.** A strict encoder that always writes the canonical block (`VT` payload `FS` `CR`), and
+  a decoder that tolerates the quirks real senders have, one opt-in flag at a time, with a stable
+  warning code for each.
+- **Acknowledgments.** A client whose `send()` resolves with the acknowledgment for that message,
+  not the next bytes off the wire, and a server that only answers `AA` after your handler has
+  committed the message.
+- **A connection that lasts.** Auto-reconnect with backoff and jitter, dead-peer detection,
+  backpressure with a bounded queue, and a shutdown that waits for outstanding acknowledgments.
+- **TLS.** Verification on by default, mutual TLS, a TLS 1.2 floor, and the IHE ATNA cipher suites
+  as an opt-in.
+- **Testing.** An in-memory transport so your tests open no socket, and a harness that observes how
+  an engine you name frames and acknowledges.
 
-## Install
+It has no runtime dependencies: the client, the server and the codec use Node.js built-ins only.
+It is published on npm under the MIT license.
 
-```bash
-npm install @cosyte/mllp
-```
+## Who it is for
 
-`@cosyte/hl7` is an **optional** peer dependency. Install it only if you use the `ack-from-hl7`
-subpath:
+Developers who connect a Node.js service to a hospital interface engine, a lab system or another
+HL7 v2 sender or receiver, and who need the transport to fail safely: a message that was not
+committed must never be acknowledged as if it were.
 
-```bash
-npm install @cosyte/hl7
-```
+## What it is not
 
-## Send a message
+- **Not a parser.** It never reads the payload. Pair it with
+  [`@cosyte/hl7`](https://docs.cosyte.com/hl7) or any other parser to read fields. The one
+  exception is the optional `@cosyte/mllp/ack-from-hl7` subpath, which builds an acknowledgment
+  through `@cosyte/hl7`.
+- **Not a queue.** It holds a message in memory only until its acknowledgment settles it, and
+  keeps nothing across a restart. MLLP with an HL7 acknowledgment is at-least-once at best, and
+  de-duplication belongs to the application.
+- **Not MLLP Release 2.** Only Release 1 framing is implemented.
 
-```ts
-import { MllpClient } from "@cosyte/mllp";
+[Known limitations and non-goals](./limitations.md) lists every bound, and is worth reading before
+you depend on the package.
 
-const client = new MllpClient({ host: "127.0.0.1", port: 2575 });
-await client.connect();
+## The package at a glance
 
-const ack = await client.send(Buffer.from(rawHl7)); // resolves on the correlated ACK frame
-await client[Symbol.asyncDispose]();
-```
-
-`send` resolves with the ACK frame the remote returns, matched back to your message, not just the
-next bytes off the wire. Reconnects, backoff, and backpressure are handled for you; pass an
-`AbortSignal` to bound any await.
-
-## Receive messages
-
-```ts
-import { createServer } from "@cosyte/mllp";
-
-const server = createServer({
-  onMessage: (payload, meta) => {
-    // Each inbound message, de-framed for you. `payload` is a raw Buffer.
-    // Charset decoding stays with the caller. How you acknowledge is next.
-    route(payload);
-  },
-});
-await server.listen(2575, "127.0.0.1");
-```
-
-The server frames and de-frames for you; you decide what to send back. The payload is a raw
-`Buffer`. Charset decoding stays with the caller. The `'message'` event and the `onMessage`
-callback always fire **before** any ACK is sent.
-
-## Fail-safe ACKs: the commit contract
-
-A positive acknowledgment (`AA`) tells the sender "you may forget this message. I have it." So a
-server must **never** emit `AA` before the message is durably handled. `@cosyte/mllp` makes that
-structural: pair `autoAck: 'AA'` with an `onMessage` handler, and the server **awaits your handler
-(the durable-commit step) and only then ACKs**: `AA` on success, a **negative** code on failure,
-never `AA` before commit.
-
-```ts
-const server = createServer({
-  autoAck: "AA",
-  onMessage: async (payload) => {
-    await db.commit(payload); // throw here ⇒ AE (resend may succeed), never AA
-  },
-});
-```
-
-- **Handler resolves ⇒ `AA`** (HL7 Table 0008), echoing the inbound `MSH-10` into `MSA-2`.
-- **Handler throws / rejects ⇒ `AE`** (application error, the sender may resend).
-- **Handler throws `MllpAckError({ ackCode: 'AR' })` ⇒ `AR`** (application reject, do not resend
-  unchanged).
-
-On failure the server emits a PHI-safe `'nack'` event carrying only `{ connectionId, ackCode }`. The
-payload and the thrown error's message (which may carry PHI) never reach the wire or the event.
-
-`autoAck: 'AA'` **without** an `onMessage` handler degrades to a **transport-accept**: `AA` means
-"bytes received and framed", not "application-processed": only safe when a downstream component owns
-durability. For full control, pass `autoAck: fn` to build the ACK bytes yourself, or omit `autoAck`
-for manual mode (`respond()` / `conn.send()`).
-
-## Framing and tolerance
-
-The encoder is strict: it always emits canonical `VT + payload + FS + CR`. The decoder is liberal
-where you let it be: real-world senders drop the leading `VT`, append a stray `LF`, or pad with
-whitespace, and each tolerated deviation surfaces as a warning with a **stable code** and byte offset
-rather than failing the frame (Postel's Law). Codes such as `MLLP_MISSING_LEADING_VT` and
-`MLLP_TRAILING_BYTES` are part of the public API.
-
-Note that **tolerance is opt-in**: a bare `FrameReader` is _strict_ by default, while `MllpServer`
-ships tolerant defaults (`allowFsOnly`, `allowLfAfterFs`, `allowLeadingWhitespace`) because it is the
-side that must accept what real senders emit. Accumulators are bounded: frames past
-`maxFrameSizeBytes` (16 MB default) throw `MLLP_FRAME_TOO_LARGE` instead of growing unbounded.
-
-See [Framing & tolerance](./framing.md) for the flag-by-flag table and the full warning-code registry.
-
-## Testing without sockets
-
-```ts
-import { Connection } from "@cosyte/mllp";
-import { InMemoryTransport } from "@cosyte/mllp/testing";
-
-// Two connected, in-process ends: a write to one delivers synchronously to the other.
-const [clientSide, serverSide] = InMemoryTransport.pair();
-const conn = new Connection({ transport: clientSide });
-// Drive framing + ACK correlation deterministically against `serverSide`.
-```
-
-The in-memory transport is a first-class deliverable from the `@cosyte/mllp/testing` subpath.
-Pair two ends with `InMemoryTransport.pair()` and hand one to a `Connection` (deterministic, no
-ports, no certs) and reserve real sockets for integration smoke tests. Chunked reads, backpressure
-and an abrupt disconnect are all one call each, and `runDifferential` ships alongside it to check a
-real engine before go-live: see [Testing & verification](./testing.md).
-
-## ACK from an HL7 message
-
-The optional `ack-from-hl7` subpath builds a spec-correct, MLLP-framed ACK from an inbound HL7 v2
-message: a thin adapter over `@cosyte/hl7`'s `buildAck` (hl7 owns the ACK content and control
-tables; this package frames and correlates). It is the only place this package touches
-`@cosyte/hl7`, and the peer is loaded lazily on first call:
-
-```ts
-import { buildAckAA, buildAckAE } from "@cosyte/mllp/ack-from-hl7";
-
-// After your handler durably commits the message (the commit contract):
-const { frame, code, correlationId } = buildAckAA(payload); // requires the @cosyte/hl7 peer dep
-socket.write(frame); // VT + ACK + FS + CR, MSA-2 echoes the inbound MSH-10 verbatim
-
-// On a processing failure, never acknowledge what you did not commit:
-socket.write(buildAckAE(payload, { error: { conditionCode: "207" } }).frame);
-```
-
-`buildMllpAck` is the core (explicit `code`); `buildAckAA/AE/AR/CA/CE/CR` are the six
-Table-0008 conveniences; `detectMode` reports original-vs-enhanced from the inbound MSH-15/16.
-Fail-safe by construction: an inbound without a findable MSH-10 **never** yields a positive
-ACK. The disposition downgrades (`AA`→`AE`, `CA`→`CE`) and the result carries a warning
-(`ACK_NO_CORRELATION_ID` from the peer, or `MLLP_ACK_INBOUND_UNPARSEABLE` when the inbound
-could not be parsed at all). Warnings carry codes and structural context only, never message
-content.
-
-The builder's own limits (it trusts your disposition, MSA-2 is a canonical re-serialization rather
-than the inbound's original bytes, and there is no enhanced-mode sequencing) are covered in
-[ACKs & the commit contract](./acks.md).
+| Entry point                 | What it holds                                                                |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `@cosyte/mllp`              | the client, the server, the framing codec, TLS, and the differential harness |
+| `@cosyte/mllp/testing`      | `InMemoryTransport`, two connected in-process ends for socket-free tests     |
+| `@cosyte/mllp/ack-from-hl7` | acknowledgment builders over the optional `@cosyte/hl7` peer                 |
 
 ## Next
 
-- **[Framing & tolerance](./framing.md)**: the wire format, the opt-in tolerance flags, the stable
-  warning codes, and the PHI contract on diagnostics.
-- **[ACKs & the commit contract](./acks.md)**: the page to read before you put this in front of a
-  clinical system.
-- **[Connection, reconnect & backpressure](./reliability.md)**: the 6-state machine, backoff,
-  dead-peer detection, and load shedding.
-- **[MLLPS / TLS](./tls.md)**: mutual TLS, the ATNA TLS 1.2 floor, bind safety.
-- **[Testing & verification](./testing.md)**: the socket-free in-memory transport, and the
+- [Installation](./installation.md): install the package and the optional peer.
+- [Quickstart](./quickstart.md): a server and a client on loopback, then the frame underneath.
+- [Send messages](./send-messages.md) and [Receive and acknowledge messages](./receive-messages.md):
+  the two everyday tasks.
+- [Testing and verification](./testing.md): the socket-free in-memory transport, and the
   differential harness for checking a real engine before go-live.
-- **[Known limitations & non-goals](./limitations.md)**: what _not_ to trust this package to do.
-  Read it before you depend on it.
-- **[Conformance statement](./conformance.md)**: the single document to hand a conformance reviewer,
-  declaring the framing tolerances, the per-role acknowledgment verdicts, and the IHE options in
-  actor-and-option terms.
-- The **API reference** for every export, generated from source.
-- For parsing the payloads this transport carries, see **`@cosyte/hl7`**.
+- [ACKs and the commit contract](./acks.md): the page to read before you put this in front of a
+  clinical system.
+- [Conformance statement](./conformance.md): the declaration to hand a conformance reviewer.
+- The [API reference](./api/README.md), generated from the source.

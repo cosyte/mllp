@@ -533,7 +533,7 @@ export class MllpClient extends EventEmitter {
    */
   private _ackSweepTimer: ReturnType<typeof setInterval> | null = null;
 
-  // ── Reconnect state (Plan 04, CLIENT-05/06/12/17/18) ─────────────────────
+  // ── Reconnect state: backoff, the retry strategy and the reconnect cycle ─────────
   private readonly _autoReconnect: boolean;
   private readonly _initialDelayMs: number;
   private readonly _maxDelayMs: number;
@@ -558,7 +558,7 @@ export class MllpClient extends EventEmitter {
   /** Last delay (ms) used by the strategy. Surfaced via RetryContext.lastDelayMs. */
   private _lastDelayMs = 0;
 
-  // ── Backpressure + pipeline state (Plan 05, CLIENT-07/CLIENT-19, D-23) ───
+  // ── Backpressure and pipeline state: the high-water mark and the in-flight set ───
   /** Count cap; `Number.POSITIVE_INFINITY` when only bytes configured. */
   private readonly _hwmCount: number;
   /** Byte cap; `Number.POSITIVE_INFINITY` when only count configured. */
@@ -608,7 +608,7 @@ export class MllpClient extends EventEmitter {
    */
   private _reconnectFactory: (() => { conn: Connection; arm: () => void }) | null = null;
 
-  // ── PLAN-06, observability counters for getStats (OBS-01, D-26) ─────────
+  // ── Observability counters for getStats() ─────────────────────────────────
   /** Total successful `conn.send()` flushes since construction. */
   private _sentTotal = 0;
   /** Total ACKs resolved since construction. */
@@ -1073,7 +1073,7 @@ export class MllpClient extends EventEmitter {
       this._correlator = new Correlator({
         mode: this._correlateByControlId ? "controlId" : "fifo",
         ackTimeoutMs: this._ackTimeoutMs,
-        // Plan 05, pipeline:false collapses the in-flight set to ≤1 (D-06).
+        // pipeline:false collapses the in-flight set to at most one.
         maxInFlight: this._pipeline ? Number.POSITIVE_INFINITY : 1,
         onWarning: (code, ctx) => {
           // PLAN-06 (OBS-01, D-26), aggregate Correlator-emitted warning counts.
@@ -1776,7 +1776,7 @@ export class MllpClient extends EventEmitter {
    *
    * Emits a frozen `'ack'` event on every successful match.
    *
-   * ## Enhanced acknowledgement mode
+   * **Enhanced acknowledgement mode**
    *
    * A message whose MSH-15 or MSH-16 is not null asks for the two-part protocol of HL7
    * v2.5.1 §2.9, and on a client correlating by control ID this method delivers it: the

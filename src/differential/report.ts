@@ -6,14 +6,14 @@
  * `JSON.stringify` a run straight into a log pipeline or a review artifact and read it
  * programmatically without scraping human-readable text.
  *
- * ## What this report is, and what it is not
+ * **What this report is, and what it is not**
  *
  * It records what was **observed** on the wire. It is not a conformance verdict and never
  * becomes one: no field says a peer is conformant, no field says a run passed, and nothing
  * here decides whether an interface is fit to carry clinical traffic. That judgement
  * belongs to the people standing the interface up, with this evidence in front of them.
  *
- * ## Why no payload content appears anywhere
+ * **Why no payload content appears anywhere**
  *
  * A peer answering this harness may be a live engine holding real patients, and a report
  * is a diagnostic surface that gets written to a file, pasted into a ticket and mailed to

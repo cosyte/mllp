@@ -4,7 +4,7 @@
  * `'connection'` listener, a `tls.Server`'s `'tlsClientError'` listener, or the `catch` block of a
  * `void`-ed async task.
  *
- * ## Why this module exists
+ * **Why this module exists**
  *
  * Node's `EventEmitter.emit()` calls its listeners **synchronously**. So a throwing subscriber does
  * not merely fail itself, it unwinds the whole call stack it was invoked from. When that stack
@@ -18,7 +18,7 @@
  * could take down an MLLP interface. That is not an acceptable failure mode for a transport
  * carrying clinical messages.
  *
- * ## The rule
+ * **The rule**
  *
  * **No `emit()` reachable from a transport, accept, or handshake callback, in *any* class, may go
  * uncontained.** Scoping this rule to one class is exactly the mistake that let it regress: the
