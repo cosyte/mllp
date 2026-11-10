@@ -50,11 +50,12 @@ you depend on the package.
 
 ## The package at a glance
 
-| Entry point                 | What it holds                                                                |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| `@cosyte/mllp`              | the client, the server, the framing codec, TLS, and the differential harness |
-| `@cosyte/mllp/testing`      | `InMemoryTransport`, two connected in-process ends for socket-free tests     |
-| `@cosyte/mllp/ack-from-hl7` | acknowledgment builders over the optional `@cosyte/hl7` peer                 |
+| Entry point                 | What it holds                                                                    |
+| --------------------------- | -------------------------------------------------------------------------------- |
+| `@cosyte/mllp`              | the client, the server, the framing codec, TLS, and the differential harness     |
+| `@cosyte/mllp/testing`      | `InMemoryTransport`, two connected in-process ends for socket-free tests         |
+| `@cosyte/mllp/ack-from-hl7` | acknowledgment builders over the optional `@cosyte/hl7` peer                     |
+| `@cosyte/mllp/arbitraries`  | fast-check generators of frames and streams, over the optional `fast-check` peer |
 
 ## Next
 
@@ -64,6 +65,8 @@ you depend on the package.
   the two everyday tasks.
 - [Testing and verification](./testing.md): the socket-free in-memory transport, and the
   differential harness for checking a real engine before go-live.
+- [Property-test your code](./property-test-your-code.md): generated frames, messy streams and
+  hostile bytes for testing code you build on this package.
 - [ACKs and the commit contract](./acks.md): the page to read before you put this in front of a
   clinical system.
 - [Conformance statement](./conformance.md): the declaration to hand a conformance reviewer.

@@ -41,6 +41,16 @@ Calling into `ack-from-hl7` without the peer installed throws a typed `MllpPeerM
 bare module-not-found error. The peer is loaded on first use, so importing the subpath alone does
 not need it.
 
+### The optional `fast-check` peer
+
+`fast-check` is an optional peer dependency too, needed only for the `@cosyte/mllp/arbitraries`
+subpath, the generators for [property-testing your own code](./property-test-your-code.md). Install
+it where your tests run:
+
+```bash
+npm install --save-dev fast-check
+```
+
 ## Smoke test
 
 Confirm the package resolves and its version marker is present:
@@ -56,8 +66,8 @@ If that runs, the install is good. Continue with the [Quickstart](./quickstart.m
 ## Module systems
 
 `@cosyte/mllp` is an ES module package that also ships a CommonJS build, and each condition carries
-its own type declarations (`.d.ts` for `import`, `.d.cts` for `require`), on all three entry points:
-the root, `/testing` and `/ack-from-hl7`.
+its own type declarations (`.d.ts` for `import`, `.d.cts` for `require`), on all four entry points:
+the root, `/testing`, `/ack-from-hl7` and `/arbitraries`.
 
 ```ts runnable
 // ES modules and TypeScript
@@ -72,5 +82,5 @@ typeof MllpServer; // => "function"
 const { MllpClient, MllpServer } = require("@cosyte/mllp");
 ```
 
-Every release is checked with `attw` (Are the Types Wrong) across the three entry points, so the
+Every release is checked with `attw` (Are the Types Wrong) across the four entry points, so the
 types an editor shows match the build that loads.

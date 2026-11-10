@@ -79,6 +79,16 @@
         "default": "./dist/ack-from-hl7/index.cjs"
       }
     },
+    "./arbitraries": {
+      "import": {
+        "types": "./dist/arbitraries/index.d.ts",
+        "default": "./dist/arbitraries/index.mjs"
+      },
+      "require": {
+        "types": "./dist/arbitraries/index.d.cts",
+        "default": "./dist/arbitraries/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -87,10 +97,14 @@
   },
   "prettier": "@cosyte/prettier-config",
   "peerDependencies": {
-    "@cosyte/hl7": ">=0.0.0"
+    "@cosyte/hl7": ">=0.0.0",
+    "fast-check": "^4.0.0"
   },
   "peerDependenciesMeta": {
     "@cosyte/hl7": {
+      "optional": true
+    },
+    "fast-check": {
       "optional": true
     }
   },

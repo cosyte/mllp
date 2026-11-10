@@ -73,7 +73,10 @@ pnpm add @cosyte/hl7
 
 Node.js 22 or later, tested on 22, 24, and 26 (`engines.node` is `>=22.0.0`). The package ships
 dual ESM (`import`) and CommonJS (`require`) builds, each with its own type declarations, and has
-zero runtime dependencies.
+zero runtime dependencies. The optional `@cosyte/mllp/arbitraries` entry point, fast-check
+generators for
+[property-testing your own code](https://github.com/cosyte/mllp/blob/main/docs-content/property-test-your-code.md),
+needs `fast-check` installed beside it; the main entry point never loads it.
 
 ## Usage
 
