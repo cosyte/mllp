@@ -62,6 +62,61 @@ describe("Connection: the peer closes while we drain", () => {
   });
 });
 
+describe("Connection.close(): a drain ended by another route", () => {
+  /** True once `p` has settled, checked after the pending callbacks have run. */
+  async function settledSoon(p: Promise<unknown>): Promise<boolean> {
+    let settled = false;
+    void p.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return settled;
+  }
+
+  it("resolves as soon as a destroy ends the drain, not at the drain timeout", async () => {
+    const { conn } = connected();
+    conn.beforeClose = () => new Promise<void>(() => undefined);
+
+    const closing = conn.close({ drainTimeoutMs: 60_000 });
+    const joined = conn.close({ drainTimeoutMs: 10 });
+    conn.destroy(new Error("operator abort"));
+
+    expect(conn.state).toBe("CLOSED");
+    expect(await settledSoon(closing)).toBe(true);
+    expect(await settledSoon(joined)).toBe(true);
+  });
+
+  it("resolves as soon as the peer's close ends the drain", async () => {
+    const { conn, peer } = connected();
+    conn.beforeClose = () => new Promise<void>(() => undefined);
+
+    const closing = conn.close({ drainTimeoutMs: 60_000 });
+    peer.close();
+
+    expect(conn.state).toBe("DISCONNECTED");
+    expect(await settledSoon(closing)).toBe(true);
+  });
+
+  it("resolves when a 'DRAINING' subscriber destroys the connection before the drain starts", async () => {
+    const { conn } = connected();
+    const beforeClose = vi.fn(() => new Promise<void>(() => undefined));
+    conn.beforeClose = beforeClose;
+    conn.on("stateChange", (e: StateChangeEvent) => {
+      if (e.to === "DRAINING") conn.destroy();
+    });
+
+    const closing = conn.close({ drainTimeoutMs: 60_000 });
+
+    expect(conn.state).toBe("CLOSED");
+    expect(await settledSoon(closing)).toBe(true);
+  });
+});
+
 describe("Connection: the drain times out after the connection was destroyed", () => {
   it("leaves the destroyed state alone and destroys the transport only once", async () => {
     const destroy = vi.fn<(reason?: Error) => void>();
@@ -103,6 +158,54 @@ describe("Connection: a late connect after close", () => {
 
     expect(conn.state).toBe("CLOSED");
     expect(states).toEqual([]);
+  });
+
+  it("emits no 'connect' and leaves the peer address unset", () => {
+    const [local] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: local });
+    conn.destroy();
+    const connects: unknown[] = [];
+    conn.on("connect", (e: unknown) => connects.push(e));
+
+    conn.notifyConnect("127.0.0.1", 2575);
+
+    expect(connects).toEqual([]);
+    const stats = conn.getStats();
+    expect(stats.remoteAddress).toBeNull();
+    expect(stats.remotePort).toBeNull();
+    expect(stats.connectedAt).toBeNull();
+  });
+
+  it("emits 'connect' once when the connect is reported twice", () => {
+    const [local] = InMemoryTransport.pair();
+    const conn = new Connection({ transport: local });
+    const connects: unknown[] = [];
+    conn.on("connect", (e: unknown) => connects.push(e));
+
+    conn.notifyConnect("127.0.0.1", 2575);
+    conn.notifyConnect("127.0.0.2", 2576);
+
+    expect(connects).toHaveLength(1);
+    expect(conn.getStats().remoteAddress).toBe("127.0.0.1");
+  });
+});
+
+describe("Connection: an 'error' subscriber that destroys the connection", () => {
+  it("stays CLOSED: the transport error's own DISCONNECTED is not applied on top", () => {
+    const { conn, local } = connected();
+    const states: StateChangeEvent[] = [];
+    const disconnects: unknown[] = [];
+    conn.on("stateChange", (e: StateChangeEvent) => states.push(e));
+    conn.on("disconnect", (e: unknown) => disconnects.push(e));
+    conn.on("error", () => {
+      conn.destroy(new Error("subscriber gave up"));
+    });
+
+    local.destroy(new Error("ECONNRESET"));
+
+    expect(conn.state).toBe("CLOSED");
+    expect(states.map((e) => e.to)).toEqual(["CLOSED"]);
+    expect(disconnects).toEqual([]);
   });
 });
 
