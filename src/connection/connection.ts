@@ -192,6 +192,17 @@ export class Connection extends EventEmitter {
 
   private _onWarningFn: ((w: MllpWarning) => void) | null = null;
   private _drainPromise: Promise<void> | null = null;
+  /** Resolves {@link Connection._leftDraining}; called on the transition out of `DRAINING`. */
+  private _leaveDraining!: (value: "left") => void;
+  /**
+   * Settles when the connection leaves `DRAINING` by any route: the drain finishing, the drain
+   * timeout, a `destroy()`, or the peer closing. A connection enters `DRAINING` at most once, so
+   * one promise per connection is enough. The drain races it, so a `close()` never outlives the
+   * drain it waits on.
+   */
+  private readonly _leftDraining = new Promise<"left">((resolve) => {
+    this._leaveDraining = resolve;
+  });
 
   /**
    * beforeClose hook, no-op default that resolves immediately.
@@ -344,6 +355,10 @@ export class Connection extends EventEmitter {
    *   then `DRAINING → DISCONNECTED` once the hook resolves, or `DRAINING → CLOSED`
    *   if the drain timeout elapses first.
    * - If `DRAINING`: waits for the existing drain to complete (idempotent).
+   *
+   * Every pending `close()` resolves as soon as the connection leaves `DRAINING`, by whatever
+   * route: the hook resolving, the drain timeout, a `destroy()`, or the peer closing. A
+   * `destroy()` during a long drain therefore ends the wait at once, not at the drain timeout.
    * - If `CLOSED` or `DISCONNECTED`: no-op.
    *
    * @param opts.drainTimeoutMs - Override drain timeout (default: `opts.drainTimeoutMs ?? 30_000`).
@@ -387,28 +402,39 @@ export class Connection extends EventEmitter {
    */
   private async _drainWithTimeout(timeoutMs: number): Promise<void> {
     const drainPromise = this.beforeClose(timeoutMs);
+    let handle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<"timeout">((resolve) => {
-      const handle = setTimeout(() => {
+      handle = setTimeout(() => {
         resolve("timeout");
       }, timeoutMs);
       // Unref so this timer does not keep the process alive (T-03-04-01)
       handle.unref();
     });
 
-    const result = await Promise.race([drainPromise.then(() => "done" as const), timeoutPromise]);
+    try {
+      // The third racer ends the wait the moment something else ends the drain (a destroy, the
+      // peer closing). Without it, a close() whose connection was already destroyed by a second,
+      // shorter close() still waited out this close's own timeout.
+      const result = await Promise.race([
+        drainPromise.then(() => "done" as const),
+        timeoutPromise,
+        this._leftDraining,
+      ]);
 
-    if (result === "timeout") {
-      // Drain timed out, force to CLOSED (DRAINING → CLOSED per LIFE-02)
-      if (this._state === "DRAINING") {
+      // Already out of DRAINING: whatever ended the drain has settled the state and the transport.
+      if (this._state !== "DRAINING") return;
+
+      if (result === "timeout") {
+        // Drain timed out, force to CLOSED (DRAINING → CLOSED per LIFE-02)
         this._transition("CLOSED", "drain timeout");
         this._transport.destroy();
-      }
-    } else {
-      // Drain completed, DRAINING → DISCONNECTED (LIFE-02)
-      if (this._state === "DRAINING") {
+      } else {
+        // Drain completed, DRAINING → DISCONNECTED (LIFE-02)
         this._transition("DISCONNECTED");
         this._transport.close();
       }
+    } finally {
+      clearTimeout(handle);
     }
   }
 
@@ -494,6 +520,9 @@ export class Connection extends EventEmitter {
     this._dispatchContained(() => {
       this.emit("stateChange", event);
     });
+
+    // Release every close() waiting on this drain, whatever ended it.
+    if (from === "DRAINING") this._leaveDraining("left");
 
     // Fire semantic lifecycle events
     if (to === "DISCONNECTED") {

@@ -62,6 +62,61 @@ describe("Connection: the peer closes while we drain", () => {
   });
 });
 
+describe("Connection.close(): a drain ended by another route", () => {
+  /** True once `p` has settled, checked after the pending callbacks have run. */
+  async function settledSoon(p: Promise<unknown>): Promise<boolean> {
+    let settled = false;
+    void p.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return settled;
+  }
+
+  it("resolves as soon as a destroy ends the drain, not at the drain timeout", async () => {
+    const { conn } = connected();
+    conn.beforeClose = () => new Promise<void>(() => undefined);
+
+    const closing = conn.close({ drainTimeoutMs: 60_000 });
+    const joined = conn.close({ drainTimeoutMs: 10 });
+    conn.destroy(new Error("operator abort"));
+
+    expect(conn.state).toBe("CLOSED");
+    expect(await settledSoon(closing)).toBe(true);
+    expect(await settledSoon(joined)).toBe(true);
+  });
+
+  it("resolves as soon as the peer's close ends the drain", async () => {
+    const { conn, peer } = connected();
+    conn.beforeClose = () => new Promise<void>(() => undefined);
+
+    const closing = conn.close({ drainTimeoutMs: 60_000 });
+    peer.close();
+
+    expect(conn.state).toBe("DISCONNECTED");
+    expect(await settledSoon(closing)).toBe(true);
+  });
+
+  it("resolves when a 'DRAINING' subscriber destroys the connection before the drain starts", async () => {
+    const { conn } = connected();
+    const beforeClose = vi.fn(() => new Promise<void>(() => undefined));
+    conn.beforeClose = beforeClose;
+    conn.on("stateChange", (e: StateChangeEvent) => {
+      if (e.to === "DRAINING") conn.destroy();
+    });
+
+    const closing = conn.close({ drainTimeoutMs: 60_000 });
+
+    expect(conn.state).toBe("CLOSED");
+    expect(await settledSoon(closing)).toBe(true);
+  });
+});
+
 describe("Connection: the drain times out after the connection was destroyed", () => {
   it("leaves the destroyed state alone and destroys the transport only once", async () => {
     const destroy = vi.fn<(reason?: Error) => void>();

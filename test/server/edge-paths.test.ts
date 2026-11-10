@@ -267,13 +267,36 @@ describe("MllpServer.close(): cutting a slow drain short", () => {
       peerClosed = true;
     });
 
-    const slow = server.close({ drainTimeoutMs: 1_500 });
+    const slow = server.close({ drainTimeoutMs: 60_000 });
     const fast = server.close({ drainTimeoutMs: 50 });
 
-    // Well before the first close's 1,500 ms timeout, the straggler is gone.
+    // Well before the first close's 60 s timeout, the straggler is gone.
     await waitFor(() => peerClosed, 1_000);
     expect(server.getStats().activeConnections).toBe(0);
-    await Promise.all([slow, fast]);
+    // And both close() calls have resolved with it, the slow one included: once the connection
+    // is gone there is nothing left for either to wait on.
+    const late = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), 1_000));
+    await expect(Promise.race([Promise.all([slow, fast]), late])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("the shorter close() resolves at its own deadline, not at the longer one", async () => {
+    const server = track(createServer({}));
+    await server.listen(0);
+    sockets.push(await connectTo(server));
+    await waitFor(() => server.getStats().activeConnections === 1);
+    stallDrains(server);
+
+    void server.close({ drainTimeoutMs: 60_000 });
+    const start = Date.now();
+    const fast = server.close({ drainTimeoutMs: 50 });
+    const late = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), 2_000));
+
+    await expect(Promise.race([fast, late])).resolves.toBeUndefined();
+    expect(Date.now() - start).toBeGreaterThanOrEqual(40);
+    expect(server.getStats().activeConnections).toBe(0);
   });
 });
 
