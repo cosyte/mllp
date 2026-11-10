@@ -622,6 +622,7 @@ function toMllpAck(params: {
   // non-ASCII code unit. The text check reads the MSA-2 as PRE-ENCODE code units (not the emitted
   // bytes), so a lossy `ascii` override masking a high bit into the ASCII range cannot hide it.
   const echoWarning = verifyVerbatimEcho(payload, params.verifyAgainst);
+  /* v8 ignore next -- every ACK built here carries MSA */
   const echoedControlId = ack.segments("MSA")[0]?.field(2).text ?? "";
   const unverifiableWarning =
     params.inbound === undefined ? null : verifyTextInboundEcho(echoedControlId, params.inbound);
@@ -827,6 +828,7 @@ export function buildMllpAck(
   // A vendor-quirk inbound MSH-10 like `ID^X` surfaces here byte-for-byte,
   // matching what a raw-bytes-correlating sender (this package's own client
   // correlator) will compare against.
+  /* v8 ignore next -- every ACK built here carries MSA */
   const msa2 = ack.segments("MSA")[0]?.field(2).text ?? "";
   const correlationId = msa2 !== "" ? msa2 : undefined;
 

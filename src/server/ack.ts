@@ -235,7 +235,9 @@ export function rawAckUncorrelatable(payload: Buffer): boolean {
 /** Non-positive counterpart of a positive HL7 Table 0008 code: `AA`→`AE`, `CA`→`CE`. @internal */
 function downgradePositiveAck(code: AckCode): AckCode {
   if (code === "AA") return "AE";
+  /* v8 ignore else -- the one caller passes only AA or CA */
   if (code === "CA") return "CE";
+  /* v8 ignore next -- the one caller passes only AA or CA */
   return code;
 }
 
@@ -359,6 +361,7 @@ export function buildRawAck(payload: Buffer, code: AckCode): Buffer {
   //   [1]=MSH-2 encoding chars
   //   [2]=sendingApp [3]=sendingFacility [4]=receivingApp [5]=receivingFacility
   //   [9]=MSH-10 control ID  [10]=processingId  [11]=version
+  /* v8 ignore next -- the split always yields MSH-2 */
   const declaredEnc = fields[1] ?? "";
   const usableEnc =
     declaredEnc !== "" && !UNSAFE_DELIMITER.test(declaredEnc)

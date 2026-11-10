@@ -94,6 +94,7 @@ export function encodeFrame(payload: Buffer, opts?: EncoderOptions): Buffer {
   // Scan for delimiter bytes, O(n) but required to ensure correct framing (FRAME-03).
   for (let i = 0; i < payload.length; i++) {
     const byte = payload[i];
+    /* v8 ignore next -- i < payload.length, so the index is always in range */
     if (byte === undefined) break; // noUncheckedIndexedAccess guard
 
     if (byte === VT || byte === FS) {
