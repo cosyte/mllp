@@ -35,6 +35,7 @@ export {
   MLLP_TLS_CIPHER_LIST_UNENFORCEABLE,
   MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE,
   MLLP_TLS_PFX_REJECTED,
+  MLLP_TLS_CREDENTIAL_CONFLICT,
   MllpTlsConfigurationError,
   tlsConfigurationMessage,
   type TlsConfigurationErrorCode,

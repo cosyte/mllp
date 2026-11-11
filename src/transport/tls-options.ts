@@ -77,6 +77,10 @@ export interface TlsOptions {
    * older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
    * file with AES-256. The refusal is permanent: a client does not retry it.
    *
+   * Set it instead of `cert` and `key`, never with either: a client given both throws
+   * `MllpTlsConfigurationError` with `MLLP_TLS_CREDENTIAL_CONFLICT` at construction, since Node.js
+   * would load the file last and present its certificate in place of `cert`.
+   *
    * @default undefined (no PKCS#12 file)
    */
   readonly pfx?: Buffer;
@@ -222,7 +226,11 @@ export interface ServerTlsOptions {
    * message names this option and never its value: a wrong passphrase, bytes that are not
    * PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
    * older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
-   * file with AES-256. Construction never throws for it.
+   * file with AES-256. Construction never throws for a file that cannot be loaded.
+   *
+   * Set it instead of `cert` and `key`, never with either: a server given both throws
+   * `MllpTlsConfigurationError` with `MLLP_TLS_CREDENTIAL_CONFLICT` at construction, since Node.js
+   * would load the file last and present its certificate in place of `cert`.
    *
    * @default undefined (no PKCS#12 file)
    */

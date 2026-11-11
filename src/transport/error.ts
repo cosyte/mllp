@@ -144,6 +144,25 @@ export const MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE = "MLLP_TLS_DH_PARAMETERS_UNEN
 export const MLLP_TLS_PFX_REJECTED = "MLLP_TLS_PFX_REJECTED";
 
 /**
+ * `tls.pfx` was set together with `tls.cert` or `tls.key`. The PKCS#12 file carries its own
+ * certificate and key, and Node.js loads it after the PEM pair, so the file's certificate would
+ * silently win over the one passed as `cert`. Both declarations are refused instead.
+ *
+ * Unlike the other codes, this one is thrown by the constructor (`createClient`, `createServer`,
+ * `new MllpClient`, `new MllpServer`), not by `connect()` or `listen()`: it is a contradiction in
+ * the options themselves, the same kind of mistake as a server given no certificate at all. The
+ * message names the options and never their values, and there is no `cause`.
+ *
+ * @example
+ * ```typescript
+ * import { MLLP_TLS_CREDENTIAL_CONFLICT } from '@cosyte/mllp';
+ * if (err.code === MLLP_TLS_CREDENTIAL_CONFLICT) logger.error('pass cert and key, or pfx');
+ * ```
+ */
+// Stryker disable next-line StringLiteral: a module-level initializer runs once, when the module is first loaded, so per-test coverage credits it to whichever test loaded the module first rather than to the tests that assert this value (test/tls/pfx.test.ts asserts it literally).
+export const MLLP_TLS_CREDENTIAL_CONFLICT = "MLLP_TLS_CREDENTIAL_CONFLICT";
+
+/**
  * Union of the stable TLS-configuration error codes.
  *
  * @example
@@ -157,7 +176,8 @@ export type TlsConfigurationErrorCode =
   | typeof MLLP_TLS_DH_PARAMETERS_REJECTED
   | typeof MLLP_TLS_CIPHER_LIST_UNENFORCEABLE
   | typeof MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE
-  | typeof MLLP_TLS_PFX_REJECTED;
+  | typeof MLLP_TLS_PFX_REJECTED
+  | typeof MLLP_TLS_CREDENTIAL_CONFLICT;
 
 /**
  * Fixed, human-readable description for a TLS-configuration code.
@@ -197,7 +217,10 @@ export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string
       "tls.pfx could not be loaded with tls.passphrase: the passphrase is wrong, the file is not " +
       "PKCS#12, or it uses a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy` and " +
       "older exports write it) that OpenSSL 3 does not load, so re-export it with AES-256; " +
-      "nothing was bound",
+      "no socket was opened",
+    [MLLP_TLS_CREDENTIAL_CONFLICT]:
+      "tls.pfx was set together with tls.cert or tls.key; the PKCS#12 file carries its own " +
+      "certificate and key, so set either cert and key or pfx, not both",
   };
   return messages[code];
 }
@@ -205,7 +228,8 @@ export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string
 /**
  * Thrown for a TLS configuration this package will not open a connection on.
  * Rejects the originating `MllpClient.connect()` or `MllpServer.listen()`; no
- * socket is opened and no listener is left bound.
+ * socket is opened and no listener is left bound. One code,
+ * {@link MLLP_TLS_CREDENTIAL_CONFLICT}, is thrown by the constructor instead.
  *
  * Identify it by `instanceof` **and** by the stable {@link MllpTlsConfigurationError.code},
  * never by matching on the message text. `message` is a fixed registry entry

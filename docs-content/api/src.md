@@ -1933,7 +1933,8 @@ Epoch ms timestamp recorded at write-flush callback.
 
 Thrown for a TLS configuration this package will not open a connection on.
 Rejects the originating `MllpClient.connect()` or `MllpServer.listen()`; no
-socket is opened and no listener is left bound.
+socket is opened and no listener is left bound. One code,
+[MLLP\_TLS\_CREDENTIAL\_CONFLICT](#mllp_tls_credential_conflict), is thrown by the constructor instead.
 
 Identify it by `instanceof` **and** by the stable [MllpTlsConfigurationError.code](#code-2),
 never by matching on the message text. `message` is a fixed registry entry
@@ -4863,7 +4864,11 @@ The file is loaded before anything is bound. One the TLS library cannot load rej
 message names this option and never its value: a wrong passphrase, bytes that are not
 PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
 older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
-file with AES-256. Construction never throws for it.
+file with AES-256. Construction never throws for a file that cannot be loaded.
+
+Set it instead of `cert` and `key`, never with either: a server given both throws
+`MllpTlsConfigurationError` with `MLLP_TLS_CREDENTIAL_CONFLICT` at construction, since Node.js
+would load the file last and present its certificate in place of `cert`.
 
 ###### Default
 
@@ -5542,6 +5547,10 @@ PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, Op
 older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
 file with AES-256. The refusal is permanent: a client does not retry it.
 
+Set it instead of `cert` and `key`, never with either: a client given both throws
+`MllpTlsConfigurationError` with `MLLP_TLS_CREDENTIAL_CONFLICT` at construction, since Node.js
+would load the file last and present its certificate in place of `cert`.
+
 ###### Default
 
 ```ts
@@ -6132,7 +6141,7 @@ const code: SecurityWarningCode = 'MLLP_TLS_VERIFY_DISABLED';
 
 ### TlsConfigurationErrorCode
 
-> **TlsConfigurationErrorCode** = *typeof* [`MLLP_TLS_CIPHER_LIST_REJECTED`](#mllp_tls_cipher_list_rejected) \| *typeof* [`MLLP_TLS_CIPHER_OPTION_CONFLICT`](#mllp_tls_cipher_option_conflict) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_REJECTED`](#mllp_tls_dh_parameters_rejected) \| *typeof* [`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`](#mllp_tls_cipher_list_unenforceable) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`](#mllp_tls_dh_parameters_unenforceable) \| *typeof* [`MLLP_TLS_PFX_REJECTED`](#mllp_tls_pfx_rejected)
+> **TlsConfigurationErrorCode** = *typeof* [`MLLP_TLS_CIPHER_LIST_REJECTED`](#mllp_tls_cipher_list_rejected) \| *typeof* [`MLLP_TLS_CIPHER_OPTION_CONFLICT`](#mllp_tls_cipher_option_conflict) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_REJECTED`](#mllp_tls_dh_parameters_rejected) \| *typeof* [`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`](#mllp_tls_cipher_list_unenforceable) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`](#mllp_tls_dh_parameters_unenforceable) \| *typeof* [`MLLP_TLS_PFX_REJECTED`](#mllp_tls_pfx_rejected) \| *typeof* [`MLLP_TLS_CREDENTIAL_CONFLICT`](#mllp_tls_credential_conflict)
 
 Union of the stable TLS-configuration error codes.
 
@@ -6310,6 +6319,28 @@ Honouring either one silently discards the other, so both are refused.
 ```typescript
 import { MLLP_TLS_CIPHER_OPTION_CONFLICT } from '@cosyte/mllp';
 if (err.code === MLLP_TLS_CIPHER_OPTION_CONFLICT) logger.error('pick one of the two');
+```
+
+***
+
+### MLLP\_TLS\_CREDENTIAL\_CONFLICT
+
+> `const` **MLLP\_TLS\_CREDENTIAL\_CONFLICT**: `"MLLP_TLS_CREDENTIAL_CONFLICT"` = `"MLLP_TLS_CREDENTIAL_CONFLICT"`
+
+`tls.pfx` was set together with `tls.cert` or `tls.key`. The PKCS#12 file carries its own
+certificate and key, and Node.js loads it after the PEM pair, so the file's certificate would
+silently win over the one passed as `cert`. Both declarations are refused instead.
+
+Unlike the other codes, this one is thrown by the constructor (`createClient`, `createServer`,
+`new MllpClient`, `new MllpServer`), not by `connect()` or `listen()`: it is a contradiction in
+the options themselves, the same kind of mistake as a server given no certificate at all. The
+message names the options and never their values, and there is no `cause`.
+
+#### Example
+
+```typescript
+import { MLLP_TLS_CREDENTIAL_CONFLICT } from '@cosyte/mllp';
+if (err.code === MLLP_TLS_CREDENTIAL_CONFLICT) logger.error('pass cert and key, or pfx');
 ```
 
 ***

@@ -97,6 +97,13 @@ await client.connect();
 
 A server given neither `cert` and `key` nor `pfx` throws a `TypeError` when it is created.
 
+Pass `cert` and `key`, or `pfx`, never both. Node.js loads a PKCS#12 file after the PEM pair, so
+the file's certificate would be presented and the `cert` you passed would go unused. A client or a
+server given `pfx` together with `cert` or `key` throws `MllpTlsConfigurationError` with the code
+`MLLP_TLS_CREDENTIAL_CONFLICT` when it is created; its message names the options and never their
+values. Before this check a mixed configuration was accepted, so code that passed all three must
+now drop either `pfx` or the `cert` and `key` pair.
+
 When TLS is configured, the server consumes `tls.Server`'s `'secureConnection'` event (post-handshake
 sockets) instead of `net.Server`'s `'connection'`, and the client's `onConnect` transport hook maps
 to `'secureConnect'` (handshake complete) rather than the raw TCP `'connect'`.
@@ -443,6 +450,7 @@ the message text:
 | `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`   | The runtime does not enforce the list: it would take a `ciphers` list without applying it, or it cannot offer a suite `atnaTransportSecurity` names. See [Under Bun and Deno](#under-bun-and-deno).                        |
 | `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE` | The runtime does not enforce server Diffie-Hellman parameters, for `dhParameters` or for a server's `atnaTransportSecurity`. See [Under Bun and Deno](#under-bun-and-deno). Server side only.                              |
 | `MLLP_TLS_PFX_REJECTED`                | The TLS library cannot load `pfx` with `passphrase`: a wrong passphrase, not PKCS#12, or a legacy RC2-40 encryption. See [A PKCS#12 file](#a-pkcs12-file-pfx).                                                             |
+| `MLLP_TLS_CREDENTIAL_CONFLICT`         | `pfx` is set together with `cert` or `key`. Thrown by the constructor, not by `connect()` or `listen()`. See [A PKCS#12 file](#a-pkcs12-file-pfx).                                                                         |
 
 ```ts runnable
 import {
