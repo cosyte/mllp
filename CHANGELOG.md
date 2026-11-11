@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9
+### Patch Changes
+
+- b3f843c: Add the npm keywords `client` and `server` so the package is easier to find in npm search.
+
 ## 0.1.8
 ### Patch Changes
 
