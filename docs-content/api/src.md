@@ -2523,7 +2523,7 @@ The correlation code this warning reports.
 
 ###### Overrides
 
-[`MllpWarning`](#mllpwarning).[`code`](#code-8)
+[`MllpWarning`](#mllpwarning).[`code`](#code-9)
 
 ##### connectionId
 
@@ -2570,7 +2570,7 @@ registry and does not vary with the wire at all.
 
 ###### Inherited from
 
-[`MllpWarning`](#mllpwarning).[`message`](#message-3)
+[`MllpWarning`](#mllpwarning).[`message`](#message-4)
 
 ##### timestamp
 
@@ -2580,7 +2580,7 @@ Wall-clock time at point of emission.
 
 ###### Inherited from
 
-[`MllpWarning`](#mllpwarning).[`timestamp`](#timestamp-3)
+[`MllpWarning`](#mllpwarning).[`timestamp`](#timestamp-4)
 
 ***
 
@@ -2821,7 +2821,7 @@ transition directly to `CLOSED`.
 > `readonly` `optional` **connectTimeoutMs?**: `number`
 
 Bound, in milliseconds, on establishing each connection: the TCP connect and, when
-`ClientOptions.tls` is set, the TLS handshake after it. The clock starts when the
+[ClientOptions.tls](#tls) is set, the TLS handshake after it. The clock starts when the
 socket is created and stops at `'connect'` (plaintext) or `'secureConnect'` (TLS).
 
 On expiry the socket is destroyed. On `connect()` the promise rejects with an
@@ -4715,18 +4715,18 @@ Override default `30_000`.
 
 Override default `true` (auto-reconnect on transient errors).
 
-##### correlateByControlId?
-
-> `readonly` `optional` **correlateByControlId?**: `boolean`
-
-Override default `false` (FIFO mode).
-
 ##### connectTimeoutMs?
 
 > `readonly` `optional` **connectTimeoutMs?**: `number`
 
 Bound on the TCP connect and TLS handshake, in ms. Passthrough to
 `ClientOptions.connectTimeoutMs`; unset means no bound, as there.
+
+##### correlateByControlId?
+
+> `readonly` `optional` **correlateByControlId?**: `boolean`
+
+Override default `false` (FIFO mode).
 
 ##### deadPeerTimeoutMs?
 
@@ -6160,7 +6160,7 @@ console.log(TLS13_DEFAULT_CIPHER_SUITES.length); // => 3
 
 ### VERSION
 
-> `const` **VERSION**: `string` = `"0.1.6"`
+> `const` **VERSION**: `string` = `"0.1.11"`
 
 Package version marker exported from the `@cosyte/mllp` root.
 
@@ -7036,13 +7036,19 @@ Which end of the connection is being configured.
 [`ResolvedTlsCipherPolicy`](#resolvedtlscipherpolicy)
 
 The TLS-context fields to spread into `tls.connect` / `tls.createServer`.
+**A runtime that would not enforce what was asked for is refused too.** Before
+a list or parameters are handed over, probes with no caller input in scope
+prove that this runtime's TLS library enforces that kind of input at all; one
+that would accept it and then run without it (a `node:tls` that takes a list
+and offers its own) gets an `_UNENFORCEABLE` code instead of a link that is
+not what it says. Node.js passes every probe.
 
 #### Throws
 
 On a conflicting declaration, a list the
-runtime rejects, or Diffie-Hellman parameters it cannot use. Never falls back
-to the runtime default list, and never to a server with no Diffie-Hellman
-parameters.
+runtime rejects, Diffie-Hellman parameters it cannot use, or a list or
+parameters this runtime does not enforce. Never falls back to the runtime
+default list, and never to a server with no Diffie-Hellman parameters.
 
 #### Example
 
