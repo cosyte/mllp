@@ -830,7 +830,7 @@ export class MllpClient extends EventEmitter {
       if (this._opts.keepaliveIntervalMs !== undefined) {
         socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
       }
-      socket.setNoDelay(this._opts.noDelay ?? true);
+      socket.setNoDelay(this._opts.noDelay !== false);
       this._socket = socket;
 
       const connOpts =
@@ -1649,7 +1649,7 @@ export class MllpClient extends EventEmitter {
         if (this._opts.keepaliveIntervalMs !== undefined) {
           socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
         }
-        socket.setNoDelay(this._opts.noDelay ?? true);
+        socket.setNoDelay(this._opts.noDelay !== false);
         this._socket = socket;
         const connOpts =
           this._opts.framing !== undefined
@@ -2780,7 +2780,7 @@ export async function createStarterClient(opts: StarterClientOptions): Promise<M
       ? { keepaliveIntervalMs: opts.keepaliveIntervalMs }
       : {}),
     ...(opts.deadPeerTimeoutMs !== undefined ? { deadPeerTimeoutMs: opts.deadPeerTimeoutMs } : {}),
-    ...(opts.noDelay !== undefined ? { noDelay: opts.noDelay } : {}),
+    noDelay: opts.noDelay !== false,
     ...(opts.connectTimeoutMs !== undefined ? { connectTimeoutMs: opts.connectTimeoutMs } : {}),
     ...(opts.tls !== undefined ? { tls: opts.tls } : {}),
   };

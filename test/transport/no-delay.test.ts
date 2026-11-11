@@ -45,13 +45,16 @@ async function waitFor(cond: () => boolean, timeoutMs = 3_000): Promise<void> {
   }
 }
 
-/** Spies on `setNoDelay` of `proto`, calling through; the last flag given to each socket. */
-function watchNoDelay(proto: net.Socket): () => Map<unknown, boolean> {
+/**
+ * Spies on `setNoDelay` of `proto`, calling through; the last argument given to each socket, as
+ * given: Node reads a missing one as `true`, so an `undefined` here is not the same as `true`.
+ */
+function watchNoDelay(proto: net.Socket): () => Map<unknown, boolean | undefined> {
   const spy = vi.spyOn(proto, "setNoDelay");
   return () => {
-    const last = new Map<unknown, boolean>();
+    const last = new Map<unknown, boolean | undefined>();
     spy.mock.calls.forEach((args, i) => {
-      last.set(spy.mock.contexts[i], args[0] ?? true);
+      last.set(spy.mock.contexts[i], args[0]);
     });
     return last;
   };
@@ -123,6 +126,15 @@ describe("MllpClient: TCP_NODELAY", () => {
     expect(flags().get(second)).toBe(true);
   });
 
+  it("turns Nagle off through createStarterClient by default", async () => {
+    const flags = watchNoDelay(net.Socket.prototype);
+    const { port } = await plainListener();
+    const client = await createStarterClient({ host: "127.0.0.1", port, autoReconnect: false });
+    clients.push(client);
+
+    expect(flags().get(socketOf(client))).toBe(true);
+  });
+
   it("passes noDelay through createStarterClient", async () => {
     const flags = watchNoDelay(net.Socket.prototype);
     const { port } = await plainListener();
@@ -160,7 +172,7 @@ describe("MllpServer: TCP_NODELAY", () => {
     server: MllpServer,
     proto: net.Socket,
     connect: (port: number) => net.Socket,
-  ): Promise<Map<unknown, boolean>> {
+  ): Promise<Map<unknown, boolean | undefined>> {
     servers.push(server);
     const flags = watchNoDelay(proto);
     await server.listen(0, "127.0.0.1");

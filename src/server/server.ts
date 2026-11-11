@@ -1387,7 +1387,7 @@ export class MllpServer extends EventEmitter {
     if (this._opts.keepaliveIntervalMs !== undefined) {
       socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
     }
-    socket.setNoDelay(this._opts.noDelay ?? true);
+    socket.setNoDelay(this._opts.noDelay !== false);
 
     const transport = this._isTls
       ? new TlsTransport(socket as TLSSocket)
