@@ -1032,8 +1032,8 @@ Send an MLLP-framed payload and await the inbound ACK.
 
 Resolves with the ACK Buffer (framing stripped). Rejects with:
 - `DOMException('Aborted', 'AbortError')` if `signal` aborts before the ACK.
-- `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs`.
-  The clock starts at the underlying `write()` flush callback, NOT at
+- `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs` (this send's own, else the
+  client's). The clock starts at the underlying `write()` flush callback, NOT at
   the `send()` call.
 - `MllpConnectionError({ phase: 'send' })` if the client is not connected.
 
@@ -1068,7 +1068,10 @@ Raw bytes; MLLP framing is added internally via `encodeFrame`.
 
 `number`
 
-Per-send override of the backpressure wait budget.
+This send's bound on the wait for its acknowledgement, from the
+  moment its bytes are flushed, in place of the client's `ackTimeoutMs`. Under
+  `onBackpressure: "wait"` it also bounds the wait for queue room, and the
+  acknowledgement wait then starts afresh once the send is written.
 
 ###### applicationAckTimeoutMs?
 
@@ -2784,6 +2787,9 @@ const opts: ClientOptions = { host: 'localhost', port: 2575, drainTimeoutMs: 10_
 Per-message ACK timeout in milliseconds. The clock starts at
 the underlying `write()` flush callback, NOT at the `send()` call,
 pre-flush queue time is not charged to the peer. Default: `30_000`.
+
+A send can set its own with `send(payload, { ackTimeoutMs })`, which replaces this value
+for that send's acknowledgement wait.
 
 ##### applicationAckTimeoutMs?
 
