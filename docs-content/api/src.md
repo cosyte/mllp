@@ -1602,6 +1602,9 @@ one-time notice when a wildcard host is bound via `allowWildcardBind: true`), an
 `'tlsNegotiated'` ([NegotiatedTlsParameters](#negotiatedtlsparameters), the protocol version and cipher
 suite each accepted link actually negotiated, once per completed handshake and never
 on a plaintext listener).
+With [ServerOptions.maxConnections](#maxconnections-1) set, `'connectionRejected'`
+([ConnectionRejectedEvent](#connectionrejectedevent)) reports each connection closed at accept because the server
+was already full; such a connection never fires `'connection'` and never reaches `onMessage`.
 All event payloads are `Object.freeze()`'d before emission.
 
 #### Example
@@ -3215,6 +3218,69 @@ The transport this Connection will drive.
 
 ***
 
+### ConnectionRejectedEvent
+
+Payload of the server `'connectionRejected'` event: a connection was closed at accept and never
+reached the server's handler.
+
+Emitted when a connection arrives while the server already holds
+[ServerOptions.maxConnections](#maxconnections-1) sockets. The socket is closed before any byte is read from
+it and before any TLS handshake, so the rejected peer never becomes a `Connection`, never fires
+`'connection'` and never reaches `onMessage`. The peer sees its connection close; a client that
+reconnects will try again.
+
+**PHI-safe by construction:** a stable code, a fixed message, the configured cap and the peer's
+address and port (the routing metadata the `'connection'` event already carries), never a byte
+of payload. The object is `Object.freeze()`'d before emission.
+
+#### Example
+
+```typescript
+server.on('connectionRejected', ({ code, remoteAddress }) => {
+  logger.warn({ code, remoteAddress });
+});
+```
+
+#### Properties
+
+##### code
+
+> `readonly` **code**: `"MLLP_CONNECTION_LIMIT_REACHED"`
+
+Why the connection was closed.
+
+##### maxConnections
+
+> `readonly` **maxConnections**: `number`
+
+The configured [ServerOptions.maxConnections](#maxconnections-1).
+
+##### message
+
+> `readonly` **message**: `string`
+
+Fixed text for `code`. Never interpolated.
+
+##### remoteAddress
+
+> `readonly` **remoteAddress**: `string` \| `null`
+
+The rejected peer's address, or `null` if it could not be read.
+
+##### remotePort
+
+> `readonly` **remotePort**: `number` \| `null`
+
+The rejected peer's port, or `null` if it could not be read.
+
+##### timestamp
+
+> `readonly` **timestamp**: `Date`
+
+Wall-clock time at point of emission.
+
+***
+
 ### ConnectionStats
 
 Return type of `connection.getStats()`, JSON-serializable.
@@ -4226,6 +4292,29 @@ Calls `socket.setKeepAlive(true, ms)` on each accepted socket.
 Uses OS TCP stack to detect dead peers (half-open, network partitions).
 Distinct from `deadPeerTimeoutMs` (application-level idle close).
 
+##### maxConnections?
+
+> `optional` **maxConnections?**: `number`
+
+The most connections this server holds at once. A connection that arrives while the server
+already holds this many is closed at accept: it never reaches `onMessage` or the
+`'connection'` event, and the server emits `'connectionRejected'`
+([ConnectionRejectedEvent](#connectionrejectedevent), code `MLLP_CONNECTION_LIMIT_REACHED`) instead.
+
+The count is of open sockets, the number that bounds file descriptors: it includes a TLS
+handshake still in progress, and a connection counts until its socket has fully closed. An
+over-cap TLS connection is closed before its handshake, so it costs no handshake work and is
+not a `'tlsClientError'`.
+
+Must be a positive integer; anything else throws a `RangeError` at construction. Unset means
+no cap.
+
+###### Default
+
+```ts
+undefined (no cap)
+```
+
 ##### onMessage?
 
 > `optional` **onMessage?**: (`payload`, `meta`, `conn`) => `void` \| `Promise`\<`void`\>
@@ -4821,6 +4910,33 @@ Distinct from `deadPeerTimeoutMs` (application-level idle close).
 ###### Inherited from
 
 [`ServerOptions`](#serveroptions).[`keepaliveIntervalMs`](#keepaliveintervalms-1)
+
+##### maxConnections?
+
+> `optional` **maxConnections?**: `number`
+
+The most connections this server holds at once. A connection that arrives while the server
+already holds this many is closed at accept: it never reaches `onMessage` or the
+`'connection'` event, and the server emits `'connectionRejected'`
+([ConnectionRejectedEvent](#connectionrejectedevent), code `MLLP_CONNECTION_LIMIT_REACHED`) instead.
+
+The count is of open sockets, the number that bounds file descriptors: it includes a TLS
+handshake still in progress, and a connection counts until its socket has fully closed. An
+over-cap TLS connection is closed before its handshake, so it costs no handshake work and is
+not a `'tlsClientError'`.
+
+Must be a positive integer; anything else throws a `RangeError` at construction. Unset means
+no cap.
+
+###### Default
+
+```ts
+undefined (no cap)
+```
+
+###### Inherited from
+
+[`ServerOptions`](#serveroptions).[`maxConnections`](#maxconnections-1)
 
 ##### onMessage?
 
@@ -5765,6 +5881,26 @@ the loud, one-time reminder that the operator opted in.
 import { MLLP_BIND_ALL_INTERFACES } from '@cosyte/mllp';
 server.on('securityWarning', (w) => {
   if (w.code === MLLP_BIND_ALL_INTERFACES) logger.warn(w.message);
+});
+```
+
+***
+
+### MLLP\_CONNECTION\_LIMIT\_REACHED
+
+> `const` **MLLP\_CONNECTION\_LIMIT\_REACHED**: `"MLLP_CONNECTION_LIMIT_REACHED"` = `"MLLP_CONNECTION_LIMIT_REACHED"`
+
+The stable code on a [ConnectionRejectedEvent](#connectionrejectedevent): a connection arrived while the server
+already held [ServerOptions.maxConnections](#maxconnections-1) connections, and it was closed at accept.
+
+Part of the public surface: renaming or removing it is a breaking change.
+
+#### Example
+
+```typescript
+import { MLLP_CONNECTION_LIMIT_REACHED } from '@cosyte/mllp';
+server.on('connectionRejected', (e) => {
+  if (e.code === MLLP_CONNECTION_LIMIT_REACHED) metrics.increment('mllp.over_cap');
 });
 ```
 

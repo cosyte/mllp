@@ -21,7 +21,7 @@
  */
 
 import { createServer as netCreateServer, isIP, SocketAddress } from "node:net";
-import type { Server as NetServer, Socket } from "node:net";
+import type { DropArgument, Server as NetServer, Socket } from "node:net";
 import { createServer as tlsCreateServer } from "node:tls";
 import type { TLSSocket } from "node:tls";
 import { EventEmitter } from "node:events";
@@ -251,6 +251,62 @@ export interface AckModeWarningEvent {
 }
 
 /**
+ * The stable code on a {@link ConnectionRejectedEvent}: a connection arrived while the server
+ * already held {@link ServerOptions.maxConnections} connections, and it was closed at accept.
+ *
+ * Part of the public surface: renaming or removing it is a breaking change.
+ *
+ * @example
+ * ```typescript
+ * import { MLLP_CONNECTION_LIMIT_REACHED } from '@cosyte/mllp';
+ * server.on('connectionRejected', (e) => {
+ *   if (e.code === MLLP_CONNECTION_LIMIT_REACHED) metrics.increment('mllp.over_cap');
+ * });
+ * ```
+ */
+export const MLLP_CONNECTION_LIMIT_REACHED = "MLLP_CONNECTION_LIMIT_REACHED";
+
+/** Fixed text of a {@link ConnectionRejectedEvent}. Never interpolated. */
+const CONNECTION_LIMIT_MESSAGE =
+  "connection closed at accept: the server already holds maxConnections connections";
+
+/**
+ * Payload of the server `'connectionRejected'` event: a connection was closed at accept and never
+ * reached the server's handler.
+ *
+ * Emitted when a connection arrives while the server already holds
+ * {@link ServerOptions.maxConnections} sockets. The socket is closed before any byte is read from
+ * it and before any TLS handshake, so the rejected peer never becomes a `Connection`, never fires
+ * `'connection'` and never reaches `onMessage`. The peer sees its connection close; a client that
+ * reconnects will try again.
+ *
+ * **PHI-safe by construction:** a stable code, a fixed message, the configured cap and the peer's
+ * address and port (the routing metadata the `'connection'` event already carries), never a byte
+ * of payload. The object is `Object.freeze()`'d before emission.
+ *
+ * @example
+ * ```typescript
+ * server.on('connectionRejected', ({ code, remoteAddress }) => {
+ *   logger.warn({ code, remoteAddress });
+ * });
+ * ```
+ */
+export interface ConnectionRejectedEvent {
+  /** Why the connection was closed. */
+  readonly code: typeof MLLP_CONNECTION_LIMIT_REACHED;
+  /** Fixed text for `code`. Never interpolated. */
+  readonly message: string;
+  /** The configured {@link ServerOptions.maxConnections}. */
+  readonly maxConnections: number;
+  /** The rejected peer's address, or `null` if it could not be read. */
+  readonly remoteAddress: string | null;
+  /** The rejected peer's port, or `null` if it could not be read. */
+  readonly remotePort: number | null;
+  /** Wall-clock time at point of emission. */
+  readonly timestamp: Date;
+}
+
+/**
  * Observability snapshot returned by `server.getStats()`.
  *
  * All fields are JSON-serializable. `connections` and `activeConnections` both
@@ -412,6 +468,24 @@ export interface ServerOptions {
    * @default false
    */
   allowWildcardBind?: boolean;
+
+  /**
+   * The most connections this server holds at once. A connection that arrives while the server
+   * already holds this many is closed at accept: it never reaches `onMessage` or the
+   * `'connection'` event, and the server emits `'connectionRejected'`
+   * ({@link ConnectionRejectedEvent}, code `MLLP_CONNECTION_LIMIT_REACHED`) instead.
+   *
+   * The count is of open sockets, the number that bounds file descriptors: it includes a TLS
+   * handshake still in progress, and a connection counts until its socket has fully closed. An
+   * over-cap TLS connection is closed before its handshake, so it costs no handshake work and is
+   * not a `'tlsClientError'`.
+   *
+   * Must be a positive integer; anything else throws a `RangeError` at construction. Unset means
+   * no cap.
+   *
+   * @default undefined (no cap)
+   */
+  maxConnections?: number;
 }
 
 /**
@@ -502,6 +576,9 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * `'tlsNegotiated'` ({@link NegotiatedTlsParameters}, the protocol version and cipher
  * suite each accepted link actually negotiated, once per completed handshake and never
  * on a plaintext listener).
+ * With {@link ServerOptions.maxConnections} set, `'connectionRejected'`
+ * ({@link ConnectionRejectedEvent}) reports each connection closed at accept because the server
+ * was already full; such a connection never fires `'connection'` and never reaches `onMessage`.
  * All event payloads are `Object.freeze()`'d before emission.
  *
  * @example
@@ -559,6 +636,15 @@ export class MllpServer extends EventEmitter {
    */
   constructor(opts: ServerOptions) {
     super();
+    const maxConnections = opts.maxConnections;
+    if (
+      maxConnections !== undefined &&
+      !(Number.isSafeInteger(maxConnections) && maxConnections >= 1)
+    ) {
+      throw new RangeError(
+        "ServerOptions.maxConnections must be a positive integer, or left unset for no cap",
+      );
+    }
     this._opts = opts;
     this._isTls = opts.tls !== undefined;
 
@@ -661,6 +747,35 @@ export class MllpServer extends EventEmitter {
         this.emit("error", err); // DELIBERATE: unlistened + serving ⇒ Node's fail-loud convention
       }
     });
+
+    // The connection cap is enforced by the listener itself, at accept: it closes an over-cap
+    // socket before 'connection' (or, under TLS, before the handshake) and reports it on 'drop'.
+    // Its count is of open sockets, so it bounds file descriptors, handshakes in flight included.
+    // Nothing is set and nothing listens when no cap is configured.
+    if (maxConnections !== undefined) {
+      this._netServer.maxConnections = maxConnections;
+      this._netServer.on("drop", (data?: DropArgument) => {
+        this._onConnectionOverCap(maxConnections, data);
+      });
+    }
+  }
+
+  /**
+   * Report a connection the listener closed at accept because the cap was full.
+   *
+   * Contained: this runs inside the listener's own 'drop' callback, so a throwing subscriber would
+   * otherwise unwind into the accept path. The throw is surfaced on 'error' instead.
+   */
+  private _onConnectionOverCap(maxConnections: number, data: DropArgument | undefined): void {
+    const event: ConnectionRejectedEvent = Object.freeze({
+      code: MLLP_CONNECTION_LIMIT_REACHED,
+      message: CONNECTION_LIMIT_MESSAGE,
+      maxConnections,
+      remoteAddress: data?.remoteAddress ?? null,
+      remotePort: data?.remotePort ?? null,
+      timestamp: new Date(),
+    });
+    this._emitContained("connectionRejected", event);
   }
 
   /**

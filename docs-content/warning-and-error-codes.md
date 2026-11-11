@@ -101,6 +101,16 @@ TLS configuration errors reject `connect()` or `listen()` with an
 | `MLLP_TLS_CIPHER_OPTION_CONFLICT` | both `atnaTransportSecurity` and `ciphers` are set                                               |
 | `MLLP_TLS_DH_PARAMETERS_REJECTED` | the server's `dhParameters` cannot be used                                                       |
 
+## Server connection codes
+
+Emitted on the server's `connectionRejected` event as a
+[`ConnectionRejectedEvent`](./api/src.md#connectionrejectedevent), only when `maxConnections` is
+set:
+
+| Code                            | Raised when                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------ |
+| `MLLP_CONNECTION_LIMIT_REACHED` | a connection arrives while the server holds `maxConnections`; it is closed at accept |
+
 ## Connection causes
 
 The `connectionCause` of an [`MllpConnectionError`](./api/src.md#mllpconnectionerror), of type

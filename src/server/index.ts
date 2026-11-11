@@ -16,6 +16,8 @@ export {
   type NackReason,
   type NackAckCode,
   type AckModeWarningEvent,
+  MLLP_CONNECTION_LIMIT_REACHED,
+  type ConnectionRejectedEvent,
 } from "./server.js";
 
 export {

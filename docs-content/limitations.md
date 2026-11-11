@@ -79,6 +79,16 @@ client facing a peer that emits _occasional_ junk will **stop**, not heal. If a 
 expected, use the tolerance opt-ins so the bytes are a warning rather than a fatal. See
 [Framing and tolerance](./framing.md).
 
+## It does not bound its connections unless you ask it to
+
+A server accepts every connection it is offered by default, so a sender that opens connections and
+never closes them can use up the process's file descriptors. Set `maxConnections` to bound them: a
+connection over the cap is closed at accept and reported as `connectionRejected`
+(`MLLP_CONNECTION_LIMIT_REACHED`). That is the whole of it. There is no rate limit, no per-sender
+quota and no allow-list: a sender that keeps the server full keeps others out, and choosing who may
+connect belongs to your network layer or to a `connection` handler that closes what it does not
+trust. See [Cap the number of connections](./receive-messages.md#cap-the-number-of-connections).
+
 ## It does not complete an enhanced-mode exchange on the server side
 
 The client half is built: an enhanced-mode send correlated by control ID draws both its commit

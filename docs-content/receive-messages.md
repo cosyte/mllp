@@ -184,6 +184,45 @@ const server = createServer({ autoAck: "AA", allowWildcardBind: true });
 await server.listen(2575, "0.0.0.0");
 ```
 
+## Cap the number of connections
+
+A server accepts every connection it is offered unless you set `maxConnections`. With it set, a
+connection that arrives while the server already holds that many is closed at accept: it never
+reaches your handler or the `connection` event, and the server emits `connectionRejected` with the
+code `MLLP_CONNECTION_LIMIT_REACHED`, the cap, and the peer's address and port. The sender sees its
+connection close and may try again; once a connection closes, its place is free.
+
+```ts runnable
+import { createServer, createStarterClient, type ConnectionRejectedEvent } from "@cosyte/mllp";
+
+const server = createServer({ autoAck: "AA", maxConnections: 1 });
+const rejected: ConnectionRejectedEvent[] = [];
+server.on("connectionRejected", (event: ConnectionRejectedEvent) => rejected.push(event));
+await server.listen(0);
+const port = server.getStats().port ?? 0;
+
+const first = await createStarterClient({ host: "127.0.0.1", port });
+await first.send(
+  Buffer.from("MSH|^~\\&|APP|FAC|RECV|RFAC|20260101120000||ADT^A01|CTRL0206|P|2.5.1\r"),
+);
+
+const second = await createStarterClient({ host: "127.0.0.1", port });
+while (rejected.length === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+
+rejected.map((event) => `${event.code} ${event.maxConnections}`); // => ["MLLP_CONNECTION_LIMIT_REACHED 1"]
+server.getStats().activeConnections; // => 1
+
+second.destroy();
+await first.close();
+await server.close();
+```
+
+The cap counts open sockets, which is what bounds file descriptors. A TLS connection counts from
+the moment it is accepted, handshake included, and an over-cap one is closed before its handshake.
+A connection counts until its socket has fully closed, so one the sender has just closed may hold
+its place for a moment. The value must be a positive integer; anything else throws a `RangeError`
+when the server is created.
+
 [Secure a link with TLS](./tls.md) covers TLS on the server, and [Connection, reconnect and
 backpressure](./reliability.md#shutdown-and-what-it-does-and-does-not-do-for-in-flight-messages)
 covers what `close()` does to a handler that is still running.

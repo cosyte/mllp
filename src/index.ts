@@ -92,6 +92,8 @@ export {
   type NackEvent,
   type NackReason,
   type NackAckCode,
+  MLLP_CONNECTION_LIMIT_REACHED,
+  type ConnectionRejectedEvent,
 } from "./server/index.js";
 
 // Phase 6: fail-safe ACK semantics & the commit contract
