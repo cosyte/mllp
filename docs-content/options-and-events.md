@@ -15,18 +15,19 @@ Every option on one page, with its default, and every event and statistic with i
 
 [`ServerOptions`](./api/src.md#serveroptions), passed to `createServer(options)`.
 
-| Option                | Type                                                           | Default                   | What it does                                                                                              |
-| --------------------- | -------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `onMessage`           | `(payload, meta, conn) => void \| Promise<void>`               | unset                     | Called for each message. With `autoAck: "AA"` it is the commit step, awaited before the answer            |
-| `autoAck`             | `"AA"` or `(payload, meta, conn) => Buffer \| Promise<Buffer>` | unset (manual mode)       | `"AA"`: the server answers each message itself. A function: the server sends the bytes it returns, framed |
-| `framing`             | `FrameReaderOptions` without `onFrame` and `onWarning`         | the server defaults below | Tolerance flags and the frame size cap for every accepted connection                                      |
-| `onWarning`           | `(warning: MllpWarning) => void`                               | unset                     | Called for each framing warning on every connection                                                       |
-| `keepaliveIntervalMs` | `number`                                                       | unset (off)               | TCP keepalive interval on each accepted socket                                                            |
-| `deadPeerTimeoutMs`   | `number`                                                       | unset (off)               | Closes a connection that delivers no message for this long                                                |
-| `drainTimeoutMs`      | `number`                                                       | `30_000`                  | Bound on the wait `close()` gives each connection                                                         |
-| `tls`                 | `ServerTlsOptions`                                             | unset (plain TCP)         | Serve MLLP over TLS                                                                                       |
-| `allowWildcardBind`   | `boolean`                                                      | `false`                   | Allow `listen()` on a wildcard host such as `0.0.0.0`; binding one emits `securityWarning`                |
-| `maxConnections`      | `number` (a positive integer)                                  | unset (no cap)            | Close a connection at accept when the server already holds this many, and emit `connectionRejected`       |
+| Option                  | Type                                                           | Default                   | What it does                                                                                              |
+| ----------------------- | -------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `onMessage`             | `(payload, meta, conn) => void \| Promise<void>`               | unset                     | Called for each message. With `autoAck: "AA"` it is the commit step, awaited before the answer            |
+| `autoAck`               | `"AA"` or `(payload, meta, conn) => Buffer \| Promise<Buffer>` | unset (manual mode)       | `"AA"`: the server answers each message itself. A function: the server sends the bytes it returns, framed |
+| `framing`               | `FrameReaderOptions` without `onFrame` and `onWarning`         | the server defaults below | Tolerance flags and the frame size cap for every accepted connection                                      |
+| `onWarning`             | `(warning: MllpWarning) => void`                               | unset                     | Called for each framing warning on every connection                                                       |
+| `keepaliveIntervalMs`   | `number`                                                       | unset (off)               | TCP keepalive interval on each accepted socket                                                            |
+| `deadPeerTimeoutMs`     | `number`                                                       | unset (off)               | Closes a connection that delivers no message for this long                                                |
+| `partialFrameTimeoutMs` | `number` (positive, up to 2147483647)                          | unset (off)               | Closes a connection whose frame has been open, begun and not finished, for this long                      |
+| `drainTimeoutMs`        | `number`                                                       | `30_000`                  | Bound on the wait `close()` gives each connection                                                         |
+| `tls`                   | `ServerTlsOptions`                                             | unset (plain TCP)         | Serve MLLP over TLS                                                                                       |
+| `allowWildcardBind`     | `boolean`                                                      | `false`                   | Allow `listen()` on a wildcard host such as `0.0.0.0`; binding one emits `securityWarning`                |
+| `maxConnections`        | `number` (a positive integer)                                  | unset (no cap)            | Close a connection at accept when the server already holds this many, and emit `connectionRejected`       |
 
 `server.listen(port, host)` binds `127.0.0.1` when you name no host; port `0` lets the operating
 system pick one. `server.close({ drainTimeoutMs })` overrides `drainTimeoutMs` for one call.
@@ -99,7 +100,8 @@ The second argument of `client.send(payload, options)`.
 | `ca`                    | `PemInput`                 | the runtime's trust store     | Trust anchors for the server's certificate                                                            |
 | `cert`                  | `PemInput`                 | unset                         | Client certificate, for mutual TLS                                                                    |
 | `key`                   | `PemInput`                 | unset                         | Private key for `cert`                                                                                |
-| `passphrase`            | `string`                   | unset                         | Passphrase for an encrypted `key`                                                                     |
+| `passphrase`            | `string`                   | unset                         | Passphrase for an encrypted `key`, or for `pfx`                                                       |
+| `pfx`                   | `Buffer`                   | unset                         | Client certificate and key as one PKCS#12 file, in place of `cert` and `key`                          |
 | `servername`            | `string`                   | the client's `host`           | Server name for SNI and for the certificate identity check; an IP address is never sent as SNI        |
 | `minVersion`            | `"TLSv1.2"` or `"TLSv1.3"` | `"TLSv1.2"`                   | Lowest protocol version; nothing below TLS 1.2 can be set                                             |
 | `maxVersion`            | `"TLSv1.2"` or `"TLSv1.3"` | unset (the runtime's highest) | Highest protocol version                                                                              |
@@ -115,10 +117,11 @@ The second argument of `client.send(payload, options)`.
 
 | Option                  | Type                           | Default                       | What it does                                                                                            |
 | ----------------------- | ------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `cert`                  | `PemInput`                     | required                      | Server certificate                                                                                      |
-| `key`                   | `PemInput`                     | required                      | Private key for `cert`                                                                                  |
+| `cert`                  | `PemInput`                     | required unless `pfx` is set  | Server certificate                                                                                      |
+| `key`                   | `PemInput`                     | required unless `pfx` is set  | Private key for `cert`                                                                                  |
+| `pfx`                   | `Buffer`                       | unset                         | Server certificate and key as one PKCS#12 file, in place of `cert` and `key`                            |
 | `ca`                    | `PemInput`                     | unset                         | Trust anchors for client certificates                                                                   |
-| `passphrase`            | `string`                       | unset                         | Passphrase for an encrypted `key`                                                                       |
+| `passphrase`            | `string`                       | unset                         | Passphrase for an encrypted `key`, or for `pfx`                                                         |
 | `clientAuth`            | `"NONE"`, `"WANT"` or `"MUST"` | `"NONE"`                      | Request a client certificate (`WANT`), or require and verify one (`MUST`)                               |
 | `minVersion`            | `"TLSv1.2"` or `"TLSv1.3"`     | `"TLSv1.2"`                   | Lowest protocol version                                                                                 |
 | `maxVersion`            | `"TLSv1.2"` or `"TLSv1.3"`     | unset (the runtime's highest) | Highest protocol version                                                                                |
