@@ -207,7 +207,7 @@ table, the TLS 1.2 floor (IHE ATNA ITI-19), the typed failure modes (`tls-verify
 
 ## API
 
-Three code subpaths ship, plus `@cosyte/mllp/package.json`:
+Four code subpaths ship, plus `@cosyte/mllp/package.json`:
 
 - **`@cosyte/mllp`** is the whole transport: `createServer` and `createStarterServer`, `createClient`
   and `createStarterClient`, `encodeFrame` and `FrameReader`, `Connection`, `buildRawAck`, the typed
@@ -216,6 +216,11 @@ Three code subpaths ship, plus `@cosyte/mllp/package.json`:
   test that can run over it should.
 - **`@cosyte/mllp/ack-from-hl7`** builds acknowledgments from a parsed message, or from raw bytes it
   parses through the peer, and is the one place the optional `@cosyte/hl7` peer is needed.
+- **`@cosyte/mllp/arbitraries`** is fast-check generators for property-testing code you build on
+  the transport: `payload`, `frame`, `chunked` and `stream` for canonical bytes, `messyStream` for
+  the framing quirks a lenient reader accepts, and `hostileInput` for streams a reader may refuse
+  but must never hang or crash on. It needs the optional `fast-check` peer, and imports nothing
+  from the library at run time.
 
 What comes with them:
 
@@ -256,25 +261,31 @@ The full reference is on [docs.cosyte.com/mllp](https://docs.cosyte.com/mllp); s
 ## Documentation
 
 The full reference lives at [docs.cosyte.com/mllp](https://docs.cosyte.com/mllp), built from this
-repository's [`docs-content/`](https://github.com/cosyte/mllp/tree/main/docs-content). Start with
-these pages:
+repository's [`docs-content/`](https://github.com/cosyte/mllp/tree/main/docs-content). Every page
+is listed here, in the order and the groups of the site's sidebar:
 
-- [Send messages](https://github.com/cosyte/mllp/blob/main/docs-content/send-messages.md) and
-  [Receive and acknowledge messages](https://github.com/cosyte/mllp/blob/main/docs-content/receive-messages.md): the two everyday tasks.
-- [ACKs and the commit contract](https://github.com/cosyte/mllp/blob/main/docs-content/acks.md):
-  the code auto-ACK selects, correlation on the client, enhanced mode, and the ack-from-hl7 builder.
-- [Framing and tolerance](https://github.com/cosyte/mllp/blob/main/docs-content/framing.md): the
-  wire format, the opt-in tolerance flags, the stable warning codes, and what throws.
-- [Connection, reconnect and backpressure](https://github.com/cosyte/mllp/blob/main/docs-content/reliability.md):
-  the six-state connection machine, backoff, dead-peer detection, and what `close()` does.
-- [Secure a link with TLS](https://github.com/cosyte/mllp/blob/main/docs-content/tls.md): mutual TLS,
-  verification, bind safety, the TLS 1.2 floor, and the typed failure modes.
-- [Test your code and verify an engine](https://github.com/cosyte/mllp/blob/main/docs-content/testing.md):
-  the in-memory transport, and the differential harness for the engine you integrate with.
-- [Warning and error codes](https://github.com/cosyte/mllp/blob/main/docs-content/warning-and-error-codes.md)
-  and [Troubleshooting](https://github.com/cosyte/mllp/blob/main/docs-content/troubleshooting.md): every stable code, and what to do when a link fails.
-- [Known limitations and non-goals](https://github.com/cosyte/mllp/blob/main/docs-content/limitations.md):
-  what not to trust this transport to do.
+- [Overview](https://github.com/cosyte/mllp/blob/main/docs-content/intro.md): what the package is and what it leaves to you.
+- [Installation](https://github.com/cosyte/mllp/blob/main/docs-content/installation.md) and [Quickstart](https://github.com/cosyte/mllp/blob/main/docs-content/quickstart.md): install it, then
+  start a server, send it a message and read the acknowledgment.
+- How-to guides:
+  - [Send messages](https://github.com/cosyte/mllp/blob/main/docs-content/send-messages.md)
+  - [Receive and acknowledge messages](https://github.com/cosyte/mllp/blob/main/docs-content/receive-messages.md)
+  - [Tolerate a sender's framing quirks](https://github.com/cosyte/mllp/blob/main/docs-content/tolerate-sender-quirks.md)
+  - [Secure a link with TLS](https://github.com/cosyte/mllp/blob/main/docs-content/tls.md)
+  - [Build ACKs with @cosyte/hl7](https://github.com/cosyte/mllp/blob/main/docs-content/build-acks-from-hl7.md)
+  - [Test your code and verify an engine](https://github.com/cosyte/mllp/blob/main/docs-content/testing.md)
+  - [Property-test your own code with generated MLLP streams](https://github.com/cosyte/mllp/blob/main/docs-content/property-test-your-code.md)
+- Explanation:
+  - [ACKs and the commit contract](https://github.com/cosyte/mllp/blob/main/docs-content/acks.md)
+  - [Framing and tolerance](https://github.com/cosyte/mllp/blob/main/docs-content/framing.md)
+  - [Connection, reconnect and backpressure](https://github.com/cosyte/mllp/blob/main/docs-content/reliability.md)
+  - [Known limitations and non-goals](https://github.com/cosyte/mllp/blob/main/docs-content/limitations.md): what not to trust this transport to do.
+- Reference:
+  - [Warning and error codes](https://github.com/cosyte/mllp/blob/main/docs-content/warning-and-error-codes.md)
+  - [Conformance statement](https://github.com/cosyte/mllp/blob/main/docs-content/conformance.md)
+- [Troubleshooting](https://github.com/cosyte/mllp/blob/main/docs-content/troubleshooting.md): what to do when a link fails, symptom by symptom.
+- [Testing and quality](https://github.com/cosyte/mllp/blob/main/docs-content/testing-and-quality.md) and [Performance](https://github.com/cosyte/mllp/blob/main/docs-content/performance.md): how we
+  test the package, and what we measure.
 
 ## Support
 
