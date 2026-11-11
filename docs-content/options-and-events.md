@@ -101,7 +101,8 @@ The second argument of `client.send(payload, options)`.
 | `ca`                    | `PemInput`                 | the runtime's trust store     | Trust anchors for the server's certificate                                                            |
 | `cert`                  | `PemInput`                 | unset                         | Client certificate, for mutual TLS                                                                    |
 | `key`                   | `PemInput`                 | unset                         | Private key for `cert`                                                                                |
-| `passphrase`            | `string`                   | unset                         | Passphrase for an encrypted `key`                                                                     |
+| `pfx`                   | `Buffer`                   | unset                         | Client certificate and key as one PKCS#12 file, in place of `cert` and `key`                          |
+| `passphrase`            | `string`                   | unset                         | Passphrase for an encrypted `key`, or for `pfx`                                                       |
 | `servername`            | `string`                   | the client's `host`           | Server name for SNI and for the certificate identity check; an IP address is never sent as SNI        |
 | `minVersion`            | `"TLSv1.2"` or `"TLSv1.3"` | `"TLSv1.2"`                   | Lowest protocol version; nothing below TLS 1.2 can be set                                             |
 | `maxVersion`            | `"TLSv1.2"` or `"TLSv1.3"` | unset (the runtime's highest) | Highest protocol version                                                                              |
