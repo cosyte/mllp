@@ -1421,17 +1421,14 @@ export class MllpServer extends EventEmitter {
       ...(this._opts.framing ?? {}),
     };
 
-    const partialFrameTimeoutMs = this._opts.partialFrameTimeoutMs;
     const connOpts =
       this._opts.onWarning !== undefined
-        ? {
-            transport,
-            framing: mergedFraming,
-            onWarning: this._opts.onWarning,
-            partialFrameTimeoutMs,
-          }
-        : { transport, framing: mergedFraming, partialFrameTimeoutMs };
-    const conn = new Connection(connOpts);
+        ? { transport, framing: mergedFraming, onWarning: this._opts.onWarning }
+        : { transport, framing: mergedFraming };
+    const conn = new Connection({
+      ...connOpts,
+      partialFrameTimeoutMs: this._opts.partialFrameTimeoutMs,
+    });
 
     // The Connection's transport has just replaced every 'close' listener on the socket, the cap's
     // own included when the cap counted this very socket. Under Node.js that is never so for TLS:

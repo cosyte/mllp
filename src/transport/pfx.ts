@@ -13,8 +13,8 @@ import { MLLP_TLS_PFX_REJECTED, MllpTlsConfigurationError } from "./error.js";
  * {@link MllpTlsConfigurationError} with {@link MLLP_TLS_PFX_REJECTED}.
  *
  * Without this a file the TLS library cannot load (a wrong passphrase, or a legacy RC2-40
- * encryption OpenSSL 3 does not load) would fail later and less clearly: inside `listen()`'s
- * server construction, or on every connect attempt as a socket error. The library's error becomes
+ * encryption OpenSSL 3 does not load) would throw out of the server's constructor, where the
+ * caller awaits `listen()`. The library's error becomes
  * the `cause`; the message is the fixed registry text, which names the option and never its value.
  *
  * @param pfx - The PKCS#12 bytes, or `undefined` when none is configured (nothing to check).

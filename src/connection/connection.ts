@@ -229,7 +229,7 @@ export class Connection extends EventEmitter {
   /** The running {@link ConnectionOptions.partialFrameTimeoutMs} timer, while a frame is open. */
   private _partialFrameTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   /** Set when a frame ends during the current `push()`, so the next frame gets its own time. */
-  private _frameEndedInRead = false;
+  private _frameEndedInRead!: boolean;
   private _drainPromise: Promise<void> | null = null;
   /** Resolves {@link Connection._leftDraining}; called on the transition out of `DRAINING`. */
   private _leaveDraining!: (value: "left") => void;

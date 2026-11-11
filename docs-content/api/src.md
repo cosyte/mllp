@@ -957,8 +957,6 @@ Rejects with:
   at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
   **before** a socket is opened, so nothing is left connected; identify it by
   `instanceof` plus its stable `code`.
-- `MllpTlsConfigurationError` with `MLLP_TLS_PFX_REJECTED` if `tls.pfx` cannot be loaded
-  with `tls.passphrase` (see [TlsOptions.pfx](#pfx-1)), also before a socket is opened.
 
 **Dual failure signal on initial connect:** the Connection's transport
 error handler is attached before this promise's own error listener, so a
@@ -5534,29 +5532,7 @@ expressible by this type, the floor cannot be lowered through this API.
 
 > `readonly` `optional` **passphrase?**: `string`
 
-Passphrase for an encrypted [TlsOptions.key](#key-1), or for the PKCS#12 file in
-[TlsOptions.pfx](#pfx-1).
-
-##### pfx?
-
-> `readonly` `optional` **pfx?**: `Buffer`\<`ArrayBufferLike`\>
-
-The client certificate and its private key as one PKCS#12 file (`.pfx` / `.p12`), in place of
-[TlsOptions.cert](#cert-1) and [TlsOptions.key](#key-1), unlocked with [TlsOptions.passphrase](#passphrase-1).
-The file's bytes, as `readFileSync` returns them; this package reads no file itself.
-
-The file is loaded before any socket is opened. One the TLS library cannot load rejects
-`connect()` with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose
-message names this option and never its value: a wrong passphrase, bytes that are not
-PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
-older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
-file with AES-256. A reconnect attempt that meets it gives up, as for any configuration error.
-
-###### Default
-
-```ts
-undefined (no PKCS#12 file)
-```
+Passphrase for an encrypted [TlsOptions.key](#key-1).
 
 ##### servername?
 
@@ -6378,7 +6354,7 @@ if (err.code === MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE) logger.error('run this se
 > `const` **MLLP\_TLS\_PFX\_REJECTED**: `"MLLP_TLS_PFX_REJECTED"` = `"MLLP_TLS_PFX_REJECTED"`
 
 The TLS library could not load `tls.pfx`, the PKCS#12 file, with `tls.passphrase`. Raised for
-`TlsOptions.pfx` and `ServerTlsOptions.pfx`, before any socket is opened or anything is bound.
+`ServerTlsOptions.pfx` by `listen()`, before anything is bound.
 
 Three causes share it: the passphrase is wrong, the bytes are not a PKCS#12 file, or the file
 uses a legacy encryption the library does not load. The last is the one that surprises: a file

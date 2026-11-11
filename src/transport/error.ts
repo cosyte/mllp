@@ -123,7 +123,7 @@ export const MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE = "MLLP_TLS_DH_PARAMETERS_UNEN
 
 /**
  * The TLS library could not load `tls.pfx`, the PKCS#12 file, with `tls.passphrase`. Raised for
- * `TlsOptions.pfx` and `ServerTlsOptions.pfx`, before any socket is opened or anything is bound.
+ * `ServerTlsOptions.pfx` by `listen()`, before anything is bound.
  *
  * Three causes share it: the passphrase is wrong, the bytes are not a PKCS#12 file, or the file
  * uses a legacy encryption the library does not load. The last is the one that surprises: a file
@@ -195,8 +195,8 @@ export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string
     [MLLP_TLS_PFX_REJECTED]:
       "tls.pfx could not be loaded with tls.passphrase: the passphrase is wrong, the file is not " +
       "PKCS#12, or it uses a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy` and " +
-      "older exports write it) that OpenSSL 3 does not load, so re-export it with AES-256; no " +
-      "connection was opened and nothing was bound",
+      "older exports write it) that OpenSSL 3 does not load, so re-export it with AES-256; " +
+      "nothing was bound",
   };
   return messages[code];
 }

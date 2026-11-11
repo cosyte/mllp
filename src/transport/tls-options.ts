@@ -59,26 +59,8 @@ export interface TlsOptions {
   readonly cert?: PemInput;
   /** Private key matching {@link TlsOptions.cert}. */
   readonly key?: PemInput;
-  /**
-   * Passphrase for an encrypted {@link TlsOptions.key}, or for the PKCS#12 file in
-   * {@link TlsOptions.pfx}.
-   */
+  /** Passphrase for an encrypted {@link TlsOptions.key}. */
   readonly passphrase?: string;
-  /**
-   * The client certificate and its private key as one PKCS#12 file (`.pfx` / `.p12`), in place of
-   * {@link TlsOptions.cert} and {@link TlsOptions.key}, unlocked with {@link TlsOptions.passphrase}.
-   * The file's bytes, as `readFileSync` returns them; this package reads no file itself.
-   *
-   * The file is loaded before any socket is opened. One the TLS library cannot load rejects
-   * `connect()` with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose
-   * message names this option and never its value: a wrong passphrase, bytes that are not
-   * PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
-   * older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
-   * file with AES-256. A reconnect attempt that meets it gives up, as for any configuration error.
-   *
-   * @default undefined (no PKCS#12 file)
-   */
-  readonly pfx?: Buffer;
   /**
    * SNI hostname and the identity-check target (matched against the server
    * certificate's Subject/SAN). Defaults to `ClientOptions.host` when unset.

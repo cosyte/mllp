@@ -57,9 +57,9 @@ await server.listen(2575, "127.0.0.1");
 ### A PKCS#12 file: `pfx`
 
 A certificate and its key often arrive as one PKCS#12 file (`.pfx` or `.p12`), the form Windows and
-many certificate authorities export. Pass its bytes as `pfx`, with `passphrase` to unlock it, in
-place of `cert` and `key`. It works on both ends: a server presents the certificate, and a client
-presents it to a server that asks for one under mutual TLS.
+many certificate authorities export. Pass its bytes to a server as `pfx`, with `passphrase` to
+unlock it, in place of `cert` and `key`. The client's TLS options do not take `pfx` yet; give a
+client its certificate as `cert` and `key`.
 
 ```ts no-run needs a PKCS#12 file of your own
 import { readFileSync } from "node:fs";
@@ -71,15 +71,14 @@ const server = createServer({
 await server.listen(2575, "127.0.0.1");
 ```
 
-The file is loaded before anything is bound or connected. If the TLS library cannot load it,
-`listen()` or `connect()` rejects with `MllpTlsConfigurationError` and the code
-`MLLP_TLS_PFX_REJECTED`; its message names `tls.pfx` and never the file or the passphrase, and the
+The file is loaded before anything is bound. If the TLS library cannot load it, `listen()` rejects
+with `MllpTlsConfigurationError` and the code `MLLP_TLS_PFX_REJECTED`; its message names `tls.pfx` and never the file or the passphrase, and the
 library's own error is the `cause`. Three things cause it: a wrong passphrase, bytes that are not
 PKCS#12, or a **legacy encryption**. A file written by `openssl pkcs12 -export -legacy`, by OpenSSL
 1.x, or by an older Windows export protects its certificates with RC2-40, and Node.js runs OpenSSL 3
 without the legacy provider that holds RC2, so it refuses the file. Re-export it with AES-256, which
-`openssl pkcs12 -export` on OpenSSL 3 uses by default. A client does not retry the refusal on
-reconnect, since every attempt would meet the same file.
+`openssl pkcs12 -export` on OpenSSL 3 uses by default. A server refused this way stays refused:
+every `listen()` on it rejects the same way.
 
 A server given neither `cert` and `key` nor `pfx` throws a `TypeError` when it is created.
 
