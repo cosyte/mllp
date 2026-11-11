@@ -60,7 +60,8 @@ jobs:
       run-scaling-gate: true
       run-bench-compare: true
 
-  # `verify`'s steps on Windows, on Node 22, 24 and 26, every one but the type-export check. Not
+  # `verify`'s steps on Windows, on Node 22, 24 and 26, but two: the type-export check and the
+  # coverage gate. Not
   # the shared `verify` on `windows-latest`: that leg runs `pnpm attw`, and the attw gate in
   # @cosyte/script-utils 0.1.10 (`cosyte-attw`) starts `npm`, `pnpm` and `attw` by name with no
   # shell, which Windows cannot do for their `.cmd` launchers (measured on the same reference in a
@@ -68,6 +69,13 @@ jobs:
   # passed). What attw checks is the packed manifest and its types, the same bytes on every system,
   # and the Linux and macOS legs check them. Once a script-utils release runs that gate on Windows,
   # add "windows-latest" to `os` above and delete this job.
+  #
+  # The suite runs whole here (`pnpm test`), but not under the coverage gate: the gate is 100% of
+  # `src/`, and the lines in `src/server/server.ts` that read a wildcard spelled as a resolver
+  # shorthand (`"0"`, `"0x0.0.0.0"`) and refuse it after the bind cannot be reached on Windows,
+  # whose resolver refuses those spellings before any bind, so their cases are skipped there
+  # (`test/server/bind-safety.test.ts`; measured: 99.86% of lines). The gate holds on Linux and
+  # macOS in `verify` and in `coverage-ratchet`.
   windows:
     strategy:
       fail-fast: false
@@ -95,9 +103,9 @@ jobs:
       - run: pnpm format:check
       - run: pnpm phi-scan
       - run: pnpm test
-      - run: pnpm test:coverage
+      # `pnpm test:coverage` is left out here, for the reason above the job.
       - run: pnpm build
-      # `pnpm attw` is the one step of `verify` left out here, for the reason above the job.
+      # `pnpm attw` is left out here, for the reason above the job.
       - name: Dual ESM/CJS smoke
         run: |
           test -f dist/index.mjs && test -f dist/index.cjs && test -f dist/index.d.ts

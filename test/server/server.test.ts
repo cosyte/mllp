@@ -128,8 +128,12 @@ describe("createServer / MllpServer skeleton", () => {
       await server.listen(0);
 
       const sock = await connectToServer(server);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(server.getStats().activeConnections).toBe(1);
+      // Polled: the client's 'connect' can land before the server has accepted, on macOS by
+      // more than one tick.
+      await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+        timeout: 2_000,
+        interval: 5,
+      });
 
       // Destroy the socket to close connection
       sock.destroy();
@@ -385,8 +389,12 @@ describe("Gap closure, byteOffset/warnings threading, closedTotal accuracy, onMe
       expect(server.getStats().closedTotal).toBe(0);
 
       const sock = await connectToServer(server);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(server.getStats().activeConnections).toBe(1);
+      // Polled: the client's 'connect' can land before the server has accepted, on macOS by
+      // more than one tick.
+      await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+        timeout: 2_000,
+        interval: 5,
+      });
 
       // Destroy the client socket, server sees peer close, transitions CONNECTED → DISCONNECTED,
       // then DISCONNECTED → CLOSED when destroyed during _drainAll straggler path.

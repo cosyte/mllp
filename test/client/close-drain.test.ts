@@ -156,6 +156,9 @@ describe("close() awaits the acknowledgements of sends already on the wire", () 
     const caught = sent.catch((err: unknown) => err);
     const observed = watch(caught);
 
+    // Timed from the call to close(), not from mid-drain: on Windows the 20 ms wait below can
+    // take a whole timer tick longer, which left less than half the drain to measure after it.
+    const started = Date.now();
     const closing = h.client.close({ drainTimeoutMs: SHORT_DRAIN_MS });
     await delay(Math.floor(SHORT_DRAIN_MS / 3));
     // Mid-drain: the send is still being awaited, not rejected out of hand, and the
@@ -163,10 +166,11 @@ describe("close() awaits the acknowledgements of sends already on the wire", () 
     expect(observed.settled()).toBe(false);
     expect(h.client.state).toBe("DRAINING");
 
-    const took = await elapsed(async () => {
-      await closing;
-    });
-    expect(took).toBeGreaterThanOrEqual(SHORT_DRAIN_MS / 2);
+    await closing;
+    // The bound the case held before, a third of the drain and then half of it, from the start.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(
+      Math.floor(SHORT_DRAIN_MS / 3) + SHORT_DRAIN_MS / 2,
+    );
     await expect(sent).rejects.toBeInstanceOf(MllpUnknownFateError);
   });
 
