@@ -1,8 +1,9 @@
 /**
- * `tls.pfx` on a server: a PKCS#12 file in place of a PEM `cert` and `key`, unlocked with
- * `tls.passphrase`.
+ * `tls.pfx` on a server and on a client: a PKCS#12 file in place of a PEM `cert` and `key`,
+ * unlocked with `tls.passphrase`.
  *
- * A file the runtime's TLS library cannot load is refused before anything is bound, with
+ * A file the runtime's TLS library cannot load is refused before anything is bound or connected,
+ * with
  * `MllpTlsConfigurationError` and the stable code `MLLP_TLS_PFX_REJECTED`, whose message names the
  * option and never its value. The case that matters most in practice is a legacy-encrypted file
  * (RC2, as `openssl pkcs12 -export -legacy` and older exports write it): Node.js runs OpenSSL 3
@@ -16,7 +17,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { RUNTIME } from "../_helpers/runtime.js";
 
+import {
+  createServer as createNetServer,
+  type AddressInfo,
+  type Server as NetServer,
+} from "node:net";
+
 import { createClient, type MllpClient } from "../../src/client/client.js";
+import { isTransientConnectionError } from "../../src/client/error.js";
 import { createServer, type MllpServer } from "../../src/server/server.js";
 import {
   MLLP_TLS_PFX_REJECTED,
@@ -25,7 +33,12 @@ import {
 } from "../../src/transport/error.js";
 import * as root from "../../src/index.js";
 import { buildPfx, buildLegacyPfx } from "../helpers/pkcs12-fixtures.js";
-import { buildServerCertFixture, type ServerCertFixture } from "../helpers/tls-fixtures.js";
+import {
+  buildMutualTlsFixture,
+  buildServerCertFixture,
+  type MutualTlsFixture,
+  type ServerCertFixture,
+} from "../helpers/tls-fixtures.js";
 
 const PASSPHRASE = "synthetic-pfx-passphrase";
 const MESSAGE = Buffer.from("MSH|^~\\&|A|B|C|D|20260101||ADT^A01|PFXMSG1|P|2.5\r", "latin1");
@@ -148,6 +161,116 @@ describe.skipIf(RUNTIME !== "node")("tls.pfx on Node.js", () => {
       (e: unknown) => e,
     );
     expectPfxRefusal(err, pfx);
+  });
+});
+
+/** A plain TCP listener that counts the sockets opened to it, so a test can prove none was. */
+async function countingListener(): Promise<{ port: number; opened: () => number }> {
+  let opened = 0;
+  const listener = createNetServer((socket) => {
+    opened += 1;
+    socket.destroy();
+  });
+  netServers.push(listener);
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  return { port: (listener.address() as AddressInfo).port, opened: () => opened };
+}
+
+const netServers: NetServer[] = [];
+afterEach(async () => {
+  for (const s of netServers) await new Promise<void>((resolve) => s.close(() => resolve()));
+  netServers.length = 0;
+});
+
+describe.skipIf(RUNTIME !== "node")("tls.pfx on a client, on Node.js", () => {
+  let sharedMutual: MutualTlsFixture | undefined;
+  function mutual(): MutualTlsFixture {
+    sharedMutual ??= buildMutualTlsFixture();
+    return sharedMutual;
+  }
+
+  it("a client presents its certificate from a PKCS#12 file to a server that requires one", async () => {
+    const { cert, key, clientCert, clientKey } = mutual();
+    const server = createServer({
+      tls: { cert, key, ca: cert, clientAuth: "MUST" },
+      autoAck: "AA",
+    });
+    servers.push(server);
+    const peers: Array<{ subjectCN: string | null; authorized: boolean } | null> = [];
+    server.on(
+      "connection",
+      (e: { peerCertificate: { subjectCN: string | null; authorized: boolean } | null }) => {
+        peers.push(e.peerCertificate);
+      },
+    );
+    await server.listen(0, "127.0.0.1");
+
+    const pfx = buildPfx({ cert: clientCert, key: clientKey }, PASSPHRASE);
+    const client = createClient({
+      host: "127.0.0.1",
+      port: must(server.getStats().port),
+      tls: { ca: cert, servername: "localhost", pfx, passphrase: PASSPHRASE },
+    });
+    clients.push(client);
+    await client.connect();
+    const ack = await client.send(MESSAGE);
+    expect(ack.toString("latin1")).toContain("MSA|AA|PFXMSG1");
+    expect(peers).toHaveLength(1);
+    expect(peers[0]?.subjectCN).toBe("test-client");
+    expect(peers[0]?.authorized).toBe(true);
+  });
+
+  it("a legacy-encrypted file rejects connect() before a socket is opened", async () => {
+    const { clientCert, clientKey } = mutual();
+    const pfx = buildLegacyPfx({ cert: clientCert, key: clientKey }, PASSPHRASE);
+    const target = await countingListener();
+    const client = createClient({
+      host: "127.0.0.1",
+      port: target.port,
+      tls: { pfx, passphrase: PASSPHRASE },
+    });
+    clients.push(client);
+    const err: unknown = await client.connect().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expectPfxRefusal(err, pfx);
+    expect(((err as Error).cause as NodeJS.ErrnoException).code).toBe(
+      "ERR_CRYPTO_UNSUPPORTED_OPERATION",
+    );
+    // Permanent: the same file would meet the same library on every attempt.
+    expect(isTransientConnectionError(err)).toBe(false);
+    // A second call meets the same refusal, and neither opened a socket.
+    await expect(client.connect()).rejects.toMatchObject({ code: MLLP_TLS_PFX_REJECTED });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(target.opened()).toBe(0);
+  });
+
+  it("the wrong passphrase, or bytes that are not PKCS#12, are the same refusal", async () => {
+    const { clientCert, clientKey } = mutual();
+    const target = await countingListener();
+    const wrong = "synthetic-wrong-passphrase";
+    const goodFile = buildPfx({ cert: clientCert, key: clientKey }, PASSPHRASE);
+    const notPkcs12 = Buffer.from("synthetic bytes that are not a PKCS#12 file", "latin1");
+    for (const [pfx, passphrase] of [
+      [goodFile, wrong],
+      [notPkcs12, PASSPHRASE],
+    ] as const) {
+      const client = createClient({
+        host: "127.0.0.1",
+        port: target.port,
+        tls: { pfx, passphrase },
+      });
+      clients.push(client);
+      const err: unknown = await client.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expectPfxRefusal(err, pfx);
+      expect(String((err as Error).cause)).not.toContain(wrong);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(target.opened()).toBe(0);
   });
 });
 

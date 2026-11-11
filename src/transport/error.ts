@@ -123,7 +123,8 @@ export const MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE = "MLLP_TLS_DH_PARAMETERS_UNEN
 
 /**
  * The TLS library could not load `tls.pfx`, the PKCS#12 file, with `tls.passphrase`. Raised for
- * `ServerTlsOptions.pfx` by `listen()`, before anything is bound.
+ * `ServerTlsOptions.pfx` by `listen()`, before anything is bound, and for `TlsOptions.pfx` by a
+ * client's `connect()`, before a socket is opened.
  *
  * Three causes share it: the passphrase is wrong, the bytes are not a PKCS#12 file, or the file
  * uses a legacy encryption the library does not load. The last is the one that surprises: a file

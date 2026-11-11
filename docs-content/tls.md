@@ -57,9 +57,9 @@ await server.listen(2575, "127.0.0.1");
 ### A PKCS#12 file: `pfx`
 
 A certificate and its key often arrive as one PKCS#12 file (`.pfx` or `.p12`), the form Windows and
-many certificate authorities export. Pass its bytes to a server as `pfx`, with `passphrase` to
-unlock it, in place of `cert` and `key`. The client's TLS options do not take `pfx` yet; give a
-client its certificate as `cert` and `key`.
+many certificate authorities export. Pass its bytes as `pfx`, with `passphrase` to unlock it, in
+place of `cert` and `key`: to a server for its own certificate, or to a client for the certificate
+it presents under mutual TLS.
 
 ```ts no-run needs a PKCS#12 file of your own
 import { readFileSync } from "node:fs";
@@ -79,6 +79,21 @@ PKCS#12, or a **legacy encryption**. A file written by `openssl pkcs12 -export -
 without the legacy provider that holds RC2, so it refuses the file. Re-export it with AES-256, which
 `openssl pkcs12 -export` on OpenSSL 3 uses by default. A server refused this way stays refused:
 every `listen()` on it rejects the same way.
+
+On a client the file is loaded before a socket is opened, and a file that cannot be loaded rejects
+`connect()` with the same error and code. The refusal is permanent, so a client does not retry it.
+
+```ts no-run needs a PKCS#12 file and a TLS server of your own
+import { readFileSync } from "node:fs";
+import { createClient } from "@cosyte/mllp";
+
+const client = createClient({
+  host: "mllp.example.com",
+  port: 2575,
+  tls: { ca: caPem, pfx: readFileSync("client.pfx"), passphrase: process.env.PFX_PASSPHRASE },
+});
+await client.connect();
+```
 
 A server given neither `cert` and `key` nor `pfx` throws a `TypeError` when it is created.
 
@@ -121,6 +136,9 @@ const client = createClient({
   tls: { ca: serverCaPem, cert: clientCertPem, key: clientKeyPem },
 });
 ```
+
+A client whose certificate and key arrive as one PKCS#12 file passes it as `pfx` instead: see
+[A PKCS#12 file](#a-pkcs12-file-pfx).
 
 The `'connection'` event's `peerCertificate` includes an `authorized` flag: whether the chain was
 **verified** against `ServerTlsOptions.ca`. ⚠️ Under `'WANT'`, a peer certificate can be present yet
