@@ -11,8 +11,6 @@ name: Nightly properties
 # their pinned seed, and their deep run is nightly-fuzz.yml, by time budget rather than by count.
 
 on:
-  pull_request:
-    branches: [main]
   schedule:
     # 04:41 UTC. An odd minute: GitHub delays scheduled runs at the start of every hour.
     - cron: "41 4 * * *"

@@ -12,8 +12,6 @@ name: Weekly mutation
 # exactly a week apart could find the last results gone and start from nothing.
 
 on:
-  pull_request:
-    branches: [main]
   schedule:
     # Sunday and Wednesday 07:13 UTC. An odd minute: GitHub delays scheduled runs at the start of
     # every hour.
