@@ -103,6 +103,7 @@ TLS configuration errors reject `connect()` or `listen()` with an
 | `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`   | the runtime would not enforce `ciphers`, or cannot offer every suite `atnaTransportSecurity` names (Deno, Bun)      |
 | `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE` | the runtime would not enforce `dhParameters`, or a server's `atnaTransportSecurity` Diffie-Hellman half (Deno, Bun) |
 | `MLLP_TLS_PFX_REJECTED`                | the TLS library cannot load `pfx` with `passphrase`: wrong passphrase, not PKCS#12, or legacy RC2-40                |
+| `MLLP_TLS_CREDENTIAL_CONFLICT`         | `pfx` is set together with `cert` or `key`; thrown when the client or server is created                             |
 
 ## Server connection codes
 

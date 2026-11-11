@@ -35,7 +35,7 @@ import {
   type ResolvedTlsCipherPolicy,
 } from "../transport/tls-cipher-policy.js";
 import { MllpTlsConfigurationError } from "../transport/error.js";
-import { checkPfx } from "../transport/pfx.js";
+import { checkCredentialMix, checkPfx } from "../transport/pfx.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
@@ -681,6 +681,8 @@ export class MllpServer extends EventEmitter {
       );
     }
     const tlsInput = opts.tls;
+    // A contradiction in the options themselves, so refused here rather than carried to listen().
+    checkCredentialMix(tlsInput);
     if (
       tlsInput !== undefined &&
       tlsInput.pfx === undefined &&
