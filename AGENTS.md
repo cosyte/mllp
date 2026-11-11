@@ -37,6 +37,12 @@ pnpm check:documents
 pnpm check:process
 ```
 
+`pnpm check:documents` ends with `pnpm check:docs-reference`: the API reference in
+`docs-content/api/` is generated from the TSDoc comments of every entry point in `exports`, and the
+check fails when the committed pages differ from a fresh generation or an export has no TSDoc
+summary. After changing a public export or its comment, run `pnpm docs:reference` and commit the
+pages. The `version` script regenerates them, since they print `VERSION`.
+
 ## Mutation testing and the floor
 
 `quality-floor.json` holds the coverage and mutation floors, which only rise. On a pull request CI

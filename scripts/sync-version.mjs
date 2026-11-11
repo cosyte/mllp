@@ -16,6 +16,9 @@
  * rewrite of the declared release and nothing else: no other sentence on that page is generated,
  * because the rest of it is a claim about behaviour that a human has to re-check.
  *
+ * The generated API reference in `docs-content/api/` prints `VERSION` too, so the `version` script
+ * regenerates it (`cosyte-docs-reference`) right after this, in the same commit.
+ *
  * The guard against drift is the test suite: `test/sanity.test.ts` compares the export against
  * `package.json`, and `test/conformance/statement.test.ts` compares the statement's declared release
  * against it. Skipping this script makes both go red, deliberately.
