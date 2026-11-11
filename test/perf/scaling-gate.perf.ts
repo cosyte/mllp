@@ -82,6 +82,24 @@ function arriving(payload: Buffer): Buffer[] {
 }
 
 /**
+ * A document message of `size` KiB, one of 16 kept per size: the size axis takes thousands of
+ * inputs, enough for its clean phase to clear the gate's 4 ms floor now that a frame is decoded in
+ * bulk, and building each afresh would cost more than measuring it. Many short documents rather
+ * than a few long ones, because the self-check's injected regression costs the square of the
+ * reads in one document, and the fixture must stay quick to run with it.
+ */
+const documents = new Map<string, Buffer>();
+function documentOf(i: number, size: number): Buffer {
+  const key = `${String(i % 16)}:${String(size)}`;
+  let doc = documents.get(key);
+  if (doc === undefined) {
+    doc = documentMessage(i % 16, size * KIB);
+    documents.set(key, doc);
+  }
+  return doc;
+}
+
+/**
  * The receive path: a 280 byte ADT^A01 in one read on the count axis; on the size axis, a document
  * message of `size` KiB in 1,460 byte reads.
  */
@@ -89,8 +107,8 @@ const decodeOptions: ScalingGateOptions<Buffer[], Buffer[]> = {
   name: "@cosyte/mllp FrameReader",
   parse: (chunks) => decode(chunks),
   weigh: (payloads) => payloads.length,
-  count: { n: 4_000, generate: (i) => arriving(adtMessage(i)) },
-  size: { inputs: 2, size: 512, generate: (i, size) => arriving(documentMessage(i, size * KIB)) },
+  count: { n: 48_000, generate: (i) => arriving(adtMessage(i)) },
+  size: { inputs: 2_000, size: 8, generate: (i, size) => arriving(documentOf(i, size)) },
 };
 
 /** The MSA segment of an ACK: the code and the control id it answers, which a resend keys on. */
@@ -113,8 +131,8 @@ const roundTripOptions: ScalingGateOptions<Buffer, string> = {
   name: "@cosyte/mllp Connection, send then ACK",
   parse: (payload) => msa(exchange(payload)),
   weigh: (answer) => answer.length,
-  count: { n: 1_000, generate: (i) => adtMessage(i) },
-  size: { inputs: 2, size: 512, generate: (i, size) => documentMessage(i, size * KIB) },
+  count: { n: 4_000, generate: (i) => adtMessage(i) },
+  size: { inputs: 1_000, size: 16, generate: (i, size) => documentOf(i, size) },
 };
 
 describe("the scaling gate: the receive path", () => {

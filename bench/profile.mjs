@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-import { MIB, adtMessage, documentMessage, frame } from "./corpus.mjs";
+import { MIB, SOCKET_READ_BYTES, adtMessage, documentMessage, frame, reads } from "./corpus.mjs";
 import { counting, roundTrip, splitReads } from "./mllp.bench.mjs";
 
 const { values } = parseArgs({
@@ -31,6 +31,7 @@ const mllp = await import(pathToFileURL(resolve(values.target)).href);
 
 const big = documentMessage(0, 4 * MIB);
 const bigFrame = frame(big);
+const bigReads = reads(bigFrame, SOCKET_READ_BYTES);
 const adts = Array.from({ length: 64 }, (_, i) => adtMessage(i));
 const adtReads = splitReads(adts);
 const decoder = counting(mllp);
@@ -54,12 +55,23 @@ async function socketStream() {
   await Promise.all(Array.from({ length: 64 }, lane));
 }
 
-/** The hottest paths: the large opaque frame each way, the small-message stream, and a socket. */
+/**
+ * The hottest paths: the large opaque frame each way, whole and in the reads a socket hands up
+ * (a frame across reads is gathered and joined, one in a single read is copied out of it), the
+ * small-message stream, and a socket.
+ */
 const PATHS = [
   {
     name: "decode-4mib",
     what: "FrameReader, a 4 MiB base64 document in one read",
     run: () => decoder.reader.push(bigFrame),
+  },
+  {
+    name: "decode-4mib-reads",
+    what: "FrameReader, a 4 MiB base64 document in 64 KiB reads",
+    run: () => {
+      for (const chunk of bigReads) decoder.reader.push(chunk);
+    },
   },
   {
     name: "decode-adt-split",

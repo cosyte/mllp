@@ -121,17 +121,22 @@ function isMshSegmentAt(buf: Buffer, i: number): boolean {
   );
 }
 
-/** Index of the byte after the `CR`/`LF`-delimited segment starting at `i`. @internal */
-function segmentEnd(buf: Buffer, i: number): number {
-  let end = i;
-  while (
-    end < buf.length &&
-    buf[end] !== SEGMENT_SEPARATOR_CR &&
-    buf[end] !== SEGMENT_SEPARATOR_LF
-  ) {
-    end++;
-  }
-  return end;
+/**
+ * A finder of segment ends over one payload: given a segment's first byte `i`, the index of the
+ * first `CR` or `LF` at or after it, or the payload's length when there is none. Each terminator
+ * is found by a native search and kept until a later segment passes it, so a walk over every
+ * segment searches each byte at most once per terminator. @internal
+ */
+function segmentEnds(buf: Buffer): (i: number) => number {
+  let cr = -2;
+  let lf = -2;
+  return (i) => {
+    if (cr !== -1 && cr < i) cr = buf.indexOf(SEGMENT_SEPARATOR_CR, i);
+    if (lf !== -1 && lf < i) lf = buf.indexOf(SEGMENT_SEPARATOR_LF, i);
+    const atCr = cr === -1 ? buf.length : cr;
+    const atLf = lf === -1 ? buf.length : lf;
+    return atCr < atLf ? atCr : atLf;
+  };
 }
 
 /**
@@ -164,9 +169,10 @@ function segmentEnd(buf: Buffer, i: number): number {
  * @internal
  */
 function findMshSegment(buf: Buffer): { start: number; end: number } | null {
+  const segmentEnd = segmentEnds(buf);
   let segStart = 0;
   while (segStart < buf.length) {
-    const end = segmentEnd(buf, segStart);
+    const end = segmentEnd(segStart);
     if (isMshSegmentAt(buf, segStart)) return { start: segStart, end };
     // Advance past this segment's terminator bytes (handles `CRLF` as one break).
     let next = end;
@@ -232,10 +238,11 @@ function isBatchEnvelopeSegmentAt(buf: Buffer, i: number): boolean {
  * @internal
  */
 export function containsBatchOrExtraMessage(buf: Buffer): boolean {
+  const segmentEnd = segmentEnds(buf);
   let mshCount = 0;
   let segStart = 0;
   while (segStart < buf.length) {
-    const end = segmentEnd(buf, segStart);
+    const end = segmentEnd(segStart);
     if (isMshSegmentAt(buf, segStart)) {
       mshCount++;
       if (mshCount > 1) return true;

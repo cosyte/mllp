@@ -302,10 +302,12 @@ footnote.
 **What it does with your payload.** It moves the buffer you hand it to the peer and hands the peer's
 bytes back to your handler. It holds a message in memory only while that message is in flight: from
 `send()` until its acknowledgment is correlated, or until `close()` drains it or reports it
-unresolved. On the receive side your handler is given a copy, and the decoder then reuses its
-internal accumulator for the next frame rather than zeroing it, so those bytes stay in that private
-buffer until a later frame overwrites them, for as long as that reader lives. That is buffer reuse
-rather than storage, and no public API hands the buffer out, but it is not a scrub.
+unresolved. On the receive side your handler is given a copy. A frame that arrived across reads was
+gathered in the decoder's internal accumulator, which is never zeroed: a frame of up to 4 KiB stays
+in that private buffer until a later frame overwrites it, for as long as that reader lives, and the
+buffer that held a larger one is dropped once the frame is delivered and left to the garbage
+collector. That is buffer reuse rather than storage, and no public API hands the buffer out, but it
+is not a scrub.
 
 **The reads the transport performs, and where they stop.** The transport does not parse HL7, but it
 is not blind to the payload either, and the bound is worth more to you than the slogan. To answer a
