@@ -8,6 +8,8 @@ name: Bench
 #   side, so the reading finishes inside a pull request's wait;
 # - `socket`: bench/socket.mjs, the same traffic over a real 127.0.0.1 socket, client and server
 #   in two processes, with the memory outside the V8 heap that holds a frame's bytes;
+# - `open-loop`: bench/open-loop.mjs, acknowledgment latency at fixed send rates over plain TCP and
+#   TLS, with TCP_NODELAY as the package sets it, turned off by option, and set from outside;
 # - `profile`: bench/profile.mjs, a CPU and a sampled heap profile of the hottest paths.
 #
 # On demand, and on a pull request that changes what is measured, so a change to the suite is
@@ -115,6 +117,35 @@ jobs:
         with:
           name: bench-socket
           path: bench-results/socket/
+          if-no-files-found: warn
+          retention-days: 30
+
+  open-loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Read acknowledgment latency at fixed rates
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm bench:open-loop --out bench-results/open-loop
+          cat bench-results/open-loop/open-loop.md >> "${GITHUB_STEP_SUMMARY}"
+      - name: Keep the reading
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-open-loop
+          path: bench-results/open-loop/
           if-no-files-found: warn
           retention-days: 30
 
