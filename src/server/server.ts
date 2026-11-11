@@ -624,6 +624,8 @@ export class MllpServer extends EventEmitter {
    * set: the number the cap is compared against.
    */
   private _openSockets = 0;
+  /** Sockets the connection cap closed at accept, so a runtime's report of them is recognised. */
+  private readonly _closedAtAccept = new WeakSet<object>();
   /** Count of `'tlsClientError'` events since listen(). */
   private _tlsClientErrorsTotal = 0;
   /**
@@ -702,6 +704,10 @@ export class MllpServer extends EventEmitter {
       // accepting other connections, only the error's message/code and the
       // remote address are surfaced; never payload bytes or a cert dump.
       tlsServer.on("tlsClientError", (err: Error, socket: TLSSocket) => {
+        // A socket the connection cap closed at accept never began a handshake, so its close is
+        // not a failed one. Node never reports it; Bun does, on the very socket the cap closed
+        // (measured: Bun 1.4.4), so it is recognised by identity and left out.
+        if (this._closedAtAccept.has(socket)) return;
         this._tlsClientErrorsTotal += 1;
         const nodeErr = err as NodeJS.ErrnoException;
         const event: {
@@ -788,6 +794,7 @@ export class MllpServer extends EventEmitter {
         // Read before the destroy: a destroyed socket no longer reports its peer.
         const remoteAddress = socket.remoteAddress ?? null;
         const remotePort = socket.remotePort ?? null;
+        this._closedAtAccept.add(socket);
         socket.destroy();
         this._onConnectionOverCap(maxConnections, remoteAddress, remotePort);
         return;

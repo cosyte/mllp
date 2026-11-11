@@ -428,6 +428,25 @@ describe("ServerOptions.maxConnections without a socket", () => {
     }
   });
 
+  it("a TLS server does not count a socket it closed at accept as a failed handshake", () => {
+    const server = track(createServer({ maxConnections: 1, tls: buildServerCertFixture() }));
+    const tlsErrors: unknown[] = [];
+    server.on("tlsClientError", (e: unknown) => tlsErrors.push(e));
+    const closed = fakeSocket({ remoteAddress: "192.0.2.11", remotePort: 49_153 });
+    offerOverCap(server, 1, closed);
+    const inner = (server as unknown as { _netServer: EventEmitter })._netServer;
+
+    // The report a runtime may make of the socket the cap closed (Bun does) is left out...
+    inner.emit("tlsClientError", new Error("socket hang up"), closed);
+    expect(tlsErrors).toHaveLength(0);
+    expect(server.getStats().tlsClientErrorsTotal).toBe(0);
+
+    // ...and a real failed handshake on any other socket is still reported.
+    inner.emit("tlsClientError", new Error("wrong version number"), fakeSocket());
+    expect(tlsErrors).toHaveLength(1);
+    expect(server.getStats().tlsClientErrorsTotal).toBe(1);
+  });
+
   it("gates nothing when no cap is set", () => {
     const server = track(createServer({}));
     const inner = (server as unknown as { _netServer: net.Server })._netServer;
