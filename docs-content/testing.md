@@ -173,6 +173,12 @@ console.log(JSON.stringify(report, null, 2));
 MLLP_DIFF_PEER=engine.staging.example:2575 node differential.js
 ```
 
+`runDifferential`, `canonicalExchanges` and the rest of the harness are exported from the package
+root, `@cosyte/mllp`, and from nowhere else: there is no `@cosyte/mllp/differential` subpath, and we
+do not plan one. Our subpaths exist to keep an optional peer out of the root (`ack-from-hl7` needs
+`@cosyte/hl7`, `arbitraries` needs `fast-check`) or to set apart a surface for tests (`testing`).
+The harness needs no peer: it runs on the same Node.js built-ins as the client.
+
 > **The run sends messages INTO whatever engine you aim it at.** They are synthetic patients, and an
 > engine that accepts them stores synthetic patients: an admit and an observation result will land in
 > whatever that endpoint feeds. Aim it at a test or staging endpoint. Never at a production interface
