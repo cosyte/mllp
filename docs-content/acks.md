@@ -196,7 +196,8 @@ server.on("nack", ({ connectionId, ackCode, reason }) =>
 
 `ackTimeoutMs` (default 30 s) bounds the wait. Its clock starts at the socket **write-flush**, not
 at the `send()` call. Time a message spent queued behind backpressure is not charged against the
-peer's response budget.
+peer's response budget. A send can set its own: `client.send(payload, { ackTimeoutMs: 5_000 })`
+bounds that send's wait at 5 s, whatever the client's value is.
 
 **A timeout is not a failure to deliver.** It means you do not know. The message may have been
 committed by the receiver and the ACK lost on the way back. This is the at-least-once boundary; see

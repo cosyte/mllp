@@ -326,6 +326,9 @@ export interface ClientOptions {
    * Per-message ACK timeout in milliseconds. The clock starts at
    * the underlying `write()` flush callback, NOT at the `send()` call,
    * pre-flush queue time is not charged to the peer. Default: `30_000`.
+   *
+   * A send can set its own with `send(payload, { ackTimeoutMs })`, which replaces this value
+   * for that send's acknowledgement wait.
    */
   readonly ackTimeoutMs?: number;
   /**
@@ -629,6 +632,15 @@ export class MllpClient extends EventEmitter {
   /** Set when close()/destroy()/abort fires; reconnect handler short-circuits. */
   private _userClosed = false;
   /**
+   * The reason passed to the `destroy(reason)` that closed a connection still connecting, `null`
+   * otherwise. The socket hands it back on `'error'`, and `connect()` compares by identity so the
+   * caller's own reason is carried as the cause and never sorted into a TLS `connectionCause`.
+   * Only the call that reaches the socket records it: a later `destroy()` finds the connection
+   * already CLOSED and leaves it alone. Cleared once matched and at the start of `connect()`, so
+   * the client does not keep the caller's object alive.
+   */
+  private _destroyReason: Error | null = null;
+  /**
    * Sends parked inside the client with nothing written for them. See {@link ParkedSend}.
    * Every entry removes itself the moment its own wait ends, however it ends.
    */
@@ -750,8 +762,15 @@ export class MllpClient extends EventEmitter {
    * - `MllpConnectionError({ phase: 'connect', connectionCause: 'connect-timeout' })` if
    *   {@link ClientOptions.connectTimeoutMs} is set and the TCP connect, or the TLS handshake
    *   after it, did not complete in time. The socket is destroyed; nothing was written.
-   * - `MllpConnectionError({ phase: 'connect' })` if the socket closes before connecting with
-   *   no error, which is what {@link MllpClient.destroy} called during `connect()` does.
+   * - `MllpConnectionError({ phase: 'connect' })` if {@link MllpClient.destroy} is called while
+   *   `connect()` is still connecting, over TCP or TLS, before or during the handshake. Its
+   *   `cause` is the reason passed to `destroy(reason)`, as it is, and its message is that
+   *   reason's; with no reason the cause is an `Error` whose message is `closed before connect`,
+   *   the same as for any socket that closes before connecting with no error. It carries no
+   *   `connectionCause` either way: a reason is the caller's own, so one whose message or `code`
+   *   reads like a TLS failure (`alert`, `ERR_SSL_*`, `EPROTO`, a certificate code) is never
+   *   sorted into `'tls-handshake'` or `'tls-verify'`. The first `destroy()` decides: a second
+   *   call before `connect()` settles, with a reason or without one, changes nothing.
    * - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
    *   honoured (the runtime rejects it, the runtime does not enforce cipher lists
    *   at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
@@ -810,6 +829,8 @@ export class MllpClient extends EventEmitter {
     if (signal !== undefined) {
       this._captureConnectSignal(signal);
     }
+
+    this._destroyReason = null;
 
     return new Promise<void>((resolve, reject) => {
       let aborted = false;
@@ -883,6 +904,13 @@ export class MllpClient extends EventEmitter {
         /* v8 ignore next -- cleanup() removes this listener before an abort settles, so it never runs after one */
         if (aborted) return;
         cleanup();
+        // A reason the caller passed to destroy() is theirs, not the runtime's: it is carried as
+        // the cause as it is, never classified, however much it reads like a TLS failure.
+        if (err === this._destroyReason) {
+          this._destroyReason = null;
+          reject(new MllpConnectionError(err.message, { cause: err, phase: "connect" }));
+          return;
+        }
         // Surface the OS error wrapped in MllpConnectionError (Connection's
         // _onTransportError handles the same wrap once attached, but the
         // socket's 'error' may arrive before NetTransport hands it off).
@@ -1893,8 +1921,8 @@ export class MllpClient extends EventEmitter {
    *
    * Resolves with the ACK Buffer (framing stripped). Rejects with:
    * - `DOMException('Aborted', 'AbortError')` if `signal` aborts before the ACK.
-   * - `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs`.
-   *   The clock starts at the underlying `write()` flush callback, NOT at
+   * - `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs` (this send's own, else the
+   *   client's). The clock starts at the underlying `write()` flush callback, NOT at
    *   the `send()` call.
    * - `MllpConnectionError({ phase: 'send' })` if the client is not connected.
    *
@@ -1923,7 +1951,10 @@ export class MllpClient extends EventEmitter {
    *
    * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.
    * @param opts.signal AbortSignal, aborting cancels the ACK wait.
-   * @param opts.ackTimeoutMs Per-send override of the backpressure wait budget.
+   * @param opts.ackTimeoutMs This send's bound on the wait for its acknowledgement, from the
+   *   moment its bytes are flushed, in place of the client's `ackTimeoutMs`. Under
+   *   `onBackpressure: "wait"` it also bounds the wait for queue room, and the
+   *   acknowledgement wait then starts afresh once the send is written.
    * @param opts.applicationAckTimeoutMs Per-send override of the second wait's bound.
    * @param opts.onCommitAck Called with the commit disposition when the peer commits the
    *   message ahead of its application acknowledgement. See {@link CommitAckReport}.
@@ -2005,21 +2036,37 @@ export class MllpClient extends EventEmitter {
       );
     }
 
+    const sendAckTimeoutMs = opts?.ackTimeoutMs;
     return new Promise<Buffer>((resolve, reject) => {
       let abortListener: (() => void) | null = null;
-      const wrappedResolve = (ack: Buffer): void => {
+      // A per-send acknowledgement bound gets a one-shot sweep of its own at the moment it
+      // falls due, because the periodic sweep runs at the resolution of the client-wide value
+      // and would let a shorter per-send bound overrun by up to a second.
+      let ackDeadline: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const settle = (): void => {
+        settled = true;
         if (signal !== undefined && abortListener !== null) {
           signal.removeEventListener("abort", abortListener);
         }
+        clearTimeout(ackDeadline);
+      };
+      const wrappedResolve = (ack: Buffer): void => {
+        settle();
         resolve(ack);
       };
       const wrappedReject = (err: Error): void => {
-        if (signal !== undefined && abortListener !== null) {
-          signal.removeEventListener("abort", abortListener);
-        }
+        settle();
         reject(err);
       };
-      const key = correlator.enqueue(frame, controlId, wrappedResolve, wrappedReject, twoPhase);
+      const key = correlator.enqueue(
+        frame,
+        controlId,
+        wrappedResolve,
+        wrappedReject,
+        twoPhase,
+        sendAckTimeoutMs,
+      );
       if (key === null) {
         // pipeline:false (Plan 05, D-06). Correlator's maxInFlight=1 is
         // saturated. Wait for the next 'drain' event (the prior ACK
@@ -2081,6 +2128,15 @@ export class MllpClient extends EventEmitter {
       // high-water mark is what the gate above enforces.
       conn.send(frame);
       correlator.markFlushed(key, Date.now());
+      // `settled` covers a transport that answers inside `send()`: nothing is left to bound.
+      if (sendAckTimeoutMs !== undefined && !settled) {
+        // Every teardown settles this send, which clears this timer, so the correlator it
+        // fires on is always the live one.
+        ackDeadline = setTimeout(() => {
+          correlator.expireDue();
+        }, sendAckTimeoutMs);
+        ackDeadline.unref();
+      }
       // PLAN-06 (OBS-01, D-26), count flushed sends. Synchronous post-send
       // increment per T-05-06-05 (counter race is bounded; observability is
       // "good enough" per D-26).
@@ -2305,7 +2361,7 @@ export class MllpClient extends EventEmitter {
    */
   private _shutdownErrorFor(entry: PendingAck): Error {
     const flushedAt = entry.sentAt;
-    /* c8 ignore next 6 -- structural guard, unreachable today; see the note above */
+    /* v8 ignore if -- structural guard, unreachable today; see the note above */
     if (flushedAt === null) {
       return new MllpNeverDeliveredError({
         byteCount: entry.byteCount,
@@ -2551,6 +2607,12 @@ export class MllpClient extends EventEmitter {
    * ever written for it; that is a statement about the bytes, not about how the client was
    * shut down, so it holds on this path too.
    *
+   * A {@link MllpClient.connect} still connecting rejects with an `MllpConnectionError` whose
+   * `phase` is `'connect'` and no `connectionCause`. Its `cause` is `reason` when one is given,
+   * never classified as a TLS failure whatever its message or `code`, and otherwise an `Error`
+   * whose message is `closed before connect`. Only the first call reaches the socket, so a
+   * second `destroy()` before `connect()` settles, with or without a reason, changes nothing.
+   *
    * @example
    * ```typescript
    * client.destroy(new Error('shutting down'));
@@ -2576,6 +2638,10 @@ export class MllpClient extends EventEmitter {
     this._teardownCorrelator(teardownReason);
     const conn = this._connection;
     if (conn === null) return;
+    // Only the call that reaches the socket, on a connection still connecting, records its
+    // reason. A second destroy() finds the connection CLOSED and never reaches the socket, so it
+    // must not displace the reason the socket is about to hand back.
+    if (conn.state === "CONNECTING") this._destroyReason = reason ?? null;
     conn.destroy(reason);
   }
 

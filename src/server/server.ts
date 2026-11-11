@@ -446,6 +446,14 @@ export interface ServerOptions {
    * (post-handshake sockets) instead of `'connection'`, and surfaces failed
    * handshakes via the `'tlsClientError'` event rather than crashing.
    *
+   * We set no handshake time limit of our own: the runtime's applies. On Node.js that is its
+   * `handshakeTimeout` default of 120 seconds, after which the socket is closed and
+   * `'tlsClientError'` fires with code `ERR_TLS_HANDSHAKE_TIMEOUT`. Until then a peer that
+   * connects and never completes the handshake holds a {@link ServerOptions.maxConnections}
+   * place, and `deadPeerTimeoutMs` does not apply, because it starts only once the connection is
+   * accepted after its handshake. We have not measured what bounds a handshake on Bun or Deno,
+   * which may set no limit at all.
+   *
    * Spec anchor: IHE ATNA ITI-19 (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html).
    *
    * @default undefined (plaintext TCP)

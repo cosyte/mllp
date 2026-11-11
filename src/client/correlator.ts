@@ -81,6 +81,11 @@ export interface PendingAck {
   readonly byteCount: number;
   /** Epoch ms recorded by `markFlushed()`; `null` until transport flush. */
   sentAt: number | null;
+  /**
+   * This send's bound on the wait for its acknowledgement, measured from `sentAt`: the
+   * caller's per-send `ackTimeoutMs` when it passed one, else the correlator's own.
+   */
+  readonly ackTimeoutMs: number;
   readonly resolve: (ack: Buffer) => void;
   readonly reject: (err: Error) => void;
   /**
@@ -298,6 +303,9 @@ export class Correlator {
    * `twoPhase` is the enhanced-mode state for a send being correlated by control ID.
    * Omitting it (or passing `null`) is what every other send does, and such an entry is
    * settled by the first acknowledgement matched to it, exactly as before.
+   *
+   * `ackTimeoutMs` is this send's own bound on the wait for its acknowledgement. Omitting it
+   * gives the entry the correlator-wide `ackTimeoutMs`.
    */
   enqueue(
     frame: Buffer,
@@ -305,6 +313,7 @@ export class Correlator {
     resolve: (ack: Buffer) => void,
     reject: (err: Error) => void,
     twoPhase: TwoPhaseState | null = null,
+    ackTimeoutMs?: number,
   ): CorrelationKey | null {
     if (this._pending.size >= this._opts.maxInFlight) return null;
     // controlId mode keys by MSH-10 (string). When MSH-10 is absent, we fall
@@ -321,6 +330,7 @@ export class Correlator {
       controlId: controlIdOrNull,
       byteCount: frame.length,
       sentAt: null,
+      ackTimeoutMs: ackTimeoutMs ?? this._opts.ackTimeoutMs,
       resolve,
       reject,
       twoPhase,
@@ -476,7 +486,7 @@ export class Correlator {
     byteOffsetFromAck: number,
   ): PendingAck | null {
     const twoPhase = entry.twoPhase;
-    /* c8 ignore next */
+    /* v8 ignore next -- the one caller passes only an entry that carries two-phase state */
     if (twoPhase === null) return entry;
     const now = this._opts.now();
     const classification = classifyMsa1(payload);
@@ -529,7 +539,7 @@ export class Correlator {
   }
 
   /**
-   * Sweep live entries; expire those past `sentAt + ackTimeoutMs`.
+   * Sweep live entries; expire those past `sentAt` plus their own `ackTimeoutMs`.
    * Fires `onTimeout(entry, elapsedMs)`; entries move to graveyard.
    * Driven externally by `MllpClient`'s periodic sweep tick, Correlator
    * itself owns no timers.
@@ -541,7 +551,6 @@ export class Correlator {
    */
   expireDue(now?: number): void {
     const t = now ?? this._opts.now();
-    const ackTimeoutMs = this._opts.ackTimeoutMs;
     for (const [key, entry] of this._pending) {
       if (entry.sentAt === null) continue;
       const twoPhase = entry.twoPhase;
@@ -559,7 +568,7 @@ export class Correlator {
         }
         continue;
       }
-      if (entry.sentAt + ackTimeoutMs <= t) {
+      if (entry.sentAt + entry.ackTimeoutMs <= t) {
         const elapsed = t - entry.sentAt;
         this._removeExpired(key, entry);
         if (twoPhase !== null) {
