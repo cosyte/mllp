@@ -74,10 +74,11 @@ jobs:
   # `mutation` then merges the parts with scripts/merge-mutation-parts.mjs, which refuses a part
   # that is missing, a file one part mutated and another did not, a file the change did not touch,
   # and a mutant tested by no part or by two, and holds the merged report to the same mutation
-  # ratchet the shared job ran: every mutant in the changed lines killed. It reports as
-  # `ci / mutation`, the context the shared job reported, and it runs whenever a part did not get
-  # to finish, so a failed or cancelled part fails it rather than skipping it: a skipped required
-  # context would let a merge through. MUTATION_PARTS and the `part` list must agree; the test in
+  # ratchet the shared job ran: every mutant in the changed lines killed. It reports as `mutation`,
+  # never as `ci / mutation`: the shared caller still reports that context, skipped, and a second
+  # check of the same name could be satisfied by the skipped one. It runs whenever a part did not
+  # get to finish, so a failed or cancelled part fails it rather than skipping it: a skipped
+  # required context would let a merge through. MUTATION_PARTS and the `part` list must agree; the test in
   # test/scripts/mutation-shards.test.ts holds them together.
   mutation-part:
     if: ${{ github.event_name == 'pull_request' }}
@@ -127,7 +128,7 @@ jobs:
   mutation:
     needs: mutation-part
     if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-    name: ci / mutation
+    name: mutation
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

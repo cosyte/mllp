@@ -457,8 +457,11 @@ describe("the mutation jobs in ci.yml", () => {
     expect(ci).toContain("node scripts/merge-mutation-parts.mjs");
   });
 
-  it("reports under the context name the shared job used, and fails when a part did not finish", () => {
-    expect(ci).toMatch(/^ {4}name: ci \/ mutation$/m);
+  it("reports under a name of its own, and fails when a part did not finish", () => {
+    // Never `ci / mutation`: the shared caller still reports that context, skipped, and a skipped
+    // check of the same name could stand in for this one.
+    expect(ci).toMatch(/^ {4}name: mutation$/m);
+    expect(ci).not.toMatch(/name: ci \/ mutation/);
     expect(ci).toContain("needs.mutation-part.result");
     expect(ci).toMatch(/if: \$\{\{ !cancelled\(\) && github\.event_name == 'pull_request' \}\}/);
   });
