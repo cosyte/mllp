@@ -1964,3 +1964,4 @@ export async function createStarterServer(opts: StarterServerOptions): Promise<M
   await server.listen(opts.port, opts.host ?? "127.0.0.1");
   return server;
 }
+// Measurement only: this line is removed in the next commit.
