@@ -626,6 +626,11 @@ export class MllpServer extends EventEmitter {
   private _openSockets = 0;
   /** Sockets the connection cap closed at accept, so a runtime's report of them is recognised. */
   private readonly _closedAtAccept = new WeakSet<object>();
+  /**
+   * For each socket the connection cap counted, what gives its place back. Released once, however
+   * many times it is called.
+   */
+  private readonly _capRelease = new WeakMap<object, () => void>();
   /** Count of `'tlsClientError'` events since listen(). */
   private _tlsClientErrorsTotal = 0;
   /**
@@ -800,15 +805,20 @@ export class MllpServer extends EventEmitter {
         return;
       }
       this._openSockets += 1;
+      let released = false;
+      const release = (): void => {
+        if (released) return;
+        released = true;
+        this._openSockets -= 1;
+      };
+      this._capRelease.set(socket, release);
       try {
         for (const listener of downstream) listener.call(server, socket);
       } finally {
         // Registered AFTER the accept handler, never before it: a plaintext socket is handed to a
         // NetTransport, whose set-once onClose removes every 'close' listener already on it. A
         // close is never emitted synchronously, so none can be missed by registering here.
-        socket.once("close", () => {
-          this._openSockets -= 1;
-        });
+        socket.once("close", release);
       }
     });
   }
@@ -1381,6 +1391,14 @@ export class MllpServer extends EventEmitter {
         ? { transport, framing: mergedFraming, onWarning: this._opts.onWarning }
         : { transport, framing: mergedFraming };
     const conn = new Connection(connOpts);
+
+    // The Connection's transport has just replaced every 'close' listener on the socket, the cap's
+    // own included when the cap counted this very socket. Under Node.js that is never so for TLS:
+    // the cap counts the raw socket and this is the TLS socket wrapping it. Bun hands both events
+    // the same socket object, and there the cap's place was never given back. So it is registered
+    // again here, after the transport's.
+    const release = this._capRelease.get(socket);
+    if (release !== undefined) socket.once("close", release);
 
     // Set beforeClose no-op hook (Plan 04 will wire autoAck drain here if needed)
     conn.beforeClose = () => Promise.resolve();
