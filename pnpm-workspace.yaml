@@ -20,3 +20,12 @@ minimumReleaseAgeExclude:
   # reason: first-party @cosyte package, exempt from the floor by operator decision
   - "@cosyte/*"
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  # reason: every @types/node 22 release depends on undici-types ~6.21.0, and 6.21.0 is the only
+  # version that range admits. It was published without a provenance attestation, after 6.13.0 had
+  # one, so `no-downgrade` refuses it whenever pnpm resolves the tree afresh, as Dependabot does for
+  # every update: the dev-dependencies group failed on it for every package and opened no pull
+  # request. The lockfile already holds this exact version. Exempting the one version, not the
+  # package, keeps the policy on every other undici-types release. Remove the entry when
+  # @types/node 22 moves to a later undici-types line.
+  - "undici-types@6.21.0"
