@@ -511,6 +511,10 @@ so every later connect, reconnect or server reads the result the first one found
 | Bun     | `dhParameters`, and `atnaTransportSecurity` on a server | **Refused**, `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`, with Bun's own refusal as the `cause`. The server is constructed; `listen()` is what rejects. |
 | Bun     | `ciphers`                                               | Enforced, as on Node.js.                                                                                                                           |
 
+`pfx` is tested on Node.js only. Bun and Deno ship their own TLS libraries, which are not OpenSSL 3,
+so what they load from a PKCS#12 file, and which files they refuse, may differ; where a link must
+run under either, prefer `cert` and `key`.
+
 A refused configuration is permanent: a client does not retry it, because every attempt would meet
 the same runtime. Run on Node.js when you rely on these options. `maxConnections` behaves the same on
 every runtime, because the server counts its connections itself: see
