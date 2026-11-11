@@ -58,6 +58,14 @@ When TLS is configured, the server consumes `tls.Server`'s `'secureConnection'` 
 sockets) instead of `net.Server`'s `'connection'`, and the client's `onConnect` transport hook maps
 to `'secureConnect'` (handshake complete) rather than the raw TCP `'connect'`.
 
+The server sets no handshake time limit of its own; the runtime's applies. On Node.js that is the
+`handshakeTimeout` default of `tls.createServer`, 120 seconds: a peer that connects and never
+completes the handshake is closed then, and the server emits `'tlsClientError'` with code
+`ERR_TLS_HANDSHAKE_TIMEOUT`. Until then that connection holds a `maxConnections` place, and
+`deadPeerTimeoutMs` does not cover it, because that timer starts only once a connection is accepted
+after its handshake. We have not measured what bounds a handshake on Bun or Deno, which may set
+no limit at all.
+
 ## Mutual TLS (mTLS)
 
 `ServerTlsOptions.clientAuth` selects the ATNA ITI-19 mutual-authentication mode:
