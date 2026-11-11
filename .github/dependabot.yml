@@ -10,7 +10,8 @@ updates:
       dev-dependencies:
         dependency-type: development
         # The TLS tests' certificate library moves on its own pull request, so a group that
-        # Dependabot cannot update as a whole never holds back a security fix for it.
+        # Dependabot cannot update as a whole never holds back a version update for it.
+        # Security updates are not grouped here either way: groups apply to version updates only.
         exclude-patterns:
           - "node-forge"
           - "@types/node-forge"
