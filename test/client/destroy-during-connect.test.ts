@@ -223,6 +223,128 @@ describe.each([
   );
 });
 
+// A second `destroy()` in the same tick, from a cleanup or a finally block, never reaches the
+// socket: the Connection is already CLOSED. The reason that did reach it is the one `connect()`
+// reports, so a later call with no reason or with another reason must not displace it.
+// Over TCP the calls run in the same tick as `connect()`, since a silent peer lets the TCP connect
+// complete; over TLS they run both then and once the peer has accepted, mid-handshake.
+describe.each([
+  { when: "before the TCP connect completes", tls: false, midHandshake: false },
+  { when: "before the TLS connect completes", tls: true, midHandshake: false },
+  { when: "during the TLS handshake", tls: true, midHandshake: true },
+])("destroy() twice in one tick $when", ({ tls, midHandshake }) => {
+  async function connectingClient(): Promise<{
+    client: ReturnType<typeof createClient>;
+    connecting: Promise<void>;
+  }> {
+    const peer = await silentPeer();
+    const client = createClient({
+      host: "127.0.0.1",
+      port: peer.port,
+      ...(tls ? { tls: { ca: buildServerCertFixture().cert, servername: "localhost" } } : {}),
+    });
+    const connecting = client.connect();
+    if (midHandshake) await waitFor(() => peer.accepted() === 1);
+    expect(client.state).toBe("CONNECTING");
+    return { client, connecting };
+  }
+
+  const SECOND_CALLS = [
+    { then: "no reason", second: (): Error | undefined => undefined },
+    { then: "another reason", second: (): Error | undefined => reasonWith("other", "EPROTO") },
+  ];
+
+  it.each(TLS_SHAPED_REASONS.flatMap((first) => SECOND_CALLS.map((s) => ({ ...first, ...s }))))(
+    "first with a reason carrying $label, then with $then: the first reason is the cause",
+    async ({ make, second }) => {
+      const { client, connecting } = await connectingClient();
+
+      const reason = make();
+      client.destroy(reason);
+      client.destroy(second());
+      const outcome = await settledWithin(connecting, 2_000);
+
+      expect(outcome).toBeInstanceOf(MllpConnectionError);
+      const err = outcome as MllpConnectionError;
+      expect(err.phase).toBe("connect");
+      expect(err.cause).toBe(reason);
+      expect(err.message).toBe(reason.message);
+      expect(err.connectionCause).toBeUndefined();
+      expect(client.state).toBe("CLOSED");
+    },
+  );
+
+  it.each(TLS_SHAPED_REASONS)(
+    "first with no reason, then with a reason carrying $label: closed before connect",
+    async ({ make }) => {
+      const { client, connecting } = await connectingClient();
+
+      client.destroy();
+      client.destroy(make());
+      const outcome = await settledWithin(connecting, 2_000);
+
+      expect(outcome).toBeInstanceOf(MllpConnectionError);
+      const err = outcome as MllpConnectionError;
+      expect(err.phase).toBe("connect");
+      expect(err.message).toBe("connection closed before it was established");
+      expect(err.cause).toBeInstanceOf(Error);
+      expect(err.cause.message).toBe("closed before connect");
+      expect(err.connectionCause).toBeUndefined();
+      expect(client.state).toBe("CLOSED");
+    },
+  );
+});
+
+// The client holds a destroy() reason only while the socket has yet to hand it back: it does not
+// keep the caller's object alive after that, nor record one for a connection already connected.
+describe("the destroy() reason is not kept", () => {
+  /** The reason the client is holding for the connect in progress. */
+  function heldReason(client: ReturnType<typeof createClient>): unknown {
+    return (client as unknown as { _destroyReason: unknown })._destroyReason;
+  }
+
+  it("once connect() has rejected with it", async () => {
+    const peer = await silentPeer();
+    const { cert } = buildServerCertFixture();
+    const client = createClient({
+      host: "127.0.0.1",
+      port: peer.port,
+      tls: { ca: cert, servername: "localhost" },
+    });
+    const connecting = client.connect();
+    await waitFor(() => peer.accepted() === 1);
+
+    const reason = reasonWith("alert: shutting down");
+    client.destroy(reason);
+    expect(heldReason(client)).toBe(reason);
+    expect(((await settledWithin(connecting, 2_000)) as MllpConnectionError).cause).toBe(reason);
+    expect(heldReason(client)).toBeNull();
+  });
+
+  it("when the client was already connected", async () => {
+    const peer = await silentPeer();
+    const client = createClient({ host: "127.0.0.1", port: peer.port });
+    await client.connect();
+
+    client.destroy(reasonWith("shutting down"));
+    expect(heldReason(client)).toBeNull();
+    expect(client.state).toBe("CLOSED");
+  });
+
+  it("once a new connect() starts", async () => {
+    const peer = await silentPeer();
+    const client = createClient({ host: "127.0.0.1", port: peer.port });
+    // A reason left over from an attempt the connect() promise never saw, as a destroy() during
+    // a reconnect attempt leaves it.
+    (client as unknown as { _destroyReason: unknown })._destroyReason = reasonWith("earlier");
+
+    const connecting = client.connect();
+    expect(heldReason(client)).toBeNull();
+    await connecting;
+    client.destroy();
+  });
+});
+
 // Node only: `getEventListeners` on an `AbortSignal` is how Node exposes an EventTarget's
 // listeners. What these pin, that a settled connect() leaves nothing of itself on the caller's
 // signal, is the same on every runtime.

@@ -933,7 +933,8 @@ Rejects with:
   the same as for any socket that closes before connecting with no error. It carries no
   `connectionCause` either way: a reason is the caller's own, so one whose message or `code`
   reads like a TLS failure (`alert`, `ERR_SSL_*`, `EPROTO`, a certificate code) is never
-  sorted into `'tls-handshake'` or `'tls-verify'`.
+  sorted into `'tls-handshake'` or `'tls-verify'`. The first `destroy()` decides: a second
+  call before `connect()` settles, with a reason or without one, changes nothing.
 - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
   honoured (the runtime rejects it, the runtime does not enforce cipher lists
   at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
@@ -993,7 +994,8 @@ shut down, so it holds on this path too.
 A [MllpClient.connect](#connect) still connecting rejects with an `MllpConnectionError` whose
 `phase` is `'connect'` and no `connectionCause`. Its `cause` is `reason` when one is given,
 never classified as a TLS failure whatever its message or `code`, and otherwise an `Error`
-whose message is `closed before connect`.
+whose message is `closed before connect`. Only the first call reaches the socket, so a
+second `destroy()` before `connect()` settles, with or without a reason, changes nothing.
 
 ###### Parameters
 

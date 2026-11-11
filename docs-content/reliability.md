@@ -160,7 +160,9 @@ is `connect`. Its `cause` is the reason you passed to `destroy(reason)`, and its
 reason's; with no reason the cause is an `Error` whose message is `closed before connect`. It carries
 no `connectionCause` either way: a reason is yours, so one whose message or `code` reads like a TLS
 failure (`alert`, `ERR_SSL_*`, `EPROTO`, a certificate code) is never sorted into `tls-handshake` or
-`tls-verify`. The client does not reconnect after a `destroy()`.
+`tls-verify`. The first `destroy()` decides: a second call before `connect()` settles, from a
+cleanup or `finally` block say, changes nothing, with a reason or without one. The client does not
+reconnect after a `destroy()`.
 
 ## Detecting a peer that is gone but not closed
 
