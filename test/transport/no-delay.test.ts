@@ -126,6 +126,28 @@ describe("MllpClient: TCP_NODELAY", () => {
     expect(flags().get(second)).toBe(true);
   });
 
+  it("leaves Nagle on again on the socket of every reconnect when noDelay is false", async () => {
+    const flags = watchNoDelay(net.Socket.prototype);
+    const { port, accepted } = await plainListener();
+    const client = await connectedClient({
+      host: "127.0.0.1",
+      port,
+      autoReconnect: true,
+      retryStrategy: () => 5,
+      noDelay: false,
+    });
+    const first = socketOf(client);
+    await waitFor(() => accepted.length === 1);
+
+    must(accepted[0]).destroy();
+    await waitFor(() => accepted.length === 2 && client.state === "CONNECTED");
+
+    const second = socketOf(client);
+    expect(second).not.toBe(first);
+    expect(flags().get(first)).toBe(false);
+    expect(flags().get(second)).toBe(false);
+  });
+
   it("turns Nagle off through createStarterClient by default", async () => {
     const flags = watchNoDelay(net.Socket.prototype);
     const { port } = await plainListener();
