@@ -57,6 +57,8 @@ vi.mock("node:tls", async (importOriginal) => {
 
 import {
   ATNA_CIPHER_LIST,
+  MLLP_TLS_CIPHER_OPTION_CONFLICT,
+  MLLP_TLS_DH_PARAMETERS_REJECTED,
   MllpTlsConfigurationError,
   MLLP_TLS_CIPHER_LIST_REJECTED,
   MLLP_TLS_CIPHER_LIST_UNENFORCEABLE,
@@ -203,5 +205,32 @@ describe("the runtime as it is, under the same mock", () => {
     expect(resolveTlsCipherPolicy({ dhParameters: DH_PARAMETERS_3072_PEM }, "server")).toEqual({
       dhparam: DH_PARAMETERS_3072_PEM,
     });
+  });
+});
+
+describe("the two new codes and every configuration message", () => {
+  it("are the stable values a caller branches and logs on", () => {
+    expect(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE).toBe("MLLP_TLS_CIPHER_LIST_UNENFORCEABLE");
+    expect(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE).toBe("MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE");
+    expect(tlsConfigurationMessage(MLLP_TLS_CIPHER_LIST_REJECTED)).toBe(
+      "the TLS library rejected the configured cipher-suite list; no connection was opened and " +
+        "no fallback to the runtime default list was made",
+    );
+    expect(tlsConfigurationMessage(MLLP_TLS_CIPHER_OPTION_CONFLICT)).toBe(
+      "tls.atnaTransportSecurity and tls.ciphers both declare the offered cipher-suite list; " +
+        "set exactly one of them",
+    );
+    expect(tlsConfigurationMessage(MLLP_TLS_DH_PARAMETERS_REJECTED)).toBe(
+      "the configured ephemeral Diffie-Hellman parameters are not usable; nothing was bound and " +
+        "no fallback to a server without Diffie-Hellman parameters was made",
+    );
+    expect(tlsConfigurationMessage(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE)).toBe(
+      "this runtime's TLS library does not enforce a configured cipher-suite list; no " +
+        "connection was opened, rather than one offering a list other than the one configured",
+    );
+    expect(tlsConfigurationMessage(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE)).toBe(
+      "this runtime's TLS library does not enforce server Diffie-Hellman parameters; nothing " +
+        "was bound, rather than a server running without the parameters configured",
+    );
   });
 });

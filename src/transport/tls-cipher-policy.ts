@@ -96,27 +96,6 @@ export const ATNA_CIPHER_LIST: string = [
 ].join(":");
 
 /**
- * A cipher-list string that describes no suite at all: it names one real suite and then removes
- * it for good with `!`. A TLS library that enforces a cipher list works out what the list selects,
- * finds nothing, and refuses it (Node.js and Bun: `no cipher match`). One that only checks how a
- * list is spelled and then offers its own accepts it, and would take the caller's list the same
- * way (measured: Deno 2.9.8, which refuses a list of lower-case words but accepts this one, and
- * accepts `!ALL`). That difference is the whole probe. The suite is a real one so that a check of
- * the names alone passes it.
- */
-const EMPTY_LIST_PROBE = "ECDHE-RSA-AES128-GCM-SHA256:!ECDHE-RSA-AES128-GCM-SHA256";
-
-/**
- * PKCS#3 Diffie-Hellman parameters for the group p = 23, g = 5: a five-bit prime, far below the
- * 1024 bits under which Node.js refuses parameters out loud (`DH parameter is less than 1024
- * bits`). A TLS library that reads `dhparam` refuses it; one that takes parameters and runs without
- * them accepts it, and would take the caller's group the same way. A probe only: these are never
- * handed to a context that serves anything.
- */
-const UNDERSIZED_DH_PROBE =
-  "-----BEGIN DH PARAMETERS-----\nMAYCARcCAQU=\n-----END DH PARAMETERS-----\n";
-
-/**
  * Build a TLS context from `options` alone and report what the runtime threw, if anything.
  *
  * @param options - A probe: no certificate, key or passphrase is ever passed here.
@@ -152,7 +131,13 @@ function refusalOf(options: SecureContextOptions): Error | null {
  * own refusal as `cause` when a named suite is what it refused.
  */
 function assertCipherListEnforced(atna: boolean): void {
-  if (refusalOf({ ciphers: EMPTY_LIST_PROBE }) === null) {
+  // A list that describes no suite at all: it names one real suite and then removes it for good
+  // with `!`. A TLS library that enforces a list works out what the list selects, finds nothing,
+  // and refuses it (Node.js and Bun: `no cipher match`). One that only checks how a list is spelled
+  // and then offers its own accepts it, and would take the caller's list the same way (measured:
+  // Deno 2.9.8, which refuses a list of lower-case words but accepts this one, and accepts
+  // `!ALL`). The suite is a real one so that a check of the names alone passes it.
+  if (refusalOf({ ciphers: "ECDHE-RSA-AES128-GCM-SHA256:!ECDHE-RSA-AES128-GCM-SHA256" }) === null) {
     throw new MllpTlsConfigurationError(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE);
   }
   if (!atna) return;
@@ -184,7 +169,12 @@ function assertDhParametersEnforced(): void {
       cause: autoRefusal,
     });
   }
-  if (refusalOf({ dhparam: UNDERSIZED_DH_PROBE }) === null) {
+  // PKCS#3 parameters for the group p = 23, g = 5: a five-bit prime, far below the 1024 bits under
+  // which Node.js refuses parameters out loud (`DH parameter is less than 1024 bits`). A library
+  // that reads `dhparam` refuses it; one that takes parameters and runs without them accepts it.
+  // Never handed to a context that serves anything.
+  const undersized = "-----BEGIN DH PARAMETERS-----\nMAYCARcCAQU=\n-----END DH PARAMETERS-----\n";
+  if (refusalOf({ dhparam: undersized }) === null) {
     throw new MllpTlsConfigurationError(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE);
   }
 }

@@ -95,6 +95,7 @@ export const MLLP_TLS_DH_PARAMETERS_REJECTED = "MLLP_TLS_DH_PARAMETERS_REJECTED"
  * if (err.code === MLLP_TLS_CIPHER_LIST_UNENFORCEABLE) logger.error('run this link on Node.js');
  * ```
  */
+// Stryker disable next-line StringLiteral: a module-level initializer runs once, when the module is first loaded, so per-test coverage credits it to whichever test loaded the module first rather than to the tests that assert this value (test/tls/enforcement-probes.test.ts asserts it literally).
 export const MLLP_TLS_CIPHER_LIST_UNENFORCEABLE = "MLLP_TLS_CIPHER_LIST_UNENFORCEABLE";
 
 /**
@@ -117,6 +118,7 @@ export const MLLP_TLS_CIPHER_LIST_UNENFORCEABLE = "MLLP_TLS_CIPHER_LIST_UNENFORC
  * if (err.code === MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE) logger.error('run this server on Node.js');
  * ```
  */
+// Stryker disable next-line StringLiteral: a module-level initializer runs once, when the module is first loaded, so per-test coverage credits it to whichever test loaded the module first rather than to the tests that assert this value (test/tls/enforcement-probes.test.ts asserts it literally).
 export const MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE = "MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE";
 
 /**
@@ -135,15 +137,24 @@ export type TlsConfigurationErrorCode =
   | typeof MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE;
 
 /**
- * Frozen message registry for {@link TlsConfigurationErrorCode}.
+ * Fixed, human-readable description for a TLS-configuration code.
  *
- * Deliberately a **lookup, never an interpolation**. The factory below takes
- * only a code and no value parameter at all, which is what keeps caller-supplied
- * material (a key, a passphrase, a cipher string) out of an error message that
- * lands in a log.
+ * Byte-for-byte identical for a given code, whatever the configuration was.
+ *
+ * @param code - The stable configuration-error code.
+ * @returns The fixed registry text for `code`.
+ *
+ * @example
+ * ```typescript
+ * import { tlsConfigurationMessage, MLLP_TLS_CIPHER_OPTION_CONFLICT } from '@cosyte/mllp';
+ * logger.error(tlsConfigurationMessage(MLLP_TLS_CIPHER_OPTION_CONFLICT));
+ * ```
  */
-const TLS_CONFIGURATION_MESSAGES: Readonly<Record<TlsConfigurationErrorCode, string>> =
-  Object.freeze({
+export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string {
+  // Deliberately a **lookup, never an interpolation**: this takes only a code and no value
+  // parameter at all, which is what keeps caller-supplied material (a key, a passphrase, a cipher
+  // string) out of an error message that lands in a log. The registry is built where it is read.
+  const messages: Readonly<Record<TlsConfigurationErrorCode, string>> = {
     [MLLP_TLS_CIPHER_LIST_REJECTED]:
       "the TLS library rejected the configured cipher-suite list; no connection was opened and " +
       "no fallback to the runtime default list was made",
@@ -159,24 +170,8 @@ const TLS_CONFIGURATION_MESSAGES: Readonly<Record<TlsConfigurationErrorCode, str
     [MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE]:
       "this runtime's TLS library does not enforce server Diffie-Hellman parameters; nothing " +
       "was bound, rather than a server running without the parameters configured",
-  });
-
-/**
- * Fixed, human-readable description for a TLS-configuration code.
- *
- * Byte-for-byte identical for a given code, whatever the configuration was.
- *
- * @param code - The stable configuration-error code.
- * @returns The frozen registry text for `code`.
- *
- * @example
- * ```typescript
- * import { tlsConfigurationMessage, MLLP_TLS_CIPHER_OPTION_CONFLICT } from '@cosyte/mllp';
- * logger.error(tlsConfigurationMessage(MLLP_TLS_CIPHER_OPTION_CONFLICT));
- * ```
- */
-export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string {
-  return TLS_CONFIGURATION_MESSAGES[code];
+  };
+  return messages[code];
 }
 
 /**
@@ -185,7 +180,7 @@ export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string
  * socket is opened and no listener is left bound.
  *
  * Identify it by `instanceof` **and** by the stable {@link MllpTlsConfigurationError.code},
- * never by matching on the message text. `message` is a frozen registry entry
+ * never by matching on the message text. `message` is a fixed registry entry
  * and carries no key material and no passphrase; `cause`, when present, is the
  * TLS library's own error for one input on its own (the suite list and the
  * Diffie-Hellman parameters are each validated with no credential in scope).

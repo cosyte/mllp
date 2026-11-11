@@ -842,7 +842,7 @@ export class MllpClient extends EventEmitter {
         }
         socket.removeListener(connectEventName, onSocketConnect);
         socket.removeListener("error", onSocketError);
-        // Stryker disable next-line StringLiteral: equivalent. Left attached, onSocketClose runs only after the promise settled, where its cleanup() and reject() are both no-ops.
+        // Stryker disable next-line StringLiteral,CallExpression: equivalent. Left attached, onSocketClose runs only after the promise settled, where its cleanup() and reject() are both no-ops.
         socket.removeListener("close", onSocketClose);
       };
 

@@ -1918,7 +1918,7 @@ Rejects the originating `MllpClient.connect()` or `MllpServer.listen()`; no
 socket is opened and no listener is left bound.
 
 Identify it by `instanceof` **and** by the stable [MllpTlsConfigurationError.code](#code-2),
-never by matching on the message text. `message` is a frozen registry entry
+never by matching on the message text. `message` is a fixed registry entry
 and carries no key material and no passphrase; `cause`, when present, is the
 TLS library's own error for one input on its own (the suite list and the
 Diffie-Hellman parameters are each validated with no credential in scope).
@@ -7119,7 +7119,7 @@ The stable configuration-error code.
 
 `string`
 
-The frozen registry text for `code`.
+The fixed registry text for `code`.
 
 #### Example
 

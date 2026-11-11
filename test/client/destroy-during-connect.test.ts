@@ -9,11 +9,13 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
+import { getEventListeners } from "node:events";
 import { createServer as netCreateServer, type Server as NetServer, type Socket } from "node:net";
 
 import { createClient } from "../../src/client/client.js";
 import { MllpConnectionError } from "../../src/connection/index.js";
 import { buildServerCertFixture } from "../helpers/tls-fixtures.js";
+import { RUNTIME } from "../_helpers/runtime.js";
 
 const servers: NetServer[] = [];
 const peers: Socket[] = [];
@@ -104,3 +106,53 @@ describe("destroy() during connect()", () => {
     expect((outcome as MllpConnectionError).cause).toBe(reason);
   });
 });
+
+// Node only: `getEventListeners` on an `AbortSignal` is how Node exposes an EventTarget's
+// listeners. What these pin, that a settled connect() leaves nothing of itself on the caller's
+// signal, is the same on every runtime.
+describe.skipIf(RUNTIME !== "node")(
+  "connect() leaves nothing of itself on the caller's signal",
+  () => {
+    /** Listeners on `signal`: the client keeps exactly one for its lifetime, to stop reconnecting. */
+    function abortListeners(signal: AbortSignal): number {
+      return getEventListeners(signal, "abort").length;
+    }
+
+    it("once it resolves", async () => {
+      const server = netCreateServer((socket) => {
+        peers.push(socket);
+      });
+      servers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new Error("expected a TCP address");
+
+      const client = createClient({ host: "127.0.0.1", port: address.port });
+      const ac = new AbortController();
+      const connecting = client.connect({ signal: ac.signal });
+      expect(abortListeners(ac.signal)).toBe(2);
+      await connecting;
+      expect(abortListeners(ac.signal)).toBe(1);
+      client.destroy();
+    });
+
+    it("once destroy() rejects it", async () => {
+      const peer = await silentPeer();
+      const { cert } = buildServerCertFixture();
+      const client = createClient({
+        host: "127.0.0.1",
+        port: peer.port,
+        tls: { ca: cert, servername: "localhost" },
+      });
+      const ac = new AbortController();
+      const connecting = client.connect({ signal: ac.signal });
+      await waitFor(() => peer.accepted() === 1);
+      expect(abortListeners(ac.signal)).toBe(2);
+
+      client.destroy();
+      expect(await settledWithin(connecting, 2_000)).toBeInstanceOf(MllpConnectionError);
+      expect(abortListeners(ac.signal)).toBe(1);
+    });
+  },
+);
