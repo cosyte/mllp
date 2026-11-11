@@ -7,9 +7,11 @@ runtime dependencies. Parsing is the optional peer `@cosyte/hl7`'s, used only by
 
 ## Gate
 
-Required: `ci / verify` on Node 22 and 24, `ci / actionlint`, `no-emdash / tracked-files` and
-`no-internal-refs / public-surface`. From the repo root, in order, with the `packageManager` pnpm
-first on PATH: pnpm 12 refuses the frozen install, and tests spawn a bare `pnpm`.
+Required: `ci / verify` on Node 22, 24 and 26 (Ubuntu), `ci / actionlint`, `ci / prepublish`,
+`examples` on Node 22, 24 and 26, `documents`, `codeql / analyze`, `no-emdash / tracked-files`,
+`no-internal-refs / public-surface` and `pr-title / conventional-commits`. From the repo root, in
+order, with the `packageManager` pnpm first on PATH: pnpm 12 refuses the frozen install, and tests
+spawn a bare `pnpm`.
 
 ```sh
 pnpm install --frozen-lockfile
