@@ -28,3 +28,5 @@ export {
   type AckCode,
   type NegativeAckCode,
 } from "./ack.js";
+
+export { selectAckCode, type AckCodeSelection, type AckCodeSelectionInput } from "./ack-code.js";

@@ -59,8 +59,26 @@ export interface TlsOptions {
   readonly cert?: PemInput;
   /** Private key matching {@link TlsOptions.cert}. */
   readonly key?: PemInput;
-  /** Passphrase for an encrypted {@link TlsOptions.key}. */
+  /**
+   * Passphrase for an encrypted {@link TlsOptions.key}, or for the PKCS#12 file in
+   * {@link TlsOptions.pfx}.
+   */
   readonly passphrase?: string;
+  /**
+   * The client certificate and its private key as one PKCS#12 file (`.pfx` / `.p12`), in place of
+   * {@link TlsOptions.cert} and {@link TlsOptions.key}, unlocked with {@link TlsOptions.passphrase}.
+   * The file's bytes, as `readFileSync` returns them; this package reads no file itself.
+   *
+   * The file is loaded before any socket is opened. One the TLS library cannot load rejects
+   * `connect()` with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose
+   * message names this option and never its value: a wrong passphrase, bytes that are not
+   * PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
+   * older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
+   * file with AES-256. A reconnect attempt that meets it gives up, as for any configuration error.
+   *
+   * @default undefined (no PKCS#12 file)
+   */
+  readonly pfx?: Buffer;
   /**
    * SNI hostname and the identity-check target (matched against the server
    * certificate's Subject/SAN). Defaults to `ClientOptions.host` when unset.
@@ -177,14 +195,37 @@ export type ClientAuth = "NONE" | "WANT" | "MUST";
  * ```
  */
 export interface ServerTlsOptions {
-  /** Server certificate (PEM). Required. */
-  readonly cert: PemInput;
-  /** Private key matching {@link ServerTlsOptions.cert}. Required. */
-  readonly key: PemInput;
+  /**
+   * Server certificate (PEM). Required with {@link ServerTlsOptions.key} unless
+   * {@link ServerTlsOptions.pfx} is set: a server given neither pair nor file throws a
+   * `TypeError` at construction.
+   */
+  readonly cert?: PemInput;
+  /** Private key matching {@link ServerTlsOptions.cert}. Required with it unless `pfx` is set. */
+  readonly key?: PemInput;
   /** Trust anchor(s) for verifying client certificates under `WANT`/`MUST`. */
   readonly ca?: PemInput;
-  /** Passphrase for an encrypted {@link ServerTlsOptions.key}. */
+  /**
+   * Passphrase for an encrypted {@link ServerTlsOptions.key}, or for the PKCS#12 file in
+   * {@link ServerTlsOptions.pfx}.
+   */
   readonly passphrase?: string;
+  /**
+   * The server certificate and its private key as one PKCS#12 file (`.pfx` / `.p12`), in place of
+   * {@link ServerTlsOptions.cert} and {@link ServerTlsOptions.key}, unlocked with
+   * {@link ServerTlsOptions.passphrase}. The file's bytes, as `readFileSync` returns them; this
+   * package reads no file itself.
+   *
+   * The file is loaded before anything is bound. One the TLS library cannot load rejects
+   * `listen()` with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose
+   * message names this option and never its value: a wrong passphrase, bytes that are not
+   * PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
+   * older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
+   * file with AES-256. Construction never throws for it.
+   *
+   * @default undefined (no PKCS#12 file)
+   */
+  readonly pfx?: Buffer;
   /**
    * ATNA ITI-19 mutual-authentication mode. `'WANT'` requests a client
    * certificate without rejecting unauthorized/absent ones (surfaced, not

@@ -43,7 +43,7 @@ const client = createClient({
 await client.connect();
 ```
 
-**Server**: `ServerOptions.tls` requires `cert` + `key`:
+**Server**: `ServerOptions.tls` requires `cert` + `key`, or a PKCS#12 file in `pfx` (below):
 
 ```ts no-run needs a certificate and key of your own
 import { createServer } from "@cosyte/mllp";
@@ -53,6 +53,35 @@ const server = createServer({
 });
 await server.listen(2575, "127.0.0.1");
 ```
+
+### A PKCS#12 file: `pfx`
+
+A certificate and its key often arrive as one PKCS#12 file (`.pfx` or `.p12`), the form Windows and
+many certificate authorities export. Pass its bytes as `pfx`, with `passphrase` to unlock it, in
+place of `cert` and `key`. It works on both ends: a server presents the certificate, and a client
+presents it to a server that asks for one under mutual TLS.
+
+```ts no-run needs a PKCS#12 file of your own
+import { readFileSync } from "node:fs";
+import { createServer } from "@cosyte/mllp";
+
+const server = createServer({
+  tls: { pfx: readFileSync("server.pfx"), passphrase: process.env.PFX_PASSPHRASE },
+});
+await server.listen(2575, "127.0.0.1");
+```
+
+The file is loaded before anything is bound or connected. If the TLS library cannot load it,
+`listen()` or `connect()` rejects with `MllpTlsConfigurationError` and the code
+`MLLP_TLS_PFX_REJECTED`; its message names `tls.pfx` and never the file or the passphrase, and the
+library's own error is the `cause`. Three things cause it: a wrong passphrase, bytes that are not
+PKCS#12, or a **legacy encryption**. A file written by `openssl pkcs12 -export -legacy`, by OpenSSL
+1.x, or by an older Windows export protects its certificates with RC2-40, and Node.js runs OpenSSL 3
+without the legacy provider that holds RC2, so it refuses the file. Re-export it with AES-256, which
+`openssl pkcs12 -export` on OpenSSL 3 uses by default. A client does not retry the refusal on
+reconnect, since every attempt would meet the same file.
+
+A server given neither `cert` and `key` nor `pfx` throws a `TypeError` when it is created.
 
 When TLS is configured, the server consumes `tls.Server`'s `'secureConnection'` event (post-handshake
 sockets) instead of `net.Server`'s `'connection'`, and the client's `onConnect` transport hook maps
@@ -388,6 +417,7 @@ the message text:
 | `MLLP_TLS_DH_PARAMETERS_REJECTED`      | `ServerTlsOptions.dhParameters` is not usable: not PEM, not a `DH PARAMETERS` block, or a group the TLS library refuses. Nothing is bound and there is **no fallback to a server running without them**. Server side only. |
 | `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`   | The runtime does not enforce the list: it would take a `ciphers` list without applying it, or it cannot offer a suite `atnaTransportSecurity` names. See [Under Bun and Deno](#under-bun-and-deno).                        |
 | `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE` | The runtime does not enforce server Diffie-Hellman parameters, for `dhParameters` or for a server's `atnaTransportSecurity`. See [Under Bun and Deno](#under-bun-and-deno). Server side only.                              |
+| `MLLP_TLS_PFX_REJECTED`                | The TLS library cannot load `pfx` with `passphrase`: a wrong passphrase, not PKCS#12, or a legacy RC2-40 encryption. See [A PKCS#12 file](#a-pkcs12-file-pfx).                                                             |
 
 ```ts runnable
 import {

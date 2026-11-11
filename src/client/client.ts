@@ -36,6 +36,7 @@ import type { Transport } from "../transport/index.js";
 import type { TlsOptions } from "../transport/tls-options.js";
 import { MLLP_TLS_VERIFY_DISABLED, type SecurityWarning } from "../transport/security-warnings.js";
 import { resolveTlsCipherPolicy } from "../transport/tls-cipher-policy.js";
+import { checkPfx } from "../transport/pfx.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import { MllpFramingError } from "../framing/index.js";
@@ -757,6 +758,8 @@ export class MllpClient extends EventEmitter {
    *   at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
    *   **before** a socket is opened, so nothing is left connected; identify it by
    *   `instanceof` plus its stable `code`.
+   * - `MllpTlsConfigurationError` with `MLLP_TLS_PFX_REJECTED` if `tls.pfx` cannot be loaded
+   *   with `tls.passphrase` (see {@link TlsOptions.pfx}), also before a socket is opened.
    *
    * **Dual failure signal on initial connect:** the Connection's transport
    * error handler is attached before this promise's own error listener, so a
@@ -940,6 +943,9 @@ export class MllpClient extends EventEmitter {
     // lands in connect()'s promise executor (a rejection) and in
     // _beginReconnectAttempt's catch (a permanent classification, MLLP_* code).
     const cipherPolicy = resolveTlsCipherPolicy(tlsOpts, "client");
+    // The PKCS#12 file the same way: a file the TLS library cannot load rejects connect() with
+    // MLLP_TLS_PFX_REJECTED here, rather than failing as a socket error on every attempt.
+    checkPfx(tlsOpts.pfx, tlsOpts.passphrase);
     const socket = tlsConnect({
       host: this._opts.host,
       port: this._opts.port,
@@ -948,6 +954,7 @@ export class MllpClient extends EventEmitter {
       ...(tlsOpts.cert !== undefined ? { cert: tlsOpts.cert } : {}),
       ...(tlsOpts.key !== undefined ? { key: tlsOpts.key } : {}),
       ...(tlsOpts.passphrase !== undefined ? { passphrase: tlsOpts.passphrase } : {}),
+      pfx: tlsOpts.pfx,
       minVersion: tlsOpts.minVersion ?? "TLSv1.2",
       ...(tlsOpts.maxVersion !== undefined ? { maxVersion: tlsOpts.maxVersion } : {}),
       ...cipherPolicy,

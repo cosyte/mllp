@@ -27,6 +27,7 @@ import type { TLSSocket } from "node:tls";
 import { EventEmitter } from "node:events";
 import { Connection } from "../connection/index.js";
 import { MllpConnectionError } from "../connection/index.js";
+import { checkPartialFrameTimeout } from "../connection/connection.js";
 import { NetTransport, TlsTransport } from "../transport/index.js";
 import type { ServerTlsOptions } from "../transport/tls-options.js";
 import { MLLP_BIND_ALL_INTERFACES, type SecurityWarning } from "../transport/security-warnings.js";
@@ -35,6 +36,7 @@ import {
   type ResolvedTlsCipherPolicy,
 } from "../transport/tls-cipher-policy.js";
 import { MllpTlsConfigurationError } from "../transport/error.js";
+import { checkPfx } from "../transport/pfx.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
@@ -434,6 +436,26 @@ export interface ServerOptions {
   deadPeerTimeoutMs?: number;
 
   /**
+   * Close a connection that holds a half-sent frame for this many milliseconds: a sender that
+   * opens a frame (its VT) and stops part way through, or trickles it so slowly that it never
+   * ends, holds the frame's bytes and a connection place for no longer than this.
+   *
+   * Separate from `deadPeerTimeoutMs`, which is an idle timer: this one runs only while a frame
+   * is open, from the read that began it, and bytes arriving for that frame do not extend it. A
+   * connection with no frame open is never closed by it, however quiet. A frame that ends stops
+   * it, and the next frame starts its own. On expiry the connection is destroyed (its
+   * `'stateChange'` reason reads `'partial frame timeout'`), the partial frame never reaches
+   * `onMessage`, and no acknowledgement is sent for it. Set it above the time your largest
+   * message takes to arrive on your slowest link.
+   *
+   * Must be a positive number of milliseconds no greater than 2147483647; anything else throws a
+   * `RangeError` at construction. Unset means no limit.
+   *
+   * @default undefined (no limit)
+   */
+  partialFrameTimeoutMs?: number;
+
+  /**
    * Graceful drain timeout passed to `conn.close()` during `server.close()`.
    * Default: 30 000 ms.
    */
@@ -661,6 +683,15 @@ export class MllpServer extends EventEmitter {
         "ServerOptions.maxConnections must be a positive integer, or left unset for no cap",
       );
     }
+    checkPartialFrameTimeout(opts.partialFrameTimeoutMs, "ServerOptions");
+    const tlsInput = opts.tls;
+    if (
+      tlsInput !== undefined &&
+      tlsInput.pfx === undefined &&
+      (tlsInput.cert === undefined || tlsInput.key === undefined)
+    ) {
+      throw new TypeError("ServerOptions.tls needs cert and key, or pfx");
+    }
     this._opts = opts;
     this._isTls = opts.tls !== undefined;
 
@@ -673,9 +704,12 @@ export class MllpServer extends EventEmitter {
     let cipherPolicy: ResolvedTlsCipherPolicy | null = null;
     if (opts.tls !== undefined) {
       try {
+        // The PKCS#12 file first: a file that cannot load leaves no policy, so no TLS context is
+        // built from it below, which would throw out of this constructor rather than reject listen().
+        checkPfx(opts.tls.pfx, opts.tls.passphrase);
         cipherPolicy = resolveTlsCipherPolicy(opts.tls, "server");
       } catch (err) {
-        /* v8 ignore next -- resolveTlsCipherPolicy throws only MllpTlsConfigurationError */
+        /* v8 ignore next -- checkPfx and resolveTlsCipherPolicy throw only MllpTlsConfigurationError */
         if (!(err instanceof MllpTlsConfigurationError)) throw err;
         this._tlsConfigError = err;
       }
@@ -692,6 +726,7 @@ export class MllpServer extends EventEmitter {
       const tlsServer = tlsCreateServer({
         cert: tlsOpts.cert,
         key: tlsOpts.key,
+        pfx: tlsOpts.pfx,
         ...(tlsOpts.ca !== undefined ? { ca: tlsOpts.ca } : {}),
         ...(tlsOpts.passphrase !== undefined ? { passphrase: tlsOpts.passphrase } : {}),
         minVersion: tlsOpts.minVersion ?? "TLSv1.2",
@@ -1386,10 +1421,16 @@ export class MllpServer extends EventEmitter {
       ...(this._opts.framing ?? {}),
     };
 
+    const partialFrameTimeoutMs = this._opts.partialFrameTimeoutMs;
     const connOpts =
       this._opts.onWarning !== undefined
-        ? { transport, framing: mergedFraming, onWarning: this._opts.onWarning }
-        : { transport, framing: mergedFraming };
+        ? {
+            transport,
+            framing: mergedFraming,
+            onWarning: this._opts.onWarning,
+            partialFrameTimeoutMs,
+          }
+        : { transport, framing: mergedFraming, partialFrameTimeoutMs };
     const conn = new Connection(connOpts);
 
     // The Connection's transport has just replaced every 'close' listener on the socket, the cap's

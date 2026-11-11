@@ -168,6 +168,30 @@ Two independent, complementary mechanisms, both off by default, and they are not
 A quiet MLLP link is normal at 3 a.m. Set `deadPeerTimeoutMs` above your genuine idle period, or a
 healthy connection will be torn down all night.
 
+## Closing a connection that stops part way through a frame
+
+`deadPeerTimeoutMs` cannot see a sender that opens a frame and never finishes it, or trickles it a
+byte at a time: bytes keep arriving, so the link is not idle, and the server holds the half-received
+frame and a connection place for as long as the sender likes. **`partialFrameTimeoutMs`** on the
+server bounds that. It runs only while a frame is open, from the read that began it, and bytes for
+the same frame do not extend it. On expiry the connection is destroyed (its `'stateChange'` reason
+reads `'partial frame timeout'`); the partial frame never reaches `onMessage` and no acknowledgement
+is sent for it, so the sender resends the message on its next connection.
+
+```ts no-run a fragment that shows the two server timers together
+const server = createServer({
+  autoAck: "AA",
+  onMessage,
+  deadPeerTimeoutMs: 600_000, // nothing at all for 10 minutes: close
+  partialFrameTimeoutMs: 30_000, // a frame open for 30 seconds: close
+});
+```
+
+A connection with no frame open is never closed by it, however quiet. Set it above the time your
+largest message takes to arrive on your slowest link. It is off by default; the value is a positive
+number of milliseconds up to 2147483647, and anything else throws a `RangeError` when the server is
+created.
+
 ## Backpressure
 
 If a peer stops ACKing but the socket still accepts writes, an unbounded client buffers every message
