@@ -168,6 +168,15 @@ Two independent, complementary mechanisms, both off by default, and they are not
 A quiet MLLP link is normal at 3 a.m. Set `deadPeerTimeoutMs` above your genuine idle period, or a
 healthy connection will be torn down all night.
 
+## Nagle's algorithm and acknowledgment latency
+
+The client and the server turn Nagle's algorithm off (TCP_NODELAY) on every socket they open or
+accept, plain and TLS, reconnects included. With it on, a frame written while an earlier one is
+still unacknowledged at the TCP level waits until the peer acknowledges it, and the peer delays that
+acknowledgment (40 ms on Linux) unless it has data of its own to send. On a link where messages
+arrive at random moments, an ACK then sometimes waits for the next message or for that timer. Set
+`noDelay: false` on the client or the server only to go back to the operating system's default.
+
 ## Backpressure
 
 If a peer stops ACKing but the socket still accepts writes, an unbounded client buffers every message
