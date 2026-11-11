@@ -170,6 +170,7 @@
     "bench:compare": "cosyte-bench compare --suite bench/mllp.bench.mjs",
     "bench:profile": "node bench/profile.mjs",
     "bench:socket": "node --expose-gc bench/socket.mjs",
+    "bench:open-loop": "node bench/open-loop.mjs",
     "certs:gen": "node scripts/generate-test-certs.mjs",
     "clean": "rm -rf dist coverage",
     "docs:reference": "cosyte-docs-reference",

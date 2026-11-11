@@ -70,6 +70,7 @@ is synthetic and built in code by `bench/corpus.mjs`. After `pnpm build`:
 ```sh
 pnpm bench:reading --out bench-results/reading.json   # throughput, latency, memory, import cost
 pnpm bench:socket                                      # the same traffic over a 127.0.0.1 socket
+pnpm bench:open-loop                                   # ACK latency at fixed rates, by TCP_NODELAY
 pnpm bench:profile                                     # CPU and heap profiles of the hot paths
 ```
 

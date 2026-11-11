@@ -3082,6 +3082,21 @@ Maximum backoff cap (ms); default 30_000.
 
 Backoff multiplier; default 2.
 
+##### noDelay?
+
+> `readonly` `optional` **noDelay?**: `boolean`
+
+Whether to turn off Nagle's algorithm (`socket.setNoDelay(noDelay)`) on each connection,
+the first and every reconnect. With it on (`false` here), a frame written while an earlier
+one is still unacknowledged at the TCP level waits for that acknowledgment, which Linux
+delays by up to about 40 ms. Set `false` only to restore the operating system's default.
+
+###### Default
+
+```ts
+true
+```
+
 ##### onBackpressure?
 
 > `readonly` `optional` **onBackpressure?**: `"reject"` \| `"wait"`
@@ -4478,6 +4493,21 @@ no cap.
 undefined (no cap)
 ```
 
+##### noDelay?
+
+> `optional` **noDelay?**: `boolean`
+
+Whether to turn off Nagle's algorithm (`socket.setNoDelay(noDelay)`) on each accepted
+socket. With it on (`false` here), an ACK written while an earlier one is still
+unacknowledged at the TCP level waits for that acknowledgment, which Linux delays by up to
+about 40 ms. Set `false` only to restore the operating system's default.
+
+###### Default
+
+```ts
+true
+```
+
 ##### onMessage?
 
 > `optional` **onMessage?**: (`payload`, `meta`, `conn`) => `void` \| `Promise`\<`void`\>
@@ -4931,6 +4961,12 @@ Host to connect to.
 
 TCP keepalive interval ms.
 
+##### noDelay?
+
+> `readonly` `optional` **noDelay?**: `boolean`
+
+Turn off Nagle's algorithm. Passthrough to `ClientOptions.noDelay`, default `true`.
+
 ##### onBackpressure?
 
 > `readonly` `optional` **onBackpressure?**: `"reject"` \| `"wait"`
@@ -5160,6 +5196,25 @@ undefined (no cap)
 ###### Inherited from
 
 [`ServerOptions`](#serveroptions).[`maxConnections`](#maxconnections-1)
+
+##### noDelay?
+
+> `optional` **noDelay?**: `boolean`
+
+Whether to turn off Nagle's algorithm (`socket.setNoDelay(noDelay)`) on each accepted
+socket. With it on (`false` here), an ACK written while an earlier one is still
+unacknowledged at the TCP level waits for that acknowledgment, which Linux delays by up to
+about 40 ms. Set `false` only to restore the operating system's default.
+
+###### Default
+
+```ts
+true
+```
+
+###### Inherited from
+
+[`ServerOptions`](#serveroptions).[`noDelay`](#nodelay-1)
 
 ##### onMessage?
 

@@ -427,6 +427,16 @@ export interface ServerOptions {
   keepaliveIntervalMs?: number;
 
   /**
+   * Whether to turn off Nagle's algorithm (`socket.setNoDelay(noDelay)`) on each accepted
+   * socket. With it on (`false` here), an ACK written while an earlier one is still
+   * unacknowledged at the TCP level waits for that acknowledgment, which Linux delays by up to
+   * about 40 ms. Set `false` only to restore the operating system's default.
+   *
+   * @default true
+   */
+  noDelay?: boolean;
+
+  /**
    * Application-level idle close timeout in ms.
    * If no HL7 messages are received on a connection for this interval, the connection
    * is destroyed via `conn.destroy(new Error('idle timeout'))`.
@@ -1398,6 +1408,7 @@ export class MllpServer extends EventEmitter {
     if (this._opts.keepaliveIntervalMs !== undefined) {
       socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
     }
+    socket.setNoDelay(this._opts.noDelay !== false);
 
     const transport = this._isTls
       ? new TlsTransport(socket as TLSSocket)

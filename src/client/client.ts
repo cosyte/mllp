@@ -429,6 +429,15 @@ export interface ClientOptions {
    */
   readonly keepaliveIntervalMs?: number;
   /**
+   * Whether to turn off Nagle's algorithm (`socket.setNoDelay(noDelay)`) on each connection,
+   * the first and every reconnect. With it on (`false` here), a frame written while an earlier
+   * one is still unacknowledged at the TCP level waits for that acknowledgment, which Linux
+   * delays by up to about 40 ms. Set `false` only to restore the operating system's default.
+   *
+   * @default true
+   */
+  readonly noDelay?: boolean;
+  /**
    * Application-idle timeout (ms) keyed on last inbound bytes / ACK / warning.
    * On trip, calls `connection.destroy(new Error('dead
    * peer timeout'))` which surfaces as `MllpConnectionError({ phase: 'receive' })`.
@@ -842,6 +851,7 @@ export class MllpClient extends EventEmitter {
       if (this._opts.keepaliveIntervalMs !== undefined) {
         socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
       }
+      socket.setNoDelay(this._opts.noDelay !== false);
       this._socket = socket;
 
       const connOpts =
@@ -1667,6 +1677,7 @@ export class MllpClient extends EventEmitter {
         if (this._opts.keepaliveIntervalMs !== undefined) {
           socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
         }
+        socket.setNoDelay(this._opts.noDelay !== false);
         this._socket = socket;
         const connOpts =
           this._opts.framing !== undefined
@@ -2773,6 +2784,8 @@ export interface StarterClientOptions {
   readonly framing?: ClientOptions["framing"];
   /** TCP keepalive interval ms. */
   readonly keepaliveIntervalMs?: number;
+  /** Turn off Nagle's algorithm. Passthrough to `ClientOptions.noDelay`, default `true`. */
+  readonly noDelay?: boolean;
   /** Application-idle dead-peer timeout ms. */
   readonly deadPeerTimeoutMs?: number;
   /**
@@ -2833,6 +2846,7 @@ export async function createStarterClient(opts: StarterClientOptions): Promise<M
       ? { keepaliveIntervalMs: opts.keepaliveIntervalMs }
       : {}),
     ...(opts.deadPeerTimeoutMs !== undefined ? { deadPeerTimeoutMs: opts.deadPeerTimeoutMs } : {}),
+    noDelay: opts.noDelay !== false,
     ...(opts.connectTimeoutMs !== undefined ? { connectTimeoutMs: opts.connectTimeoutMs } : {}),
     ...(opts.tls !== undefined ? { tls: opts.tls } : {}),
   };
