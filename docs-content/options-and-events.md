@@ -83,12 +83,12 @@ the client options it does not pass on.
 
 The second argument of `client.send(payload, options)`.
 
-| Option                    | Type                                | Default                                       | What it does                                                             |
-| ------------------------- | ----------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------ |
-| `signal`                  | `AbortSignal`                       | unset                                         | Aborting it rejects the send with an `AbortError`                        |
-| `ackTimeoutMs`            | `number`                            | the client's `ackTimeoutMs`                   | Bound on the wait for room under `onBackpressure: "wait"`, for this send |
-| `applicationAckTimeoutMs` | `number`                            | the client's, then this send's `ackTimeoutMs` | Bound on this send's wait for an application acknowledgment after a `CA` |
-| `onCommitAck`             | `(report: CommitAckReport) => void` | unset                                         | Called with the `CA` when an application acknowledgment is still to come |
+| Option                    | Type                                | Default                                       | What it does                                                                                                                                       |
+| ------------------------- | ----------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `signal`                  | `AbortSignal`                       | unset                                         | Aborting it rejects the send with an `AbortError`                                                                                                  |
+| `ackTimeoutMs`            | `number`                            | the client's `ackTimeoutMs`                   | Bound on this send's wait for its acknowledgment, from the moment its bytes are flushed; under `onBackpressure: "wait"`, also on its wait for room |
+| `applicationAckTimeoutMs` | `number`                            | the client's, then this send's `ackTimeoutMs` | Bound on this send's wait for an application acknowledgment after a `CA`                                                                           |
+| `onCommitAck`             | `(report: CommitAckReport) => void` | unset                                         | Called with the `CA` when an application acknowledgment is still to come                                                                           |
 
 ## TLS options
 

@@ -326,6 +326,9 @@ export interface ClientOptions {
    * Per-message ACK timeout in milliseconds. The clock starts at
    * the underlying `write()` flush callback, NOT at the `send()` call,
    * pre-flush queue time is not charged to the peer. Default: `30_000`.
+   *
+   * A send can set its own with `send(payload, { ackTimeoutMs })`, which replaces this value
+   * for that send's acknowledgement wait.
    */
   readonly ackTimeoutMs?: number;
   /**
@@ -1929,8 +1932,8 @@ export class MllpClient extends EventEmitter {
    *
    * Resolves with the ACK Buffer (framing stripped). Rejects with:
    * - `DOMException('Aborted', 'AbortError')` if `signal` aborts before the ACK.
-   * - `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs`.
-   *   The clock starts at the underlying `write()` flush callback, NOT at
+   * - `MllpTimeoutError` if no ACK arrives within `ackTimeoutMs` (this send's own, else the
+   *   client's). The clock starts at the underlying `write()` flush callback, NOT at
    *   the `send()` call.
    * - `MllpConnectionError({ phase: 'send' })` if the client is not connected.
    *
@@ -1959,7 +1962,10 @@ export class MllpClient extends EventEmitter {
    *
    * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.
    * @param opts.signal AbortSignal, aborting cancels the ACK wait.
-   * @param opts.ackTimeoutMs Per-send override of the backpressure wait budget.
+   * @param opts.ackTimeoutMs This send's bound on the wait for its acknowledgement, from the
+   *   moment its bytes are flushed, in place of the client's `ackTimeoutMs`. Under
+   *   `onBackpressure: "wait"` it also bounds the wait for queue room, and the
+   *   acknowledgement wait then starts afresh once the send is written.
    * @param opts.applicationAckTimeoutMs Per-send override of the second wait's bound.
    * @param opts.onCommitAck Called with the commit disposition when the peer commits the
    *   message ahead of its application acknowledgement. See {@link CommitAckReport}.
@@ -2041,21 +2047,37 @@ export class MllpClient extends EventEmitter {
       );
     }
 
+    const sendAckTimeoutMs = opts?.ackTimeoutMs;
     return new Promise<Buffer>((resolve, reject) => {
       let abortListener: (() => void) | null = null;
-      const wrappedResolve = (ack: Buffer): void => {
+      // A per-send acknowledgement bound gets a one-shot sweep of its own at the moment it
+      // falls due, because the periodic sweep runs at the resolution of the client-wide value
+      // and would let a shorter per-send bound overrun by up to a second.
+      let ackDeadline: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const settle = (): void => {
+        settled = true;
         if (signal !== undefined && abortListener !== null) {
           signal.removeEventListener("abort", abortListener);
         }
+        clearTimeout(ackDeadline);
+      };
+      const wrappedResolve = (ack: Buffer): void => {
+        settle();
         resolve(ack);
       };
       const wrappedReject = (err: Error): void => {
-        if (signal !== undefined && abortListener !== null) {
-          signal.removeEventListener("abort", abortListener);
-        }
+        settle();
         reject(err);
       };
-      const key = correlator.enqueue(frame, controlId, wrappedResolve, wrappedReject, twoPhase);
+      const key = correlator.enqueue(
+        frame,
+        controlId,
+        wrappedResolve,
+        wrappedReject,
+        twoPhase,
+        sendAckTimeoutMs,
+      );
       if (key === null) {
         // pipeline:false (Plan 05, D-06). Correlator's maxInFlight=1 is
         // saturated. Wait for the next 'drain' event (the prior ACK
@@ -2117,6 +2139,15 @@ export class MllpClient extends EventEmitter {
       // high-water mark is what the gate above enforces.
       conn.send(frame);
       correlator.markFlushed(key, Date.now());
+      // `settled` covers a transport that answers inside `send()`: nothing is left to bound.
+      if (sendAckTimeoutMs !== undefined && !settled) {
+        // Every teardown settles this send, which clears this timer, so the correlator it
+        // fires on is always the live one.
+        ackDeadline = setTimeout(() => {
+          correlator.expireDue();
+        }, sendAckTimeoutMs);
+        ackDeadline.unref();
+      }
       // PLAN-06 (OBS-01, D-26), count flushed sends. Synchronous post-send
       // increment per T-05-06-05 (counter race is bounded; observability is
       // "good enough" per D-26).
