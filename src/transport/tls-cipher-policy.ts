@@ -110,6 +110,44 @@ function refusalOf(options: SecureContextOptions): Error | null {
   return null;
 }
 
+/** One enforcement probe: a single fixed option, never caller input. */
+type Probe = { readonly ciphers: string } | { readonly dhparam: string };
+
+/**
+ * What each probe found, by probe, for the life of the process.
+ *
+ * A probe's input is a fixed value written in this file and the runtime's TLS library does not
+ * change under a running process, so a probe's result cannot change either. Without this a client
+ * with `atnaTransportSecurity` built five throwaway TLS contexts on every connect and every
+ * reconnect.
+ */
+const probeResults = new Map<string, Error | null>();
+
+/**
+ * Run a probe once per process and answer every later ask from what it found.
+ *
+ * @param probe - The fixed option the probe builds a context from.
+ * @returns The runtime's refusal as an `Error`, or `null` when it built the context.
+ */
+function probeRefusal(probe: Probe): Error | null {
+  const key = "ciphers" in probe ? `ciphers=${probe.ciphers}` : `dhparam=${probe.dhparam}`;
+  const found = probeResults.get(key);
+  if (found !== undefined) return found;
+  const refusal = refusalOf(probe);
+  probeResults.set(key, refusal);
+  return refusal;
+}
+
+/**
+ * Forget every probe result, so the next probe builds its context again. For tests that stand a
+ * different TLS library behind `createSecureContext` between cases; not part of the package's API.
+ *
+ * @internal
+ */
+export function clearTlsEnforcementProbes(): void {
+  probeResults.clear();
+}
+
 /**
  * Prove this runtime enforces a cipher-suite list before one is handed to it, or refuse.
  *
@@ -137,12 +175,14 @@ function assertCipherListEnforced(atna: boolean): void {
   // and then offers its own accepts it, and would take the caller's list the same way (measured:
   // Deno 2.9.8, which refuses a list of lower-case words but accepts this one, and accepts
   // `!ALL`). The suite is a real one so that a check of the names alone passes it.
-  if (refusalOf({ ciphers: "ECDHE-RSA-AES128-GCM-SHA256:!ECDHE-RSA-AES128-GCM-SHA256" }) === null) {
+  if (
+    probeRefusal({ ciphers: "ECDHE-RSA-AES128-GCM-SHA256:!ECDHE-RSA-AES128-GCM-SHA256" }) === null
+  ) {
     throw new MllpTlsConfigurationError(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE);
   }
   if (!atna) return;
   for (const suite of ATNA_CIPHER_SUITES) {
-    const refusal = refusalOf({ ciphers: suite });
+    const refusal = probeRefusal({ ciphers: suite });
     if (refusal !== null) {
       throw new MllpTlsConfigurationError(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE, { cause: refusal });
     }
@@ -163,7 +203,7 @@ function assertCipherListEnforced(atna: boolean): void {
  * @throws {MllpTlsConfigurationError} `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`.
  */
 function assertDhParametersEnforced(): void {
-  const autoRefusal = refusalOf({ dhparam: "auto" });
+  const autoRefusal = probeRefusal({ dhparam: "auto" });
   if (autoRefusal !== null) {
     throw new MllpTlsConfigurationError(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE, {
       cause: autoRefusal,
@@ -174,7 +214,7 @@ function assertDhParametersEnforced(): void {
   // that reads `dhparam` refuses it; one that takes parameters and runs without them accepts it.
   // Never handed to a context that serves anything.
   const undersized = "-----BEGIN DH PARAMETERS-----\nMAYCARcCAQU=\n-----END DH PARAMETERS-----\n";
-  if (refusalOf({ dhparam: undersized }) === null) {
+  if (probeRefusal({ dhparam: undersized }) === null) {
     throw new MllpTlsConfigurationError(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE);
   }
 }
