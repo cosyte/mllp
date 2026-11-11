@@ -11,3 +11,12 @@ export const RUNTIME: "bun" | "deno" | "node" =
 
 /** Whether the suite is running on Windows. */
 export const ON_WINDOWS = process.platform === "win32";
+
+/**
+ * Whether this is the mutation run (`vitest.mutation.config.ts` sets `COSYTE_MUTATION_RUN`).
+ * StrykerJS rewrites every mutated file under `src/` with its mutant switches, so a case that
+ * reads a source file's text rather than running it reads the rewrite there and fails before any
+ * mutant runs. Such a case is skipped in the mutation run, by name at its site, and runs in every
+ * other run.
+ */
+export const MUTATION_RUN = process.env["COSYTE_MUTATION_RUN"] === "1";

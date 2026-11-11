@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { MUTATION_RUN } from "../_helpers/runtime.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -186,11 +187,15 @@ describe("createStarterClient (PLAN-06, CLIENT-10, D-22)", () => {
     expect(captured.state === "CLOSED" || captured.state === "DISCONNECTED").toBe(true);
   });
 
-  it("Test 6 (W-06): JSDoc @example contains the literal `await using c = await createStarterClient(...)` snippet", () => {
-    const src = readFileSync(resolve(__dirname, "../../src/client/client.ts"), "utf8");
-    expect(src).toMatch(/await using c = await createStarterClient\(/);
-    expect(src).toMatch(/const ack = await c\.send\(/);
-  });
+  // Reads the source text: skipped in the mutation run (see test/_helpers/runtime.ts).
+  it.skipIf(MUTATION_RUN)(
+    "Test 6 (W-06): JSDoc @example contains the literal `await using c = await createStarterClient(...)` snippet",
+    () => {
+      const src = readFileSync(resolve(__dirname, "../../src/client/client.ts"), "utf8");
+      expect(src).toMatch(/await using c = await createStarterClient\(/);
+      expect(src).toMatch(/const ack = await c\.send\(/);
+    },
+  );
 
   it("Test 7: state is CONNECTED on return (not CONNECTING), connect() awaited", async () => {
     const peer = await startEchoAckPeer();

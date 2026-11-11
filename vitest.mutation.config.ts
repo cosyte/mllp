@@ -23,6 +23,11 @@ const config = shared as ViteUserConfig;
  * - `test/docs/**`: the docs pages and their structure, not the library.
  * - `test/scripts/**`: this repository's own tooling (the changelog and the PHI scan), not the
  *   library.
+ * - `test/differential/warning-codes.test.ts` and `test/conformance/statement.test.ts`: they read
+ *   the text of files under `src/`, which StrykerJS rewrites with its mutant switches in the
+ *   sandbox, so they fail before any mutant runs. A case elsewhere that reads source text is
+ *   skipped at its own site when `COSYTE_MUTATION_RUN`, set below, says this is the mutation run
+ *   (`test/_helpers/runtime.ts`).
  *
  * What they prove is proved by `pnpm test` on every pull request.
  */
@@ -38,7 +43,10 @@ const mutation: ViteUserConfig = {
       "test/examples-typecheck.test.ts",
       "test/docs/**",
       "test/scripts/**",
+      "test/differential/warning-codes.test.ts",
+      "test/conformance/statement.test.ts",
     ],
+    env: { ...config.test?.env, COSYTE_MUTATION_RUN: "1" },
   },
 };
 
