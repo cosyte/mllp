@@ -90,9 +90,6 @@ export interface AckCodeSelection {
   readonly applicationTypeUnrecognised: boolean;
 }
 
-/** The standard MSH-2, for a caller that does not pass one. */
-const STANDARD_ENCODING_CHARACTERS = "^~\\&";
-
 /**
  * Select the acknowledgement code for a message from its MSH-15, MSH-16 and what the application
  * did with it, by the table the server's auto-ACK uses.
@@ -135,7 +132,9 @@ export function selectAckCode(input: AckCodeSelectionInput): AckCodeSelection {
   if (outcome !== "AA" && outcome !== "AE" && outcome !== "AR") {
     throw new RangeError("selectAckCode: outcome must be one of AA, AE or AR");
   }
-  const delimiters = delimitersFrom(input.encodingCharacters ?? STANDARD_ENCODING_CHARACTERS);
+  // The standard MSH-2 where the caller passes none. Written here rather than as a module-level
+  // constant, so the tests that rely on it are the ones credited with it.
+  const delimiters = delimitersFrom(input.encodingCharacters ?? "^~\\&");
   const accept = readConditionField(input.msh15, delimiters);
   const application = readConditionField(input.msh16, delimiters);
   return Object.freeze({
