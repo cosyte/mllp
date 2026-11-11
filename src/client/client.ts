@@ -2017,14 +2017,14 @@ export class MllpClient extends EventEmitter {
       // A per-send acknowledgement bound gets a one-shot sweep of its own at the moment it
       // falls due, because the periodic sweep runs at the resolution of the client-wide value
       // and would let a shorter per-send bound overrun by up to a second.
-      let ackDeadline: ReturnType<typeof setTimeout> | null = null;
+      let ackDeadline: ReturnType<typeof setTimeout> | undefined;
       let settled = false;
       const settle = (): void => {
         settled = true;
         if (signal !== undefined && abortListener !== null) {
           signal.removeEventListener("abort", abortListener);
         }
-        if (ackDeadline !== null) clearTimeout(ackDeadline);
+        clearTimeout(ackDeadline);
       };
       const wrappedResolve = (ack: Buffer): void => {
         settle();
@@ -2105,8 +2105,10 @@ export class MllpClient extends EventEmitter {
       correlator.markFlushed(key, Date.now());
       // `settled` covers a transport that answers inside `send()`: nothing is left to bound.
       if (sendAckTimeoutMs !== undefined && !settled) {
+        // Every teardown settles this send, which clears this timer, so the correlator it
+        // fires on is always the live one.
         ackDeadline = setTimeout(() => {
-          this._correlator?.expireDue();
+          correlator.expireDue();
         }, sendAckTimeoutMs);
         ackDeadline.unref();
       }

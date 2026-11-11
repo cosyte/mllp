@@ -198,4 +198,35 @@ describe("send({ ackTimeoutMs }) bounds that send's acknowledgement wait", () =>
     expect((await sent).toString("latin1")).toContain("MSA|AA|M1");
     h.client.destroy();
   });
+
+  it("a send without it arms no timer of its own", () => {
+    const h = harness({ ackTimeoutMs: 10_000 });
+    const before = vi.getTimerCount();
+    const sent = h.client.send(message("M1"));
+    void sent.catch(() => undefined);
+    expect(vi.getTimerCount()).toBe(before);
+    h.client.destroy();
+  });
+
+  it("its timer never keeps the process alive", () => {
+    const h = harness({ ackTimeoutMs: 10_000 });
+    const armed: ReturnType<typeof setTimeout>[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const spy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation((fn: () => void, ms?: number) => {
+        const handle = realSetTimeout(fn, ms);
+        if (ms === 1_000) armed.push(handle);
+        return handle;
+      });
+    try {
+      const sent = h.client.send(message("M1"), { ackTimeoutMs: 1_000 });
+      void sent.catch(() => undefined);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(armed).toHaveLength(1);
+    expect(armed[0]?.hasRef()).toBe(false);
+    h.client.destroy();
+  });
 });
