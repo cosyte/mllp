@@ -9,6 +9,12 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+        # The TLS tests' certificate library moves on its own pull request, so a group that
+        # Dependabot cannot update as a whole never holds back a version update for it.
+        # Security updates are not grouped here either way: groups apply to version updates only.
+        exclude-patterns:
+          - "node-forge"
+          - "@types/node-forge"
     # Wait a day after a release before proposing it, the same 24 hours pnpm-workspace.yaml's
     # minimumReleaseAge holds every install to. Security updates are not delayed.
     cooldown:
