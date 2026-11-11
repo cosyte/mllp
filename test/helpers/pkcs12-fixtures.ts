@@ -6,10 +6,12 @@
  *
  * - {@link buildPfx}: what a current tool exports, the key under AES-256 (PBES2), which OpenSSL 3
  *   loads.
- * - {@link buildLegacyPfx}: what `openssl pkcs12 -export -legacy` writes, and what OpenSSL 1.x and
- *   older Windows exports wrote by default: the certificate safe under `pbeWithSHAAnd40BitRC2-CBC`
- *   (RC2 with a 40-bit key) and the key under `pbeWithSHAAnd3-KeyTripleDES-CBC`. OpenSSL 3 keeps
- *   RC2 in its legacy provider, which Node.js does not load, so Node refuses the file.
+ * - {@link buildLegacyPfx}: the legacy PKCS#12 scheme `openssl pkcs12 -export -legacy`, OpenSSL 1.x
+ *   and older Windows exports use: the certificate safe under RC2 and the key under
+ *   `pbeWithSHAAnd3-KeyTripleDES-CBC`. Those tools use the 40-bit RC2 variant; this fixture uses
+ *   the 128-bit one (`pbeWithSHAAnd128BitRC2-CBC`) of the same scheme, so the repository's code
+ *   scanning does not flag a deliberately weak key in a test. OpenSSL 3 keeps every RC2 variant in
+ *   its legacy provider, which Node.js does not load, so Node refuses the file either way.
  */
 
 import forge from "node-forge";
@@ -62,11 +64,12 @@ function dataContentInfo(content: forge.asn1.Asn1): forge.asn1.Asn1 {
 
 /**
  * Build a legacy-encrypted PKCS#12 holding `fixture`'s certificate and key, under `passphrase`: the
- * shape `openssl pkcs12 -export -legacy` writes. The encryption is real (forge's RC2 and 3DES), so
- * a TLS library with the legacy algorithms reads it; only the algorithms are old.
+ * shape `openssl pkcs12 -export -legacy` writes, with the 128-bit RC2 variant (see the module
+ * comment). The encryption is real (forge's RC2 and 3DES), so a TLS library with the legacy
+ * algorithms reads it; only the algorithms are old.
  */
 export function buildLegacyPfx(fixture: ServerCertFixture, passphrase: string): Buffer {
-  // The certificate safe: one certBag, encrypted with RC2-40 under the PKCS#12 key derivation.
+  // The certificate safe: one certBag, encrypted with RC2 under the PKCS#12 key derivation.
   const certDer = asn1.toDer(
     forge.pki.certificateToAsn1(forge.pki.certificateFromPem(fixture.cert)),
   );
@@ -76,9 +79,15 @@ export function buildLegacyPfx(fixture: ServerCertFixture, passphrase: string): 
   );
   const certSafe = asn1.toDer(seq(certBag)).getBytes();
   const salt = forge.random.getBytesSync(8);
-  const key = forge.pkcs12.generateKey(passphrase, forge.util.createBuffer(salt), 1, ITERATIONS, 5);
+  const key = forge.pkcs12.generateKey(
+    passphrase,
+    forge.util.createBuffer(salt),
+    1,
+    ITERATIONS,
+    16,
+  );
   const iv = forge.pkcs12.generateKey(passphrase, forge.util.createBuffer(salt), 2, ITERATIONS, 8);
-  const rc2 = forge.rc2.createEncryptionCipher(key, 40);
+  const rc2 = forge.rc2.createEncryptionCipher(key, 128);
   rc2.start(iv);
   rc2.update(forge.util.createBuffer(certSafe));
   rc2.finish();
@@ -89,7 +98,7 @@ export function buildLegacyPfx(fixture: ServerCertFixture, passphrase: string): 
         integer(0),
         seq(
           oid("data"),
-          seq(oid("pbewithSHAAnd40BitRC2-CBC"), seq(octets(salt), integer(ITERATIONS))),
+          seq(oid("pbeWithSHAAnd128BitRC2-CBC"), seq(octets(salt), integer(ITERATIONS))),
           asn1.create(Class.CONTEXT_SPECIFIC, 0, false, rc2.output.getBytes()),
         ),
       ),

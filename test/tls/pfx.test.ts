@@ -5,8 +5,9 @@
  * A file the runtime's TLS library cannot load is refused before any socket exists, with
  * `MllpTlsConfigurationError` and the stable code `MLLP_TLS_PFX_REJECTED`, whose message names the
  * option and never its value. The case that matters most in practice is a legacy-encrypted file
- * (RC2-40, what `openssl pkcs12 -export -legacy` and older exports write): Node.js runs OpenSSL 3
- * without its legacy provider and refuses it.
+ * (RC2, as `openssl pkcs12 -export -legacy` and older exports write it): Node.js runs OpenSSL 3
+ * without its legacy provider and refuses it. The fixture uses RC2's 128-bit variant rather than
+ * the 40-bit one those tools write (see `pkcs12-fixtures.ts`); OpenSSL 3 loads neither.
  *
  * Certificates and PKCS#12 files are generated in memory per run; no file and no real identity is
  * involved.
@@ -144,6 +145,10 @@ describe.skipIf(RUNTIME !== "node")("tls.pfx on Node.js", () => {
       (e: unknown) => e,
     );
     expectPfxRefusal(err, pfx);
+    // Refused for its algorithm, not as malformed bytes: the file itself is well formed.
+    expect(((err as Error).cause as NodeJS.ErrnoException).code).toBe(
+      "ERR_CRYPTO_UNSUPPORTED_OPERATION",
+    );
     expect(server.getStats().listening).toBe(false);
     expect(server.getStats().port).toBeNull();
   });
