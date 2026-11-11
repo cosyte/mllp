@@ -139,9 +139,14 @@ jobs:
 
   # The repository's documents, each checked by the shared checker in @cosyte/script-utils: the
   # README against the house skeleton and npm's size limit, CLAUDE.md against the card spec, and
-  # the package.json description against the catalog. `pnpm check:documents` runs the same three
+  # the package.json description against the catalog. `pnpm check:documents` runs those three
   # locally. The job also runs `pnpm check:process`, which fails when a verb script stops
-  # delegating to the shared @cosyte/process or cosyte-process.config.json is invalid.
+  # delegating to the shared @cosyte/process or cosyte-process.config.json is invalid, and
+  # `pnpm check:docs-reference` (@cosyte/process's `cosyte-docs-reference --check`), which fails
+  # when the API reference committed in docs-content/api/ differs from what the TSDoc comments of
+  # the root and every subpath in `exports` generate (an export changed and `pnpm docs:reference`
+  # was not run), when an export has no TSDoc summary, or when a TSDoc comment holds a heading.
+  # `pnpm check:documents` runs the reference check after the three document checks.
   documents:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -159,3 +164,4 @@ jobs:
       - run: pnpm check:claude-card
       - run: pnpm check:catalog
       - run: pnpm check:process
+      - run: pnpm check:docs-reference
