@@ -117,7 +117,7 @@ describe("the scaling gate on an unstable warmup", () => {
     }).toThrow(/phase-too-short/);
   });
 
-  it("names every unsettled attempt in the log, sizes and timings only", () => {
+  it("logs every attempt, sizes and timings only", () => {
     const lines: string[] = [];
     const run = scripted([
       gate(skipped("count", "warmup-unstable"), skipped("size", "warmup-unstable")),
@@ -126,6 +126,7 @@ describe("the scaling gate on an unstable warmup", () => {
     gateUntilWarm(run.run, { log: (line) => lines.push(line) });
     expect(lines).toEqual([
       "[scaling gate] attempt 1 of 3: the warmup did not settle on the count, size axis; measuring again",
+      "[scaling gate] stand-in: attempt 2 of 3: count ratio 4 (warmup 600 ms), size ratio 4 (warmup 600 ms)",
     ]);
   });
 });
@@ -150,8 +151,13 @@ describe("the self-check on an unstable warmup", () => {
       }),
       settled,
     ]);
-    expect(selfCheckUntilWarm(run.run, { log: quiet })).toBe(settled);
+    const lines: string[] = [];
+    expect(selfCheckUntilWarm(run.run, { log: (line) => lines.push(line) })).toBe(settled);
     expect(run.calls()).toBe(2);
+    expect(lines).toEqual([
+      "[scaling gate] attempt 1 of 3: the warmup did not settle on the self-check; measuring again",
+      "[scaling gate] stand-in: self-check attempt 2 of 3: signal 12, margin 1.5",
+    ]);
   });
 
   it("fails a signal under the ceiling on the first attempt", () => {

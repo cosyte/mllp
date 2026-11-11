@@ -22,9 +22,12 @@ import type { ScalingGateReport, ScalingSelfCheckReport } from "@cosyte/test-uti
 /** How many times one gate or self-check is measured before an unsettled warmup fails it. */
 export const WARMUP_ATTEMPTS = 3;
 
-/** Where the retry notes go, and how many attempts to allow. */
+/** Where the notes on each attempt go. */
 export interface WarmupRetryOptions {
-  /** One line per attempt that did not settle. Defaults to stderr, as the gate's own diagnostics. */
+  /**
+   * One line per attempt: why it is measured again, or the ratios it settled on. Defaults to
+   * stderr, as the gate's own diagnostics.
+   */
   readonly log?: (line: string) => void;
 }
 
@@ -43,6 +46,17 @@ function unsettledAxes(report: ScalingGateReport): string[] {
   return [report.count, report.size]
     .filter((axis) => axis.status === "skipped" && axis.skipReason === "warmup-unstable")
     .map((axis) => axis.axis);
+}
+
+/** Each axis's ratio and warmup, or why it has none: sizes and timings only. */
+function outcome(report: ScalingGateReport): string {
+  return [report.count, report.size]
+    .map((axis) =>
+      axis.status === "measured"
+        ? `${axis.axis} ratio ${String(axis.ratio)} (warmup ${String(Math.round(axis.warmup.elapsedMs))} ms)`
+        : `${axis.axis} skipped (${axis.skipReason})`,
+    )
+    .join(", ");
 }
 
 function retryNote(attempt: number, what: string): string {
@@ -70,7 +84,12 @@ export function gateUntilWarm(
   for (let attempt = 1; ; attempt++) {
     const report = run();
     const unsettled = unsettledAxes(report);
-    if (unsettled.length === 0) return report;
+    if (unsettled.length === 0) {
+      log(
+        `[scaling gate] ${report.name}: attempt ${String(attempt)} of ${String(WARMUP_ATTEMPTS)}: ${outcome(report)}`,
+      );
+      return report;
+    }
     for (const axis of [report.count, report.size]) {
       if (unsettled.includes(axis.axis)) diagnostics.push(axis.diagnostic);
     }
@@ -92,7 +111,11 @@ export function selfCheckUntilWarm(
   const diagnostics: string[] = [];
   for (let attempt = 1; ; attempt++) {
     try {
-      return run();
+      const report = run();
+      log(
+        `[scaling gate] ${report.name}: self-check attempt ${String(attempt)} of ${String(WARMUP_ATTEMPTS)}: signal ${String(report.signal)}, margin ${String(report.margin)}`,
+      );
+      return report;
     } catch (error) {
       if (!(error instanceof AssertionError) || !SELF_CHECK_UNSETTLED.test(error.message)) {
         throw error;
