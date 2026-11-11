@@ -62,9 +62,10 @@ checks outcomes on the wire, not only that nothing threw.
 - **The coverage gate** runs with the suite, at 100% of lines, branches, functions and statements,
   the floor in `quality-floor.json`. On a pull request every changed line coverage counts must have
   run, and no floor may be lowered.
-- **Mutation testing** runs on every pull request over the source files it changed, and every
-  mutant in the changed lines must be killed. Twice a week every source file is mutated, in eight
-  parallel shards, and the score is held to the floor in `quality-floor.json`, which only rises.
+- **Mutation testing** runs on every pull request over the source files it changed, its mutants
+  shared out across four parallel jobs and merged back into one report, and every mutant in the
+  changed lines must be killed. Twice a week every source file is mutated, in eight parallel shards,
+  and the score is held to the floor in `quality-floor.json`, which only rises.
 - **The PHI scan** runs on every commit (a pre-commit hook) and in CI.
 - **The examples** run in their own CI job, and **the type exports** are checked in the main job
   after the build, on Linux and macOS.
