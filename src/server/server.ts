@@ -1401,9 +1401,10 @@ export class MllpServer extends EventEmitter {
     conn: Connection,
   ): Promise<void> {
     const handler = this._opts.onMessage;
-    // Read the MSH header ONCE per message, as it arrived, and hand that one reading to every step
-    // below: the mode selection, the correlation check and the ACK builder. Each used to read the
-    // payload again, about four header reads and two whole-payload batch scans per message.
+    // Read the MSH header once here, as it arrived, for the mode selection, and with no handler for
+    // every step below too. A handler is handed the payload buffer and may rewrite it in place, so
+    // after it settles the payload is read once more and that reading decides the correlation check
+    // and the ACK, as the bytes the handler left: each of those used to read the payload itself.
     const inbound = readInbound(payload);
     // Read MSH-15 ONCE per message, before any disposition is reached, so the same reading
     // decides every branch below and any report about it is made exactly once.
@@ -1420,10 +1421,12 @@ export class MllpServer extends EventEmitter {
     }
 
     let code: AckCode;
+    let settled: InboundRead | undefined;
     try {
       await handler(payload, meta, conn); // durable-commit step
+      settled = readInbound(payload);
       // Commit succeeded, but only answer `AA` if the message is one we could correlate.
-      code = this._resolveAutoAckPositive(inbound, meta, conn, selectCode);
+      code = this._resolveAutoAckPositive(settled, meta, conn, selectCode);
     } catch (err: unknown) {
       const nack: NegativeAckCode = resolveNackCode(err);
       code = selectCode(nack);
@@ -1446,7 +1449,9 @@ export class MllpServer extends EventEmitter {
     }
 
     // Unconditional: reached whether the handler committed or threw, and no subscriber can skip it.
-    this._dispatchAck(conn, buildRawAckFrom(inbound, code));
+    // A handler that threw is read here, after it, as on success.
+    settled ??= readInbound(payload);
+    this._dispatchAck(conn, buildRawAckFrom(settled, code));
   }
 
   /**

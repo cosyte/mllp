@@ -128,6 +128,8 @@ function scanEachByte(
 ): void {
   for (let i = 0; i < payload.length; i++) {
     const byte = payload[i];
+    // The byte scan stopped at the first missing element, a hole in an array, and so does this.
+    if (byte === undefined) break;
     if (byte === VT || byte === FS) delimiterAt(byte, i, allow, onWarning);
   }
 }

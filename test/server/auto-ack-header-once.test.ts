@@ -1,11 +1,13 @@
 /**
- * The server's auto-ACK path reads an inbound's MSH header once.
+ * The server's auto-ACK path reads an inbound's MSH header once, and once more after a handler.
  *
  * Choosing the acknowledgement mode, deciding whether a positive ACK can be correlated, and
  * building the ACK each read the header again, about four times per message, and scanned the whole
  * payload for a batch or a second MSH twice: a quarter of a round trip's time and about half its
- * allocated bytes. These count the calls into the shared scanner for one message on each route
- * through the path. Every message is synthetic.
+ * allocated bytes. Now it reads the header once on arrival; with a handler, which may rewrite the
+ * payload in place, it reads it once more after the handler settles, and the ACK is built from that
+ * second reading, as before. These count the calls into the shared scanner for one message on each
+ * route through the path. Every message is synthetic.
  */
 
 import { EventEmitter } from "node:events";
@@ -85,7 +87,7 @@ async function ackOne(text: string, onMessage?: ServerOptions["onMessage"]): Pro
   return (socket.written[0] as Buffer).subarray(1, -2).toString("latin1");
 }
 
-describe("auto-ACK reads the MSH header once per message", () => {
+describe("auto-ACK reads the MSH header once per message, and again after a handler", () => {
   beforeEach(() => {
     calls.msh = 0;
     calls.batch = 0;
@@ -117,8 +119,8 @@ describe("auto-ACK reads the MSH header once per message", () => {
     it(`on ${route}`, async () => {
       const ack = await ackOne(text, onMessage);
       expect(ack).toContain(msa);
-      expect(calls.msh).toBe(1);
-      expect(calls.batch).toBeLessThanOrEqual(1);
+      expect(calls.msh).toBe(onMessage === undefined ? 1 : 2);
+      expect(calls.batch).toBeLessThanOrEqual(onMessage === undefined ? 1 : 2);
     });
   }
 });

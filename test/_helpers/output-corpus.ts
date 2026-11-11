@@ -511,7 +511,59 @@ const HANDLERS: readonly { label: string; onMessage: ServerOptions["onMessage"] 
       throw Object.assign(new Error("shape"), { ackCode: "AR" });
     },
   },
+  // A handler is handed the payload buffer itself and may rewrite it in place before it settles;
+  // the ACK must answer what the buffer holds when it does, as it always has.
+  { label: "rewrites-msh-10", onMessage: (payload) => void rewriteControlId(payload) },
+  {
+    label: "rewrites-msh-10-async",
+    onMessage: async (payload) => {
+      await Promise.resolve();
+      rewriteControlId(payload);
+    },
+  },
+  {
+    label: "rewrites-msh-10-then-throws",
+    onMessage: (payload) => {
+      rewriteControlId(payload);
+      throw new Error("handler failed");
+    },
+  },
+  { label: "renames-msh", onMessage: (payload) => void overwriteAt(payload, "MSH", "XXX") },
+  {
+    label: "adds-batch-header",
+    onMessage: (payload) => void overwriteAt(payload, "\rPID", "\rBHS"),
+  },
+  {
+    label: "adds-second-msh",
+    onMessage: (payload) => void overwriteAt(payload, "\rPID|", "\rMSH|"),
+  },
+  {
+    label: "truncates",
+    onMessage: (payload) => void payload.fill(CR, Math.min(payload.length, 12)),
+  },
+  { label: "empties", onMessage: (payload) => void payload.fill(0) },
 ];
+
+/** Overwrite the first `from` in `payload` with `to`, the same length, in place. */
+function overwriteAt(payload: Buffer, from: string, to: string): void {
+  const at = payload.indexOf(from, 0, "latin1");
+  if (at !== -1) payload.write(to, at, "latin1");
+}
+
+/** Overwrite every byte of MSH-10 in place with `Z`, as a handler that renumbers a message would. */
+function rewriteControlId(payload: Buffer): void {
+  const at = payload.indexOf("MSH", 0, "latin1");
+  if (at === -1 || at + 3 >= payload.length) return;
+  const sep = payload[at + 3] as number;
+  let k = at + 3;
+  for (let field = 1; field < 10 && k < payload.length; k++) {
+    if (payload[k] === sep) field++;
+    if (payload[k] === CR || payload[k] === LF) return;
+  }
+  for (; k < payload.length && payload[k] !== sep && payload[k] !== CR && payload[k] !== LF; k++) {
+    payload[k] = 0x5a;
+  }
+}
 
 /** Let every pending promise of the auto-ACK path settle. */
 async function settle(): Promise<void> {

@@ -69,6 +69,12 @@ describe("encodeFrame with an array of numbers", () => {
     ).toThrow(TypeError);
   });
 
+  it("stops at a hole in an array, as the byte scan did, so a VT after it is not refused", () => {
+    // eslint-disable-next-line no-sparse-arrays
+    const holed = [0x41, , VT] as unknown as Buffer;
+    expect(() => encodeFrame(holed)).toThrow(TypeError);
+  });
+
   it("reads a string as characters, which are never framing bytes", () => {
     expect(() => encodeFrame("\u000b" as unknown as Buffer)).toThrow(TypeError);
   });
