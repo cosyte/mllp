@@ -609,7 +609,17 @@ afterAll(() => {
 // The gate
 // ---------------------------------------------------------------------------
 
-/** Run the gate over the slots carrying a given `lengthInvariant` setting. */
+/**
+ * Run the gate over the slots carrying a given `lengthInvariant` setting.
+ *
+ * Under Bun the size comparison (`checkLengthInvariance`) is off and every other check of the gate
+ * still runs on the same slots: the marker search, the strict and lenient probes and the expected
+ * code. Bun attaches the source file path to each error it builds, and the stacks among these
+ * diagnostics differ in size between the short and the long probe there (measured in CI: 1,028
+ * to 1,054 characters, 2,894 to 3,020, and one more 48-character string, the path), with no echo
+ * of the value, which cannot reach that path. The size comparison reads that as growth. It runs on
+ * Node on every system.
+ */
 function runGate(lengthInvariant: boolean): void {
   const slots = CLIENT_SLOTS.filter((slot) => slot.lengthInvariant === lengthInvariant);
   assertNoDiagnosticPhiLeak<SlotProbe, Collected>({
@@ -623,23 +633,16 @@ function runGate(lengthInvariant: boolean): void {
     getDiagnostics: (c) => c.diagnostics,
     getModelIdentifiers: (c) => c.identifiers,
     largeProbeRepeats: LARGE_PROBE_REPEATS,
-    checkLengthInvariance: lengthInvariant,
+    checkLengthInvariance: lengthInvariant && RUNTIME !== "bun",
   });
 }
 
 describe("PHI: no consumer-controlled input reaches a diagnostic surface", () => {
-  // Not under Bun: the error stacks among these diagnostics gain frames between the short and the
-  // long probe there (measured in CI: 1,028 to 1,054 characters, 2,894 to 3,020, and one more
-  // 48-character string), with no echo of the value. JavaScriptCore's stack depends on how hot
-  // the code is, and the size check reads that as growth. In 2 of 4 runs. Node runs this on every
-  // system, and the case below still runs under Bun.
-  it.skipIf(RUNTIME === "bun")(
-    "holds on the slots whose diagnostics cannot move with the planted value",
-    () => {
-      expect(CLIENT_SLOTS.filter((s) => s.lengthInvariant).length).toBeGreaterThan(0);
-      runGate(true);
-    },
-  );
+  // Under Bun this runs without the size comparison only (see `runGate`).
+  it("holds on the slots whose diagnostics cannot move with the planted value", () => {
+    expect(CLIENT_SLOTS.filter((s) => s.lengthInvariant).length).toBeGreaterThan(0);
+    runGate(true);
+  });
 
   it("holds on the slots whose diagnostics legitimately count the input", () => {
     runGate(false);

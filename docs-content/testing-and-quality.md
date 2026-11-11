@@ -41,7 +41,10 @@ checks outcomes on the wire, not only that nothing threw.
   handshakes, PHI checks and doc samples** run in one Vitest suite on every pull request and on
   `main`, on Node.js 22, 24 and 26, each on Linux, macOS and Windows, and the same suite runs again
   under Bun and under Deno. A test that cannot run on one system or runtime is skipped there by
-  name, with its reason beside it in the code.
+  name, with its reason beside it in the code. Running the suite under Bun and Deno does not mean
+  every option works there: three TLS and connection options are not enforced on them, as
+  [Known limitations](./limitations.md#it-enforces-its-tls-cipher-options-and-reports-its-connection-cap-on-nodejs-only)
+  says.
 - **Property depth.** Every property runs 100 cases on a pull request and 10,000 every night.
   `COSYTE_PROPERTY_RUNS` sets the depth of a whole run; no property sets its own.
 - **Seeds.** A pull request lets fast-check draw a new seed for each property, so a run can find a
