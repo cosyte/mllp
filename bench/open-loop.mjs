@@ -4,10 +4,14 @@
 //
 //   pnpm build && pnpm bench:open-loop [--out <dir>] [--target <entry>] [--quick]
 //
-// Open loop: message n is due at start + n / rate and is sent when it is due, whether or not the
-// earlier ones have been answered, and its latency runs from when it was due to its ACK. A server
-// from `createServer` answers every message with the auto-ACK, in a child process; the client from
-// `createClient` sends from this one. Plain TCP and TLS, at 100, 200 and 400 messages a second.
+// Open loop: each message is sent when it is due, whether or not the earlier ones have been
+// answered, and its latency runs from when it was due to its ACK. Messages arrive as a Poisson
+// process at 100, 200 and 400 a second (random gaps from a fixed seed, so every run sends the same
+// schedule), as independent senders do: evenly spaced messages each answered before the next never
+// put two ACKs in flight at once, and so never meet Nagle's algorithm. A server from `createServer`
+// in a child process answers every message with the auto-ACK after an asynchronous commit step, as
+// an engine that stores each message does; the client from `createClient` sends from this one, over
+// plain TCP and over TLS.
 //
 // What it is for: with Nagle's algorithm on, a small write that finds unacknowledged data in flight
 // waits for the peer's ACK, and Linux delays that ACK by up to about 40 ms. The third state works on
@@ -53,6 +57,8 @@ if (values.serve !== undefined) {
   const chosen = MODES.find((m) => m.key === mode);
   const server = mllp.createServer({
     autoAck: "AA",
+    // The commit step: the ACK waits for it, as it waits for a store in an engine.
+    onMessage: () => new Promise((done) => setImmediate(done)),
     ...chosen.option,
     ...(tls === undefined ? {} : { tls }),
   });
@@ -103,21 +109,41 @@ async function startServer(mode, tls) {
   };
 }
 
-/** Sends `count` messages at `rate` a second, open loop; each one's latency from due to ACK. */
+/** A small seeded generator (mulberry32): the same gaps on every run. */
+function random(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Sends `count` messages at an average `rate` a second, Poisson arrivals, open loop; each one's
+ * latency from when it was due to its ACK.
+ */
 async function openLoop(client, rate, count) {
   const latencies = [];
   const pending = [];
+  const next = random(rate * 7919 + count);
   let failed = 0;
-  const start = performance.now();
+  let due = performance.now();
   for (let n = 0; n < count; n++) {
-    const due = start + (n * 1000) / rate;
-    // A timer, never a spin: a spinning sender would hold up the ACKs it is timing. A timer that
-    // lands late is counted, as the message is timed from when it was due.
-    const wait = due - performance.now();
-    if (wait > 0) await new Promise((done) => setTimeout(done, wait));
+    due += (-Math.log(1 - next()) * 1000) / rate;
+    // A timer for the whole milliseconds, which may wake up to one early, then a spin for what is
+    // left of it: a message sent before it is due would read as faster than it was.
+    const wait = Math.floor(due - performance.now());
+    if (wait >= 1) await new Promise((done) => setTimeout(done, wait));
+    while (performance.now() < due) {
+      // Under a millisecond.
+    }
+    const sentDue = due;
     pending.push(
       client.send(adtMessage(n)).then(
-        () => latencies.push(performance.now() - due),
+        () => latencies.push(performance.now() - sentDue),
         () => {
           failed += 1;
         },
@@ -205,7 +231,7 @@ async function main() {
     "",
     `Node ${document.node} on ${runner} (${cpu}, ${String(document.machine.logicalCpus)} logical CPUs), ${document.date}.`,
     "",
-    `Client and server in two processes on one machine. Each rate runs ${String(seconds)} seconds, open loop; latency is from when a message was due to its ACK, nearest rank. Every state is read in each of ${String(rounds)} rounds.`,
+    `Client and server in two processes on one machine. Each rate runs ${String(seconds)} seconds, open loop, Poisson arrivals from a fixed seed, and the server answers after an asynchronous commit step; latency is from when a message was due to its ACK, nearest rank. Every state is read in each of ${String(rounds)} rounds.`,
     "",
     "| Round | Transport | TCP_NODELAY | Msgs/s | Messages | Failed | p50 | p90 | p99 | Max | Over 20 ms |",
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
