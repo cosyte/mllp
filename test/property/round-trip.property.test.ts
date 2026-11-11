@@ -26,9 +26,7 @@ import { encodeFrame } from "../../src/framing/encoder.js";
 import { FrameReader } from "../../src/framing/decoder.js";
 
 import { delimiterFreePayload } from "./_arbitraries.js";
-
-/** Stable run budget so failures reproduce deterministically. */
-const NUM_RUNS = 500;
+import { checkProperty, usePropertyBudget } from "./_runner.js";
 
 /**
  * Decode exactly one frame's worth of bytes via `FrameReader` and return the
@@ -49,6 +47,8 @@ function decodeOneFrame(frame: Buffer): Buffer {
   return delivered[0];
 }
 
+usePropertyBudget();
+
 describe("property: MLLP codec round-trip (encode → decode) byte fidelity", () => {
   it("decode(encode(payload)) recovers the exact payload bytes, and encode is idempotent", () => {
     roundTripProperty<Buffer>({
@@ -60,19 +60,17 @@ describe("property: MLLP codec round-trip (encode → decode) byte fidelity", ()
       // The runner re-serializes the parsed value and asserts byte-identity, which
       // gives us encode-idempotency for free: encode(decode(encode(p))) === encode(p).
       equals: (a, b) => a.equals(b),
-      numRuns: NUM_RUNS,
     });
   });
 
   it("a directly-decoded frame equals the original payload (no string marshalling)", () => {
     // Belt-and-braces: prove fidelity against the raw Buffer path too, so the
     // latin1 marshalling above can never mask a codec bug.
-    fc.assert(
+    checkProperty(
       fc.property(delimiterFreePayload(), (payload) => {
         const recovered = decodeOneFrame(encodeFrame(payload));
         expect(recovered.equals(payload)).toBe(true);
       }),
-      { numRuns: NUM_RUNS },
     );
   });
 
@@ -80,7 +78,7 @@ describe("property: MLLP codec round-trip (encode → decode) byte fidelity", ()
     // Guards the GENERATOR + encoder: a canonical encodeFrame output must never
     // trip a tolerance warning, otherwise the fidelity claim could be masking a
     // lossy recovery path rather than a clean round-trip.
-    fc.assert(
+    checkProperty(
       fc.property(delimiterFreePayload(), (payload) => {
         let warningCount = 0;
         const reader = new FrameReader({
@@ -94,12 +92,11 @@ describe("property: MLLP codec round-trip (encode → decode) byte fidelity", ()
         reader.push(encodeFrame(payload));
         expect(warningCount).toBe(0);
       }),
-      { numRuns: NUM_RUNS },
     );
   });
 
   it("encode wraps payload in exactly VT + payload + FS + CR (length + sentinels)", () => {
-    fc.assert(
+    checkProperty(
       fc.property(delimiterFreePayload(), (payload) => {
         const frame = encodeFrame(payload);
         expect(frame.length).toBe(payload.length + 3);
@@ -109,7 +106,6 @@ describe("property: MLLP codec round-trip (encode → decode) byte fidelity", ()
         // The middle bytes are an exact, independent copy of the payload.
         expect(frame.subarray(1, frame.length - 2).equals(payload)).toBe(true);
       }),
-      { numRuns: NUM_RUNS },
     );
   });
 });

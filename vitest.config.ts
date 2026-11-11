@@ -21,7 +21,16 @@ import { cosyteVitest } from "@cosyte/vitest-config";
  * move. Figures, method and what the trim bought are in CHANGELOG.md, not repeated here.
  */
 export default cosyteVitest({
-  coverageDirs: ["framing", "client", "connection", "server", "transport", "ack-from-hl7", "arbitraries"],
+  coverageDirs: [
+    "framing",
+    "client",
+    "connection",
+    "server",
+    "transport",
+    "ack-from-hl7",
+    "arbitraries",
+    "differential",
+  ],
   coverageThresholds: { lines: 100, branches: 100, functions: 100, statements: 100 },
   test: {
     globals: false,

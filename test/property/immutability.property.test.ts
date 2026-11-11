@@ -28,9 +28,7 @@ import { FrameReader } from "../../src/framing/decoder.js";
 import type { MllpWarning } from "../../src/framing/registry.js";
 
 import { malformedFrame } from "./_arbitraries.js";
-
-/** Stable run budget so failures reproduce deterministically. */
-const NUM_RUNS = 300;
+import { checkProperty, usePropertyBudget } from "./_runner.js";
 
 /** All decoder tolerances on, so malformed frames recover into warnings to inspect. */
 const ALL_TOLERANCES = {
@@ -63,6 +61,8 @@ function firstWarning(bytes: Buffer): MllpWarning | undefined {
   return warnings[0];
 }
 
+usePropertyBudget();
+
 describe("property: emitted MllpWarning objects are frozen (no shared-state mutation)", () => {
   it("a warning's code cannot be mutated through the public surface", () => {
     // Source warnings from malformed frames that are NOT the oversized fatal (those
@@ -85,12 +85,11 @@ describe("property: emitted MllpWarning objects are frozen (no shared-state muta
       },
       // Snapshot the full observable shape by value.
       getSnapshot: (w) => ({ code: w.code, byteOffset: w.byteOffset, message: w.message }),
-      numRuns: NUM_RUNS,
     });
   });
 
   it("every emitted warning is Object.isFrozen", () => {
-    fc.assert(
+    checkProperty(
       fc.property(
         malformedFrame().filter((mf) => mf.kind !== "frame-too-large"),
         (mf) => {
@@ -99,14 +98,13 @@ describe("property: emitted MllpWarning objects are frozen (no shared-state muta
           if (w !== undefined) expect(Object.isFrozen(w)).toBe(true);
         },
       ),
-      { numRuns: NUM_RUNS },
     );
   });
 });
 
 describe("property: Connection lifecycle event payloads are frozen", () => {
   it("the stateChange payload is frozen and unchanged by a mutation attempt", () => {
-    fc.assert(
+    checkProperty(
       fc.property(fc.constant(null), () => {
         const [clientT, serverT] = InMemoryTransport.pair();
         const conn = new Connection({ transport: clientT });
@@ -131,12 +129,11 @@ describe("property: Connection lifecycle event payloads are frozen", () => {
           expect({ from: e.from, to: e.to, reason: e.reason }).toEqual(before);
         }
       }),
-      { numRuns: 50 },
     );
   });
 
   it("the message event payload is frozen", () => {
-    fc.assert(
+    checkProperty(
       fc.property(
         fc.array(fc.integer({ min: 0x20, max: 0x7e }), { minLength: 1, maxLength: 32 }),
         (payloadBytes) => {
@@ -156,7 +153,6 @@ describe("property: Connection lifecycle event payloads are frozen", () => {
           expect(frozen).toBe(true);
         },
       ),
-      { numRuns: NUM_RUNS },
     );
   });
 });

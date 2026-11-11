@@ -37,6 +37,23 @@ pnpm check:documents
 pnpm check:process
 ```
 
+## Mutation testing and the floor
+
+`quality-floor.json` holds the coverage and mutation floors, which only rise. On a pull request CI
+holds coverage to it (`ci / coverage-ratchet`) and mutates the source files the change touched
+(`ci / mutation`, with `stryker.config.mjs` and `vitest.mutation.config.ts`): every mutant in the
+changed lines must be killed. `weekly-mutation.yml` mutates every source file in eight shards and
+holds the score to the floor. To raise a floor after a full run:
+
+```sh
+pnpm mutate:full
+pnpm quality:raise --skip coverage
+```
+
+Properties run 100 cases on a pull request; `nightly-properties.yml` runs them at
+`COSYTE_PROPERTY_RUNS=10000` from a seed it prints. A failure prints the `COSYTE_PROPERTY_SEED` and
+`COSYTE_PROPERTY_PATH` that replay it.
+
 ## Benchmarks
 
 `bench/mllp.bench.mjs` is the suite on `@cosyte/bench`: the frame decoder (whole frames, and frames

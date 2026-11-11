@@ -23,22 +23,86 @@ jobs:
   # README claims only the lines CI runs. mllp ships a PHI scanner (it transports HL7 v2 payloads,
   # so its fixtures carry the same PHI shapes hl7's do), so the shared pipeline's optional PHI-scan
   # step is switched on. Every call to cosyte/.github names one published reference, pinned by its
-  # commit, and the workflows in this repository move to the next one together.
+  # commit: this caller, weekly-mutation.yml and nightly-properties.yml at
+  # `workflows-2026-11-10-398cd4ded647`, the first to carry the testing standard's jobs, and the
+  # other workflow files at `workflows-2026-11-10-0be6757a7738` until a change of their own moves
+  # them (the newer release workflow gates a publish on the weekly mutation result, which wants a
+  # weekly run on `main` first).
   #
-  # Two jobs of the performance standard run beside `verify`, never after it, so a pull request
-  # waits for the slowest job rather than their sum:
+  # `verify` runs on Linux and macOS, each on Node 22, 24 and 26. The Ubuntu legs keep the names the
+  # ruleset requires; the macOS legs are new contexts, `ci / verify (<node>, macos-latest)`. The
+  # suite also runs under Bun and under Deno, each in its own job (`ci / bun`, `ci / deno`), on
+  # Linux. Windows runs `verify`'s steps in the `windows` job below rather than in `verify`: see
+  # there.
+  #
+  # The testing and performance standards' jobs run beside `verify`, never after it, so a pull
+  # request waits for the slowest job rather than their sum:
+  # - `coverage-ratchet`: coverage held to quality-floor.json, and on a pull request every changed
+  #   line that coverage counts must have run and no floor may be lowered or removed;
+  # - `mutation` (pull requests only): the changed source files mutated with stryker.config.mjs,
+  #   and every mutant in the changed lines killed;
   # - `scaling-gate`: `pnpm test:perf`, the scaling gate on the receive path and on a round trip
   #   through a connection, with its self-checks, never under coverage;
   # - `bench-compare` (pull requests only): bench/mllp.bench.mjs timed on the base build and the
   #   head build, interleaved on one runner. Advisory: it never fails, so never require it.
-  # A skipped job satisfies a required check, so require `scaling-gate` only while its input below
-  # stays on. The full reading, the socket reading and the profile are bench.yml.
+  # A skipped job satisfies a required check, so require each of the others only while its input
+  # below stays on. The full reading, the socket reading and the profile are bench.yml; the full
+  # mutation run is weekly-mutation.yml, and the deep property run nightly-properties.yml.
   ci:
-    uses: cosyte/.github/.github/workflows/ci.yml@0be6757a773885cbd5165dbfa0f93772d907b3e8 # workflows-2026-11-10-0be6757a7738
+    uses: cosyte/.github/.github/workflows/ci.yml@398cd4ded647dddd9f2e220ceb042840f59e1426 # workflows-2026-11-10-398cd4ded647
     with:
+      os: '["ubuntu-latest", "macos-latest"]'
       run-phi-scan: true
+      run-bun: true
+      run-deno: true
+      run-coverage-ratchet: true
+      run-mutation: true
       run-scaling-gate: true
       run-bench-compare: true
+
+  # `verify`'s steps on Windows, on Node 22, 24 and 26, every one but the type-export check. Not
+  # the shared `verify` on `windows-latest`: that leg runs `pnpm attw`, and the attw gate in
+  # @cosyte/script-utils 0.1.10 (`cosyte-attw`) starts `npm`, `pnpm` and `attw` by name with no
+  # shell, which Windows cannot do for their `.cmd` launchers (measured on the same reference in a
+  # sibling library: `spawnSync ... node_modules\.bin\attw ENOENT`, after every earlier step
+  # passed). What attw checks is the packed manifest and its types, the same bytes on every system,
+  # and the Linux and macOS legs check them. Once a script-utils release runs that gate on Windows,
+  # add "windows-latest" to `os` above and delete this job.
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24", "26"]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm phi-scan
+      - run: pnpm test
+      - run: pnpm test:coverage
+      - run: pnpm build
+      # `pnpm attw` is the one step of `verify` left out here, for the reason above the job.
+      - name: Dual ESM/CJS smoke
+        run: |
+          test -f dist/index.mjs && test -f dist/index.cjs && test -f dist/index.d.ts
+          node -e "import(require('node:url').pathToFileURL('dist/index.mjs').href).then(() => console.log('esm ok'))"
+          node -e "require('./dist/index.cjs'); console.log('cjs ok')"
 
   # The programs under examples/, run against the BUILT package the way a consumer imports it:
   # `pnpm examples` (scripts/run-examples.ts) fails when any example exits non-zero, and each
