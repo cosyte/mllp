@@ -10,7 +10,12 @@
  *   `ciphers` list and a `dhparam` and then negotiates without them;
  * - `no-ffdhe` has no finite-field Diffie-Hellman at all, the way Bun's TLS library refuses the
  *   automatic `dhparam` selection and every DHE suite, and otherwise enforces a list;
- * - `throws-non-error` throws a value that is not an `Error`.
+ * - `throws-non-error` throws a value that is not an `Error`;
+ * - `enforcing` enforces everything it is given, the way Node.js does, under whichever runtime runs
+ *   the suite, so a configuration passes every probe everywhere.
+ *
+ * Every context built through the mock is counted, which is how the per-process probe cache is
+ * checked.
  *
  * `test/tls/runtime-enforcement.test.ts` runs the same configurations against the real runtime
  * under Node.js, Bun and Deno.
@@ -21,13 +26,14 @@ import type * as Tls from "node:tls";
 import type { SecureContextOptions } from "node:tls";
 
 /** Which TLS library stands behind `createSecureContext` for the case running. */
-type Model = "real" | "lenient" | "no-ffdhe" | "throws-non-error";
+type Model = "real" | "lenient" | "no-ffdhe" | "throws-non-error" | "enforcing";
 
-const model: { mode: Model } = vi.hoisted(() => ({ mode: "real" }));
+const model: { mode: Model; built: number } = vi.hoisted(() => ({ mode: "real", built: 0 }));
 
 vi.mock("node:tls", async (importOriginal) => {
   const actual = await importOriginal<typeof Tls>();
   const createSecureContext = (options: SecureContextOptions): unknown => {
+    model.built += 1;
     switch (model.mode) {
       case "lenient":
         return {};
@@ -48,12 +54,24 @@ vi.mock("node:tls", async (importOriginal) => {
       case "throws-non-error":
         // eslint-disable-next-line @typescript-eslint/only-throw-error -- the case under test
         throw "not an Error";
+      case "enforcing":
+        // A list that removes what it names selects nothing, and the five-bit group is refused;
+        // everything else is taken, as Node.js takes it.
+        if (typeof options.ciphers === "string" && options.ciphers.includes("!")) {
+          throw new Error("no cipher match");
+        }
+        if (typeof options.dhparam === "string" && options.dhparam.includes("MAYCARcCAQU=")) {
+          throw new Error("DH parameter is less than 1024 bits");
+        }
+        return {};
       case "real":
         return actual.createSecureContext(options);
     }
   };
   return { ...actual, createSecureContext, default: { ...actual, createSecureContext } };
 });
+
+import * as net from "node:net";
 
 import {
   ATNA_CIPHER_LIST,
@@ -67,11 +85,22 @@ import {
   tlsConfigurationMessage,
   type TlsCipherPolicyInput,
 } from "../../src/index.js";
+import { createClient, type MllpClient } from "../../src/client/client.js";
+import { MllpConnectionError } from "../../src/connection/error.js";
+import { clearTlsEnforcementProbes } from "../../src/transport/tls-cipher-policy.js";
 import { DH_PARAMETERS_3072_PEM } from "../helpers/dhparam-fixtures.js";
+import { buildServerCertFixture } from "../helpers/tls-fixtures.js";
 import { RUNTIME } from "../_helpers/runtime.js";
 
-afterEach(() => {
+const clients: MllpClient[] = [];
+
+afterEach(async () => {
   model.mode = "real";
+  model.built = 0;
+  // Each case stands its own library behind the mock, so none may read another's probe results.
+  clearTlsEnforcementProbes();
+  for (const c of clients) await c.close().catch(() => undefined);
+  clients.length = 0;
 });
 
 /** The configuration error `resolveTlsCipherPolicy` throws, failing if it returns. */
@@ -185,6 +214,90 @@ describe("a TLS library that throws something other than an Error", () => {
     expect(dh.code).toBe(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE);
     expect(dh.cause).toBeInstanceOf(Error);
     expect(dh.cause?.message).toBe("not an Error");
+  });
+});
+
+describe("each probe runs once per process", () => {
+  /** A loopback port nothing listens on: a connect to it is refused at the TCP layer. */
+  async function closedPort(): Promise<number> {
+    const holder = net.createServer();
+    await new Promise<void>((r) => holder.listen(0, "127.0.0.1", r));
+    const port = (holder.address() as net.AddressInfo).port;
+    await new Promise((r) => holder.close(r));
+    return port;
+  }
+
+  it("a client's second connect builds no probe context, only the check of its own list", async () => {
+    model.mode = "enforcing";
+    const { cert } = buildServerCertFixture();
+    const client = createClient({
+      host: "127.0.0.1",
+      port: await closedPort(),
+      tls: { ca: cert, atnaTransportSecurity: true },
+    });
+    clients.push(client);
+
+    // The first connect runs the five cipher probes (the list that selects nothing, then each of
+    // the four named suites) and then checks the list itself.
+    const first = await client.connect().catch((e: unknown) => e);
+    expect(first).toBeInstanceOf(MllpConnectionError);
+    expect(model.built).toBe(6);
+
+    // Every later one, a reconnect included, reads the probes from the cache.
+    model.built = 0;
+    const second = await client.connect().catch((e: unknown) => e);
+    expect(second).toBeInstanceOf(MllpConnectionError);
+    expect(model.built).toBe(1);
+  });
+
+  it("a server's probes are shared with every later server and client in the process", () => {
+    model.mode = "enforcing";
+    expect(resolveTlsCipherPolicy({ atnaTransportSecurity: true }, "server")).toEqual({
+      ciphers: ATNA_CIPHER_LIST,
+      dhparam: "auto",
+    });
+    // Two Diffie-Hellman probes, five cipher probes, and the list itself.
+    expect(model.built).toBe(8);
+
+    model.built = 0;
+    resolveTlsCipherPolicy({ atnaTransportSecurity: true }, "server");
+    resolveTlsCipherPolicy({ atnaTransportSecurity: true }, "client");
+    resolveTlsCipherPolicy({ ciphers: ECDHE_ONLY }, "client");
+    // The ATNA list twice and the caller's own list once; no probe again.
+    expect(model.built).toBe(3);
+  });
+
+  it("a refusal found once is the refusal every later ask gets, with the same cause", () => {
+    model.mode = "no-ffdhe";
+    const first = refusal({ atnaTransportSecurity: true }, "client");
+    const dhFirst = refusal({ atnaTransportSecurity: true }, "server");
+    model.built = 0;
+    const second = refusal({ atnaTransportSecurity: true }, "client");
+    const dhSecond = refusal({ atnaTransportSecurity: true }, "server");
+    expect(model.built).toBe(0);
+    expect(second.code).toBe(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE);
+    expect(second.cause).toBe(first.cause);
+    expect(second.cause?.message).toBe("no cipher match");
+    expect(dhSecond.code).toBe(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE);
+    expect(dhSecond.cause).toBe(dhFirst.cause);
+
+    // A probe the library passed stays passed: the list that selects nothing was refused, so a list
+    // of suites it has is still taken, with only the list itself checked.
+    model.built = 0;
+    expect(resolveTlsCipherPolicy({ ciphers: ECDHE_ONLY }, "client")).toEqual({
+      ciphers: ECDHE_ONLY,
+    });
+    expect(model.built).toBe(1);
+  });
+
+  it("forgets every result when cleared, so the next probe builds its context again", () => {
+    model.mode = "enforcing";
+    resolveTlsCipherPolicy({ ciphers: ECDHE_ONLY }, "client");
+    expect(model.built).toBe(2);
+    clearTlsEnforcementProbes();
+    model.built = 0;
+    resolveTlsCipherPolicy({ ciphers: ECDHE_ONLY }, "client");
+    expect(model.built).toBe(2);
   });
 });
 

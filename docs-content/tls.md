@@ -469,7 +469,9 @@ all: a cipher list that names a suite and then removes it, so selects none, must
 suite the ATNA option names must be
 available, automatic Diffie-Hellman selection must be accepted, and a Diffie-Hellman group far too
 small to use must be refused. Where a probe fails, `connect()` or `listen()` rejects with an
-`MllpTlsConfigurationError` instead of opening a link that is not what you configured:
+`MllpTlsConfigurationError` instead of opening a link that is not what you configured. Each probe
+runs once per process: its input is fixed and the runtime does not change under a running process,
+so every later connect, reconnect or server reads the result the first one found:
 
 | Runtime | Option                                                  | What happens                                                                                                                                       |
 | ------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |

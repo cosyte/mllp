@@ -367,6 +367,108 @@ describe("ServerOptions.maxConnections over TLS", () => {
   });
 });
 
+// The plaintext turnover above, for each way a TLS connection can end. A TLS socket is the
+// runtime's wrapper around the raw socket the gate counted, so the place is given back only if
+// that raw socket's close still reaches the count however the connection ended. On every runtime
+// CI runs, Bun and Deno included.
+describe("ServerOptions.maxConnections over TLS: an ended connection frees its place", () => {
+  /** The number the cap is compared against. */
+  function held(server: MllpServer): number {
+    return (server as unknown as { _openSockets: number })._openSockets;
+  }
+
+  /** A TLS server with room for one connection, and what it reports. */
+  async function tlsServer(): Promise<{
+    server: MllpServer;
+    seen: ReturnType<typeof observe>;
+    port: number;
+    cert: string;
+  }> {
+    const { cert, key } = buildServerCertFixture();
+    const server = track(createServer({ maxConnections: 1, tls: { cert, key } }));
+    const seen = observe(server);
+    server.on("tlsClientError", () => undefined); // a failed handshake is one case under test
+    await server.listen(0);
+    return { server, seen, port: must(server.getStats().port), cert };
+  }
+
+  /** A TLS client that has finished its handshake, tracked for teardown. */
+  async function handshaken(port: number, cert: string): Promise<tls.TLSSocket> {
+    const sock = tls.connect({ host: "127.0.0.1", port, ca: cert, servername: "localhost" });
+    sockets.push(sock);
+    await new Promise<void>((resolve, reject) => {
+      sock.once("secureConnect", () => resolve());
+      sock.once("error", reject);
+    });
+    return sock;
+  }
+
+  /** After the first connection ended: the place is free, and the next connection is served. */
+  async function expectPlaceFreed(
+    server: MllpServer,
+    seen: ReturnType<typeof observe>,
+    port: number,
+    cert: string,
+  ): Promise<void> {
+    await waitFor(() => held(server) === 0);
+    const acceptedBefore = seen.accepted.length;
+    const next = await handshaken(port, cert);
+    await waitFor(() => seen.accepted.length === acceptedBefore + 1);
+    expect(next.destroyed).toBe(false);
+    expect(held(server)).toBe(1);
+    expect(seen.rejected).toHaveLength(0);
+  }
+
+  it("a clean close", async () => {
+    const { server, seen, port, cert } = await tlsServer();
+    const first = await handshaken(port, cert);
+    await waitFor(() => seen.accepted.length === 1);
+    expect(held(server)).toBe(1);
+
+    first.end();
+    await expectPlaceFreed(server, seen, port, cert);
+  });
+
+  it("a client that destroys its socket", async () => {
+    const { server, seen, port, cert } = await tlsServer();
+    const first = await handshaken(port, cert);
+    await waitFor(() => seen.accepted.length === 1);
+    expect(held(server)).toBe(1);
+
+    first.destroy();
+    await expectPlaceFreed(server, seen, port, cert);
+  });
+
+  it("a failed handshake", async () => {
+    const { server, seen, port, cert } = await tlsServer();
+    // A client that does not trust the server's certificate gives up during the handshake.
+    const first = tls.connect({ host: "127.0.0.1", port, servername: "localhost" });
+    sockets.push(first);
+    const outcome = await new Promise<string>((resolve) => {
+      first.once("secureConnect", () => resolve("handshake completed"));
+      first.once("error", () => resolve("handshake failed"));
+    });
+    expect(outcome).toBe("handshake failed");
+    await expectPlaceFreed(server, seen, port, cert);
+  });
+
+  it("a peer that connects and closes without a byte", async () => {
+    const { server, seen, port, cert } = await tlsServer();
+    const first = net.createConnection({ host: "127.0.0.1", port });
+    sockets.push(first);
+    first.on("error", () => undefined);
+    await new Promise<void>((resolve, reject) => {
+      first.once("connect", () => resolve());
+      first.once("error", reject);
+    });
+    await waitFor(() => held(server) === 1);
+
+    first.end();
+    await expectPlaceFreed(server, seen, port, cert);
+    expect(seen.accepted).toHaveLength(1);
+  });
+});
+
 describe("ServerOptions.maxConnections without a socket", () => {
   /** A stand-in for an accepted socket: the fields the accept gate reads, and its destroy. */
   function fakeSocket(peer: { remoteAddress?: string; remotePort?: number } = {}): {
@@ -445,6 +547,26 @@ describe("ServerOptions.maxConnections without a socket", () => {
     inner.emit("tlsClientError", new Error("wrong version number"), fakeSocket());
     expect(tlsErrors).toHaveLength(1);
     expect(server.getStats().tlsClientErrorsTotal).toBe(1);
+  });
+
+  it("gives the place back when the TLS socket it serves is the socket it counted, as under Bun", async () => {
+    // Node.js counts the raw socket and serves the TLS socket wrapping it, two objects. Bun hands
+    // 'connection' and 'secureConnection' the same object, so the transport that takes it over
+    // replaces the cap's 'close' listener. Modelled here by reporting the counted socket as the
+    // secure one.
+    const server = track(createServer({ maxConnections: 1, tls: buildServerCertFixture() }));
+    const inner = (server as unknown as { _netServer: EventEmitter })._netServer;
+    const socket = new net.Socket();
+    socket.on("error", () => undefined);
+    inner.emit("connection", socket);
+    expect((server as unknown as { _openSockets: number })._openSockets).toBe(1);
+
+    inner.emit("secureConnection", socket);
+    socket.destroy();
+    await waitFor(() => (server as unknown as { _openSockets: number })._openSockets === 0);
+    // Given back once, though the socket carries the cap's listener twice.
+    await new Promise((r) => setTimeout(r, 20));
+    expect((server as unknown as { _openSockets: number })._openSockets).toBe(0);
   });
 
   it("gates nothing when no cap is set", () => {
