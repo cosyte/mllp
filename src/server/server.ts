@@ -27,7 +27,6 @@ import type { TLSSocket } from "node:tls";
 import { EventEmitter } from "node:events";
 import { Connection } from "../connection/index.js";
 import { MllpConnectionError } from "../connection/index.js";
-import { checkPartialFrameTimeout } from "../connection/connection.js";
 import { NetTransport, TlsTransport } from "../transport/index.js";
 import type { ServerTlsOptions } from "../transport/tls-options.js";
 import { MLLP_BIND_ALL_INTERFACES, type SecurityWarning } from "../transport/security-warnings.js";
@@ -436,26 +435,6 @@ export interface ServerOptions {
   deadPeerTimeoutMs?: number;
 
   /**
-   * Close a connection that holds a half-sent frame for this many milliseconds: a sender that
-   * opens a frame (its VT) and stops part way through, or trickles it so slowly that it never
-   * ends, holds the frame's bytes and a connection place for no longer than this.
-   *
-   * Separate from `deadPeerTimeoutMs`, which is an idle timer: this one runs only while a frame
-   * is open, from the read that began it, and bytes arriving for that frame do not extend it. A
-   * connection with no frame open is never closed by it, however quiet. A frame that ends stops
-   * it, and the next frame starts its own. On expiry the connection is destroyed (its
-   * `'stateChange'` reason reads `'partial frame timeout'`), the partial frame never reaches
-   * `onMessage`, and no acknowledgement is sent for it. Set it above the time your largest
-   * message takes to arrive on your slowest link.
-   *
-   * Must be a positive number of milliseconds no greater than 2147483647; anything else throws a
-   * `RangeError` at construction. Unset means no limit.
-   *
-   * @default undefined (no limit)
-   */
-  partialFrameTimeoutMs?: number;
-
-  /**
    * Graceful drain timeout passed to `conn.close()` during `server.close()`.
    * Default: 30 000 ms.
    */
@@ -683,7 +662,6 @@ export class MllpServer extends EventEmitter {
         "ServerOptions.maxConnections must be a positive integer, or left unset for no cap",
       );
     }
-    checkPartialFrameTimeout(opts.partialFrameTimeoutMs, "ServerOptions");
     const tlsInput = opts.tls;
     if (
       tlsInput !== undefined &&
@@ -1425,10 +1403,7 @@ export class MllpServer extends EventEmitter {
       this._opts.onWarning !== undefined
         ? { transport, framing: mergedFraming, onWarning: this._opts.onWarning }
         : { transport, framing: mergedFraming };
-    const conn = new Connection({
-      ...connOpts,
-      partialFrameTimeoutMs: this._opts.partialFrameTimeoutMs,
-    });
+    const conn = new Connection(connOpts);
 
     // The Connection's transport has just replaced every 'close' listener on the socket, the cap's
     // own included when the cap counted this very socket. Under Node.js that is never so for TLS:

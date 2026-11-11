@@ -332,30 +332,6 @@ Reader options (`onFrame`/`onWarning` callbacks, tolerance, `maxFrameSizeBytes`)
 
 [`FrameReader`](#framereader)
 
-#### Accessors
-
-##### frameInProgress
-
-###### Get Signature
-
-> **get** **frameInProgress**(): `boolean`
-
-Whether a frame has begun and not yet ended: `true` from the byte that opens a frame (the VT,
-or the first payload byte where a missing VT is tolerated) until the end of the `FS CR` that
-closes it, and `false` between frames, including while leading whitespace is skipped. A
-[FrameReader.reset](#reset) makes it `false`.
-
-###### Example
-
-```typescript
-reader.push(chunk);
-if (reader.frameInProgress) startStallTimer();
-```
-
-###### Returns
-
-`boolean`
-
 #### Methods
 
 ##### push()
@@ -3374,29 +3350,6 @@ Per-connection warning subscriber. Replaces previous subscription.
 
 `void`
 
-##### partialFrameTimeoutMs?
-
-> `optional` **partialFrameTimeoutMs?**: `number`
-
-Destroy the connection when a frame has been begun and not finished for this many
-milliseconds: a sender that opens a frame and stops part way through, or trickles it so
-slowly that it never ends, holds the frame's bytes and the connection for no longer than this.
-
-The time runs from the read that began the frame, so bytes arriving for the same frame do not
-extend it. A frame that ends stops it, and the next frame starts its own. A connection with no
-frame open is never closed by it, however quiet it is. On expiry the connection goes to
-`CLOSED` with the `'stateChange'` reason `'partial frame timeout'`, and the partial frame is
-never delivered.
-
-Must be a positive number of milliseconds no greater than 2147483647 (the longest timer the
-runtime keeps); anything else throws a `RangeError` at construction. Unset means no limit.
-
-###### Default
-
-```ts
-undefined (no limit)
-```
-
 ##### transport
 
 > **transport**: [`Transport`](#transport-1)
@@ -4560,31 +4513,6 @@ Per-connection warning subscriber. Called for every framing warning on every con
 
 `void`
 
-##### partialFrameTimeoutMs?
-
-> `optional` **partialFrameTimeoutMs?**: `number`
-
-Close a connection that holds a half-sent frame for this many milliseconds: a sender that
-opens a frame (its VT) and stops part way through, or trickles it so slowly that it never
-ends, holds the frame's bytes and a connection place for no longer than this.
-
-Separate from `deadPeerTimeoutMs`, which is an idle timer: this one runs only while a frame
-is open, from the read that began it, and bytes arriving for that frame do not extend it. A
-connection with no frame open is never closed by it, however quiet. A frame that ends stops
-it, and the next frame starts its own. On expiry the connection is destroyed (its
-`'stateChange'` reason reads `'partial frame timeout'`), the partial frame never reaches
-`onMessage`, and no acknowledgement is sent for it. Set it above the time your largest
-message takes to arrive on your slowest link.
-
-Must be a positive number of milliseconds no greater than 2147483647; anything else throws a
-`RangeError` at construction. Unset means no limit.
-
-###### Default
-
-```ts
-undefined (no limit)
-```
-
 ##### tls?
 
 > `optional` **tls?**: [`ServerTlsOptions`](#servertlsoptions)
@@ -5267,35 +5195,6 @@ Per-connection warning subscriber. Called for every framing warning on every con
 ###### Inherited from
 
 [`ServerOptions`](#serveroptions).[`onWarning`](#onwarning-4)
-
-##### partialFrameTimeoutMs?
-
-> `optional` **partialFrameTimeoutMs?**: `number`
-
-Close a connection that holds a half-sent frame for this many milliseconds: a sender that
-opens a frame (its VT) and stops part way through, or trickles it so slowly that it never
-ends, holds the frame's bytes and a connection place for no longer than this.
-
-Separate from `deadPeerTimeoutMs`, which is an idle timer: this one runs only while a frame
-is open, from the read that began it, and bytes arriving for that frame do not extend it. A
-connection with no frame open is never closed by it, however quiet. A frame that ends stops
-it, and the next frame starts its own. On expiry the connection is destroyed (its
-`'stateChange'` reason reads `'partial frame timeout'`), the partial frame never reaches
-`onMessage`, and no acknowledgement is sent for it. Set it above the time your largest
-message takes to arrive on your slowest link.
-
-Must be a positive number of milliseconds no greater than 2147483647; anything else throws a
-`RangeError` at construction. Unset means no limit.
-
-###### Default
-
-```ts
-undefined (no limit)
-```
-
-###### Inherited from
-
-[`ServerOptions`](#serveroptions).[`partialFrameTimeoutMs`](#partialframetimeoutms-1)
 
 ##### port
 

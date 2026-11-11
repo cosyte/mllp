@@ -120,41 +120,6 @@ export interface ConnectionOptions {
   drainTimeoutMs?: number;
   /** FrameReader options (tolerance, maxFrameSizeBytes). onFrame/onWarning are managed internally. */
   framing?: Omit<FrameReaderOptions, "onFrame" | "onWarning">;
-  /**
-   * Destroy the connection when a frame has been begun and not finished for this many
-   * milliseconds: a sender that opens a frame and stops part way through, or trickles it so
-   * slowly that it never ends, holds the frame's bytes and the connection for no longer than this.
-   *
-   * The time runs from the read that began the frame, so bytes arriving for the same frame do not
-   * extend it. A frame that ends stops it, and the next frame starts its own. A connection with no
-   * frame open is never closed by it, however quiet it is. On expiry the connection goes to
-   * `CLOSED` with the `'stateChange'` reason `'partial frame timeout'`, and the partial frame is
-   * never delivered.
-   *
-   * Must be a positive number of milliseconds no greater than 2147483647 (the longest timer the
-   * runtime keeps); anything else throws a `RangeError` at construction. Unset means no limit.
-   *
-   * @default undefined (no limit)
-   */
-  partialFrameTimeoutMs?: number | undefined;
-}
-
-/**
- * Check a `partialFrameTimeoutMs` option, throwing the `RangeError` that names it.
- *
- * @param value - The option as given.
- * @param owner - The options type it was given on, named in the error.
- * @internal
- */
-export function checkPartialFrameTimeout(
-  value: unknown,
-  owner: "ConnectionOptions" | "ServerOptions",
-): void {
-  if (value === undefined) return;
-  if (typeof value === "number" && value > 0 && value <= 2_147_483_647) return;
-  throw new RangeError(
-    `${owner}.partialFrameTimeoutMs must be a positive number of milliseconds no greater than 2147483647, or left unset`,
-  );
 }
 
 /** Warning ring buffer cap. */
@@ -226,10 +191,6 @@ export class Connection extends EventEmitter {
   private _warningsTruncated = false;
 
   private _onWarningFn: ((w: MllpWarning) => void) | null = null;
-  /** The running {@link ConnectionOptions.partialFrameTimeoutMs} timer, while a frame is open. */
-  private _partialFrameTimer: ReturnType<typeof setTimeout> | undefined = undefined;
-  /** Set when a frame ends during the current `push()`, so the next frame gets its own time. */
-  private _frameEndedInRead!: boolean;
   private _drainPromise: Promise<void> | null = null;
   /** Resolves {@link Connection._leftDraining}; called on the transition out of `DRAINING`. */
   private _leaveDraining!: (value: "left") => void;
@@ -259,7 +220,6 @@ export class Connection extends EventEmitter {
    */
   constructor(opts: ConnectionOptions) {
     super();
-    checkPartialFrameTimeout(opts.partialFrameTimeoutMs, "ConnectionOptions");
     this.connectionId = randomUUID();
     this._opts = opts;
     this._transport = opts.transport;
@@ -283,9 +243,7 @@ export class Connection extends EventEmitter {
       this._bytesIn += chunk.length;
       this._lastByteInAt = new Date();
       try {
-        this._frameEndedInRead = false;
         this._reader.push(chunk);
-        this._trackPartialFrame();
       } catch (err) {
         // Nothing may escape the transport's data callback. On a real socket this callback IS
         // the `'data'` listener, so a throw here becomes an uncaught exception that kills the
@@ -574,7 +532,6 @@ export class Connection extends EventEmitter {
 
     // Fire semantic lifecycle events
     if (to === "DISCONNECTED") {
-      this._stopPartialFrameTimer();
       this._dispatchContained(() => {
         this.emit("disconnect", Object.freeze({ connectionId: this.connectionId }));
       });
@@ -585,7 +542,6 @@ export class Connection extends EventEmitter {
       });
     }
     if (to === "CLOSED") {
-      this._stopPartialFrameTimer();
       this._dispatchContained(() => {
         this.emit("close", Object.freeze({ connectionId: this.connectionId }));
       });
@@ -716,42 +672,11 @@ export class Connection extends EventEmitter {
     this._transition(target, `error: ${err.message}`);
   }
 
-  /**
-   * Start, keep or stop the {@link ConnectionOptions.partialFrameTimeoutMs} timer after a read.
-   *
-   * No frame open: stop it. A frame open that was already open before this read, with none ending
-   * in between: keep it, so trickled bytes buy no time. Otherwise a frame began in this read:
-   * start its own.
-   */
-  private _trackPartialFrame(): void {
-    const limitMs = this._opts.partialFrameTimeoutMs;
-    if (limitMs === undefined) return;
-    if (!this._reader.frameInProgress) {
-      this._stopPartialFrameTimer();
-      return;
-    }
-    if (this._partialFrameTimer !== undefined && !this._frameEndedInRead) return;
-    this._stopPartialFrameTimer();
-    const timer = setTimeout(() => {
-      this.destroy(new Error("partial frame timeout"));
-    }, limitMs);
-    // A pending timer never keeps the process alive on its own, as the server's idle timer.
-    timer.unref();
-    this._partialFrameTimer = timer;
-  }
-
-  /** Clear the partial-frame timer, if one is running. */
-  private _stopPartialFrameTimer(): void {
-    clearTimeout(this._partialFrameTimer);
-    this._partialFrameTimer = undefined;
-  }
-
   private _onFrameDecoded(
     payload: Buffer,
     byteOffset: number,
     warnings: readonly MllpWarning[],
   ): void {
-    this._frameEndedInRead = true;
     // Only deliver messages when in an active state (CONNECTED or DRAINING)
     if (this._state !== "CONNECTED" && this._state !== "DRAINING") return;
     const event = Object.freeze({ payload, connectionId: this.connectionId, byteOffset, warnings });

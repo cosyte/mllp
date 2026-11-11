@@ -83,8 +83,6 @@ serving every other one. The error event carries `connectionCause: "framing-fata
   sender's messages really are that large.
 - A connection closed after a quiet period: `deadPeerTimeoutMs` closes a connection on which nothing
   arrived for that long. Set it above the longest quiet period of a healthy link, or leave it unset.
-- A connection closed in the middle of a message: `partialFrameTimeoutMs` closes a connection whose
-  frame stayed open for that long. Raise it if the sender's largest messages arrive that slowly.
 - A connection closed as soon as it opened, with a `connectionRejected` event
   (`MLLP_CONNECTION_LIMIT_REACHED`): the server already held `maxConnections` connections. Raise the
   cap, or find the sender that opens connections and never closes them.

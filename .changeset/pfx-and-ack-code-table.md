@@ -2,8 +2,7 @@
 "@cosyte/mllp": patch
 ---
 
-Three additions an engine in front of this package needs to pass through.
+Two additions an engine in front of this package needs to pass through.
 
-- **`ServerOptions.partialFrameTimeoutMs`** closes a connection that holds a half-sent frame for that many milliseconds: a sender that opens a frame and stops, or trickles it so it never ends. It runs only while a frame is open, from the read that began it, so it is separate from `deadPeerTimeoutMs` (idle) and never closes a quiet connection. The same option is on `ConnectionOptions`, and `FrameReader.frameInProgress` reports whether a frame is open. Off by default; a value that is not a positive number of milliseconds up to 2147483647 throws a `RangeError` at construction.
 - **`ServerTlsOptions.pfx`** takes a PKCS#12 file's bytes in place of `cert` and `key`, unlocked with `passphrase`. A file the TLS library cannot load (a wrong passphrase, not PKCS#12, or a legacy RC2-40 file that Node.js on OpenSSL 3 refuses) rejects `listen()` with `MllpTlsConfigurationError` and the new code `MLLP_TLS_PFX_REJECTED`, before anything is bound; the message names `tls.pfx` and never the file or the passphrase. `ServerTlsOptions.cert` and `key` are now optional in the type, since `pfx` can stand in for them; a server given neither pair nor file now throws a `TypeError` when it is created, where before it was refused by the type and failed every handshake if the type was bypassed. A caller passing `cert` and `key` changes nothing.
 - **`selectAckCode({ msh15, msh16, outcome })`** returns the acknowledgement code to send, by the same table the server's auto-ACK uses: the accept-mode `CA`/`CE`/`CR` where MSH-15 asks for an accept acknowledgement on that outcome, the outcome itself otherwise. It also reports the mode, whether MSH-16 asks for an application acknowledgement, and whether either field held a value outside Table 0155. New types `AckCodeSelection` and `AckCodeSelectionInput`.

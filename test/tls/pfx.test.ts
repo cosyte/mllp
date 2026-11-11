@@ -25,7 +25,7 @@ import {
 } from "../../src/transport/error.js";
 import * as root from "../../src/index.js";
 import { buildPfx, buildLegacyPfx } from "../helpers/pkcs12-fixtures.js";
-import { buildServerCertFixture } from "../helpers/tls-fixtures.js";
+import { buildServerCertFixture, type ServerCertFixture } from "../helpers/tls-fixtures.js";
 
 const PASSPHRASE = "synthetic-pfx-passphrase";
 const MESSAGE = Buffer.from("MSH|^~\\&|A|B|C|D|20260101||ADT^A01|PFXMSG1|P|2.5\r", "latin1");
@@ -35,6 +35,13 @@ const PFX_MESSAGE =
   "PKCS#12, or it uses a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy` and " +
   "older exports write it) that OpenSSL 3 does not load, so re-export it with AES-256; " +
   "nothing was bound";
+
+/** One certificate for the whole file, built on first use: key generation is the slow part. */
+let sharedFixture: ServerCertFixture | undefined;
+function certificate(): ServerCertFixture {
+  sharedFixture ??= buildServerCertFixture();
+  return sharedFixture;
+}
 
 function must<T>(v: T | undefined | null): T {
   if (v === undefined || v === null) throw new Error("expected value");
@@ -82,7 +89,7 @@ describe("tls.pfx: the refusal and its message", () => {
 // and the refusals below are about Node's OpenSSL 3, which is where the legacy encryption fails.
 describe.skipIf(RUNTIME !== "node")("tls.pfx on Node.js", () => {
   it("a server presents the certificate from a PKCS#12 file", async () => {
-    const fixture = buildServerCertFixture();
+    const fixture = certificate();
     const server = createServer({
       tls: { pfx: buildPfx(fixture, PASSPHRASE), passphrase: PASSPHRASE },
       autoAck: "AA",
@@ -102,7 +109,7 @@ describe.skipIf(RUNTIME !== "node")("tls.pfx on Node.js", () => {
   });
 
   it("a legacy-encrypted file rejects listen() before anything is bound", async () => {
-    const pfx = buildLegacyPfx(buildServerCertFixture(), PASSPHRASE);
+    const pfx = buildLegacyPfx(certificate(), PASSPHRASE);
     const server = createServer({ tls: { pfx, passphrase: PASSPHRASE } });
     servers.push(server);
 
@@ -120,7 +127,7 @@ describe.skipIf(RUNTIME !== "node")("tls.pfx on Node.js", () => {
   });
 
   it("the wrong passphrase is the same refusal", async () => {
-    const pfx = buildPfx(buildServerCertFixture(), PASSPHRASE);
+    const pfx = buildPfx(certificate(), PASSPHRASE);
     const wrong = "synthetic-wrong-passphrase";
     const server = createServer({ tls: { pfx, passphrase: wrong } });
     servers.push(server);
@@ -145,7 +152,7 @@ describe.skipIf(RUNTIME !== "node")("tls.pfx on Node.js", () => {
 });
 
 describe("ServerOptions.tls needs a certificate", () => {
-  const { cert, key } = buildServerCertFixture();
+  const { cert, key } = certificate();
   const MESSAGE_TEXT = "ServerOptions.tls needs cert and key, or pfx";
 
   it("refuses neither cert, key nor pfx with a TypeError", () => {

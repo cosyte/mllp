@@ -170,22 +170,6 @@ export class FrameReader {
   }
 
   /**
-   * Whether a frame has begun and not yet ended: `true` from the byte that opens a frame (the VT,
-   * or the first payload byte where a missing VT is tolerated) until the end of the `FS CR` that
-   * closes it, and `false` between frames, including while leading whitespace is skipped. A
-   * {@link FrameReader.reset} makes it `false`.
-   *
-   * @example
-   * ```typescript
-   * reader.push(chunk);
-   * if (reader.frameInProgress) startStallTimer();
-   * ```
-   */
-  get frameInProgress(): boolean {
-    return this._state !== "SCANNING_FOR_VT";
-  }
-
-  /**
    * Feed a chunk of raw TCP bytes into the FSM. Frames fire synchronously via `onFrame`
    * during this call. May throw `MllpFramingError` for unrecoverable framing violations
    * when the matching tolerance is not enabled.
