@@ -2308,7 +2308,7 @@ export class MllpClient extends EventEmitter {
    */
   private _shutdownErrorFor(entry: PendingAck): Error {
     const flushedAt = entry.sentAt;
-    /* c8 ignore next 6 -- structural guard, unreachable today; see the note above */
+    /* v8 ignore if -- structural guard, unreachable today; see the note above */
     if (flushedAt === null) {
       return new MllpNeverDeliveredError({
         byteCount: entry.byteCount,
