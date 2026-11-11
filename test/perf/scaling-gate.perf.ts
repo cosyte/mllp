@@ -14,6 +14,9 @@
  * searched again from its first byte for the end of the frame, which costs the square of the reads.
  * It must clear the ceiling at exactly these sizes. Every input is synthetic and built in
  * code by `bench/corpus.mjs`.
+ *
+ * A warmup that never settles is measured again in the same job, at most three times, and every
+ * other failure fails at once: `unstable-warmup.ts` holds that rule and the reason for it.
  */
 
 import {
@@ -33,6 +36,8 @@ import {
 } from "../../bench/corpus.mjs";
 import { roundTrip } from "../../bench/mllp.bench.mjs";
 import * as mllp from "../../src/index.js";
+
+import { expectMeasured, gateUntilWarm, selfCheckUntilWarm } from "./unstable-warmup.js";
 
 const FS = 0x1c;
 
@@ -137,32 +142,32 @@ const roundTripOptions: ScalingGateOptions<Buffer, string> = {
 
 describe("the scaling gate: the receive path", () => {
   it("has not acquired a complexity regression on either axis", () => {
-    const report = scalingGate(decodeOptions);
     // A skip is not a pass: a gate that could not measure says so here, rather than reading green.
-    expect(report.count.status, report.count.diagnostic).toBe("measured");
-    expect(report.size.status, report.size.diagnostic).toBe("measured");
+    expectMeasured(gateUntilWarm(() => scalingGate(decodeOptions)));
   });
 
   it("has fixtures large enough for that gate to fail", () => {
-    const report = assertScalingGateFires(decodeOptions, {
-      regressedParse: (chunks) => decode([rescanEveryRead(chunks)]),
-      equals: samePayloads,
-    });
+    const report = selfCheckUntilWarm(() =>
+      assertScalingGateFires(decodeOptions, {
+        regressedParse: (chunks) => decode([rescanEveryRead(chunks)]),
+        equals: samePayloads,
+      }),
+    );
     expect(report.margin).toBeGreaterThan(1);
   });
 });
 
 describe("the scaling gate: a round trip through a connection", () => {
   it("has not acquired a complexity regression on either axis", () => {
-    const report = scalingGate(roundTripOptions);
-    expect(report.count.status, report.count.diagnostic).toBe("measured");
-    expect(report.size.status, report.size.diagnostic).toBe("measured");
+    expectMeasured(gateUntilWarm(() => scalingGate(roundTripOptions)));
   });
 
   it("has fixtures large enough for that gate to fail", () => {
-    const report = assertScalingGateFires(roundTripOptions, {
-      regressedParse: (payload) => msa(exchange(rescanEveryRead(reads(payload, SEGMENT_BYTES)))),
-    });
+    const report = selfCheckUntilWarm(() =>
+      assertScalingGateFires(roundTripOptions, {
+        regressedParse: (payload) => msa(exchange(rescanEveryRead(reads(payload, SEGMENT_BYTES)))),
+      }),
+    );
     expect(report.margin).toBeGreaterThan(1);
   });
 });
