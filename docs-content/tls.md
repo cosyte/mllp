@@ -456,8 +456,8 @@ material, and it is emitted at handshake-completion time, before any HL7 byte ha
 ## Under Bun and Deno
 
 We build on Node's `node:tls` and `node:net`, and Node.js is the runtime where every option on this
-page is enforced. Bun and Deno each provide their own version of those modules, and some of them do
-not enforce three of our options. We measured what each does by running our suite under each (Bun
+page is enforced. Bun and Deno each provide their own version of those modules, and between them
+they leave three of our options unenforced. We measured what each does by running our suite under each (Bun
 1.4.4, Deno 2.9.8): Deno takes a cipher list and Diffie-Hellman parameters and applies neither (a
 peer restricted to `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256` negotiated
 `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`), and Bun's TLS library has no finite-field Diffie-Hellman
@@ -465,7 +465,8 @@ suite and refuses automatic Diffie-Hellman selection.
 
 So we do not hand these options to a runtime that would not enforce them. Before a socket exists,
 probes that carry none of your configuration check that the runtime enforces that kind of option at
-all: a cipher list naming no real suite must be refused, each suite the ATNA option names must be
+all: a cipher list that names a suite and then removes it, so selects none, must be refused, each
+suite the ATNA option names must be
 available, automatic Diffie-Hellman selection must be accepted, and a Diffie-Hellman group far too
 small to use must be refused. Where a probe fails, `connect()` or `listen()` rejects with an
 `MllpTlsConfigurationError` instead of opening a link that is not what you configured:

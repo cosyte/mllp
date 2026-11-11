@@ -96,11 +96,15 @@ export const ATNA_CIPHER_LIST: string = [
 ].join(":");
 
 /**
- * A cipher-list string that names no suite at all. A TLS library that enforces a cipher list
- * refuses it (Node.js: `no cipher match`); one that takes a list without applying it accepts it,
- * and would take the caller's list the same way. That difference is the whole probe.
+ * A cipher-list string that describes no suite at all: it names one real suite and then removes
+ * it for good with `!`. A TLS library that enforces a cipher list works out what the list selects,
+ * finds nothing, and refuses it (Node.js and Bun: `no cipher match`). One that only checks how a
+ * list is spelled and then offers its own accepts it, and would take the caller's list the same
+ * way (measured: Deno 2.9.8, which refuses a list of lower-case words but accepts this one, and
+ * accepts `!ALL`). That difference is the whole probe. The suite is a real one so that a check of
+ * the names alone passes it.
  */
-const UNKNOWN_SUITE_PROBE = "no-such-cipher-suite";
+const EMPTY_LIST_PROBE = "ECDHE-RSA-AES128-GCM-SHA256:!ECDHE-RSA-AES128-GCM-SHA256";
 
 /**
  * PKCS#3 Diffie-Hellman parameters for the group p = 23, g = 5: a five-bit prime, far below the
@@ -136,7 +140,8 @@ function refusalOf(options: SecureContextOptions): Error | null {
  * is refused here instead, before any socket exists. Two probes, each with no caller input in
  * scope:
  *
- * - a list naming no real suite must be refused, which shows the runtime reads lists at all;
+ * - a list that selects no suite must be refused, which shows the runtime works out what a list
+ *   selects rather than only how it is spelled;
  * - with `atnaTransportSecurity`, each of the four suites it names must be accepted on its own,
  *   which shows the runtime can offer every one of them. A TLS library with no finite-field
  *   Diffie-Hellman suite (measured: Bun 1.4.4) cannot offer two of the four, and would otherwise
@@ -147,7 +152,7 @@ function refusalOf(options: SecureContextOptions): Error | null {
  * own refusal as `cause` when a named suite is what it refused.
  */
 function assertCipherListEnforced(atna: boolean): void {
-  if (refusalOf({ ciphers: UNKNOWN_SUITE_PROBE }) === null) {
+  if (refusalOf({ ciphers: EMPTY_LIST_PROBE }) === null) {
     throw new MllpTlsConfigurationError(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE);
   }
   if (!atna) return;

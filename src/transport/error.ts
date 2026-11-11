@@ -82,8 +82,9 @@ export const MLLP_TLS_DH_PARAMETERS_REJECTED = "MLLP_TLS_DH_PARAMETERS_REJECTED"
  * This is a property of the runtime, not of the list: Node.js enforces both options, and the same
  * configuration fails here on a runtime whose `node:tls` takes a `ciphers` list without applying
  * it, or whose TLS library has no finite-field Diffie-Hellman suite for the ATNA option to offer.
- * It is proved with a probe rather than read off a runtime name: a list naming no real suite must
- * be refused, and each suite the ATNA option names must be accepted on its own.
+ * It is proved with a probe rather than read off a runtime name: a list that names a suite and then
+ * removes it, so selects none, must be refused, and each suite the ATNA option names must be
+ * accepted on its own.
  *
  * Distinct from {@link MLLP_TLS_CIPHER_LIST_REJECTED}, where the runtime does enforce lists and
  * refused this one: the remedy here is a different runtime, or no cipher option at all.
