@@ -928,9 +928,12 @@ Rejects with:
   after it, did not complete in time. The socket is destroyed; nothing was written.
 - `MllpConnectionError({ phase: 'connect' })` if [MllpClient.destroy](#destroy-1) is called while
   `connect()` is still connecting, over TCP or TLS, before or during the handshake. Its
-  `cause` is the reason passed to `destroy(reason)`; with no reason it is an `Error` whose
-  message is `closed before connect`, the same as for any socket that closes before
-  connecting with no error. It carries no `connectionCause`.
+  `cause` is the reason passed to `destroy(reason)`, as it is, and its message is that
+  reason's; with no reason the cause is an `Error` whose message is `closed before connect`,
+  the same as for any socket that closes before connecting with no error. It carries no
+  `connectionCause` either way: a reason is the caller's own, so one whose message or `code`
+  reads like a TLS failure (`alert`, `ERR_SSL_*`, `EPROTO`, a certificate code) is never
+  sorted into `'tls-handshake'` or `'tls-verify'`.
 - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
   honoured (the runtime rejects it, the runtime does not enforce cipher lists
   at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
@@ -988,7 +991,8 @@ ever written for it; that is a statement about the bytes, not about how the clie
 shut down, so it holds on this path too.
 
 A [MllpClient.connect](#connect) still connecting rejects with an `MllpConnectionError` whose
-`phase` is `'connect'`. Its `cause` is `reason` when one is given, and otherwise an `Error`
+`phase` is `'connect'` and no `connectionCause`. Its `cause` is `reason` when one is given,
+never classified as a TLS failure whatever its message or `code`, and otherwise an `Error`
 whose message is `closed before connect`.
 
 ###### Parameters
@@ -4427,7 +4431,8 @@ We set no handshake time limit of our own: the runtime's applies. On Node.js tha
 `'tlsClientError'` fires with code `ERR_TLS_HANDSHAKE_TIMEOUT`. Until then a peer that
 connects and never completes the handshake holds a [ServerOptions.maxConnections](#maxconnections-1)
 place, and `deadPeerTimeoutMs` does not apply, because it starts only once the connection is
-accepted after its handshake.
+accepted after its handshake. We have not measured what bounds a handshake on Bun or Deno,
+which may set no limit at all.
 
 Spec anchor: IHE ATNA ITI-19 (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html).
 
@@ -5098,7 +5103,8 @@ We set no handshake time limit of our own: the runtime's applies. On Node.js tha
 `'tlsClientError'` fires with code `ERR_TLS_HANDSHAKE_TIMEOUT`. Until then a peer that
 connects and never completes the handshake holds a [ServerOptions.maxConnections](#maxconnections-1)
 place, and `deadPeerTimeoutMs` does not apply, because it starts only once the connection is
-accepted after its handshake.
+accepted after its handshake. We have not measured what bounds a handshake on Bun or Deno,
+which may set no limit at all.
 
 Spec anchor: IHE ATNA ITI-19 (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html).
 

@@ -629,6 +629,12 @@ export class MllpClient extends EventEmitter {
   /** Set when close()/destroy()/abort fires; reconnect handler short-circuits. */
   private _userClosed = false;
   /**
+   * The reason last passed to `destroy(reason)`, `null` before one. The socket hands it back on
+   * `'error'`, and `connect()` compares by identity so the caller's own reason is carried as the
+   * cause and never sorted into a TLS `connectionCause`.
+   */
+  private _destroyReason: Error | null = null;
+  /**
    * Sends parked inside the client with nothing written for them. See {@link ParkedSend}.
    * Every entry removes itself the moment its own wait ends, however it ends.
    */
@@ -752,9 +758,12 @@ export class MllpClient extends EventEmitter {
    *   after it, did not complete in time. The socket is destroyed; nothing was written.
    * - `MllpConnectionError({ phase: 'connect' })` if {@link MllpClient.destroy} is called while
    *   `connect()` is still connecting, over TCP or TLS, before or during the handshake. Its
-   *   `cause` is the reason passed to `destroy(reason)`; with no reason it is an `Error` whose
-   *   message is `closed before connect`, the same as for any socket that closes before
-   *   connecting with no error. It carries no `connectionCause`.
+   *   `cause` is the reason passed to `destroy(reason)`, as it is, and its message is that
+   *   reason's; with no reason the cause is an `Error` whose message is `closed before connect`,
+   *   the same as for any socket that closes before connecting with no error. It carries no
+   *   `connectionCause` either way: a reason is the caller's own, so one whose message or `code`
+   *   reads like a TLS failure (`alert`, `ERR_SSL_*`, `EPROTO`, a certificate code) is never
+   *   sorted into `'tls-handshake'` or `'tls-verify'`.
    * - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
    *   honoured (the runtime rejects it, the runtime does not enforce cipher lists
    *   at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
@@ -886,6 +895,12 @@ export class MllpClient extends EventEmitter {
         /* v8 ignore next -- cleanup() removes this listener before an abort settles, so it never runs after one */
         if (aborted) return;
         cleanup();
+        // A reason the caller passed to destroy() is theirs, not the runtime's: it is carried as
+        // the cause as it is, never classified, however much it reads like a TLS failure.
+        if (err === this._destroyReason) {
+          reject(new MllpConnectionError(err.message, { cause: err, phase: "connect" }));
+          return;
+        }
         // Surface the OS error wrapped in MllpConnectionError (Connection's
         // _onTransportError handles the same wrap once attached, but the
         // socket's 'error' may arrive before NetTransport hands it off).
@@ -2555,7 +2570,8 @@ export class MllpClient extends EventEmitter {
    * shut down, so it holds on this path too.
    *
    * A {@link MllpClient.connect} still connecting rejects with an `MllpConnectionError` whose
-   * `phase` is `'connect'`. Its `cause` is `reason` when one is given, and otherwise an `Error`
+   * `phase` is `'connect'` and no `connectionCause`. Its `cause` is `reason` when one is given,
+   * never classified as a TLS failure whatever its message or `code`, and otherwise an `Error`
    * whose message is `closed before connect`.
    *
    * @example
@@ -2583,6 +2599,7 @@ export class MllpClient extends EventEmitter {
     this._teardownCorrelator(teardownReason);
     const conn = this._connection;
     if (conn === null) return;
+    this._destroyReason = reason ?? null;
     conn.destroy(reason);
   }
 

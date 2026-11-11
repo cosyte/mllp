@@ -63,7 +63,8 @@ The server sets no handshake time limit of its own; the runtime's applies. On No
 completes the handshake is closed then, and the server emits `'tlsClientError'` with code
 `ERR_TLS_HANDSHAKE_TIMEOUT`. Until then that connection holds a `maxConnections` place, and
 `deadPeerTimeoutMs` does not cover it, because that timer starts only once a connection is accepted
-after its handshake.
+after its handshake. We have not measured what bounds a handshake on Bun or Deno, which may set
+no limit at all.
 
 ## Mutual TLS (mTLS)
 

@@ -62,6 +62,25 @@ async function settledWithin(p: Promise<unknown>, ms: number): Promise<unknown> 
   ]);
 }
 
+/** Build a `destroy()` reason, optionally with an error `code`. */
+function reasonWith(message: string, code?: string): Error {
+  const err = new Error(message) as NodeJS.ErrnoException;
+  if (code !== undefined) err.code = code;
+  return err;
+}
+
+/**
+ * Reasons a caller might pass to `destroy()` that read like a TLS failure: a message with the
+ * word `alert`, an `ERR_SSL_` code, `EPROTO`, and a certificate verification code. A reason is
+ * the caller's own, so none of them is sorted into a TLS `connectionCause`.
+ */
+const TLS_SHAPED_REASONS = [
+  { label: "a message with the word alert", make: () => reasonWith("alert: shutting down") },
+  { label: "an ERR_SSL_ code", make: () => reasonWith("shutting down", "ERR_SSL_SYNTHETIC_TEST") },
+  { label: "the EPROTO code", make: () => reasonWith("shutting down", "EPROTO") },
+  { label: "a verification code", make: () => reasonWith("shutting down", "CERT_HAS_EXPIRED") },
+];
+
 describe("destroy() during connect()", () => {
   it("with no reason, rejects connect() with a typed connect-phase error", async () => {
     const peer = await silentPeer();
@@ -106,6 +125,32 @@ describe("destroy() during connect()", () => {
     expect((outcome as MllpConnectionError).phase).toBe("connect");
     expect((outcome as MllpConnectionError).cause).toBe(reason);
   });
+
+  it.each(TLS_SHAPED_REASONS)(
+    "with a reason carrying $label, mid-handshake, sets no connectionCause",
+    async ({ make }) => {
+      const peer = await silentPeer();
+      const { cert } = buildServerCertFixture();
+      const client = createClient({
+        host: "127.0.0.1",
+        port: peer.port,
+        tls: { ca: cert, servername: "localhost" },
+      });
+      const connecting = client.connect();
+      await waitFor(() => peer.accepted() === 1);
+
+      const reason = make();
+      client.destroy(reason);
+      const outcome = await settledWithin(connecting, 2_000);
+
+      expect(outcome).toBeInstanceOf(MllpConnectionError);
+      const err = outcome as MllpConnectionError;
+      expect(err.phase).toBe("connect");
+      expect(err.cause).toBe(reason);
+      expect(err.message).toBe(reason.message);
+      expect(err.connectionCause).toBeUndefined();
+    },
+  );
 });
 
 // The same contract before the TCP connect itself has completed, over plain TCP and over TLS.
@@ -158,6 +203,24 @@ describe.each([
     expect((outcome as MllpConnectionError).cause).toBe(reason);
     expect(client.state).toBe("CLOSED");
   });
+
+  it.each(TLS_SHAPED_REASONS)(
+    "with a reason carrying $label, sets no connectionCause",
+    async ({ make }) => {
+      const { client, connecting } = await connectingClient();
+
+      const reason = make();
+      client.destroy(reason);
+      const outcome = await settledWithin(connecting, 2_000);
+
+      expect(outcome).toBeInstanceOf(MllpConnectionError);
+      const err = outcome as MllpConnectionError;
+      expect(err.phase).toBe("connect");
+      expect(err.cause).toBe(reason);
+      expect(err.connectionCause).toBeUndefined();
+      expect(client.state).toBe("CLOSED");
+    },
+  );
 });
 
 // Node only: `getEventListeners` on an `AbortSignal` is how Node exposes an EventTarget's
