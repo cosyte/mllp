@@ -136,6 +136,20 @@ function trimSpaces(value: string): string {
 }
 
 /**
+ * Read one MSH-15 or MSH-16 value, already cut out of its message, against Table 0155 by the
+ * same rule as {@link readAcceptCondition}. For a caller holding the field rather than the
+ * scanned header, which is what the public `selectAckCode` is given.
+ *
+ * @internal
+ */
+export function readConditionField(
+  raw: string | undefined,
+  delimiters: FieldDelimiters,
+): TableRead<AckConditionCode> {
+  return readTableField(raw, delimiters, TABLE_0155);
+}
+
+/**
  * Read one table-valued field, the single reading rule this module has.
  *
  * Take the field's bytes as delimited by the field separator (the caller has already split
@@ -340,6 +354,9 @@ export interface CommitAckReport {
  * always; `NE` never; `ER` only where the disposition is an error or a reject; `SU` only
  * where it is positive. A NULL or unrecognised MSH-15 asks for nothing, which leaves the
  * responder's own application-mode answer in place.
+ *
+ * The four conditions are Table 0155's, shared by MSH-15 and MSH-16, so the public
+ * `selectAckCode` evaluates a recognised MSH-16 against the outcome with this same function.
  *
  * @internal
  */

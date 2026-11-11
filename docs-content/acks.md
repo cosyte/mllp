@@ -115,6 +115,43 @@ that is already in storage.
 server.on("ackModeWarning", ({ code }) => metrics.increment("mllp.ack_mode", { code }));
 ```
 
+### The same table as a function: `selectAckCode`
+
+When you build the acknowledgment yourself (an `autoAck` function, manual mode, or another engine
+that forwards to this one), `selectAckCode` gives you the code the auto-ACK path would send, from the
+same rules. Pass MSH-15, MSH-16 and the outcome your application reached (`AA`, `AE` or `AR`):
+
+```ts runnable
+import { selectAckCode } from "@cosyte/mllp";
+
+selectAckCode({ msh15: "AL", outcome: "AA" }).code; // => "CA"
+selectAckCode({ msh15: "ER", outcome: "AA" }).code; // => "AA"
+selectAckCode({ msh15: "ER", outcome: "AE" }).code; // => "CE"
+selectAckCode({ outcome: "AR" }).code; // => "AR"
+```
+
+It reads each field the way the server does: the text before the first repetition and component
+separator, trimmed of spaces, compared case-sensitively against Table 0155. Pass the message's MSH-2
+as `encodingCharacters` if it declares separators other than `^~\&`. The result also says whether the
+message is in the original or the enhanced protocol (`mode`), whether MSH-16 asks for an application
+acknowledgment carrying this outcome (`applicationAckRequested`: `AL` always, `NE` never, `ER` on
+`AE` or `AR`, `SU` on `AA`, and a NULL or unrecognised MSH-16 reads as `AL`), and whether either
+field held a value outside Table 0155. MSH-16 never changes the code.
+
+```ts runnable
+import { selectAckCode } from "@cosyte/mllp";
+
+const selection = selectAckCode({ msh15: "AL", msh16: "SU", outcome: "AA" });
+selection.code; // => "CA"
+selection.mode; // => "enhanced"
+selection.applicationAckRequested; // => true
+```
+
+Two rules the server applies are about the whole message rather than these fields, so the function
+does not apply them: a batch or concatenated frame keeps its non-positive answer, and a message with
+no usable MSH-10 is never answered positively. If you build an acknowledgment for such a message,
+apply them yourself.
+
 The server still sends **exactly one** acknowledgment per inbound message, in every mode. The later
 application acknowledgment of the two-part protocol is the consumer's to send; this package selects
 the code, it does not orchestrate the second exchange. Every acknowledgment mode is recorded with a
