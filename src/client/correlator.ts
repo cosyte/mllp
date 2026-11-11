@@ -486,7 +486,7 @@ export class Correlator {
     byteOffsetFromAck: number,
   ): PendingAck | null {
     const twoPhase = entry.twoPhase;
-    /* c8 ignore next */
+    /* v8 ignore next -- the one caller passes only an entry that carries two-phase state */
     if (twoPhase === null) return entry;
     const now = this._opts.now();
     const classification = classifyMsa1(payload);
