@@ -35,7 +35,9 @@
     "interoperability",
     "tcp",
     "tls",
-    "typescript"
+    "typescript",
+    "client",
+    "server"
   ],
   "files": [
     "dist",
