@@ -89,23 +89,21 @@ quota and no allow-list: a sender that keeps the server full keeps others out, a
 connect belongs to your network layer or to a `connection` handler that closes what it does not
 trust. See [Cap the number of connections](./receive-messages.md#cap-the-number-of-connections).
 
-## It enforces its TLS cipher options and reports its connection cap on Node.js only
+## It enforces its TLS cipher options on Node.js only
 
-We build on Node's `node:tls` and `node:net`. Bun and Deno provide their own versions of those
-modules, and three options behave differently there:
+We build on Node's `node:tls`. Bun and Deno provide their own version of it, and neither enforces
+every one of our cipher and Diffie-Hellman options. We do not pass an option to a runtime that would
+not enforce it: `connect()` or `listen()` rejects with a typed `MllpTlsConfigurationError` instead,
+before any socket exists.
 
-- **Deno, `atnaTransportSecurity` and `ciphers`:** the cipher list is accepted and **not applied**,
-  with no error. The link offers Deno's own list.
-- **Deno, `dhParameters`:** the parameters are accepted and **not used**, with no error.
-- **Deno, `maxConnections`:** a connection over the cap is closed, but `connectionRejected` is
-  **never emitted**, so nothing tells you it happened.
-- **Bun, `atnaTransportSecurity` and `dhParameters`:** **refused**. Bun's TLS library offers no
-  finite-field Diffie-Hellman suite and refuses `dhparam`, so a server with either option fails to
-  start.
+- **Deno, `ciphers`, `atnaTransportSecurity` and `dhParameters`:** refused. Deno takes a cipher list
+  and Diffie-Hellman parameters without applying them.
+- **Bun, `atnaTransportSecurity` and `dhParameters`:** refused. Bun's TLS library has no
+  finite-field Diffie-Hellman suite. `ciphers` is enforced on Bun.
 
-On Deno none of these fails loudly, so a configuration that looks restricted is not. Run on Node.js
-when you rely on them. See
-[Under Bun and Deno these options are not enforced](./tls.md#under-bun-and-deno-these-options-are-not-enforced).
+So on Bun and Deno a restricted configuration fails loudly rather than running unrestricted. Run on
+Node.js when you rely on these options. `maxConnections` holds on all three, with its
+`connectionRejected` event. See [Under Bun and Deno](./tls.md#under-bun-and-deno).
 
 ## It does not complete an enhanced-mode exchange on the server side
 

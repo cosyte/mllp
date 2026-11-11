@@ -28,12 +28,14 @@
  * @packageDocumentation
  */
 
-import { createSecureContext } from "node:tls";
+import { createSecureContext, type SecureContextOptions } from "node:tls";
 import {
   MllpTlsConfigurationError,
   MLLP_TLS_CIPHER_LIST_REJECTED,
+  MLLP_TLS_CIPHER_LIST_UNENFORCEABLE,
   MLLP_TLS_CIPHER_OPTION_CONFLICT,
   MLLP_TLS_DH_PARAMETERS_REJECTED,
+  MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE,
 } from "./error.js";
 import { isDhParametersPem } from "./dh-parameters.js";
 
@@ -92,6 +94,95 @@ export const ATNA_CIPHER_LIST: string = [
   ...TLS13_DEFAULT_CIPHER_SUITES,
   ...ATNA_CIPHER_SUITES,
 ].join(":");
+
+/**
+ * A cipher-list string that names no suite at all. A TLS library that enforces a cipher list
+ * refuses it (Node.js: `no cipher match`); one that takes a list without applying it accepts it,
+ * and would take the caller's list the same way. That difference is the whole probe.
+ */
+const UNKNOWN_SUITE_PROBE = "no-such-cipher-suite";
+
+/**
+ * PKCS#3 Diffie-Hellman parameters for the group p = 23, g = 5: a five-bit prime, far below the
+ * 1024 bits under which Node.js refuses parameters out loud (`DH parameter is less than 1024
+ * bits`). A TLS library that reads `dhparam` refuses it; one that takes parameters and runs without
+ * them accepts it, and would take the caller's group the same way. A probe only: these are never
+ * handed to a context that serves anything.
+ */
+const UNDERSIZED_DH_PROBE =
+  "-----BEGIN DH PARAMETERS-----\nMAYCARcCAQU=\n-----END DH PARAMETERS-----\n";
+
+/**
+ * Build a TLS context from `options` alone and report what the runtime threw, if anything.
+ *
+ * @param options - A probe: no certificate, key or passphrase is ever passed here.
+ * @returns The runtime's refusal as an `Error`, or `null` when it built the context.
+ */
+function refusalOf(options: SecureContextOptions): Error | null {
+  try {
+    createSecureContext(options);
+  } catch (err) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+  return null;
+}
+
+/**
+ * Prove this runtime enforces a cipher-suite list before one is handed to it, or refuse.
+ *
+ * A runtime can accept a list and offer its own instead, with no error and no warning (measured:
+ * Deno 2.9.8, where a peer restricted to a DHE suite negotiated an ECDHE one). Passing a list to
+ * such a runtime would leave a caller believing in a restriction that is not in force, so the list
+ * is refused here instead, before any socket exists. Two probes, each with no caller input in
+ * scope:
+ *
+ * - a list naming no real suite must be refused, which shows the runtime reads lists at all;
+ * - with `atnaTransportSecurity`, each of the four suites it names must be accepted on its own,
+ *   which shows the runtime can offer every one of them. A TLS library with no finite-field
+ *   Diffie-Hellman suite (measured: Bun 1.4.4) cannot offer two of the four, and would otherwise
+ *   offer the other two under the option's name.
+ *
+ * @param atna - Whether the list is the ATNA option's own.
+ * @throws {MllpTlsConfigurationError} `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`, with the runtime's
+ * own refusal as `cause` when a named suite is what it refused.
+ */
+function assertCipherListEnforced(atna: boolean): void {
+  if (refusalOf({ ciphers: UNKNOWN_SUITE_PROBE }) === null) {
+    throw new MllpTlsConfigurationError(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE);
+  }
+  if (!atna) return;
+  for (const suite of ATNA_CIPHER_SUITES) {
+    const refusal = refusalOf({ ciphers: suite });
+    if (refusal !== null) {
+      throw new MllpTlsConfigurationError(MLLP_TLS_CIPHER_LIST_UNENFORCEABLE, { cause: refusal });
+    }
+  }
+}
+
+/**
+ * Prove this runtime enforces server Diffie-Hellman parameters before any are handed to it, or
+ * refuse.
+ *
+ * Two probes, each with no caller input in scope. The automatic selection must be accepted: a
+ * runtime that refuses it (measured: Bun 1.4.4, `Automatic DH parameter selection is not
+ * supported`) has its refusal wrapped here, as the `cause`, rather than thrown as a plain error
+ * from deep inside the server. And a group far too small to use must be refused: a runtime that
+ * accepts it (measured: Deno 2.9.8) takes parameters without using them, and a server built there
+ * would advertise its DHE suites on parameters it never applied.
+ *
+ * @throws {MllpTlsConfigurationError} `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`.
+ */
+function assertDhParametersEnforced(): void {
+  const autoRefusal = refusalOf({ dhparam: "auto" });
+  if (autoRefusal !== null) {
+    throw new MllpTlsConfigurationError(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE, {
+      cause: autoRefusal,
+    });
+  }
+  if (refusalOf({ dhparam: UNDERSIZED_DH_PROBE }) === null) {
+    throw new MllpTlsConfigurationError(MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE);
+  }
+}
 
 /**
  * The cipher-suite half of a client's or server's TLS options, the two fields
@@ -206,10 +297,17 @@ function assertUsableDhParameters(dhParameters: string | Buffer): void {
  * @param opts - The cipher-suite half of the caller's TLS options.
  * @param side - Which end of the connection is being configured.
  * @returns The TLS-context fields to spread into `tls.connect` / `tls.createServer`.
+ * **A runtime that would not enforce what was asked for is refused too.** Before
+ * a list or parameters are handed over, probes with no caller input in scope
+ * prove that this runtime's TLS library enforces that kind of input at all; one
+ * that would accept it and then run without it (a `node:tls` that takes a list
+ * and offers its own) gets an `_UNENFORCEABLE` code instead of a link that is
+ * not what it says. Node.js passes every probe.
+ *
  * @throws {MllpTlsConfigurationError} On a conflicting declaration, a list the
- * runtime rejects, or Diffie-Hellman parameters it cannot use. Never falls back
- * to the runtime default list, and never to a server with no Diffie-Hellman
- * parameters.
+ * runtime rejects, Diffie-Hellman parameters it cannot use, or a list or
+ * parameters this runtime does not enforce. Never falls back to the runtime
+ * default list, and never to a server with no Diffie-Hellman parameters.
  *
  * @example
  * ```typescript
@@ -234,8 +332,10 @@ export function resolveTlsCipherPolicy(
   if (supplied !== undefined) assertUsableDhParameters(supplied);
   const dhparam: string | Buffer | undefined =
     supplied ?? (atna && side === "server" ? "auto" : undefined);
+  if (dhparam !== undefined) assertDhParametersEnforced();
 
   if (ciphers !== undefined) {
+    assertCipherListEnforced(atna);
     try {
       createSecureContext({ ciphers });
     } catch (err) {

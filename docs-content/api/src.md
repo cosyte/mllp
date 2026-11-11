@@ -926,10 +926,13 @@ Rejects with:
 - `MllpConnectionError({ phase: 'connect', connectionCause: 'connect-timeout' })` if
   [ClientOptions.connectTimeoutMs](#connecttimeoutms) is set and the TCP connect, or the TLS handshake
   after it, did not complete in time. The socket is destroyed; nothing was written.
+- `MllpConnectionError({ phase: 'connect' })` if the socket closes before connecting with
+  no error, which is what [MllpClient.destroy](#destroy-1) called during `connect()` does.
 - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
-  honoured (the runtime rejects it, or `atnaTransportSecurity` and `ciphers`
-  both declare one). Raised **before** a socket is opened, so nothing is left
-  connected; identify it by `instanceof` plus its stable `code`.
+  honoured (the runtime rejects it, the runtime does not enforce cipher lists
+  at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
+  **before** a socket is opened, so nothing is left connected; identify it by
+  `instanceof` plus its stable `code`.
 
 **Dual failure signal on initial connect:** the Connection's transport
 error handler is attached before this promise's own error listener, so a
@@ -1973,7 +1976,8 @@ Optional underlying `cause` from the TLS library.
 
 > `readonly` **cause**: `Error` \| `undefined`
 
-The TLS library's own error, when the runtime is what refused the list.
+The TLS library's own error, when the runtime is what refused the input
+(or, for an `_UNENFORCEABLE` code, refused one of the probes).
 `undefined` when this package refused the configuration itself.
 
 ###### Overrides
@@ -4335,6 +4339,10 @@ handshake still in progress, and a connection counts until its socket has fully 
 over-cap TLS connection is closed before its handshake, so it costs no handshake work and is
 not a `'tlsClientError'`.
 
+The server counts its connections itself rather than handing the cap to the runtime's
+listener, so the cap and `'connectionRejected'` hold the same on Node.js, Bun and Deno (Deno's
+own listener cap closed the connection and reported nothing).
+
 Must be a positive integer; anything else throws a `RangeError` at construction. Unset means
 no cap.
 
@@ -4537,6 +4545,13 @@ setting does **not** claim on your behalf.
 Mutually exclusive with [ServerTlsOptions.ciphers](#ciphers-1): setting both
 rejects `listen()` with a typed `MllpTlsConfigurationError`.
 
+**On a runtime that cannot honour it, `listen()` rejects** with a typed
+`MllpTlsConfigurationError` carrying `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`,
+before anything is bound: under Bun, whose TLS library refuses the automatic
+Diffie-Hellman selection (its own error is the `cause`), and under Deno,
+whose `node:tls` takes parameters and a cipher list without applying them.
+Construction never throws for it. Node.js honours it.
+
 ###### Default
 
 ```ts
@@ -4565,7 +4580,9 @@ suites prefer [ServerTlsOptions.atnaTransportSecurity](#atnatransportsecurity).
 
 A list the runtime rejects rejects `listen()` with a typed
 `MllpTlsConfigurationError`; it never silently falls back to the default
-list.
+list. **So does any list on a runtime that does not enforce cipher lists**
+(Deno), with `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`, before anything is bound.
+Node.js and Bun enforce a list.
 
 ###### Default
 
@@ -4617,6 +4634,13 @@ back to a server running without them, which matters because the TLS
 library's own behaviour for unreadable parameters is to discard them in
 silence. `'auto'` is not accepted here; that selection is what
 `atnaTransportSecurity` already makes.
+
+**On a runtime that does not enforce Diffie-Hellman parameters, `listen()`
+rejects** with `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`, before anything is
+bound, rather than serving without them: under Deno, whose `node:tls` takes
+parameters without using them, and under Bun, whose TLS library has no
+finite-field Diffie-Hellman (its own refusal is the `cause`). Node.js
+enforces them.
 
 There is no counterpart on [TlsOptions](#tlsoptions): the side that answers the
 key exchange supplies the parameters.
@@ -4961,6 +4985,10 @@ handshake still in progress, and a connection counts until its socket has fully 
 over-cap TLS connection is closed before its handshake, so it costs no handshake work and is
 not a `'tlsClientError'`.
 
+The server counts its connections itself rather than handing the cap to the runtime's
+listener, so the cap and `'connectionRejected'` hold the same on Node.js, Bun and Deno (Deno's
+own listener cap closed the connection and reported nothing).
+
 Must be a positive integer; anything else throws a `RangeError` at construction. Unset means
 no cap.
 
@@ -5190,6 +5218,13 @@ Mutually exclusive with [TlsOptions.ciphers](#ciphers-3): both declare the
 offered list, so setting both rejects `connect()` with a typed
 `MllpTlsConfigurationError`.
 
+**On a runtime that cannot offer the list it rejects `connect()`** with a
+typed `MllpTlsConfigurationError` carrying
+`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`, before any socket exists: under Deno,
+whose `node:tls` takes a cipher list without applying it, and under Bun,
+whose TLS library has none of the DHE suites the option names. Node.js
+offers it.
+
 ###### Default
 
 ```ts
@@ -5221,7 +5256,10 @@ the same declaration made once and reported on `'tlsNegotiated'`.
 
 A list the runtime rejects rejects `connect()` with a typed
 `MllpTlsConfigurationError`; it never silently falls back to the default
-list.
+list. **So does any list on a runtime that does not enforce cipher lists**
+(Deno, whose `node:tls` takes a list without applying it), with
+`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`, before any socket exists. Node.js and
+Bun enforce a list.
 
 ###### Default
 
@@ -5847,7 +5885,7 @@ const code: SecurityWarningCode = 'MLLP_TLS_VERIFY_DISABLED';
 
 ### TlsConfigurationErrorCode
 
-> **TlsConfigurationErrorCode** = *typeof* [`MLLP_TLS_CIPHER_LIST_REJECTED`](#mllp_tls_cipher_list_rejected) \| *typeof* [`MLLP_TLS_CIPHER_OPTION_CONFLICT`](#mllp_tls_cipher_option_conflict) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_REJECTED`](#mllp_tls_dh_parameters_rejected)
+> **TlsConfigurationErrorCode** = *typeof* [`MLLP_TLS_CIPHER_LIST_REJECTED`](#mllp_tls_cipher_list_rejected) \| *typeof* [`MLLP_TLS_CIPHER_OPTION_CONFLICT`](#mllp_tls_cipher_option_conflict) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_REJECTED`](#mllp_tls_dh_parameters_rejected) \| *typeof* [`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`](#mllp_tls_cipher_list_unenforceable) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`](#mllp_tls_dh_parameters_unenforceable)
 
 Union of the stable TLS-configuration error codes.
 
@@ -5985,6 +6023,32 @@ if (err.code === MLLP_TLS_CIPHER_LIST_REJECTED) process.exit(78); // EX_CONFIG
 
 ***
 
+### MLLP\_TLS\_CIPHER\_LIST\_UNENFORCEABLE
+
+> `const` **MLLP\_TLS\_CIPHER\_LIST\_UNENFORCEABLE**: `"MLLP_TLS_CIPHER_LIST_UNENFORCEABLE"` = `"MLLP_TLS_CIPHER_LIST_UNENFORCEABLE"`
+
+The runtime's TLS library does not enforce a cipher-suite list: it accepts a list and then
+offers its own, or it cannot offer a suite the configuration names. Raised for `ciphers` and for
+`atnaTransportSecurity`, before any socket exists.
+
+This is a property of the runtime, not of the list: Node.js enforces both options, and the same
+configuration fails here on a runtime whose `node:tls` takes a `ciphers` list without applying
+it, or whose TLS library has no finite-field Diffie-Hellman suite for the ATNA option to offer.
+It is proved with a probe rather than read off a runtime name: a list naming no real suite must
+be refused, and each suite the ATNA option names must be accepted on its own.
+
+Distinct from [MLLP\_TLS\_CIPHER\_LIST\_REJECTED](#mllp_tls_cipher_list_rejected), where the runtime does enforce lists and
+refused this one: the remedy here is a different runtime, or no cipher option at all.
+
+#### Example
+
+```typescript
+import { MLLP_TLS_CIPHER_LIST_UNENFORCEABLE } from '@cosyte/mllp';
+if (err.code === MLLP_TLS_CIPHER_LIST_UNENFORCEABLE) logger.error('run this link on Node.js');
+```
+
+***
+
 ### MLLP\_TLS\_CIPHER\_OPTION\_CONFLICT
 
 > `const` **MLLP\_TLS\_CIPHER\_OPTION\_CONFLICT**: `"MLLP_TLS_CIPHER_OPTION_CONFLICT"` = `"MLLP_TLS_CIPHER_OPTION_CONFLICT"`
@@ -6021,6 +6085,32 @@ every handshake in them.
 ```typescript
 import { MLLP_TLS_DH_PARAMETERS_REJECTED } from '@cosyte/mllp';
 if (err.code === MLLP_TLS_DH_PARAMETERS_REJECTED) process.exit(78); // EX_CONFIG
+```
+
+***
+
+### MLLP\_TLS\_DH\_PARAMETERS\_UNENFORCEABLE
+
+> `const` **MLLP\_TLS\_DH\_PARAMETERS\_UNENFORCEABLE**: `"MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE"` = `"MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE"`
+
+The runtime's TLS library does not enforce server-side ephemeral Diffie-Hellman parameters: it
+accepts parameters and then runs without them, or it refuses the automatic selection the ATNA
+option makes. Raised for `ServerTlsOptions.dhParameters` and for a server's
+`atnaTransportSecurity`, before anything is bound.
+
+Proved with a probe rather than read off a runtime name: the automatic selection must be
+accepted, and a group far too small to use must be refused. A runtime that takes the small group
+in silence would take the caller's group in silence too, and nothing would say it went unused.
+When the runtime refused the probe itself, its own error is the `cause`.
+
+Distinct from [MLLP\_TLS\_DH\_PARAMETERS\_REJECTED](#mllp_tls_dh_parameters_rejected), where the runtime does enforce parameters
+and refused these: the remedy here is a different runtime, or no Diffie-Hellman option at all.
+
+#### Example
+
+```typescript
+import { MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE } from '@cosyte/mllp';
+if (err.code === MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE) logger.error('run this server on Node.js');
 ```
 
 ***

@@ -95,11 +95,13 @@ Security warnings are emitted on the client's or the server's `securityWarning` 
 TLS configuration errors reject `connect()` or `listen()` with an
 [`MllpTlsConfigurationError`](./api/src.md#mllptlsconfigurationerror) before any socket exists:
 
-| Code                              | Raised when                                                                                      |
-| --------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `MLLP_TLS_CIPHER_LIST_REJECTED`   | the TLS library accepts no suite in the `ciphers` list; there is no fallback to its default list |
-| `MLLP_TLS_CIPHER_OPTION_CONFLICT` | both `atnaTransportSecurity` and `ciphers` are set                                               |
-| `MLLP_TLS_DH_PARAMETERS_REJECTED` | the server's `dhParameters` cannot be used                                                       |
+| Code                                   | Raised when                                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `MLLP_TLS_CIPHER_LIST_REJECTED`        | the TLS library accepts no suite in the `ciphers` list; there is no fallback to its default list                    |
+| `MLLP_TLS_CIPHER_OPTION_CONFLICT`      | both `atnaTransportSecurity` and `ciphers` are set                                                                  |
+| `MLLP_TLS_DH_PARAMETERS_REJECTED`      | the server's `dhParameters` cannot be used                                                                          |
+| `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`   | the runtime would not enforce `ciphers`, or cannot offer every suite `atnaTransportSecurity` names (Deno, Bun)      |
+| `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE` | the runtime would not enforce `dhParameters`, or a server's `atnaTransportSecurity` Diffie-Hellman half (Deno, Bun) |
 
 ## Server connection codes
 

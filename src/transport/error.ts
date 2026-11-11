@@ -5,7 +5,9 @@
  * was asked to offer cannot be honoured, so the connection is refused rather
  * than opened on some other configuration. Two things can be asked for, and
  * they carry separate codes: the offered cipher-suite list, and the server's
- * ephemeral Diffie-Hellman parameters. It rejects the `connect()` / `listen()`
+ * ephemeral Diffie-Hellman parameters. Each can fail in two ways, also with
+ * separate codes: the runtime refused this input, or the runtime does not
+ * enforce that kind of input at all. It rejects the `connect()` / `listen()`
  * call that asked for it, never a live connection.
  *
  * These codes are a **public API**. They appear in caller `catch` blocks, log
@@ -73,6 +75,50 @@ export const MLLP_TLS_CIPHER_OPTION_CONFLICT = "MLLP_TLS_CIPHER_OPTION_CONFLICT"
 export const MLLP_TLS_DH_PARAMETERS_REJECTED = "MLLP_TLS_DH_PARAMETERS_REJECTED";
 
 /**
+ * The runtime's TLS library does not enforce a cipher-suite list: it accepts a list and then
+ * offers its own, or it cannot offer a suite the configuration names. Raised for `ciphers` and for
+ * `atnaTransportSecurity`, before any socket exists.
+ *
+ * This is a property of the runtime, not of the list: Node.js enforces both options, and the same
+ * configuration fails here on a runtime whose `node:tls` takes a `ciphers` list without applying
+ * it, or whose TLS library has no finite-field Diffie-Hellman suite for the ATNA option to offer.
+ * It is proved with a probe rather than read off a runtime name: a list naming no real suite must
+ * be refused, and each suite the ATNA option names must be accepted on its own.
+ *
+ * Distinct from {@link MLLP_TLS_CIPHER_LIST_REJECTED}, where the runtime does enforce lists and
+ * refused this one: the remedy here is a different runtime, or no cipher option at all.
+ *
+ * @example
+ * ```typescript
+ * import { MLLP_TLS_CIPHER_LIST_UNENFORCEABLE } from '@cosyte/mllp';
+ * if (err.code === MLLP_TLS_CIPHER_LIST_UNENFORCEABLE) logger.error('run this link on Node.js');
+ * ```
+ */
+export const MLLP_TLS_CIPHER_LIST_UNENFORCEABLE = "MLLP_TLS_CIPHER_LIST_UNENFORCEABLE";
+
+/**
+ * The runtime's TLS library does not enforce server-side ephemeral Diffie-Hellman parameters: it
+ * accepts parameters and then runs without them, or it refuses the automatic selection the ATNA
+ * option makes. Raised for `ServerTlsOptions.dhParameters` and for a server's
+ * `atnaTransportSecurity`, before anything is bound.
+ *
+ * Proved with a probe rather than read off a runtime name: the automatic selection must be
+ * accepted, and a group far too small to use must be refused. A runtime that takes the small group
+ * in silence would take the caller's group in silence too, and nothing would say it went unused.
+ * When the runtime refused the probe itself, its own error is the `cause`.
+ *
+ * Distinct from {@link MLLP_TLS_DH_PARAMETERS_REJECTED}, where the runtime does enforce parameters
+ * and refused these: the remedy here is a different runtime, or no Diffie-Hellman option at all.
+ *
+ * @example
+ * ```typescript
+ * import { MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE } from '@cosyte/mllp';
+ * if (err.code === MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE) logger.error('run this server on Node.js');
+ * ```
+ */
+export const MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE = "MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE";
+
+/**
  * Union of the stable TLS-configuration error codes.
  *
  * @example
@@ -83,7 +129,9 @@ export const MLLP_TLS_DH_PARAMETERS_REJECTED = "MLLP_TLS_DH_PARAMETERS_REJECTED"
 export type TlsConfigurationErrorCode =
   | typeof MLLP_TLS_CIPHER_LIST_REJECTED
   | typeof MLLP_TLS_CIPHER_OPTION_CONFLICT
-  | typeof MLLP_TLS_DH_PARAMETERS_REJECTED;
+  | typeof MLLP_TLS_DH_PARAMETERS_REJECTED
+  | typeof MLLP_TLS_CIPHER_LIST_UNENFORCEABLE
+  | typeof MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE;
 
 /**
  * Frozen message registry for {@link TlsConfigurationErrorCode}.
@@ -104,6 +152,12 @@ const TLS_CONFIGURATION_MESSAGES: Readonly<Record<TlsConfigurationErrorCode, str
     [MLLP_TLS_DH_PARAMETERS_REJECTED]:
       "the configured ephemeral Diffie-Hellman parameters are not usable; nothing was bound and " +
       "no fallback to a server without Diffie-Hellman parameters was made",
+    [MLLP_TLS_CIPHER_LIST_UNENFORCEABLE]:
+      "this runtime's TLS library does not enforce a configured cipher-suite list; no " +
+      "connection was opened, rather than one offering a list other than the one configured",
+    [MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE]:
+      "this runtime's TLS library does not enforce server Diffie-Hellman parameters; nothing " +
+      "was bound, rather than a server running without the parameters configured",
   });
 
 /**
@@ -155,7 +209,8 @@ export class MllpTlsConfigurationError extends Error {
   readonly code: TlsConfigurationErrorCode;
 
   /**
-   * The TLS library's own error, when the runtime is what refused the list.
+   * The TLS library's own error, when the runtime is what refused the input
+   * (or, for an `_UNENFORCEABLE` code, refused one of the probes).
    * `undefined` when this package refused the configuration itself.
    */
   override readonly cause: Error | undefined;

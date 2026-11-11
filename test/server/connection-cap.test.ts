@@ -7,9 +7,10 @@
  * existed.
  *
  * Two tiers. Real loopback sockets (plaintext and TLS) cover a cap that is met, exceeded, and left
- * again, and a close that drains while the cap is full. The server takes only operating-system
- * sockets, so an `InMemoryTransport` cannot be handed to it; the socket-free tier instead drives
- * the accept seam directly with a synthetic over-cap notice and checks what the caller observes.
+ * again, and a close that drains while the cap is full, on every runtime CI runs. The server takes
+ * only operating-system sockets, so an `InMemoryTransport` cannot be handed to it; the socket-free
+ * tier instead offers the accept gate a stand-in socket while the count is full and checks what
+ * the caller observes.
  */
 
 import * as net from "node:net";
@@ -132,11 +133,9 @@ describe("ServerOptions.maxConnections: the value", () => {
   });
 });
 
-// Not under Deno, here and in the two blocks below: its `node:net` server closes a socket over
-// `maxConnections` without emitting `'drop'`, which is where the server learns of it, so the cap's
-// `connectionRejected` never arrives and each case waits out its budget. The value checks above and
-// the socketless cases below still run there.
-describe.skipIf(RUNTIME === "deno")("ServerOptions.maxConnections over loopback sockets", () => {
+// On every runtime, Deno included: the server counts connections itself rather than relying on the
+// listener's own cap and its `'drop'` event, which Deno's `node:net` never emits.
+describe("ServerOptions.maxConnections over loopback sockets", () => {
   it("unset: no cap, every connection is accepted and none is rejected", async () => {
     const server = track(createServer({}));
     const seen = observe(server);
@@ -146,6 +145,8 @@ describe.skipIf(RUNTIME === "deno")("ServerOptions.maxConnections over loopback 
 
     expect(seen.rejected).toHaveLength(0);
     expect(server.getStats().acceptedTotal).toBe(6);
+    // With no cap, nothing is counted either.
+    expect((server as unknown as { _openSockets: number })._openSockets).toBe(0);
   });
 
   it("at the cap: every connection up to it is accepted and nothing is rejected", async () => {
@@ -277,7 +278,7 @@ describe.skipIf(RUNTIME === "deno")("ServerOptions.maxConnections over loopback 
   });
 });
 
-describe.skipIf(RUNTIME === "deno")("ServerOptions.maxConnections while close() drains", () => {
+describe("ServerOptions.maxConnections while close() drains", () => {
   it("a full server that is draining refuses new connections and reports no rejection", async () => {
     const server = track(createServer({ maxConnections: 1 }));
     const seen = observe(server);
@@ -333,7 +334,7 @@ describe.skipIf(RUNTIME === "deno")("ServerOptions.maxConnections while close() 
   );
 });
 
-describe.skipIf(RUNTIME === "deno")("ServerOptions.maxConnections over TLS", () => {
+describe("ServerOptions.maxConnections over TLS", () => {
   it("closes an over-cap socket before its handshake, so it is no TLS client error", async () => {
     const { cert, key } = buildServerCertFixture();
     const server = track(createServer({ maxConnections: 1, tls: { cert, key } }));
@@ -367,19 +368,40 @@ describe.skipIf(RUNTIME === "deno")("ServerOptions.maxConnections over TLS", () 
 });
 
 describe("ServerOptions.maxConnections without a socket", () => {
-  /** Deliver an over-cap notice to the accept seam, as the listener does at the cap. */
-  function notifyOverCap(server: MllpServer, data?: object): void {
-    (server as unknown as { _netServer: EventEmitter })._netServer.emit("drop", data);
+  /** A stand-in for an accepted socket: the fields the accept gate reads, and its destroy. */
+  function fakeSocket(peer: { remoteAddress?: string; remotePort?: number } = {}): {
+    destroyed: boolean;
+    remoteAddress?: string;
+    remotePort?: number;
+    destroy: () => void;
+    once: () => void;
+  } {
+    return {
+      destroyed: false,
+      ...peer,
+      destroy() {
+        this.destroyed = true;
+      },
+      once: () => undefined,
+    };
   }
 
-  it("reports the peer address and port it is given, in a frozen event", () => {
+  /** Fill the count to the cap without a socket, then offer the server one more. */
+  function offerOverCap(server: MllpServer, cap: number, socket: object): void {
+    (server as unknown as { _openSockets: number })._openSockets = cap;
+    (server as unknown as { _netServer: EventEmitter })._netServer.emit("connection", socket);
+  }
+
+  it("reports the peer address and port it is given, in a frozen event, and closes the socket", () => {
     const delivered: Buffer[] = [];
     const server = track(
       createServer({ maxConnections: 3, onMessage: (payload) => void delivered.push(payload) }),
     );
     const seen = observe(server);
-    notifyOverCap(server, { remoteAddress: "192.0.2.10", remotePort: 49_152 });
+    const socket = fakeSocket({ remoteAddress: "192.0.2.10", remotePort: 49_152 });
+    offerOverCap(server, 3, socket);
 
+    expect(socket.destroyed).toBe(true);
     expect(seen.rejected).toHaveLength(1);
     const event = must(seen.rejected[0]);
     expect(Object.isFrozen(event)).toBe(true);
@@ -394,30 +416,38 @@ describe("ServerOptions.maxConnections without a socket", () => {
     expect(server.getStats().acceptedTotal).toBe(0);
   });
 
-  it("reports null for an address and port the listener could not read", () => {
+  it("reports null for an address and port the socket could not give", () => {
     const server = track(createServer({ maxConnections: 1 }));
     const seen = observe(server);
-    notifyOverCap(server);
-    notifyOverCap(server, {});
+    offerOverCap(server, 1, fakeSocket());
 
-    expect(seen.rejected).toHaveLength(2);
+    expect(seen.rejected).toHaveLength(1);
     for (const event of seen.rejected) {
       expect(event.remoteAddress).toBeNull();
       expect(event.remotePort).toBeNull();
     }
   });
 
-  it("listens for no over-cap notice when no cap is set", () => {
+  it("gates nothing when no cap is set", () => {
     const server = track(createServer({}));
-    const inner = (server as unknown as { _netServer: EventEmitter })._netServer;
+    const inner = (server as unknown as { _netServer: net.Server })._netServer;
+    expect(inner.listenerCount("connection")).toBe(1);
     expect(inner.listenerCount("drop")).toBe(0);
-    expect((inner as net.Server).maxConnections).toBeUndefined();
+    expect(inner.maxConnections).toBeUndefined();
   });
 
-  it("hands the cap to the listener when one is set", () => {
-    const server = track(createServer({ maxConnections: 7 }));
-    const inner = (server as unknown as { _netServer: net.Server })._netServer;
-    expect(inner.maxConnections).toBe(7);
-    expect(inner.listenerCount("drop")).toBe(1);
+  it("counts connections itself, in front of the listener's one accept handler", () => {
+    for (const tlsOn of [false, true]) {
+      const server = track(
+        createServer(
+          tlsOn ? { maxConnections: 7, tls: buildServerCertFixture() } : { maxConnections: 7 },
+        ),
+      );
+      const inner = (server as unknown as { _netServer: net.Server })._netServer;
+      // One gate, and the listener's own cap and its 'drop' report left unused: the count is ours.
+      expect(inner.listenerCount("connection")).toBe(1);
+      expect(inner.listenerCount("drop")).toBe(0);
+      expect(inner.maxConnections).toBeUndefined();
+    }
   });
 });

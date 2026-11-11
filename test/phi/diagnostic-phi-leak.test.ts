@@ -922,10 +922,12 @@ describe("PHI: the negotiated-TLS record carries no content", () => {
     vi.setSystemTime(new Date("2026-07-31T00:00:00.000Z"));
   });
 
-  // Not under Bun: the ATNA option sets `dhparam: "auto"`, which Bun's TLS library refuses
-  // ("Automatic DH parameter selection is not supported"), so no server starts. The record's
-  // content rules are held on Node on every system.
-  it.skipIf(RUNTIME === "bun")(
+  // Node only: Bun and Deno do not enforce the ATNA option (Bun has no finite-field
+  // Diffie-Hellman, and Deno takes a cipher list without applying it), so the server's listen()
+  // is refused there with a configuration error and no record is ever made
+  // (test/tls/runtime-enforcement.test.ts). The record's content rules are held on Node on every
+  // system.
+  it.skipIf(RUNTIME !== "node")(
     "holds on both ends, with the marker in the payload and in the certificate CN",
     async () => {
       const { cert, key } = buildNamedServerCertFixture(SHORT_MARKER);

@@ -100,6 +100,13 @@ export interface TlsOptions {
    * offered list, so setting both rejects `connect()` with a typed
    * `MllpTlsConfigurationError`.
    *
+   * **On a runtime that cannot offer the list it rejects `connect()`** with a
+   * typed `MllpTlsConfigurationError` carrying
+   * `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`, before any socket exists: under Deno,
+   * whose `node:tls` takes a cipher list without applying it, and under Bun,
+   * whose TLS library has none of the DHE suites the option names. Node.js
+   * offers it.
+   *
    * @default false
    */
   readonly atnaTransportSecurity?: boolean;
@@ -113,7 +120,10 @@ export interface TlsOptions {
    *
    * A list the runtime rejects rejects `connect()` with a typed
    * `MllpTlsConfigurationError`; it never silently falls back to the default
-   * list.
+   * list. **So does any list on a runtime that does not enforce cipher lists**
+   * (Deno, whose `node:tls` takes a list without applying it), with
+   * `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`, before any socket exists. Node.js and
+   * Bun enforce a list.
    *
    * @default undefined (Node defaults)
    */
@@ -210,6 +220,13 @@ export interface ServerTlsOptions {
    * Mutually exclusive with {@link ServerTlsOptions.ciphers}: setting both
    * rejects `listen()` with a typed `MllpTlsConfigurationError`.
    *
+   * **On a runtime that cannot honour it, `listen()` rejects** with a typed
+   * `MllpTlsConfigurationError` carrying `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`,
+   * before anything is bound: under Bun, whose TLS library refuses the automatic
+   * Diffie-Hellman selection (its own error is the `cause`), and under Deno,
+   * whose `node:tls` takes parameters and a cipher list without applying them.
+   * Construction never throws for it. Node.js honours it.
+   *
    * @default false
    */
   readonly atnaTransportSecurity?: boolean;
@@ -220,7 +237,9 @@ export interface ServerTlsOptions {
    *
    * A list the runtime rejects rejects `listen()` with a typed
    * `MllpTlsConfigurationError`; it never silently falls back to the default
-   * list.
+   * list. **So does any list on a runtime that does not enforce cipher lists**
+   * (Deno), with `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`, before anything is bound.
+   * Node.js and Bun enforce a list.
    *
    * @default undefined (Node defaults)
    */
@@ -251,6 +270,13 @@ export interface ServerTlsOptions {
    * library's own behaviour for unreadable parameters is to discard them in
    * silence. `'auto'` is not accepted here; that selection is what
    * `atnaTransportSecurity` already makes.
+   *
+   * **On a runtime that does not enforce Diffie-Hellman parameters, `listen()`
+   * rejects** with `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`, before anything is
+   * bound, rather than serving without them: under Deno, whose `node:tls` takes
+   * parameters without using them, and under Bun, whose TLS library has no
+   * finite-field Diffie-Hellman (its own refusal is the `cause`). Node.js
+   * enforces them.
    *
    * There is no counterpart on {@link TlsOptions}: the side that answers the
    * key exchange supplies the parameters.
