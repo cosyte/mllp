@@ -105,6 +105,38 @@ const OUTBOUND_WARNING_CONTEXT: AckModeWarningContext = Object.freeze({
 });
 
 /**
+ * The largest {@link ClientOptions.connectTimeoutMs} a timer can honour. Node's `setTimeout`
+ * takes a signed 32-bit delay and turns anything larger into 1 ms, which would make a generous
+ * bound expire at once, so a larger value is refused rather than quietly shortened.
+ */
+const MAX_CONNECT_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * The whole text of a connect timeout. Fixed: nothing input-derived reaches an error message.
+ * It names no TLS library term on purpose, so the TLS protocol classifier
+ * (`isTlsProtocolError`) never reads an unanswered handshake as a configuration fault.
+ */
+const CONNECT_TIMEOUT_MESSAGE =
+  "connect timed out: the connection, including its TLS handshake when TLS is on, was not " +
+  "established within connectTimeoutMs";
+
+/**
+ * The error a socket is destroyed with when {@link ClientOptions.connectTimeoutMs} expires.
+ *
+ * Module-private: a caller sees it as the `cause` of an `MllpConnectionError` with
+ * `connectionCause: 'connect-timeout'` on `connect()`, or as `RetryContext.lastError` on a
+ * reconnect attempt. Its `code` is `ETIMEDOUT`, the code the operating system gives a connect
+ * that timed out on its own, so the reconnect classifier treats it as the same transient failure.
+ */
+class ConnectTimeoutCause extends Error {
+  readonly code = "ETIMEDOUT";
+
+  constructor() {
+    super(CONNECT_TIMEOUT_MESSAGE);
+  }
+}
+
+/**
  * The TLS identity options for a client connection to `host`.
  *
  * The identity-check target is the configured `servername`, else `host`. A host name is sent as
@@ -404,6 +436,26 @@ export interface ClientOptions {
    */
   readonly deadPeerTimeoutMs?: number;
   /**
+   * Bound, in milliseconds, on establishing each connection: the TCP connect and, when
+   * {@link ClientOptions.tls} is set, the TLS handshake after it. The clock starts when the
+   * socket is created and stops at `'connect'` (plaintext) or `'secureConnect'` (TLS).
+   *
+   * On expiry the socket is destroyed. On `connect()` the promise rejects with an
+   * `MllpConnectionError` whose `phase` is `'connect'` and whose `connectionCause` is
+   * `'connect-timeout'`; nothing was written, so no message can have reached the peer. On an
+   * auto-reconnect attempt the failure feeds the reconnect policy like any other connect
+   * failure: `RetryContext.lastError` carries `code: 'ETIMEDOUT'` and it is classified
+   * **transient**, so the client backs off and tries again.
+   *
+   * Must be an integer from 1 to 2147483647 (the largest delay a Node timer takes); anything else
+   * throws a `RangeError` at construction. Unset means no bound of our own: a connect waits on
+   * the operating system, and a TLS handshake against a peer that accepts the TCP connection and
+   * never answers waits indefinitely.
+   *
+   * @default undefined (no bound)
+   */
+  readonly connectTimeoutMs?: number;
+  /**
    * Enable TLS (MLLPS) for this connection. `true` enables TLS with
    * all defaults, including certificate verification **on**. Pass a
    * {@link TlsOptions} object to customize (`ca`/`cert`/`key`, minimum
@@ -634,6 +686,20 @@ export class MllpClient extends EventEmitter {
    */
   constructor(opts: ClientOptions) {
     super();
+    const connectTimeoutMs = opts.connectTimeoutMs;
+    if (
+      connectTimeoutMs !== undefined &&
+      !(
+        Number.isInteger(connectTimeoutMs) &&
+        connectTimeoutMs >= 1 &&
+        connectTimeoutMs <= MAX_CONNECT_TIMEOUT_MS
+      )
+    ) {
+      throw new RangeError(
+        "ClientOptions.connectTimeoutMs must be an integer from 1 to 2147483647, or left unset " +
+          "for no bound",
+      );
+    }
     this._opts = opts;
     this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
     this._applicationAckTimeoutMs = opts.applicationAckTimeoutMs;
@@ -681,6 +747,9 @@ export class MllpClient extends EventEmitter {
    *   TLS failures carry a `connectionCause`: `'tls-verify'` for certificate
    *   verification failures, `'tls-handshake'` for TLS-protocol-shaped failures
    *   ({@link isTlsProtocolError}); pure TCP failures carry none.
+   * - `MllpConnectionError({ phase: 'connect', connectionCause: 'connect-timeout' })` if
+   *   {@link ClientOptions.connectTimeoutMs} is set and the TCP connect, or the TLS handshake
+   *   after it, did not complete in time. The socket is destroyed; nothing was written.
    * - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
    *   honoured (the runtime rejects it, or `atnaTransportSecurity` and `ciphers`
    *   both declare one). Raised **before** a socket is opened, so nothing is left
@@ -762,6 +831,7 @@ export class MllpClient extends EventEmitter {
       this._attachConnection(conn);
 
       const connectEventName = this._opts.tls !== undefined ? "secureConnect" : "connect";
+      this._armConnectTimeout(socket, connectEventName);
 
       const cleanup = (): void => {
         if (signal !== undefined) {
@@ -867,6 +937,32 @@ export class MllpClient extends EventEmitter {
   }
 
   /**
+   * Bound one connection attempt by {@link ClientOptions.connectTimeoutMs}, when it is set.
+   *
+   * Armed after the `Connection` has registered its own socket listeners (its set-once
+   * `onClose`/`onError` would otherwise remove ours). The timer stops at the socket's connect
+   * event (`'secureConnect'` for TLS, so the handshake is inside the bound) or at its `'close'`,
+   * whichever comes first; a refused connect or an abort therefore leaves no timer behind. On
+   * expiry the socket is destroyed with a {@link ConnectTimeoutCause}, which reaches the same
+   * `'error'` listeners as any other connect failure: `connect()` rejects, and a reconnect
+   * attempt hands it to the reconnect classifier.
+   */
+  private _armConnectTimeout(socket: Socket | TLSSocket, connectEventName: string): void {
+    const timeoutMs = this._opts.connectTimeoutMs;
+    if (timeoutMs === undefined) return;
+    const timer = setTimeout(() => {
+      socket.destroy(new ConnectTimeoutCause());
+    }, timeoutMs);
+    // Clearing a timer that already stopped is a no-op, so whichever of the two comes second
+    // does nothing. Each attempt has its own socket, so the listener left behind goes with it.
+    const stop = (): void => {
+      clearTimeout(timer);
+    };
+    socket.once(connectEventName, stop);
+    socket.once("close", stop);
+  }
+
+  /**
    * Wrap a connect-phase socket error as `MllpConnectionError`, classifying
    * TLS failures into the additive `connectionCause`:
    *
@@ -880,6 +976,13 @@ export class MllpClient extends EventEmitter {
    *   same shape as plaintext connect failures.
    */
   private _wrapConnectError(err: Error, phase: "connect" | "reconnect"): MllpConnectionError {
+    if (err instanceof ConnectTimeoutCause) {
+      return new MllpConnectionError(err.message, {
+        cause: err,
+        phase,
+        connectionCause: "connect-timeout",
+      });
+    }
     if (this._opts.tls === undefined) {
       return new MllpConnectionError(err.message, { cause: err, phase });
     }
@@ -1532,6 +1635,7 @@ export class MllpClient extends EventEmitter {
           this._emitNegotiatedTlsParameters(socket);
         };
         const connectEventName = this._opts.tls !== undefined ? "secureConnect" : "connect";
+        this._armConnectTimeout(socket, connectEventName);
         socket.once("error", (sErr: Error) => {
           // Phase 8, the raw OS/TLS error (with its original `.code`) is
           // what the reconnect classifier inspects in _handleDisconnect;
@@ -2585,6 +2689,11 @@ export interface StarterClientOptions {
   readonly keepaliveIntervalMs?: number;
   /** Application-idle dead-peer timeout ms. */
   readonly deadPeerTimeoutMs?: number;
+  /**
+   * Bound on the TCP connect and TLS handshake, in ms. Passthrough to
+   * `ClientOptions.connectTimeoutMs`; unset means no bound, as there.
+   */
+  readonly connectTimeoutMs?: number;
   /** Enable TLS (MLLPS) for this connection. Passthrough to `ClientOptions.tls`. */
   readonly tls?: TlsOptions | true;
   /**
@@ -2638,6 +2747,7 @@ export async function createStarterClient(opts: StarterClientOptions): Promise<M
       ? { keepaliveIntervalMs: opts.keepaliveIntervalMs }
       : {}),
     ...(opts.deadPeerTimeoutMs !== undefined ? { deadPeerTimeoutMs: opts.deadPeerTimeoutMs } : {}),
+    ...(opts.connectTimeoutMs !== undefined ? { connectTimeoutMs: opts.connectTimeoutMs } : {}),
     ...(opts.tls !== undefined ? { tls: opts.tls } : {}),
   };
   const client = createClient(clientOpts);

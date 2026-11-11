@@ -503,7 +503,9 @@ export function isTlsProtocolError(err: unknown): boolean {
  * Classification table:
  * - `ENOTFOUND`, `EACCES` → **permanent** (`false`)
  * - `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EHOSTUNREACH`,
- *   `ENETUNREACH`, `EPIPE` → **transient** (`true`)
+ *   `ENETUNREACH`, `EPIPE` → **transient** (`true`). An expired
+ *   `ClientOptions.connectTimeoutMs` is one of these: its error carries
+ *   `ETIMEDOUT`, the code of the operating system's own connect timeout.
  * - `CERT_*` and `UNABLE_TO_VERIFY_LEAF_SIGNATURE` /
  *   `DEPTH_ZERO_SELF_SIGNED_CERT` / `SELF_SIGNED_CERT_IN_CHAIN`
  *   (any {@link isTlsVerificationErrorCode} code) → **permanent** (`false`),

@@ -51,9 +51,18 @@ export type ConnectionErrorPhase = "connect" | "send" | "receive" | "close" | "r
  *   server, …). See `isTlsProtocolError` for the boundary. Pure TCP-level
  *   failures (`ECONNREFUSED`, `ETIMEDOUT`, …) on a TLS-configured
  *   connection carry **no** `connectionCause`, the same shape as plaintext.
+ * - `'framing-fatal'`, the peer sent bytes the decoder could not accept, or a
+ *   frame past the size cap. Classified **permanent**.
+ * - `'connect-timeout'`, the connection was not established within
+ *   `ClientOptions.connectTimeoutMs`: the TCP connect, or the TLS handshake
+ *   after it, did not complete in time and the socket was destroyed. Nothing
+ *   was written, so no message reached the peer. The `cause` carries
+ *   `code: 'ETIMEDOUT'`, and it is classified **transient** by
+ *   `isTransientConnectionError`, like the operating system's own connect
+ *   timeout: a peer that is down or unreachable now may answer later.
  *
- * Scope note: the `'tls-verify'`/`'tls-handshake'` values are attached on
- * the client's **initial `connect()` path**. Failures on the auto-reconnect
+ * Scope note: the `'tls-verify'`/`'tls-handshake'`/`'connect-timeout'` values
+ * are attached on the client's **initial `connect()` path**. Failures on the auto-reconnect
  * path surface as raw socket errors, their transient/permanent
  * classification still applies, but they do not (yet) carry a
  * `connectionCause`.
@@ -67,7 +76,12 @@ export type ConnectionErrorPhase = "connect" | "send" | "receive" | "close" | "r
  * ```
  */
 export type ConnectionErrorCause =
-  "fifo-unsafe" | "in-flight-orphan" | "tls-verify" | "tls-handshake" | "framing-fatal";
+  | "fifo-unsafe"
+  | "in-flight-orphan"
+  | "tls-verify"
+  | "tls-handshake"
+  | "framing-fatal"
+  | "connect-timeout";
 
 /**
  * Thrown (or emitted via `onError`) for socket-layer problems such as
