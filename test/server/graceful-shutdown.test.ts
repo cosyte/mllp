@@ -135,9 +135,13 @@ describe("SERVER-06: graceful shutdown", () => {
     await server.listen(0);
 
     const sock = await connectToServer(server);
-    // Give time for connection to be accepted and beforeClose to be overridden
+    // Give time for connection to be accepted and beforeClose to be overridden, then poll: on
+    // macOS the accept can take longer than the fixed 20 ms.
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
-    expect(server.getStats().activeConnections).toBe(1);
+    await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+      timeout: 2_000,
+      interval: 5,
+    });
 
     const start = Date.now();
     // Use a short drain timeout; with a stuck beforeClose, the straggler

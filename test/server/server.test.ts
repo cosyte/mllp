@@ -113,10 +113,12 @@ describe("createServer / MllpServer skeleton", () => {
       expect(server.getStats().connections).toBe(0);
 
       const sock = await connectToServer(server);
-      // Give server time to process connection event
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      expect(server.getStats().activeConnections).toBe(1);
+      // Give server time to process connection event. Polled: the client's 'connect' can land
+      // before the server has accepted, on macOS by more than one tick.
+      await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+        timeout: 2_000,
+        interval: 5,
+      });
       expect(server.getStats().connections).toBe(1);
       expect(server.getStats().acceptedTotal).toBe(1);
 
