@@ -21,7 +21,7 @@
  */
 
 import { createServer as netCreateServer, isIP, SocketAddress } from "node:net";
-import type { DropArgument, Server as NetServer, Socket } from "node:net";
+import type { Server as NetServer, Socket } from "node:net";
 import { createServer as tlsCreateServer } from "node:tls";
 import type { TLSSocket } from "node:tls";
 import { EventEmitter } from "node:events";
@@ -480,6 +480,10 @@ export interface ServerOptions {
    * over-cap TLS connection is closed before its handshake, so it costs no handshake work and is
    * not a `'tlsClientError'`.
    *
+   * The server counts its connections itself rather than handing the cap to the runtime's
+   * listener, so the cap and `'connectionRejected'` hold the same on Node.js, Bun and Deno (Deno's
+   * own listener cap closed the connection and reported nothing).
+   *
    * Must be a positive integer; anything else throws a `RangeError` at construction. Unset means
    * no cap.
    *
@@ -615,6 +619,13 @@ export class MllpServer extends EventEmitter {
   private _host: string | null = null;
   private _acceptedTotal = 0;
   private _closedTotal = 0;
+  /**
+   * Sockets accepted and not yet closed, counted only when {@link ServerOptions.maxConnections} is
+   * set: the number the cap is compared against.
+   */
+  private _openSockets = 0;
+  /** Sockets the connection cap closed at accept, so a runtime's report of them is recognised. */
+  private readonly _closedAtAccept = new WeakSet<object>();
   /** Count of `'tlsClientError'` events since listen(). */
   private _tlsClientErrorsTotal = 0;
   /**
@@ -693,6 +704,10 @@ export class MllpServer extends EventEmitter {
       // accepting other connections, only the error's message/code and the
       // remote address are surfaced; never payload bytes or a cert dump.
       tlsServer.on("tlsClientError", (err: Error, socket: TLSSocket) => {
+        // A socket the connection cap closed at accept never began a handshake, so its close is
+        // not a failed one. Node never reports it; Bun does, on the very socket the cap closed
+        // (measured: Bun 1.4.4), so it is recognised by identity and left out.
+        if (this._closedAtAccept.has(socket)) return;
         this._tlsClientErrorsTotal += 1;
         const nodeErr = err as NodeJS.ErrnoException;
         const event: {
@@ -748,31 +763,73 @@ export class MllpServer extends EventEmitter {
       }
     });
 
-    // The connection cap is enforced by the listener itself, at accept: it closes an over-cap
-    // socket before 'connection' (or, under TLS, before the handshake) and reports it on 'drop'.
-    // Its count is of open sockets, so it bounds file descriptors, handshakes in flight included.
-    // Nothing is set and nothing listens when no cap is configured.
-    if (maxConnections !== undefined) {
-      this._netServer.maxConnections = maxConnections;
-      this._netServer.on("drop", (data?: DropArgument) => {
-        this._onConnectionOverCap(maxConnections, data);
-      });
-    }
+    // Nothing is gated and nothing is counted when no cap is configured.
+    if (maxConnections !== undefined) this._gateConnections(maxConnections);
   }
 
   /**
-   * Report a connection the listener closed at accept because the cap was full.
+   * Enforce {@link ServerOptions.maxConnections} by counting sockets here, at accept.
    *
-   * Contained: this runs inside the listener's own 'drop' callback, so a throwing subscriber would
-   * otherwise unwind into the accept path. The throw is surfaced on 'error' instead.
+   * WHY NOT THE LISTENER'S OWN `maxConnections`. Node's `net.Server` enforces a cap of its own and
+   * reports each refusal on `'drop'`, but that report is the runtime's to make, and Deno's
+   * `node:net` closes the socket without emitting `'drop'` (measured: Deno 2.9.8), so the cap held
+   * and `'connectionRejected'` never fired. Counting here makes the cap and its event a property of
+   * this package on every runtime.
+   *
+   * The gate sits IN FRONT of every `'connection'` listener the server already has, and replaces
+   * them: for a plaintext server that is this class's own accept handler, and for a TLS server it
+   * is the runtime's, which wraps the raw socket and starts the handshake. An over-cap socket is
+   * destroyed before either runs, so it never becomes a `Connection`, costs no handshake, and is
+   * not a `'tlsClientError'`. The count is of open sockets, the number that bounds file
+   * descriptors: a socket counts from accept until its `'close'`, handshake in flight included.
+   *
+   * @param maxConnections - The validated cap.
    */
-  private _onConnectionOverCap(maxConnections: number, data: DropArgument | undefined): void {
+  private _gateConnections(maxConnections: number): void {
+    const server = this._netServer;
+    const downstream = server.listeners("connection") as Array<(socket: Socket) => void>;
+    server.removeAllListeners("connection");
+    server.on("connection", (socket: Socket) => {
+      if (this._openSockets >= maxConnections) {
+        // Read before the destroy: a destroyed socket no longer reports its peer.
+        const remoteAddress = socket.remoteAddress ?? null;
+        const remotePort = socket.remotePort ?? null;
+        this._closedAtAccept.add(socket);
+        socket.destroy();
+        this._onConnectionOverCap(maxConnections, remoteAddress, remotePort);
+        return;
+      }
+      this._openSockets += 1;
+      try {
+        for (const listener of downstream) listener.call(server, socket);
+      } finally {
+        // Registered AFTER the accept handler, never before it: a plaintext socket is handed to a
+        // NetTransport, whose set-once onClose removes every 'close' listener already on it. A
+        // close is never emitted synchronously, so none can be missed by registering here.
+        socket.once("close", () => {
+          this._openSockets -= 1;
+        });
+      }
+    });
+  }
+
+  /**
+   * Report a connection closed at accept because the cap was full.
+   *
+   * Contained: this runs inside the listener's own 'connection' callback, so a throwing subscriber
+   * would otherwise unwind into the accept path. The throw is surfaced on 'error' instead.
+   */
+  private _onConnectionOverCap(
+    maxConnections: number,
+    remoteAddress: string | null,
+    remotePort: number | null,
+  ): void {
     const event: ConnectionRejectedEvent = Object.freeze({
       code: MLLP_CONNECTION_LIMIT_REACHED,
       message: CONNECTION_LIMIT_MESSAGE,
       maxConnections,
-      remoteAddress: data?.remoteAddress ?? null,
-      remotePort: data?.remotePort ?? null,
+      remoteAddress,
+      remotePort,
       timestamp: new Date(),
     });
     this._emitContained("connectionRejected", event);

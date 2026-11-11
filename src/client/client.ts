@@ -750,10 +750,13 @@ export class MllpClient extends EventEmitter {
    * - `MllpConnectionError({ phase: 'connect', connectionCause: 'connect-timeout' })` if
    *   {@link ClientOptions.connectTimeoutMs} is set and the TCP connect, or the TLS handshake
    *   after it, did not complete in time. The socket is destroyed; nothing was written.
+   * - `MllpConnectionError({ phase: 'connect' })` if the socket closes before connecting with
+   *   no error, which is what {@link MllpClient.destroy} called during `connect()` does.
    * - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
-   *   honoured (the runtime rejects it, or `atnaTransportSecurity` and `ciphers`
-   *   both declare one). Raised **before** a socket is opened, so nothing is left
-   *   connected; identify it by `instanceof` plus its stable `code`.
+   *   honoured (the runtime rejects it, the runtime does not enforce cipher lists
+   *   at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
+   *   **before** a socket is opened, so nothing is left connected; identify it by
+   *   `instanceof` plus its stable `code`.
    *
    * **Dual failure signal on initial connect:** the Connection's transport
    * error handler is attached before this promise's own error listener, so a
@@ -839,6 +842,8 @@ export class MllpClient extends EventEmitter {
         }
         socket.removeListener(connectEventName, onSocketConnect);
         socket.removeListener("error", onSocketError);
+        // Stryker disable next-line StringLiteral,CallExpression: equivalent. Left attached, onSocketClose runs only after the promise settled, where its cleanup() and reject() are both no-ops.
+        socket.removeListener("close", onSocketClose);
       };
 
       const abortHandler = (): void => {
@@ -884,11 +889,26 @@ export class MllpClient extends EventEmitter {
         reject(this._wrapConnectError(err, "connect"));
       };
 
+      // A socket that closes before connecting with no error behind it. That is what destroy()
+      // during connect() does when it is given no reason: the socket emits 'close' and nothing
+      // else, and without this listener the promise never settled. A close that follows an
+      // 'error' never reaches here, because onSocketError's cleanup() removed it first.
+      const onSocketClose = (): void => {
+        cleanup();
+        reject(
+          new MllpConnectionError("connection closed before it was established", {
+            cause: new Error("closed before connect"),
+            phase: "connect",
+          }),
+        );
+      };
+
       if (signal !== undefined) {
         signal.addEventListener("abort", abortHandler, { once: true });
       }
       socket.once(connectEventName, onSocketConnect);
       socket.once("error", onSocketError);
+      socket.once("close", onSocketClose);
     });
   }
 

@@ -186,16 +186,12 @@ await server.listen(2575, "0.0.0.0");
 
 ## Cap the number of connections
 
-**Under Deno, a rejected connection is never reported.** Deno's `node:net` emits no `'drop'` event,
-which is how the server learns that a connection went over the cap. So a connection over the cap
-is closed, but `connectionRejected` never fires and nothing counts it. Node.js is the runtime where
-the cap is reported as described here. Bun reports it.
-
 A server accepts every connection it is offered unless you set `maxConnections`. With it set, a
 connection that arrives while the server already holds that many is closed at accept: it never
 reaches your handler or the `connection` event, and the server emits `connectionRejected` with the
 code `MLLP_CONNECTION_LIMIT_REACHED`, the cap, and the peer's address and port. The sender sees its
-connection close and may try again; once a connection closes, its place is free.
+connection close and may try again; once a connection closes, its place is free. The server counts
+its connections itself, so the cap and the event behave the same on Node.js, Bun and Deno.
 
 ```ts runnable
 import { createServer, createStarterClient, type ConnectionRejectedEvent } from "@cosyte/mllp";

@@ -381,16 +381,19 @@ left connected and nothing is left bound. `connect()` and `listen()` reject with
 `MllpTlsConfigurationError`, identified by `instanceof` plus a stable `code`, never by matching on
 the message text:
 
-| `code`                            | Meaning                                                                                                                                                                                                                    |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MLLP_TLS_CIPHER_LIST_REJECTED`   | The TLS library refused the list: no suite in it is available in this build. There is **no fallback to the runtime default list**.                                                                                         |
-| `MLLP_TLS_CIPHER_OPTION_CONFLICT` | `atnaTransportSecurity` and `ciphers` both declare the offered list. Set exactly one.                                                                                                                                      |
-| `MLLP_TLS_DH_PARAMETERS_REJECTED` | `ServerTlsOptions.dhParameters` is not usable: not PEM, not a `DH PARAMETERS` block, or a group the TLS library refuses. Nothing is bound and there is **no fallback to a server running without them**. Server side only. |
+| `code`                                 | Meaning                                                                                                                                                                                                                    |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MLLP_TLS_CIPHER_LIST_REJECTED`        | The TLS library refused the list: no suite in it is available in this build. There is **no fallback to the runtime default list**.                                                                                         |
+| `MLLP_TLS_CIPHER_OPTION_CONFLICT`      | `atnaTransportSecurity` and `ciphers` both declare the offered list. Set exactly one.                                                                                                                                      |
+| `MLLP_TLS_DH_PARAMETERS_REJECTED`      | `ServerTlsOptions.dhParameters` is not usable: not PEM, not a `DH PARAMETERS` block, or a group the TLS library refuses. Nothing is bound and there is **no fallback to a server running without them**. Server side only. |
+| `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`   | The runtime does not enforce the list: it would take a `ciphers` list without applying it, or it cannot offer a suite `atnaTransportSecurity` names. See [Under Bun and Deno](#under-bun-and-deno).                        |
+| `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE` | The runtime does not enforce server Diffie-Hellman parameters, for `dhParameters` or for a server's `atnaTransportSecurity`. See [Under Bun and Deno](#under-bun-and-deno). Server side only.                              |
 
 ```ts runnable
 import {
   createServer,
   MLLP_TLS_CIPHER_LIST_REJECTED,
+  MLLP_TLS_CIPHER_LIST_UNENFORCEABLE,
   MllpTlsConfigurationError,
 } from "@cosyte/mllp";
 
@@ -406,7 +409,8 @@ try {
   // A configuration problem, not a network one. Nothing is listening.
   if (err instanceof MllpTlsConfigurationError) code = err.code;
 }
-code === MLLP_TLS_CIPHER_LIST_REJECTED; // => true
+// Node.js and Bun refuse this list; Deno does not enforce lists, so it refuses the option.
+[MLLP_TLS_CIPHER_LIST_REJECTED, MLLP_TLS_CIPHER_LIST_UNENFORCEABLE].includes(code); // => true
 ```
 
 The list is validated on its own, with no certificate, key, or passphrase in scope, so the error
@@ -449,21 +453,35 @@ every session rather than only the first. It is **never** emitted for a plaintex
 is nothing negotiated to report. It carries no HL7 payload content and no certificate or key
 material, and it is emitted at handshake-completion time, before any HL7 byte has crossed the link.
 
-## Under Bun and Deno these options are not enforced
+## Under Bun and Deno
 
 We build on Node's `node:tls` and `node:net`, and Node.js is the runtime where every option on this
-page is enforced. Bun and Deno each provide their own version of those modules, and three of our
-options behave differently there. We measured this by running our suite under each (Bun 1.4.4,
-Deno 2.9.8). Before you rely on any of these options, run on Node.js.
+page is enforced. Bun and Deno each provide their own version of those modules, and between them
+they leave three of our options unenforced. We measured what each does by running our suite under each (Bun
+1.4.4, Deno 2.9.8): Deno takes a cipher list and Diffie-Hellman parameters and applies neither (a
+peer restricted to `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256` negotiated
+`TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`), and Bun's TLS library has no finite-field Diffie-Hellman
+suite and refuses automatic Diffie-Hellman selection.
 
-| Runtime | Option                                  | What actually happens                                                                                                                                                                                                                                                                         |
-| ------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deno    | `atnaTransportSecurity`, `ciphers`      | **Silent.** The cipher list is accepted and not applied: a peer restricted to `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256` negotiated `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`, and a list naming no real suite is not refused. The link offers the runtime's own list, with no error and no warning. |
-| Deno    | `dhParameters`                          | **Silent.** The parameters are accepted and not used: a server restricted to DHE suites still handshakes with an ECDHE suite, and a group the option should refuse is not refused.                                                                                                            |
-| Bun     | `atnaTransportSecurity`, `dhParameters` | **Refused.** Bun's TLS library offers no finite-field Diffie-Hellman suite and refuses `dhparam`, so a server with either option fails when it is created or when `listen()` runs, and a client with the ATNA option cannot negotiate the DHE suites.                                         |
+So we do not hand these options to a runtime that would not enforce them. Before a socket exists,
+probes that carry none of your configuration check that the runtime enforces that kind of option at
+all: a cipher list that names a suite and then removes it, so selects none, must be refused, each
+suite the ATNA option names must be
+available, automatic Diffie-Hellman selection must be accepted, and a Diffie-Hellman group far too
+small to use must be refused. Where a probe fails, `connect()` or `listen()` rejects with an
+`MllpTlsConfigurationError` instead of opening a link that is not what you configured:
 
-The `'tlsNegotiated'` event reports what a link actually agreed on, so on any runtime you can check
-the suite a link uses before you trust it. On Deno, `maxConnections` is also affected: see
+| Runtime | Option                                                  | What happens                                                                                                                                       |
+| ------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deno    | `ciphers`, and `atnaTransportSecurity` on a client      | **Refused**, `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`.                                                                                                 |
+| Deno    | `dhParameters`, and `atnaTransportSecurity` on a server | **Refused**, `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`.                                                                                               |
+| Bun     | `atnaTransportSecurity` on a client                     | **Refused**, `MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`: two of the four suites are DHE. Bun's own refusal of the suite is the `cause`.                  |
+| Bun     | `dhParameters`, and `atnaTransportSecurity` on a server | **Refused**, `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`, with Bun's own refusal as the `cause`. The server is constructed; `listen()` is what rejects. |
+| Bun     | `ciphers`                                               | Enforced, as on Node.js.                                                                                                                           |
+
+A refused configuration is permanent: a client does not retry it, because every attempt would meet
+the same runtime. Run on Node.js when you rely on these options. `maxConnections` behaves the same on
+every runtime, because the server counts its connections itself: see
 [Cap the number of connections](./receive-messages.md#cap-the-number-of-connections).
 
 ## Known limitations
@@ -480,9 +498,9 @@ the suite a link uses before you trust it. On Deno, `maxConnections` is also aff
 - **With the option off, the cipher list is the runtime's**, and the runtime's is configurable at
   build time by a Node distribution and replaceable from outside the process. See
   "TLS 1.2 floor and cipher suites" above.
-- **The cipher and Diffie-Hellman options are enforced on Node.js only.** Under Deno they are
-  silently not applied, and under Bun they are refused. See
-  [Under Bun and Deno these options are not enforced](#under-bun-and-deno-these-options-are-not-enforced).
+- **The cipher and Diffie-Hellman options are enforced on Node.js.** Where Bun or Deno would not
+  enforce one, it is refused with a typed error rather than accepted and ignored. See
+  [Under Bun and Deno](#under-bun-and-deno).
 - **Reconnect-path errors do not yet carry `connectionCause`.** The `tls-verify`/`tls-handshake`/
   `connect-timeout` labels are attached on the initial `connect()` path only; auto-reconnect failures surface as raw
   socket errors (their transient/permanent classification still applies).

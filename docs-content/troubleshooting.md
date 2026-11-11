@@ -119,8 +119,10 @@ bytes, or use the server's `autoAck: "AA"`, which uses it. See
   `close()` before listening again.
 - **With `MllpTlsConfigurationError`**: read its `code`. `MLLP_TLS_CIPHER_OPTION_CONFLICT` means
   both `atnaTransportSecurity` and `ciphers` are set; `MLLP_TLS_CIPHER_LIST_REJECTED` means no suite
-  in `ciphers` is available; `MLLP_TLS_DH_PARAMETERS_REJECTED` means `dhParameters` is unusable. See
-  [Secure a link with TLS](./tls.md#typed-failure-modes).
+  in `ciphers` is available; `MLLP_TLS_DH_PARAMETERS_REJECTED` means `dhParameters` is unusable. A
+  code ending `_UNENFORCEABLE` means the runtime (Bun or Deno) would not enforce that option, so run
+  on Node.js or drop the option. See [Secure a link with TLS](./tls.md#typed-failure-modes) and
+  [Under Bun and Deno](./tls.md#under-bun-and-deno).
 
 ## `ack-from-hl7` throws `MllpPeerMissingError`
 
