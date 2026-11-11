@@ -154,6 +154,12 @@ The value is an integer number of milliseconds from 1 to 2147483647; anything el
 `RangeError` when the client is created. Pick it above the slowest connect and handshake you expect
 on a healthy link, since a handshake that is slow but would have succeeded is cut off too.
 
+`destroy()` ends the wait as well. Called while `connect()` is still connecting, over TCP or TLS,
+before or during the handshake, it rejects `connect()` with an `MllpConnectionError` whose `phase`
+is `connect`. Its `cause` is the reason you passed to `destroy(reason)`; with no reason it is an
+`Error` whose message is `closed before connect`. It carries no `connectionCause`, and the client
+does not reconnect after a `destroy()`.
+
 ## Detecting a peer that is gone but not closed
 
 Two independent, complementary mechanisms, both off by default, and they are not substitutes:

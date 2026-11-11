@@ -750,8 +750,11 @@ export class MllpClient extends EventEmitter {
    * - `MllpConnectionError({ phase: 'connect', connectionCause: 'connect-timeout' })` if
    *   {@link ClientOptions.connectTimeoutMs} is set and the TCP connect, or the TLS handshake
    *   after it, did not complete in time. The socket is destroyed; nothing was written.
-   * - `MllpConnectionError({ phase: 'connect' })` if the socket closes before connecting with
-   *   no error, which is what {@link MllpClient.destroy} called during `connect()` does.
+   * - `MllpConnectionError({ phase: 'connect' })` if {@link MllpClient.destroy} is called while
+   *   `connect()` is still connecting, over TCP or TLS, before or during the handshake. Its
+   *   `cause` is the reason passed to `destroy(reason)`; with no reason it is an `Error` whose
+   *   message is `closed before connect`, the same as for any socket that closes before
+   *   connecting with no error. It carries no `connectionCause`.
    * - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
    *   honoured (the runtime rejects it, the runtime does not enforce cipher lists
    *   at all, or `atnaTransportSecurity` and `ciphers` both declare one). Raised
@@ -2550,6 +2553,10 @@ export class MllpClient extends EventEmitter {
    * held inside the client is failed with {@link MllpNeverDeliveredError}, because nothing was
    * ever written for it; that is a statement about the bytes, not about how the client was
    * shut down, so it holds on this path too.
+   *
+   * A {@link MllpClient.connect} still connecting rejects with an `MllpConnectionError` whose
+   * `phase` is `'connect'`. Its `cause` is `reason` when one is given, and otherwise an `Error`
+   * whose message is `closed before connect`.
    *
    * @example
    * ```typescript

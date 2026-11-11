@@ -5,7 +5,8 @@
  * that only listened for the connect event and for `'error'` was left pending for good. The peer
  * here is a plain TCP listener that accepts the connection and never writes a byte, so the TCP
  * connect completes and a TLS handshake waits for a ServerHello that never comes: the client is
- * still connecting, for as long as the test likes, when `destroy()` runs.
+ * still connecting, for as long as the test likes, when `destroy()` runs. A second block destroys
+ * in the same tick as `connect()`, before the TCP connect completes, over plain TCP and over TLS.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -104,6 +105,58 @@ describe("destroy() during connect()", () => {
     expect(outcome).toBeInstanceOf(MllpConnectionError);
     expect((outcome as MllpConnectionError).phase).toBe("connect");
     expect((outcome as MllpConnectionError).cause).toBe(reason);
+  });
+});
+
+// The same contract before the TCP connect itself has completed, over plain TCP and over TLS.
+// `destroy()` runs in the same tick as `connect()`, so the socket has not connected yet on any
+// runtime: the client is still CONNECTING, which the test checks before it destroys.
+describe.each([
+  { transport: "TCP", tls: false },
+  { transport: "TLS", tls: true },
+])("destroy() before the $transport connect completes", ({ tls }) => {
+  async function connectingClient(): Promise<{
+    client: ReturnType<typeof createClient>;
+    connecting: Promise<void>;
+  }> {
+    const peer = await silentPeer();
+    const client = createClient({
+      host: "127.0.0.1",
+      port: peer.port,
+      ...(tls ? { tls: { ca: buildServerCertFixture().cert, servername: "localhost" } } : {}),
+    });
+    const connecting = client.connect();
+    expect(client.state).toBe("CONNECTING");
+    return { client, connecting };
+  }
+
+  it("with no reason, rejects connect() with a typed connect-phase error", async () => {
+    const { client, connecting } = await connectingClient();
+
+    client.destroy();
+    const outcome = await settledWithin(connecting, 2_000);
+
+    expect(outcome).toBeInstanceOf(MllpConnectionError);
+    const err = outcome as MllpConnectionError;
+    expect(err.phase).toBe("connect");
+    expect(err.message).toBe("connection closed before it was established");
+    expect(err.cause).toBeInstanceOf(Error);
+    expect(err.cause.message).toBe("closed before connect");
+    expect(err.connectionCause).toBeUndefined();
+    expect(client.state).toBe("CLOSED");
+  });
+
+  it("with a reason, rejects connect() with that reason as the cause", async () => {
+    const { client, connecting } = await connectingClient();
+
+    const reason = new Error("shutting down");
+    client.destroy(reason);
+    const outcome = await settledWithin(connecting, 2_000);
+
+    expect(outcome).toBeInstanceOf(MllpConnectionError);
+    expect((outcome as MllpConnectionError).phase).toBe("connect");
+    expect((outcome as MllpConnectionError).cause).toBe(reason);
+    expect(client.state).toBe("CLOSED");
   });
 });
 
