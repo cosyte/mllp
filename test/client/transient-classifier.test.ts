@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { MUTATION_RUN } from "../_helpers/runtime.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve as pathResolve } from "node:path";
@@ -74,13 +75,17 @@ describe("isTransientConnectionError (CLIENT-18)", () => {
     expect(isTransientConnectionError(42)).toBe(true);
   });
 
-  it("Test 14: PLAN-01 sentinel `// PLAN-04 fills: isTransientConnectionError` is removed", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(pathResolve(here, "../../src/client/error.ts"), "utf8");
-    expect(src).not.toMatch(/PLAN-04 fills: isTransientConnectionError/);
-    // PLAN-05 sentinel removed once PLAN-05 fills MllpBackpressureError.
-    expect(src).not.toMatch(/PLAN-05 fills: MllpBackpressureError/);
-  });
+  // Reads the source text: skipped in the mutation run (see test/_helpers/runtime.ts).
+  it.skipIf(MUTATION_RUN)(
+    "Test 14: PLAN-01 sentinel `// PLAN-04 fills: isTransientConnectionError` is removed",
+    () => {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const src = readFileSync(pathResolve(here, "../../src/client/error.ts"), "utf8");
+      expect(src).not.toMatch(/PLAN-04 fills: isTransientConnectionError/);
+      // PLAN-05 sentinel removed once PLAN-05 fills MllpBackpressureError.
+      expect(src).not.toMatch(/PLAN-05 fills: MllpBackpressureError/);
+    },
+  );
 
   it("Test 15: re-exported from top-level barrel `src/index.ts`", () => {
     expect(

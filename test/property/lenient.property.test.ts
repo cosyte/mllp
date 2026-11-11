@@ -31,9 +31,7 @@ import { MllpFramingError } from "../../src/framing/error.js";
 import type { MllpWarning, WarningCode } from "../../src/framing/registry.js";
 
 import { malformedFrame, hostileBytesOrChunks, type MalformedFrame } from "./_arbitraries.js";
-
-/** Stable run budget so failures reproduce deterministically. */
-const NUM_RUNS = 600;
+import { checkProperty, usePropertyBudget } from "./_runner.js";
 
 /**
  * The 11 stable public MLLP warning codes (the registry the decoder may emit).
@@ -106,6 +104,8 @@ function hasByteOffset(w: LenientWarning): boolean {
   return pos !== undefined && typeof pos.byteOffset === "number" && Number.isFinite(pos.byteOffset);
 }
 
+usePropertyBudget();
+
 describe("property: lenient decoder never throws except the sanctioned fatal", () => {
   it("every malformed-but-recoverable frame recovers into warnings (or throws only MLLP_FRAME_TOO_LARGE)", () => {
     lenientNeverThrowsProperty<MalformedFrame>({
@@ -115,7 +115,6 @@ describe("property: lenient decoder never throws except the sanctioned fatal", (
       getWarnings: toLenientWarnings,
       isKnownCode: (code) => KNOWN_CODES.has(code),
       hasPositionalContext: hasByteOffset,
-      numRuns: NUM_RUNS,
     });
   });
 
@@ -149,14 +148,13 @@ describe("property: lenient decoder never throws except the sanctioned fatal", (
       "empty-payload": "MLLP_EMPTY_PAYLOAD",
       "frame-too-large": null, // throws instead of warning
     };
-    fc.assert(
+    checkProperty(
       fc.property(malformedFrame(), (mf) => {
         const expected = expectedByKind[mf.kind];
         if (expected === null) return; // fatal path covered above
         const { warnings } = parseTolerant(mf.bytes, mf.maxFrameSizeBytes);
         expect(warnings.some((w) => w.code === expected)).toBe(true);
       }),
-      { numRuns: NUM_RUNS },
     );
   });
 });
@@ -182,7 +180,6 @@ describe("property: lenient decoder vs hostile byte noise", () => {
       getWarnings: toLenientWarnings,
       isKnownCode: (code) => KNOWN_CODES.has(code),
       hasPositionalContext: hasByteOffset,
-      numRuns: NUM_RUNS,
     });
   });
 });

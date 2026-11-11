@@ -449,6 +449,23 @@ every session rather than only the first. It is **never** emitted for a plaintex
 is nothing negotiated to report. It carries no HL7 payload content and no certificate or key
 material, and it is emitted at handshake-completion time, before any HL7 byte has crossed the link.
 
+## Under Bun and Deno these options are not enforced
+
+We build on Node's `node:tls` and `node:net`, and Node.js is the runtime where every option on this
+page is enforced. Bun and Deno each provide their own version of those modules, and three of our
+options behave differently there. We measured this by running our suite under each (Bun 1.4.4,
+Deno 2.9.8). Before you rely on any of these options, run on Node.js.
+
+| Runtime | Option                                  | What actually happens                                                                                                                                                                                                                                                                         |
+| ------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deno    | `atnaTransportSecurity`, `ciphers`      | **Silent.** The cipher list is accepted and not applied: a peer restricted to `TLS_DHE_RSA_WITH_AES_128_GCM_SHA256` negotiated `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`, and a list naming no real suite is not refused. The link offers the runtime's own list, with no error and no warning. |
+| Deno    | `dhParameters`                          | **Silent.** The parameters are accepted and not used: a server restricted to DHE suites still handshakes with an ECDHE suite, and a group the option should refuse is not refused.                                                                                                            |
+| Bun     | `atnaTransportSecurity`, `dhParameters` | **Refused.** Bun's TLS library offers no finite-field Diffie-Hellman suite and refuses `dhparam`, so a server with either option fails when it is created or when `listen()` runs, and a client with the ATNA option cannot negotiate the DHE suites.                                         |
+
+The `'tlsNegotiated'` event reports what a link actually agreed on, so on any runtime you can check
+the suite a link uses before you trust it. On Deno, `maxConnections` is also affected: see
+[Cap the number of connections](./receive-messages.md#cap-the-number-of-connections).
+
 ## Known limitations
 
 - **No PKI or CA management.** `@cosyte/mllp` consumes PEM material you provide; it does not
@@ -463,6 +480,9 @@ material, and it is emitted at handshake-completion time, before any HL7 byte ha
 - **With the option off, the cipher list is the runtime's**, and the runtime's is configurable at
   build time by a Node distribution and replaceable from outside the process. See
   "TLS 1.2 floor and cipher suites" above.
+- **The cipher and Diffie-Hellman options are enforced on Node.js only.** Under Deno they are
+  silently not applied, and under Bun they are refused. See
+  [Under Bun and Deno these options are not enforced](#under-bun-and-deno-these-options-are-not-enforced).
 - **Reconnect-path errors do not yet carry `connectionCause`.** The `tls-verify`/`tls-handshake`/
   `connect-timeout` labels are attached on the initial `connect()` path only; auto-reconnect failures surface as raw
   socket errors (their transient/permanent classification still applies).

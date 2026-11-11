@@ -1,0 +1,34 @@
+name: Weekly mutation
+
+# The full mutation run: every file stryker.config.mjs names is mutated, shared out across eight
+# parallel shards, and the merged score is held to the floor in quality-floor.json. A score below
+# its floor turns the run red. Each shard keeps StrykerJS's incremental results in the Actions
+# cache, so a later run retests only what changed. The run never commits: to raise the floor, run
+# `pnpm mutate:full` and `pnpm quality:raise --skip coverage`, and open a pull request. The merged
+# report is kept in the `mutation-report` artifact, and the score against the floor is in the run's
+# summary.
+#
+# Twice a week, not once: GitHub evicts a cache entry nobody has read for seven days, so runs
+# exactly a week apart could find the last results gone and start from nothing.
+
+on:
+  schedule:
+    # Sunday and Wednesday 07:13 UTC. An odd minute: GitHub delays scheduled runs at the start of
+    # every hour.
+    - cron: "13 7 * * 0"
+    - cron: "13 7 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  weekly:
+    uses: cosyte/.github/.github/workflows/weekly-mutation.yml@398cd4ded647dddd9f2e220ceb042840f59e1426 # workflows-2026-11-10-398cd4ded647
+    with:
+      mutate-cmd: "pnpm mutate:full"
+      shard-count: 8

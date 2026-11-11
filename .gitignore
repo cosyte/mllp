@@ -19,3 +19,7 @@ dist-artifacts/
 # were committed here once already, referencing objects that never existed. They recur; keep
 # them out of the index.
 .claude/worktrees/
+
+# Mutation testing: StrykerJS sandboxes and reports.
+.stryker-tmp/
+reports/

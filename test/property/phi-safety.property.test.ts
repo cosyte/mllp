@@ -37,6 +37,7 @@ import { encodeFrame } from "../../src/framing/encoder.js";
 import { MllpFramingError } from "../../src/framing/error.js";
 import type { MllpWarning } from "../../src/framing/registry.js";
 import { VT, FS, CR, LF } from "../../src/framing/constants.js";
+import { checkProperty, usePropertyBudget } from "./_runner.js";
 
 /**
  * A recognizable "PHI marker" run. Chosen to be pure payload content: no framing
@@ -62,9 +63,11 @@ function markerPayload(n: number): Buffer {
   return out;
 }
 
+usePropertyBudget();
+
 describe("PHI-safety: MLLP_FRAME_TOO_LARGE never carries a payload slice (MLLP-9)", () => {
   it("the too-large snippet is empty and neither snippet nor message echoes payload content", () => {
-    fc.assert(
+    checkProperty(
       fc.property(
         fc.integer({ min: 1, max: 64 }),
         fc.integer({ min: 1, max: 200 }),
@@ -91,14 +94,13 @@ describe("PHI-safety: MLLP_FRAME_TOO_LARGE never carries a payload slice (MLLP-9
           expect(leaksMarker(fe.message)).toBe(false);
         },
       ),
-      { numRuns: 300 },
     );
   });
 });
 
 describe("PHI-safety: no framing throw echoes a payload content slice (MLLP-9)", () => {
   it("across strict/tolerant modes, snippet ≤ 1 byte and never a marker run", () => {
-    fc.assert(
+    checkProperty(
       fc.property(
         fc.constantFrom<"strict" | "default" | "tolerant">("strict", "default", "tolerant"),
         fc.integer({ min: 4, max: 80 }),
@@ -137,14 +139,13 @@ describe("PHI-safety: no framing throw echoes a payload content slice (MLLP-9)",
           expect(leaksMarker(fe.message)).toBe(false);
         },
       ),
-      { numRuns: 300 },
     );
   });
 });
 
 describe("PHI-safety: the ENCODER's delimiter-byte throw never carries a payload slice (MLLP-9)", () => {
   it("encodeFrame's MLLP_PAYLOAD_CONTAINS_VT/FS snippet is ≤ 1 byte and never a marker run", () => {
-    fc.assert(
+    checkProperty(
       fc.property(
         fc.constantFrom(VT, FS),
         fc.integer({ min: 8, max: 120 }),
@@ -173,14 +174,13 @@ describe("PHI-safety: the ENCODER's delimiter-byte throw never carries a payload
           expect(leaksMarker(fe.message)).toBe(false);
         },
       ),
-      { numRuns: 300 },
     );
   });
 });
 
 describe("PHI-safety: warnings carry structural facts only, never a payload slice (MLLP-9)", () => {
   it("every tolerance-path warning message is free of payload content", () => {
-    fc.assert(
+    checkProperty(
       fc.property(fc.integer({ min: 4, max: 120 }), (len) => {
         const payload = markerPayload(len);
         const warnings: MllpWarning[] = [];
@@ -208,7 +208,6 @@ describe("PHI-safety: warnings carry structural facts only, never a payload slic
           expect(leaksMarker(w.message)).toBe(false);
         }
       }),
-      { numRuns: 200 },
     );
   });
 });
@@ -256,7 +255,7 @@ describe("PHI-safety: the ACK builders' warnings carry no message content (MLLP-
     [MRN, NAME, DOB, MSH10].some((m) => text.includes(Buffer.from(m, "latin1").toString("hex")));
 
   it("no ACK warning echoes any inbound field, at ANY MSH truncation point", () => {
-    fc.assert(
+    checkProperty(
       fc.property(
         fc.integer({ min: 1, max: 12 }),
         fc.constantFrom<BufferEncoding>("latin1", "utf8", "ascii"),
@@ -270,12 +269,11 @@ describe("PHI-safety: the ACK builders' warnings carry no message content (MLLP-
           }
         },
       ),
-      { numRuns: 300 },
     );
   });
 
   it("no ACK PAYLOAD carries a field of any segment after the MSH", () => {
-    fc.assert(
+    checkProperty(
       fc.property(fc.integer({ min: 1, max: 12 }), (mshFields) => {
         const inbound = inboundTruncatedAt(mshFields);
         const text = buildAckAA(inbound).payload.toString("latin1");
@@ -285,7 +283,6 @@ describe("PHI-safety: the ACK builders' warnings carry no message content (MLLP-
           expect(text.includes(marker), `ACK payload leaked ${marker}`).toBe(false);
         }
       }),
-      { numRuns: 200 },
     );
   });
 });

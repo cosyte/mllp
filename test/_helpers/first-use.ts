@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import ts from "typescript";
 
@@ -57,7 +57,14 @@ export function compileSamples(
   entries: Readonly<Record<string, string>>,
   samples: readonly string[],
 ): string[][] {
-  const files = samples.map((_, index) => join(root, `docs-sample-${String(index)}.mts`));
+  // Named with `/` between segments, the form TypeScript hands back to the host and puts on a
+  // diagnostic on every system: on Windows a `\`-separated name would match neither, and every
+  // sample would read as compiling clean.
+  const files = samples.map((_, index) =>
+    join(root, `docs-sample-${String(index)}.mts`)
+      .split(sep)
+      .join("/"),
+  );
   const byFile = new Map(files.map((file, index) => [file, samples[index] ?? ""]));
   const options: ts.CompilerOptions = {
     ...READER_OPTIONS,

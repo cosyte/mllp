@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer } from "../../src/server/server.js";
 import type { MllpServer } from "../../src/server/server.js";
 import * as net from "node:net";
@@ -113,10 +113,12 @@ describe("createServer / MllpServer skeleton", () => {
       expect(server.getStats().connections).toBe(0);
 
       const sock = await connectToServer(server);
-      // Give server time to process connection event
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      expect(server.getStats().activeConnections).toBe(1);
+      // Give server time to process connection event. Polled: the client's 'connect' can land
+      // before the server has accepted, on macOS by more than one tick.
+      await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+        timeout: 2_000,
+        interval: 5,
+      });
       expect(server.getStats().connections).toBe(1);
       expect(server.getStats().acceptedTotal).toBe(1);
 
@@ -128,8 +130,12 @@ describe("createServer / MllpServer skeleton", () => {
       await server.listen(0);
 
       const sock = await connectToServer(server);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(server.getStats().activeConnections).toBe(1);
+      // Polled: the client's 'connect' can land before the server has accepted, on macOS by
+      // more than one tick.
+      await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+        timeout: 2_000,
+        interval: 5,
+      });
 
       // Destroy the socket to close connection
       sock.destroy();
@@ -385,13 +391,24 @@ describe("Gap closure, byteOffset/warnings threading, closedTotal accuracy, onMe
       expect(server.getStats().closedTotal).toBe(0);
 
       const sock = await connectToServer(server);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(server.getStats().activeConnections).toBe(1);
+      // Polled: the client's 'connect' can land before the server has accepted, on macOS by
+      // more than one tick.
+      await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+        timeout: 2_000,
+        interval: 5,
+      });
 
       // Destroy the client socket, server sees peer close, transitions CONNECTED → DISCONNECTED,
       // then DISCONNECTED → CLOSED when destroyed during _drainAll straggler path.
       sock.destroy();
 
+      // Polled rather than one fixed sleep: on a loaded macOS runner the peer close took longer
+      // than 100 ms to reach the server. Then the same 100 ms the case always gave a second event
+      // to land, so a double count still shows.
+      await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(0), {
+        timeout: 2_000,
+        interval: 10,
+      });
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
       expect(server.getStats().activeConnections).toBe(0);

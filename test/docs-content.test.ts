@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { format } from "node:util";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -56,12 +57,16 @@ import {
  */
 const root = join(import.meta.dirname, "..");
 
-/** Published subpath -> the built ESM artifact a consumer of that subpath loads. */
+/**
+ * Published subpath -> the built ESM artifact a consumer of that subpath loads, as a file URL: on
+ * Windows a bare absolute path (`D:\...`) reads as a URL with the scheme `d:`, which the ESM loader
+ * refuses.
+ */
 const SUBPATH_ENTRIES: Readonly<Record<string, string>> = {
-  "@cosyte/mllp": join(root, "dist", "index.mjs"),
-  "@cosyte/mllp/testing": join(root, "dist", "testing", "index.mjs"),
-  "@cosyte/mllp/ack-from-hl7": join(root, "dist", "ack-from-hl7", "index.mjs"),
-  "@cosyte/mllp/arbitraries": join(root, "dist", "arbitraries", "index.mjs"),
+  "@cosyte/mllp": pathToFileURL(join(root, "dist", "index.mjs")).href,
+  "@cosyte/mllp/testing": pathToFileURL(join(root, "dist", "testing", "index.mjs")).href,
+  "@cosyte/mllp/ack-from-hl7": pathToFileURL(join(root, "dist", "ack-from-hl7", "index.mjs")).href,
+  "@cosyte/mllp/arbitraries": pathToFileURL(join(root, "dist", "arbitraries", "index.mjs")).href,
 };
 
 /** Published subpath -> the source file the bundler compiles into that entry point's types. */
@@ -86,8 +91,14 @@ function resolveSnippetImport(specifier: string): string | undefined {
   return undefined;
 }
 
+// On Windows `pnpm` is a `pnpm.cmd` shim, which Node starts only through the shell. The command and
+// its one argument are fixed literals, so the shell receives no caller value.
 beforeAll(() => {
-  execFileSync("pnpm", ["build"], { cwd: root, stdio: "inherit" });
+  execFileSync("pnpm", ["build"], {
+    cwd: root,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
 }, 120_000);
 
 const DOCS_DIR = join(root, "docs-content");

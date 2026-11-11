@@ -42,6 +42,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+
+import { ON_WINDOWS } from "../_helpers/runtime.js";
 import { spawnSync } from "node:child_process";
 import {
   writeFileSync,
@@ -102,7 +104,12 @@ function runScanner(args: string[]): RunResult {
 
 /** The `tsx` invocation `pnpm phi-scan` really uses, kept for the one test that pins it. */
 function runScannerViaTsx(args: string[]): RunResult {
-  const r = spawnSync(TSX_BIN, [SCANNER_PATH, ...args], {
+  // On Windows `node_modules/.bin/tsx` is a `.cmd` shim, which Node starts only through a shell,
+  // so there the same tsx runs from its own entry point under this Node, still with no shell.
+  const [command, prefix] = ON_WINDOWS
+    ? [process.execPath, [join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs")]]
+    : [TSX_BIN, []];
+  const r = spawnSync(command, [...prefix, SCANNER_PATH, ...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     shell: false,
@@ -857,19 +864,25 @@ afterAll(() => {
 });
 
 describe("phi-scan: enumeration TOCTOU", () => {
-  it("tolerates an UNTRACKED file gone between enumeration and read, and reports it", () => {
-    const repo = makeScanRepo({ git: true });
-    const decoy = writeTransient(repo);
-    const r = runScannerIn(repo, gitShim(`rm -rf '${join(repo, "test", TRANSIENT_DIR)}'`));
-    expect(r.code, `stderr: ${r.stderr}`).toBe(0);
-    expect(r.stdout).toMatch(/OK, no hits/);
-    // Never silent: the skip is named, with the file that went away.
-    expect(r.stderr).toMatch(/skipped 1 untracked file\(s\) gone between enumeration and read/);
-    expect(r.stderr).toContain(TRANSIENT_REL);
-    expect(existsSync(decoy)).toBe(false);
-  });
+  // Not on Windows, in the four cases that put a `git` shim on PATH: the shim is a `#!/bin/sh`
+  // script, which Windows cannot start as `git`. The scanner's own handling of a vanished or
+  // unreadable file is the same code on every system, and these run on Linux and macOS.
+  it.skipIf(ON_WINDOWS)(
+    "tolerates an UNTRACKED file gone between enumeration and read, and reports it",
+    () => {
+      const repo = makeScanRepo({ git: true });
+      const decoy = writeTransient(repo);
+      const r = runScannerIn(repo, gitShim(`rm -rf '${join(repo, "test", TRANSIENT_DIR)}'`));
+      expect(r.code, `stderr: ${r.stderr}`).toBe(0);
+      expect(r.stdout).toMatch(/OK, no hits/);
+      // Never silent: the skip is named, with the file that went away.
+      expect(r.stderr).toMatch(/skipped 1 untracked file\(s\) gone between enumeration and read/);
+      expect(r.stderr).toContain(TRANSIENT_REL);
+      expect(existsSync(decoy)).toBe(false);
+    },
+  );
 
-  it("still REFUSES when a TRACKED file vanishes in the same window", () => {
+  it.skipIf(ON_WINDOWS)("still REFUSES when a TRACKED file vanishes in the same window", () => {
     // The committed corpus is what the gate promises to have observed, so a
     // tracked file that cannot be read is an incomplete scan, not a transient.
     const repo = makeScanRepo({ git: true });
@@ -880,7 +893,7 @@ describe("phi-scan: enumeration TOCTOU", () => {
     expect(r.stderr).toMatch(/ENOENT/);
   });
 
-  it("still REFUSES a non-ENOENT read failure on an untracked file", () => {
+  it.skipIf(ON_WINDOWS)("still REFUSES a non-ENOENT read failure on an untracked file", () => {
     // Replaced by a directory rather than removed: EISDIR is a scan that failed,
     // not a file that went away, so the tolerance must not swallow it.
     const repo = makeScanRepo({ git: true });
@@ -891,7 +904,7 @@ describe("phi-scan: enumeration TOCTOU", () => {
     expect(r.stderr).toMatch(/EISDIR/);
   });
 
-  it("REFUSES OUTRIGHT when git cannot answer at all", () => {
+  it.skipIf(ON_WINDOWS)("REFUSES OUTRIGHT when git cannot answer at all", () => {
     // MECHANISM RESTATED, NOT LOOSENED. This used to reach the vanish tolerance
     // and fail closed there: with no tracked set there was no way to tell a
     // transient from committed content, so nothing was tolerated and the READ
@@ -1122,7 +1135,8 @@ describe("phi-scan: a non-regular entry under a scan root refuses the scan", () 
     expect(r.stderr).toContain("src/three.ts");
   });
 
-  it("describes a FIFO by its own kind, from the engine's closed set", () => {
+  // Not on Windows: it has no FIFO in the file system and no `mkfifo` to make one.
+  it.skipIf(ON_WINDOWS)("describes a FIFO by its own kind, from the engine's closed set", () => {
     const repo = makeScanRepo({ git: true });
     const r = spawnSync("mkfifo", [join(srcRoot(repo), "pipe")], {
       encoding: "utf8",

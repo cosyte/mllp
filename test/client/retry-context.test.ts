@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { MUTATION_RUN } from "../_helpers/runtime.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve as pathResolve } from "node:path";
@@ -69,39 +70,49 @@ describe("PLAN-04 Task 2: RetryContext + RetryStrategy + reconnect ClientOptions
     expect(typeof opts.retryStrategy).toBe("function");
   });
 
-  it("Test 4: W-07, NEVER_ABORTING_SIGNAL declared at module top of client.ts", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(pathResolve(here, "../../src/client/client.ts"), "utf8");
-    expect(src).toMatch(/const NEVER_ABORTING_SIGNAL: AbortSignal/);
-    // Ensure it's at module scope (not inside a function/class), appears
-    // before the export class declaration.
-    const idxSentinel = src.indexOf("NEVER_ABORTING_SIGNAL");
-    const idxClass = src.indexOf("export class MllpClient");
-    expect(idxSentinel).toBeGreaterThan(0);
-    expect(idxSentinel).toBeLessThan(idxClass);
-  });
+  // Tests 4 to 7 read the source text: skipped in the mutation run (see test/_helpers/runtime.ts).
+  it.skipIf(MUTATION_RUN)(
+    "Test 4: W-07, NEVER_ABORTING_SIGNAL declared at module top of client.ts",
+    () => {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const src = readFileSync(pathResolve(here, "../../src/client/client.ts"), "utf8");
+      expect(src).toMatch(/const NEVER_ABORTING_SIGNAL: AbortSignal/);
+      // Ensure it's at module scope (not inside a function/class), appears
+      // before the export class declaration.
+      const idxSentinel = src.indexOf("NEVER_ABORTING_SIGNAL");
+      const idxClass = src.indexOf("export class MllpClient");
+      expect(idxSentinel).toBeGreaterThan(0);
+      expect(idxSentinel).toBeLessThan(idxClass);
+    },
+  );
 
-  it("Test 5: W-05, Correlator does not hard-code byteOffset: 0", () => {
+  it.skipIf(MUTATION_RUN)("Test 5: W-05, Correlator does not hard-code byteOffset: 0", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(pathResolve(here, "../../src/client/correlator.ts"), "utf8");
     expect(src).not.toMatch(/byteOffset:\s*0/);
     expect(src).toMatch(/byteOffsetFromAck/);
   });
 
-  it("Test 6: RetryContext + RetryStrategy re-exported from client/index.ts", () => {
-    // We cannot inspect type-only exports at runtime; rely on the source.
-    const here = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(pathResolve(here, "../../src/client/index.ts"), "utf8");
-    expect(src).toMatch(/type RetryContext/);
-    expect(src).toMatch(/type RetryStrategy/);
-  });
+  it.skipIf(MUTATION_RUN)(
+    "Test 6: RetryContext + RetryStrategy re-exported from client/index.ts",
+    () => {
+      // We cannot inspect type-only exports at runtime; rely on the source.
+      const here = dirname(fileURLToPath(import.meta.url));
+      const src = readFileSync(pathResolve(here, "../../src/client/index.ts"), "utf8");
+      expect(src).toMatch(/type RetryContext/);
+      expect(src).toMatch(/type RetryStrategy/);
+    },
+  );
 
-  it("Test 7: RetryContext + RetryStrategy re-exported from src/index.ts", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(pathResolve(here, "../../src/index.ts"), "utf8");
-    expect(src).toMatch(/type RetryContext/);
-    expect(src).toMatch(/type RetryStrategy/);
-  });
+  it.skipIf(MUTATION_RUN)(
+    "Test 7: RetryContext + RetryStrategy re-exported from src/index.ts",
+    () => {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const src = readFileSync(pathResolve(here, "../../src/index.ts"), "utf8");
+      expect(src).toMatch(/type RetryContext/);
+      expect(src).toMatch(/type RetryStrategy/);
+    },
+  );
 
   it("Test 8: barrel module loads without runtime error", () => {
     // Smoke test, the type re-exports should not throw at import time.

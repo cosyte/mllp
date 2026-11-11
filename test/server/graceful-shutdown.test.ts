@@ -5,7 +5,7 @@
  * Also covers deadPeerTimeoutMs idle timer management (SERVER-07).
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer } from "../../src/server/server.js";
 import type { MllpServer } from "../../src/server/server.js";
 import * as net from "node:net";
@@ -72,8 +72,12 @@ describe("SERVER-06: graceful shutdown", () => {
     await server.listen(0);
 
     const sock = await connectToServer(server);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(server.getStats().activeConnections).toBe(1);
+    // Polled: the client's 'connect' can land before the server has accepted, on macOS by
+    // more than one tick.
+    await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+      timeout: 2_000,
+      interval: 5,
+    });
 
     // Destroy the socket so the connection drains naturally
     const closePromise = server.close({ drainTimeoutMs: 500 });
@@ -131,9 +135,13 @@ describe("SERVER-06: graceful shutdown", () => {
     await server.listen(0);
 
     const sock = await connectToServer(server);
-    // Give time for connection to be accepted and beforeClose to be overridden
+    // Give time for connection to be accepted and beforeClose to be overridden, then poll: on
+    // macOS the accept can take longer than the fixed 20 ms.
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
-    expect(server.getStats().activeConnections).toBe(1);
+    await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+      timeout: 2_000,
+      interval: 5,
+    });
 
     const start = Date.now();
     // Use a short drain timeout; with a stuck beforeClose, the straggler
@@ -275,8 +283,12 @@ describe("SERVER-09: AbortSignal on close()", () => {
     await server.listen(0);
 
     const sock = await connectToServer(server);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(server.getStats().activeConnections).toBe(1);
+    // Polled: the client's 'connect' can land before the server has accepted, on macOS by
+    // more than one tick.
+    await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+      timeout: 2_000,
+      interval: 5,
+    });
 
     const ac = new AbortController();
     const closePromise = server.close({ signal: ac.signal, drainTimeoutMs: 5000 });
@@ -318,14 +330,20 @@ describe("SERVER-07: deadPeerTimeoutMs idle timer", () => {
     await server.listen(0);
 
     const sock = await connectToServer(server);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(server.getStats().activeConnections).toBe(1);
+    // Polled: the client's 'connect' can land before the server has accepted, on macOS by
+    // more than one tick.
+    await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(1), {
+      timeout: 2_000,
+      interval: 5,
+    });
 
-    // Wait for the idle timer to fire (100ms + tolerance)
-    await new Promise<void>((resolve) => setTimeout(resolve, 300));
-
+    // Wait for the idle timer to fire. Polled rather than one fixed sleep: on a loaded macOS
+    // runner the 100 ms timer and the socket close behind it took longer than a 300 ms sleep.
     // After idle timeout, connection should be removed from _connections
-    expect(server.getStats().activeConnections).toBe(0);
+    await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(0), {
+      timeout: 2_000,
+      interval: 10,
+    });
 
     sock.destroy();
   }, 3000);

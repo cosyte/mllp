@@ -29,6 +29,7 @@ import { describe, expect, it } from "vitest";
 import { buildAckAA, MLLP_ACK_CONTROL_ID_NOT_VERBATIM } from "../../src/ack-from-hl7/index.js";
 import { extractMsaControlId, extractMshControlId } from "../../src/client/correlator.js";
 import { buildRawAck } from "../../src/server/ack.js";
+import { checkProperty, usePropertyBudget } from "./_runner.js";
 
 /**
  * Bytes that may appear inside a control ID for this property: anything except the
@@ -104,9 +105,11 @@ function inbound(id: Buffer, sep: string): Buffer {
   ]);
 }
 
+usePropertyBudget();
+
 describe("property: MSA-2 echoes MSH-10 byte-for-byte (HL7 v2.5.1 §2.9.2.2)", () => {
   it("buildRawAck holds the invariant for any control ID and any MSH-1 separator", () => {
-    fc.assert(
+    checkProperty(
       fc.property(controlIdBytes(), fc.constantFrom(...SEPARATORS), (id, sep) => {
         // Guard the generator, not the code: an id containing the separator is
         // structurally not one field.
@@ -120,12 +123,11 @@ describe("property: MSA-2 echoes MSH-10 byte-for-byte (HL7 v2.5.1 §2.9.2.2)", (
         expect(ackedKey).toBe(sentKey);
         expect(Buffer.from(ackedKey ?? "", "latin1").equals(id)).toBe(true);
       }),
-      { numRuns: 500 },
     );
   });
 
   it("buildMllpAck holds the invariant for any control ID under the default delimiters", () => {
-    fc.assert(
+    checkProperty(
       fc.property(printableControlIdBytes(), (id) => {
         fc.pre(!id.includes(0x7c)); // `|`, the separator this message declares
 
@@ -135,7 +137,6 @@ describe("property: MSA-2 echoes MSH-10 byte-for-byte (HL7 v2.5.1 §2.9.2.2)", (
         expect(extractMsaControlId(ack.payload)).toBe(extractMshControlId(msg));
         expect(ack.warnings.map((w) => w.code)).not.toContain(MLLP_ACK_CONTROL_ID_NOT_VERBATIM);
       }),
-      { numRuns: 500 },
     );
   });
 
@@ -143,7 +144,7 @@ describe("property: MSA-2 echoes MSH-10 byte-for-byte (HL7 v2.5.1 §2.9.2.2)", (
     // Upstream `buildMessage` always emits the HL7 default `|^~\&`, so a non-default
     // MSH-1 gets re-delimited in MSA-2. That is a real limitation of this subpath, and
     // the contract is: hold the invariant, or warn. Never neither.
-    fc.assert(
+    checkProperty(
       fc.property(controlIdBytes(), fc.constantFrom(...SEPARATORS), (id, sep) => {
         fc.pre(!id.includes(Buffer.from(sep, "latin1")));
 
@@ -154,7 +155,6 @@ describe("property: MSA-2 echoes MSH-10 byte-for-byte (HL7 v2.5.1 §2.9.2.2)", (
 
         expect(verbatim || warned).toBe(true);
       }),
-      { numRuns: 500 },
     );
   });
 });

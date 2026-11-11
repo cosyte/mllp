@@ -24,9 +24,7 @@ import { createClient } from "../../src/client/client.js";
 import { Connection } from "../../src/connection/index.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { encodeFrame } from "../../src/framing/index.js";
-
-/** Stable run budget so failures reproduce deterministically. */
-const NUM_RUNS = 200;
+import { checkAsyncProperty, propertyTimeout } from "./_runner.js";
 
 /**
  * MSA-1 values a peer might send, spanning every outcome of the read: both halves of Table
@@ -132,69 +130,88 @@ async function drive(msh15: string, msh16: string, values: readonly string[]): P
   }
 }
 
+/**
+ * Each case stands up a client and a connection and drains the microtask queue between
+ * acknowledgements, so a test keeps the 60 s it had at 200 cases, or the depth's own budget when
+ * that is longer.
+ */
+const BUDGET = Math.max(60_000, propertyTimeout());
+
 describe("property: no acknowledgement for a two-phase send is silently discarded", () => {
-  it("every acknowledgement in an arbitrary sequence produces exactly one outcome", async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.array(fc.constantFrom(...MSA1_VALUES), { minLength: 1, maxLength: 6 }),
-        async (values) => {
-          const run = await drive("AL", "AL", values);
-          expect(run.outcomesPerAck).toHaveLength(values.length);
-          for (const count of run.outcomesPerAck) {
-            expect(count).toBe(1);
-          }
-        },
-      ),
-      { numRuns: NUM_RUNS },
-    );
-  }, 60_000);
+  it(
+    "every acknowledgement in an arbitrary sequence produces exactly one outcome",
+    async () => {
+      await checkAsyncProperty(
+        fc.asyncProperty(
+          fc.array(fc.constantFrom(...MSA1_VALUES), { minLength: 1, maxLength: 6 }),
+          async (values) => {
+            const run = await drive("AL", "AL", values);
+            expect(run.outcomesPerAck).toHaveLength(values.length);
+            for (const count of run.outcomesPerAck) {
+              expect(count).toBe(1);
+            }
+          },
+        ),
+      );
+    },
+    BUDGET,
+  );
 
-  it("holds for a send that awaits no application acknowledgement", async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.array(fc.constantFrom(...MSA1_VALUES), { minLength: 1, maxLength: 4 }),
-        async (values) => {
-          const run = await drive("AL", "NE", values);
-          for (const count of run.outcomesPerAck) {
-            expect(count).toBe(1);
-          }
-        },
-      ),
-      { numRuns: NUM_RUNS },
-    );
-  }, 60_000);
+  it(
+    "holds for a send that awaits no application acknowledgement",
+    async () => {
+      await checkAsyncProperty(
+        fc.asyncProperty(
+          fc.array(fc.constantFrom(...MSA1_VALUES), { minLength: 1, maxLength: 4 }),
+          async (values) => {
+            const run = await drive("AL", "NE", values);
+            for (const count of run.outcomesPerAck) {
+              expect(count).toBe(1);
+            }
+          },
+        ),
+      );
+    },
+    BUDGET,
+  );
 
-  it("a commit accept alone never settles a send that asked for an application acknowledgement", async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.array(fc.constantFrom("CA", "CA ", " CA", "CA^HL70008"), {
-          minLength: 1,
-          maxLength: 5,
-        }),
-        async (commits) => {
-          const run = await drive("AL", "AL", commits);
-          expect(run.resolved).toBe(false);
-          expect(run.rejected).toBe(false);
-        },
-      ),
-      { numRuns: NUM_RUNS },
-    );
-  }, 60_000);
+  it(
+    "a commit accept alone never settles a send that asked for an application acknowledgement",
+    async () => {
+      await checkAsyncProperty(
+        fc.asyncProperty(
+          fc.array(fc.constantFrom("CA", "CA ", " CA", "CA^HL70008"), {
+            minLength: 1,
+            maxLength: 5,
+          }),
+          async (commits) => {
+            const run = await drive("AL", "AL", commits);
+            expect(run.resolved).toBe(false);
+            expect(run.rejected).toBe(false);
+          },
+        ),
+      );
+    },
+    BUDGET,
+  );
 
-  it("an acknowledgement that cannot be classified never settles a send", async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.array(fc.constantFrom("", '""', "ca", "CAX", "OK", "C", "ZZZ"), {
-          minLength: 1,
-          maxLength: 5,
-        }),
-        async (unclassifiable) => {
-          const run = await drive("AL", "AL", unclassifiable);
-          expect(run.resolved).toBe(false);
-          expect(run.rejected).toBe(false);
-        },
-      ),
-      { numRuns: NUM_RUNS },
-    );
-  }, 60_000);
+  it(
+    "an acknowledgement that cannot be classified never settles a send",
+    async () => {
+      await checkAsyncProperty(
+        fc.asyncProperty(
+          fc.array(fc.constantFrom("", '""', "ca", "CAX", "OK", "C", "ZZZ"), {
+            minLength: 1,
+            maxLength: 5,
+          }),
+          async (unclassifiable) => {
+            const run = await drive("AL", "AL", unclassifiable);
+            expect(run.resolved).toBe(false);
+            expect(run.rejected).toBe(false);
+          },
+        ),
+      );
+    },
+    BUDGET,
+  );
 });

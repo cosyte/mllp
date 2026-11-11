@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { MUTATION_RUN } from "../_helpers/runtime.js";
 import { createConnection } from "node:net";
 import type { Socket as NetSocket } from "node:net";
 import { createClient, type MllpClient } from "../../src/client/client.js";
@@ -191,22 +192,27 @@ describe("MllpClient dead-peer + keepalive (PLAN-05 Task 3, CLIENT-08, D-11/A3)"
   });
 
   describe("FSM-aware lifecycle (D-14, B-04)", () => {
-    it("Test 8b: no parallel `conn.on('stateChange')` listener registered by Plan 05", async () => {
-      // Sanity: read the source of client.ts and ensure the only
-      // 'stateChange' listener registration count matches PLAN-02's
-      // single delegating listener (B-04 contract).
-      const fs = await import("node:fs/promises");
-      const url = new URL("../../src/client/client.ts", import.meta.url);
-      const text = await fs.readFile(url, "utf8");
-      // Quote-agnostic: the shared toolchain enforces double quotes, but accept
-      // either so the assertion tracks the registration count, not the style.
-      const matches = text.match(/conn\.on\(\s*['"]stateChange['"]/g) ?? [];
-      // Exactly ONE delegating registration (PLAN-02's). Plan 05 contributes
-      // ADDITIVE statements at the named anchor; it does NOT add a parallel.
-      expect(matches.length).toBe(1);
-    });
+    // This case and the next read the source text: skipped in the mutation run (see
+    // test/_helpers/runtime.ts).
+    it.skipIf(MUTATION_RUN)(
+      "Test 8b: no parallel `conn.on('stateChange')` listener registered by Plan 05",
+      async () => {
+        // Sanity: read the source of client.ts and ensure the only
+        // 'stateChange' listener registration count matches PLAN-02's
+        // single delegating listener (B-04 contract).
+        const fs = await import("node:fs/promises");
+        const url = new URL("../../src/client/client.ts", import.meta.url);
+        const text = await fs.readFile(url, "utf8");
+        // Quote-agnostic: the shared toolchain enforces double quotes, but accept
+        // either so the assertion tracks the registration count, not the style.
+        const matches = text.match(/conn\.on\(\s*['"]stateChange['"]/g) ?? [];
+        // Exactly ONE delegating registration (PLAN-02's). Plan 05 contributes
+        // ADDITIVE statements at the named anchor; it does NOT add a parallel.
+        expect(matches.length).toBe(1);
+      },
+    );
 
-    it("HOOK_EXTENSION_POINT: state-change anchor is preserved", async () => {
+    it.skipIf(MUTATION_RUN)("HOOK_EXTENSION_POINT: state-change anchor is preserved", async () => {
       const fs = await import("node:fs/promises");
       const url = new URL("../../src/client/client.ts", import.meta.url);
       const text = await fs.readFile(url, "utf8");
