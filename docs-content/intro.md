@@ -61,6 +61,10 @@ you depend on the package.
 
 - [Installation](./installation.md): install the package and the optional peer.
 - [Quickstart](./quickstart.md): a server and a client on loopback, then the frame underneath.
+- [Run a link end to end](./run-a-link-end-to-end.md): a tutorial that receives, commits,
+  acknowledges and reconnects, one step at a time.
+- [Coming from an interface engine or another library](./coming-from-an-engine.md): the listener,
+  the auto-ACK and reconnect you already know, mapped to this package.
 - [Send messages](./send-messages.md) and [Receive and acknowledge messages](./receive-messages.md):
   the two everyday tasks.
 - [Testing and verification](./testing.md): the socket-free in-memory transport, and the
@@ -70,4 +74,6 @@ you depend on the package.
 - [ACKs and the commit contract](./acks.md): the page to read before you put this in front of a
   clinical system.
 - [Conformance statement](./conformance.md): the declaration to hand a conformance reviewer.
+- [Options, events and statistics](./options-and-events.md) and the [Glossary](./glossary.md):
+  every option with its default, and every acknowledgment term.
 - The [API reference](./api/README.md), generated from the source.

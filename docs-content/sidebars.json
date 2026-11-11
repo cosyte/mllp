@@ -3,6 +3,7 @@
     "intro",
     { "type": "category", "label": "Installation", "items": ["installation"] },
     { "type": "category", "label": "Quickstart", "items": ["quickstart"] },
+    { "type": "category", "label": "Tutorials", "items": ["run-a-link-end-to-end"] },
     {
       "type": "category",
       "label": "How-to guides",
@@ -19,12 +20,12 @@
     {
       "type": "category",
       "label": "Explanation",
-      "items": ["acks", "framing", "reliability", "limitations"]
+      "items": ["acks", "framing", "reliability", "limitations", "coming-from-an-engine"]
     },
     {
       "type": "category",
       "label": "Reference",
-      "items": ["warning-and-error-codes", "conformance"]
+      "items": ["options-and-events", "warning-and-error-codes", "glossary", "conformance"]
     },
     { "type": "category", "label": "Troubleshooting", "items": ["troubleshooting"] },
     "testing-and-quality",
