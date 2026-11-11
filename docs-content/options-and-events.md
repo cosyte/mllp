@@ -117,10 +117,11 @@ The second argument of `client.send(payload, options)`.
 
 | Option                  | Type                           | Default                       | What it does                                                                                            |
 | ----------------------- | ------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `cert`                  | `PemInput`                     | required                      | Server certificate                                                                                      |
-| `key`                   | `PemInput`                     | required                      | Private key for `cert`                                                                                  |
+| `cert`                  | `PemInput`                     | required unless `pfx` is set  | Server certificate                                                                                      |
+| `key`                   | `PemInput`                     | required unless `pfx` is set  | Private key for `cert`                                                                                  |
+| `pfx`                   | `Buffer`                       | unset                         | Server certificate and key as one PKCS#12 file, in place of `cert` and `key`                            |
 | `ca`                    | `PemInput`                     | unset                         | Trust anchors for client certificates                                                                   |
-| `passphrase`            | `string`                       | unset                         | Passphrase for an encrypted `key`                                                                       |
+| `passphrase`            | `string`                       | unset                         | Passphrase for an encrypted `key`, or for `pfx`                                                         |
 | `clientAuth`            | `"NONE"`, `"WANT"` or `"MUST"` | `"NONE"`                      | Request a client certificate (`WANT`), or require and verify one (`MUST`)                               |
 | `minVersion`            | `"TLSv1.2"` or `"TLSv1.3"`     | `"TLSv1.2"`                   | Lowest protocol version                                                                                 |
 | `maxVersion`            | `"TLSv1.2"` or `"TLSv1.3"`     | unset (the runtime's highest) | Highest protocol version                                                                                |

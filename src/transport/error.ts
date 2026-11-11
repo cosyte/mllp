@@ -122,6 +122,27 @@ export const MLLP_TLS_CIPHER_LIST_UNENFORCEABLE = "MLLP_TLS_CIPHER_LIST_UNENFORC
 export const MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE = "MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE";
 
 /**
+ * The TLS library could not load `tls.pfx`, the PKCS#12 file, with `tls.passphrase`. Raised for
+ * `ServerTlsOptions.pfx` by `listen()`, before anything is bound.
+ *
+ * Three causes share it: the passphrase is wrong, the bytes are not a PKCS#12 file, or the file
+ * uses a legacy encryption the library does not load. The last is the one that surprises: a file
+ * written by `openssl pkcs12 -export -legacy`, by OpenSSL 1.x, or by an older Windows export
+ * protects its certificates with RC2-40, and Node.js runs OpenSSL 3 without the legacy provider
+ * that holds RC2, so it refuses the file. Re-export it with AES-256
+ * (`openssl pkcs12 -export` on OpenSSL 3 does by default). The TLS library's own error is the
+ * `cause`; it names the failure and carries neither the passphrase nor any of the file.
+ *
+ * @example
+ * ```typescript
+ * import { MLLP_TLS_PFX_REJECTED } from '@cosyte/mllp';
+ * if (err.code === MLLP_TLS_PFX_REJECTED) logger.error('re-export the PKCS#12 file with AES-256');
+ * ```
+ */
+// Stryker disable next-line StringLiteral: a module-level initializer runs once, when the module is first loaded, so per-test coverage credits it to whichever test loaded the module first rather than to the tests that assert this value (test/tls/pfx.test.ts asserts it literally).
+export const MLLP_TLS_PFX_REJECTED = "MLLP_TLS_PFX_REJECTED";
+
+/**
  * Union of the stable TLS-configuration error codes.
  *
  * @example
@@ -134,7 +155,8 @@ export type TlsConfigurationErrorCode =
   | typeof MLLP_TLS_CIPHER_OPTION_CONFLICT
   | typeof MLLP_TLS_DH_PARAMETERS_REJECTED
   | typeof MLLP_TLS_CIPHER_LIST_UNENFORCEABLE
-  | typeof MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE;
+  | typeof MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE
+  | typeof MLLP_TLS_PFX_REJECTED;
 
 /**
  * Fixed, human-readable description for a TLS-configuration code.
@@ -170,6 +192,11 @@ export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string
     [MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE]:
       "this runtime's TLS library does not enforce server Diffie-Hellman parameters; nothing " +
       "was bound, rather than a server running without the parameters configured",
+    [MLLP_TLS_PFX_REJECTED]:
+      "tls.pfx could not be loaded with tls.passphrase: the passphrase is wrong, the file is not " +
+      "PKCS#12, or it uses a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy` and " +
+      "older exports write it) that OpenSSL 3 does not load, so re-export it with AES-256; " +
+      "nothing was bound",
   };
   return messages[code];
 }
@@ -183,7 +210,9 @@ export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string
  * never by matching on the message text. `message` is a fixed registry entry
  * and carries no key material and no passphrase; `cause`, when present, is the
  * TLS library's own error for one input on its own (the suite list and the
- * Diffie-Hellman parameters are each validated with no credential in scope).
+ * Diffie-Hellman parameters are each validated with no credential in scope; a
+ * PKCS#12 file is validated with its passphrase, and the library's error for it
+ * names the failure without repeating either).
  *
  * @example
  * ```typescript

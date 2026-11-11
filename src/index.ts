@@ -65,6 +65,7 @@ export {
   MLLP_TLS_DH_PARAMETERS_REJECTED,
   MLLP_TLS_CIPHER_LIST_UNENFORCEABLE,
   MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE,
+  MLLP_TLS_PFX_REJECTED,
   MllpTlsConfigurationError,
   tlsConfigurationMessage,
   type TlsConfigurationErrorCode,
@@ -106,6 +107,14 @@ export {
   MllpAckError,
   type AckCode,
   type NegativeAckCode,
+} from "./server/index.js";
+
+// The acknowledgement-condition table the auto-ACK path reads, as a function a caller building its
+// own acknowledgement can use: MSH-15, MSH-16 and an outcome to the code to send.
+export {
+  selectAckCode,
+  type AckCodeSelection,
+  type AckCodeSelectionInput,
 } from "./server/index.js";
 
 // Phase 5: client

@@ -1937,7 +1937,9 @@ Identify it by `instanceof` **and** by the stable [MllpTlsConfigurationError.cod
 never by matching on the message text. `message` is a fixed registry entry
 and carries no key material and no passphrase; `cause`, when present, is the
 TLS library's own error for one input on its own (the suite list and the
-Diffie-Hellman parameters are each validated with no credential in scope).
+Diffie-Hellman parameters are each validated with no credential in scope; a
+PKCS#12 file is validated with its passphrase, and the library's error for it
+names the failure without repeating either).
 
 #### Example
 
@@ -2496,6 +2498,111 @@ See [Transport.write](#write-2).
 
 ## Interfaces
 
+### AckCodeSelection
+
+What [selectAckCode](#selectackcode) decided. A frozen object; it carries no field text.
+
+#### Example
+
+```typescript
+import { selectAckCode, type AckCodeSelection } from '@cosyte/mllp';
+const selection: AckCodeSelection = selectAckCode({ msh15: 'AL', outcome: 'AA' });
+selection.code; // 'CA'
+```
+
+#### Properties
+
+##### acceptTypeUnrecognised
+
+> `readonly` **acceptTypeUnrecognised**: `boolean`
+
+MSH-15 held a value outside Table 0155. It was read as NULL: `code` is `outcome`, unchanged,
+as the server answers (and reports with `MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED`).
+
+##### applicationAckRequested
+
+> `readonly` **applicationAckRequested**: `boolean`
+
+Whether MSH-16 asks for an application acknowledgement carrying this outcome: `AL` always, `NE`
+never, `ER` on `AE` or `AR` only, `SU` on `AA` only. A NULL or unrecognised MSH-16 reads as
+`AL`, which is the original protocol. Where `code` is an accept-mode code and this is `true`,
+the application acknowledgement is a second message, and sending it is the caller's; where
+`code` is an application-mode code, `code` is that acknowledgement.
+
+##### applicationTypeUnrecognised
+
+> `readonly` **applicationTypeUnrecognised**: `boolean`
+
+MSH-16 held a value outside Table 0155. It was read as NULL, so as `AL`.
+
+##### code
+
+> `readonly` **code**: [`AckCode`](#ackcode-3)
+
+The one code to send now. The accept-mode counterpart of `outcome` (`CA`, `CE` or `CR`) when
+MSH-15 asks for an accept acknowledgement on that outcome, and `outcome` itself otherwise. This
+is the code the server's auto-ACK sends for the same fields and outcome.
+
+##### mode
+
+> `readonly` **mode**: `"original"` \| `"enhanced"`
+
+`'enhanced'` when MSH-15 or MSH-16 is non-NULL (the standard's own test for the enhanced
+protocol), `'original'` when both are NULL.
+
+***
+
+### AckCodeSelectionInput
+
+Input to [selectAckCode](#selectackcode).
+
+#### Example
+
+```typescript
+import type { AckCodeSelectionInput } from '@cosyte/mllp';
+const input: AckCodeSelectionInput = { msh15: 'AL', msh16: 'NE', outcome: 'AA' };
+```
+
+#### Properties
+
+##### encodingCharacters?
+
+> `readonly` `optional` **encodingCharacters?**: `string`
+
+The message's MSH-2 encoding characters, which name its component (first byte) and repetition
+(second byte) separators. Unset means the standard `^~\&`.
+
+###### Default
+
+```ts
+'^~\\&'
+```
+
+##### msh15?
+
+> `readonly` `optional` **msh15?**: `string`
+
+MSH-15, accept acknowledgment type (HL7 Table 0155), as the field's text: `AL`, `NE`, `ER`,
+`SU`, or anything else the sender put there. Read the way the server reads it: the text before
+the first repetition separator, then before the first component separator, with leading and
+trailing spaces dropped, compared case-sensitively. Unset, empty, or the HL7 explicit null
+`""` is a NULL field.
+
+##### msh16?
+
+> `readonly` `optional` **msh16?**: `string`
+
+MSH-16, application acknowledgment type (HL7 Table 0155), read the same way as `msh15`.
+
+##### outcome
+
+> `readonly` **outcome**: `"AA"` \| `"AE"` \| `"AR"`
+
+What the receiving application did with the message, as an application-mode code: `AA` it was
+accepted, `AE` it failed, `AR` it was rejected. Any other value throws a `RangeError`.
+
+***
+
 ### AckCorrelationWarning
 
 The `'warning'` payload the client emits for an ACK-correlation deviation
@@ -2539,7 +2646,7 @@ The correlation code this warning reports.
 
 ###### Overrides
 
-[`MllpWarning`](#mllpwarning).[`code`](#code-9)
+[`MllpWarning`](#mllpwarning).[`code`](#code-10)
 
 ##### connectionId
 
@@ -4621,11 +4728,13 @@ false
 
 Trust anchor(s) for verifying client certificates under `WANT`/`MUST`.
 
-##### cert
+##### cert?
 
-> `readonly` **cert**: [`PemInput`](#peminput)
+> `readonly` `optional` **cert?**: [`PemInput`](#peminput)
 
-Server certificate (PEM). Required.
+Server certificate (PEM). Required with [ServerTlsOptions.key](#key) unless
+[ServerTlsOptions.pfx](#pfx) is set: a server given neither pair nor file throws a
+`TypeError` at construction.
 
 ##### ciphers?
 
@@ -4706,11 +4815,11 @@ key exchange supplies the parameters.
 
 undefined (no Diffie-Hellman parameters unless `atnaTransportSecurity` selects them)
 
-##### key
+##### key?
 
-> `readonly` **key**: [`PemInput`](#peminput)
+> `readonly` `optional` **key?**: [`PemInput`](#peminput)
 
-Private key matching [ServerTlsOptions.cert](#cert). Required.
+Private key matching [ServerTlsOptions.cert](#cert). Required with it unless `pfx` is set.
 
 ##### maxVersion?
 
@@ -4735,7 +4844,30 @@ Floor" (BCP195) floor (ITI TF-2 §3.19.6.2.3).
 
 > `readonly` `optional` **passphrase?**: `string`
 
-Passphrase for an encrypted [ServerTlsOptions.key](#key).
+Passphrase for an encrypted [ServerTlsOptions.key](#key), or for the PKCS#12 file in
+[ServerTlsOptions.pfx](#pfx).
+
+##### pfx?
+
+> `readonly` `optional` **pfx?**: `Buffer`\<`ArrayBufferLike`\>
+
+The server certificate and its private key as one PKCS#12 file (`.pfx` / `.p12`), in place of
+[ServerTlsOptions.cert](#cert) and [ServerTlsOptions.key](#key), unlocked with
+[ServerTlsOptions.passphrase](#passphrase). The file's bytes, as `readFileSync` returns them; this
+package reads no file itself.
+
+The file is loaded before anything is bound. One the TLS library cannot load rejects
+`listen()` with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose
+message names this option and never its value: a wrong passphrase, bytes that are not
+PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
+older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
+file with AES-256. Construction never throws for it.
+
+###### Default
+
+```ts
+undefined (no PKCS#12 file)
+```
 
 ***
 
@@ -5975,7 +6107,7 @@ const code: SecurityWarningCode = 'MLLP_TLS_VERIFY_DISABLED';
 
 ### TlsConfigurationErrorCode
 
-> **TlsConfigurationErrorCode** = *typeof* [`MLLP_TLS_CIPHER_LIST_REJECTED`](#mllp_tls_cipher_list_rejected) \| *typeof* [`MLLP_TLS_CIPHER_OPTION_CONFLICT`](#mllp_tls_cipher_option_conflict) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_REJECTED`](#mllp_tls_dh_parameters_rejected) \| *typeof* [`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`](#mllp_tls_cipher_list_unenforceable) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`](#mllp_tls_dh_parameters_unenforceable)
+> **TlsConfigurationErrorCode** = *typeof* [`MLLP_TLS_CIPHER_LIST_REJECTED`](#mllp_tls_cipher_list_rejected) \| *typeof* [`MLLP_TLS_CIPHER_OPTION_CONFLICT`](#mllp_tls_cipher_option_conflict) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_REJECTED`](#mllp_tls_dh_parameters_rejected) \| *typeof* [`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`](#mllp_tls_cipher_list_unenforceable) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`](#mllp_tls_dh_parameters_unenforceable) \| *typeof* [`MLLP_TLS_PFX_REJECTED`](#mllp_tls_pfx_rejected)
 
 Union of the stable TLS-configuration error codes.
 
@@ -6202,6 +6334,30 @@ and refused these: the remedy here is a different runtime, or no Diffie-Hellman 
 ```typescript
 import { MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE } from '@cosyte/mllp';
 if (err.code === MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE) logger.error('run this server on Node.js');
+```
+
+***
+
+### MLLP\_TLS\_PFX\_REJECTED
+
+> `const` **MLLP\_TLS\_PFX\_REJECTED**: `"MLLP_TLS_PFX_REJECTED"` = `"MLLP_TLS_PFX_REJECTED"`
+
+The TLS library could not load `tls.pfx`, the PKCS#12 file, with `tls.passphrase`. Raised for
+`ServerTlsOptions.pfx` by `listen()`, before anything is bound.
+
+Three causes share it: the passphrase is wrong, the bytes are not a PKCS#12 file, or the file
+uses a legacy encryption the library does not load. The last is the one that surprises: a file
+written by `openssl pkcs12 -export -legacy`, by OpenSSL 1.x, or by an older Windows export
+protects its certificates with RC2-40, and Node.js runs OpenSSL 3 without the legacy provider
+that holds RC2, so it refuses the file. Re-export it with AES-256
+(`openssl pkcs12 -export` on OpenSSL 3 does by default). The TLS library's own error is the
+`cause`; it names the failure and carries neither the passphrase nor any of the file.
+
+#### Example
+
+```typescript
+import { MLLP_TLS_PFX_REJECTED } from '@cosyte/mllp';
+if (err.code === MLLP_TLS_PFX_REJECTED) logger.error('re-export the PKCS#12 file with AES-256');
 ```
 
 ***
@@ -7191,6 +7347,63 @@ MllpDifferentialConfigurationError when a peer address is configured and unusabl
 import { runDifferential } from '@cosyte/mllp';
 const report = await runDifferential({ peer: process.env['MLLP_DIFF_PEER'] });
 console.log(JSON.stringify(report, null, 2));
+```
+
+***
+
+### selectAckCode()
+
+> **selectAckCode**(`input`): [`AckCodeSelection`](#ackcodeselection)
+
+Select the acknowledgement code for a message from its MSH-15, MSH-16 and what the application
+did with it, by the table the server's auto-ACK uses.
+
+Rows are MSH-15, columns the outcome:
+
+| MSH-15             | `AA`  | `AE`  | `AR`  |
+| ------------------ | ----- | ----- | ----- |
+| NULL               | `AA`  | `AE`  | `AR`  |
+| `NE`               | `AA`  | `AE`  | `AR`  |
+| `AL`               | `CA`  | `CE`  | `CR`  |
+| `ER`               | `AA`  | `CE`  | `CR`  |
+| `SU`               | `CA`  | `AE`  | `AR`  |
+| outside Table 0155 | `AA`  | `AE`  | `AR`  |
+
+MSH-16 never changes the code; it decides [AckCodeSelection.applicationAckRequested](#applicationackrequested).
+
+Two things the server does are not in this function, because they are about the whole message
+rather than its fields: a batch or concatenated frame keeps its warned non-positive answer, and
+a message with no usable MSH-10 is never answered positively. A caller building its own
+acknowledgement for such a message applies those rules itself.
+
+#### Parameters
+
+##### input
+
+[`AckCodeSelectionInput`](#ackcodeselectioninput)
+
+MSH-15, MSH-16, the message's MSH-2 and the outcome.
+
+#### Returns
+
+[`AckCodeSelection`](#ackcodeselection)
+
+The code to send, the mode, whether an application acknowledgement is asked for, and
+  whether either field held a value outside Table 0155.
+
+#### Throws
+
+when `outcome` is not `AA`, `AE` or `AR`. The message does not repeat the
+  value.
+
+#### Example
+
+```typescript
+import { selectAckCode } from '@cosyte/mllp';
+selectAckCode({ msh15: 'AL', msh16: 'AL', outcome: 'AA' }).code; // 'CA'
+selectAckCode({ msh15: 'ER', outcome: 'AA' }).code;               // 'AA'
+selectAckCode({ msh15: 'ER', outcome: 'AE' }).code;               // 'CE'
+selectAckCode({ outcome: 'AR' }).code;                            // 'AR'
 ```
 
 ***

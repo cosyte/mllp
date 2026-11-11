@@ -35,6 +35,7 @@ import {
   type ResolvedTlsCipherPolicy,
 } from "../transport/tls-cipher-policy.js";
 import { MllpTlsConfigurationError } from "../transport/error.js";
+import { checkPfx } from "../transport/pfx.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
@@ -679,6 +680,14 @@ export class MllpServer extends EventEmitter {
         "ServerOptions.maxConnections must be a positive integer, or left unset for no cap",
       );
     }
+    const tlsInput = opts.tls;
+    if (
+      tlsInput !== undefined &&
+      tlsInput.pfx === undefined &&
+      (tlsInput.cert === undefined || tlsInput.key === undefined)
+    ) {
+      throw new TypeError("ServerOptions.tls needs cert and key, or pfx");
+    }
     this._opts = opts;
     this._isTls = opts.tls !== undefined;
 
@@ -691,9 +700,12 @@ export class MllpServer extends EventEmitter {
     let cipherPolicy: ResolvedTlsCipherPolicy | null = null;
     if (opts.tls !== undefined) {
       try {
+        // The PKCS#12 file first: a file that cannot load leaves no policy, so no TLS context is
+        // built from it below, which would throw out of this constructor rather than reject listen().
+        checkPfx(opts.tls.pfx, opts.tls.passphrase);
         cipherPolicy = resolveTlsCipherPolicy(opts.tls, "server");
       } catch (err) {
-        /* v8 ignore next -- resolveTlsCipherPolicy throws only MllpTlsConfigurationError */
+        /* v8 ignore next -- checkPfx and resolveTlsCipherPolicy throw only MllpTlsConfigurationError */
         if (!(err instanceof MllpTlsConfigurationError)) throw err;
         this._tlsConfigError = err;
       }
@@ -710,6 +722,7 @@ export class MllpServer extends EventEmitter {
       const tlsServer = tlsCreateServer({
         cert: tlsOpts.cert,
         key: tlsOpts.key,
+        pfx: tlsOpts.pfx,
         ...(tlsOpts.ca !== undefined ? { ca: tlsOpts.ca } : {}),
         ...(tlsOpts.passphrase !== undefined ? { passphrase: tlsOpts.passphrase } : {}),
         minVersion: tlsOpts.minVersion ?? "TLSv1.2",

@@ -23,6 +23,7 @@ import type { Socket } from "node:net";
 
 import { createServer, type MllpServer } from "../../src/server/server.js";
 import { MllpAckError } from "../../src/server/ack.js";
+import { selectAckCode } from "../../src/server/ack-code.js";
 
 import { must } from "../helpers/tracked-servers.js";
 
@@ -147,6 +148,8 @@ describe("the server matrix: MSH-15 decides which half of Table 0008 the ACK car
           const port = must(server.getStats().port);
           const ack = await exchange(port, inbound(msh15));
           expect(ack).toContain(`MSA|${expected}|MSG001`);
+          // One table: the public function answers every cell exactly as the wire does.
+          expect(selectAckCode({ msh15, outcome: disposition }).code).toBe(expected);
         } finally {
           await server.close();
         }
