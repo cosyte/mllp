@@ -87,6 +87,7 @@
  */
 
 import { describe, it, beforeAll, afterAll, expect, vi } from "vitest";
+import { RUNTIME } from "../_helpers/runtime.js";
 import { assertNoDiagnosticPhiLeak, PHI_MARKER_UNIT } from "@cosyte/test-utils";
 
 import { createClient, type MllpClient } from "../../src/client/client.js";
@@ -910,62 +911,72 @@ describe("PHI: the negotiated-TLS record carries no content", () => {
     vi.setSystemTime(new Date("2026-07-31T00:00:00.000Z"));
   });
 
-  it("holds on both ends, with the marker in the payload and in the certificate CN", async () => {
-    const { cert, key } = buildNamedServerCertFixture(SHORT_MARKER);
-    const server = createServer({ tls: { cert, key, atnaTransportSecurity: true }, autoAck: "AA" });
-    const serverSeen: Array<Record<string, unknown>> = [];
-    server.on("tlsNegotiated", (p: Record<string, unknown>) => serverSeen.push(p));
-    await server.listen(0, "127.0.0.1");
-    const port = server.getStats().port;
-    if (port === null) throw new Error("expected a bound port");
+  // Not under Bun: the ATNA option sets `dhparam: "auto"`, which Bun's TLS library refuses
+  // ("Automatic DH parameter selection is not supported"), so no server starts. The record's
+  // content rules are held on Node on every system.
+  it.skipIf(RUNTIME === "bun")(
+    "holds on both ends, with the marker in the payload and in the certificate CN",
+    async () => {
+      const { cert, key } = buildNamedServerCertFixture(SHORT_MARKER);
+      const server = createServer({
+        tls: { cert, key, atnaTransportSecurity: true },
+        autoAck: "AA",
+      });
+      const serverSeen: Array<Record<string, unknown>> = [];
+      server.on("tlsNegotiated", (p: Record<string, unknown>) => serverSeen.push(p));
+      await server.listen(0, "127.0.0.1");
+      const port = server.getStats().port;
+      if (port === null) throw new Error("expected a bound port");
 
-    const client = createClient({
-      host: "127.0.0.1",
-      port,
-      tls: { ca: cert, atnaTransportSecurity: true },
-    });
-    const clientSeen: Array<Record<string, unknown>> = [];
-    client.on("tlsNegotiated", (p: Record<string, unknown>) => clientSeen.push(p));
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        tls: { ca: cert, atnaTransportSecurity: true },
+      });
+      const clientSeen: Array<Record<string, unknown>> = [];
+      client.on("tlsNegotiated", (p: Record<string, unknown>) => clientSeen.push(p));
 
-    try {
-      await client.connect();
-      // A message whose control id AND body both carry the marker, sent after
-      // the record was emitted, so a late mutation would show.
-      const ack = await client.send(message(SHORT_MARKER, `ZZZ|1|${SHORT_MARKER}\r`));
-      expect(ack.length).toBeGreaterThan(0);
+      try {
+        await client.connect();
+        // A message whose control id AND body both carry the marker, sent after
+        // the record was emitted, so a late mutation would show.
+        const ack = await client.send(message(SHORT_MARKER, `ZZZ|1|${SHORT_MARKER}\r`));
+        expect(ack.length).toBeGreaterThan(0);
 
-      const deadline = Date.now() + 3000;
-      while (serverSeen.length === 0 && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 10));
+        const deadline = Date.now() + 3000;
+        while (serverSeen.length === 0 && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 10));
+        }
+
+        expect(clientSeen).toHaveLength(1);
+        expect(serverSeen).toHaveLength(1);
+        // The CN really did carry the marker, so its absence below is evidence.
+        // A PEM is base64 over DER, so the plant is checked in the decoded bytes,
+        // not in the armoured text.
+        const der = Buffer.from(
+          cert.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/\s+/g, ""),
+          "base64",
+        ).toString("latin1");
+        expect(der).toContain(SHORT_MARKER);
+
+        for (const record of [...clientSeen, ...serverSeen]) {
+          expect(Object.keys(record).sort()).toEqual([...ALLOWED_KEYS].sort());
+          expect(Object.isFrozen(record)).toBe(true);
+          const rendered = JSON.stringify(record);
+          expect(rendered).not.toContain(SHORT_MARKER);
+          // No certificate or key material of any shape.
+          expect(rendered).not.toContain("BEGIN");
+          expect(rendered).not.toContain(cert.slice(40, 120));
+          expect(rendered).not.toContain(key.slice(40, 120));
+          // The two negotiated values are registry names, not caller data.
+          expect(record["protocolVersion"]).toMatch(/^TLSv1\.[23]$/);
+          expect(record["cipherSuite"]).toMatch(/^TLS_[A-Z0-9_]+$/);
+        }
+      } finally {
+        client.destroy();
+        await server.close().catch(() => undefined);
       }
-
-      expect(clientSeen).toHaveLength(1);
-      expect(serverSeen).toHaveLength(1);
-      // The CN really did carry the marker, so its absence below is evidence.
-      // A PEM is base64 over DER, so the plant is checked in the decoded bytes,
-      // not in the armoured text.
-      const der = Buffer.from(
-        cert.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/\s+/g, ""),
-        "base64",
-      ).toString("latin1");
-      expect(der).toContain(SHORT_MARKER);
-
-      for (const record of [...clientSeen, ...serverSeen]) {
-        expect(Object.keys(record).sort()).toEqual([...ALLOWED_KEYS].sort());
-        expect(Object.isFrozen(record)).toBe(true);
-        const rendered = JSON.stringify(record);
-        expect(rendered).not.toContain(SHORT_MARKER);
-        // No certificate or key material of any shape.
-        expect(rendered).not.toContain("BEGIN");
-        expect(rendered).not.toContain(cert.slice(40, 120));
-        expect(rendered).not.toContain(key.slice(40, 120));
-        // The two negotiated values are registry names, not caller data.
-        expect(record["protocolVersion"]).toMatch(/^TLSv1\.[23]$/);
-        expect(record["cipherSuite"]).toMatch(/^TLS_[A-Z0-9_]+$/);
-      }
-    } finally {
-      client.destroy();
-      await server.close().catch(() => undefined);
-    }
-  }, 60_000);
+    },
+    60_000,
+  );
 });

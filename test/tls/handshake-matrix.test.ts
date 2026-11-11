@@ -7,6 +7,7 @@
  * TLS handshakes need REAL timers; this suite never enables fake timers.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { RUNTIME } from "../_helpers/runtime.js";
 import { connect as tlsConnect, createServer as tlsCreateServer } from "node:tls";
 import type { Server as TlsServer } from "node:tls";
 import { createServer } from "../../src/server/server.js";
@@ -466,7 +467,14 @@ const NON_ATNA_DEFAULT_SUITE_IANA = "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256";
  * Real sockets and real TLS, so real timers, same budget reasoning as the
  * matrix above.
  */
-describe("ATNA transport-security option", { timeout: 60_000 }, () => {
+// Node only. Under Bun: Bun's TLS library (BoringSSL) offers no finite-field Diffie-Hellman suite
+// and refuses `dhparam` ("Automatic DH parameter selection is not supported"), so the DHE cases
+// and the ones that restrict a peer to a suite cannot handshake as pinned. Under Deno: its
+// `node:tls` takes a `ciphers` list without applying it (a peer restricted to a DHE suite
+// negotiates TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, and a list naming no real suite is accepted
+// rather than refused), so the cases that pin the offered list or its refusal read the wrong
+// result.
+describe.skipIf(RUNTIME !== "node")("ATNA transport-security option", { timeout: 60_000 }, () => {
   const servers: MllpServer[] = [];
   const clients: MllpClient[] = [];
   const rawServers: TlsServer[] = [];

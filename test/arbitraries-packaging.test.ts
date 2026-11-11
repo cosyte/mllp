@@ -7,7 +7,7 @@
  */
 
 import { readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -24,7 +24,8 @@ function sources(dir = join(root, "src")): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) return sources(path);
-    return entry.name.endsWith(".ts") ? [relative(root, path)] : [];
+    // With `/` between segments on every system, as the checks below spell the paths.
+    return entry.name.endsWith(".ts") ? [relative(root, path).split(sep).join("/")] : [];
   });
 }
 

@@ -2,8 +2,11 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { ON_WINDOWS, RUNTIME } from "./_helpers/runtime.js";
 
 import {
   compileErrors,
@@ -31,6 +34,14 @@ const root = join(import.meta.dirname, "..");
 const readme = readFileSync(join(root, "README.md"), "utf8");
 const entryPoint = join(root, "src", "index.ts");
 const tsx = join(root, "node_modules", ".bin", "tsx");
+/**
+ * How the program is started. On Windows `node_modules/.bin/tsx` is a `.cmd` shim, which Node
+ * starts only through a shell, so there the same tsx runs from its own entry point under this
+ * Node instead, still with no shell.
+ */
+const tsxCommand: readonly [string, readonly string[]] = ON_WINDOWS
+  ? [process.execPath, [join(root, "node_modules", "tsx", "dist", "cli.mjs")]]
+  : [tsx, []];
 const PUBLISHED_SPECIFIER = '"@cosyte/mllp"';
 const FIXTURE_DIR = join(root, "test", "fixtures", "first-use");
 const CASE_TIMEOUT = 120_000;
@@ -54,10 +65,17 @@ function run(source: string, fileName: string): { code: number; stdout: string; 
   const path = join(dir, fileName);
   writeFileSync(
     path,
-    `${source.replace(PUBLISHED_SPECIFIER, JSON.stringify(entryPoint))}\n`,
+    // As a file URL: on Windows a bare absolute path (`D:\...`) reads as a URL with the scheme `d:`.
+    `${source.replace(PUBLISHED_SPECIFIER, JSON.stringify(pathToFileURL(entryPoint).href))}\n`,
     "utf8",
   );
-  const r = spawnSync(tsx, [path], { cwd: root, encoding: "utf8", shell: false, timeout: 60_000 });
+  const [command, prefix] = tsxCommand;
+  const r = spawnSync(command, [...prefix, path], {
+    cwd: root,
+    encoding: "utf8",
+    shell: false,
+    timeout: 60_000,
+  });
   return { code: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -67,7 +85,11 @@ describe("the README ## Usage example", () => {
     expect(shown?.lang).toBe("text");
   });
 
-  it(
+  // Not under Deno, here and in AC-ML3 below: the program runs through tsx, whose loader does not
+  // take hold under Deno, and Deno itself refuses the source's `.js` specifiers that name `.ts`
+  // files ("Module not found ... Maybe change the extension to '.ts'"). The program runs on Node on
+  // every system, and under Bun.
+  it.skipIf(RUNTIME === "deno")(
     "AC-ML2, AC-ML5: runs to exit twice in succession, printing exactly the output shown",
     () => {
       for (const attempt of ["usage-1.mts", "usage-2.mts"]) {
@@ -107,7 +129,7 @@ describe("the README ## Usage example", () => {
     expect(fixturesByContent(root, FIXTURE_DIR).get(payload ?? "")).toBeDefined();
   });
 
-  it(
+  it.skipIf(RUNTIME === "deno")(
     "AC-ML3: a changed input value changes the output and leaves the fixture corpus",
     () => {
       const body = example?.body ?? "";

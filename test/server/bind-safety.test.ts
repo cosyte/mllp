@@ -4,6 +4,7 @@
  * `'securityWarning'`.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { ON_WINDOWS } from "../_helpers/runtime.js";
 import { createServer } from "../../src/server/server.js";
 import { must, makeServerTracker } from "../helpers/tracked-servers.js";
 
@@ -170,7 +171,11 @@ describe("Server bind safety (Phase 8)", () => {
   // any pre-bind string check. Enforcement is POST-BIND against the
   // OS-normalized bound address (server.address()): the just-bound server is
   // closed and listen() rejects, no listening state, no 'listening' event.
-  describe("resolver-shorthand wildcards are caught post-bind (Fix A)", () => {
+  // Not on Windows, here and in "reverse order" below: its resolver does not read these
+  // shorthands as an address at all (`getaddrinfo ENOTFOUND 0`), so no wildcard is ever bound and
+  // there is nothing post-bind to catch. They resolve to 0.0.0.0 on Linux and macOS, where the
+  // cases run.
+  describe.skipIf(ON_WINDOWS)("resolver-shorthand wildcards are caught post-bind (Fix A)", () => {
     const shorthands = ["0", "0.0", "0.0.0", "00.0.0.0", "0x0.0.0.0"];
 
     it.each(shorthands)(
@@ -256,19 +261,22 @@ describe("Server bind safety (Phase 8)", () => {
       });
     });
 
-    it("reverse order: p1 wildcard-shorthand + p2 loopback same tick, both reject, listening stays false, zero 'listening' events", async () => {
-      const server = track(createServer({}));
-      const listeningEvents: unknown[] = [];
-      server.on("listening", (e: unknown) => listeningEvents.push(e));
+    it.skipIf(ON_WINDOWS)(
+      "reverse order: p1 wildcard-shorthand + p2 loopback same tick, both reject, listening stays false, zero 'listening' events",
+      async () => {
+        const server = track(createServer({}));
+        const listeningEvents: unknown[] = [];
+        server.on("listening", (e: unknown) => listeningEvents.push(e));
 
-      const p1 = server.listen(0, "0"); // passes pre-bind, fails post-bind
-      const p2 = server.listen(0, "127.0.0.1"); // rejected by the in-flight guard
-      await expect(p2).rejects.toThrow(/in flight/);
-      await expect(p1).rejects.toThrow(/allowWildcardBind/);
+        const p1 = server.listen(0, "0"); // passes pre-bind, fails post-bind
+        const p2 = server.listen(0, "127.0.0.1"); // rejected by the in-flight guard
+        await expect(p2).rejects.toThrow(/in flight/);
+        await expect(p1).rejects.toThrow(/allowWildcardBind/);
 
-      expect(listeningEvents).toHaveLength(0);
-      expect(server.getStats().listening).toBe(false);
-    });
+        expect(listeningEvents).toHaveLength(0);
+        expect(server.getStats().listening).toBe(false);
+      },
+    );
 
     it("listen() while already listening → typed rejection; the original listener still accepts", async () => {
       const server = track(createServer({}));

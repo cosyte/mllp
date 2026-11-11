@@ -5,7 +5,7 @@
  * Also covers deadPeerTimeoutMs idle timer management (SERVER-07).
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer } from "../../src/server/server.js";
 import type { MllpServer } from "../../src/server/server.js";
 import * as net from "node:net";
@@ -321,11 +321,13 @@ describe("SERVER-07: deadPeerTimeoutMs idle timer", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(server.getStats().activeConnections).toBe(1);
 
-    // Wait for the idle timer to fire (100ms + tolerance)
-    await new Promise<void>((resolve) => setTimeout(resolve, 300));
-
+    // Wait for the idle timer to fire. Polled rather than one fixed sleep: on a loaded macOS
+    // runner the 100 ms timer and the socket close behind it took longer than a 300 ms sleep.
     // After idle timeout, connection should be removed from _connections
-    expect(server.getStats().activeConnections).toBe(0);
+    await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(0), {
+      timeout: 2_000,
+      interval: 10,
+    });
 
     sock.destroy();
   }, 3000);

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer } from "../../src/server/server.js";
 import type { MllpServer } from "../../src/server/server.js";
 import * as net from "node:net";
@@ -392,6 +392,13 @@ describe("Gap closure, byteOffset/warnings threading, closedTotal accuracy, onMe
       // then DISCONNECTED → CLOSED when destroyed during _drainAll straggler path.
       sock.destroy();
 
+      // Polled rather than one fixed sleep: on a loaded macOS runner the peer close took longer
+      // than 100 ms to reach the server. Then the same 100 ms the case always gave a second event
+      // to land, so a double count still shows.
+      await vi.waitFor(() => expect(server.getStats().activeConnections).toBe(0), {
+        timeout: 2_000,
+        interval: 10,
+      });
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
       expect(server.getStats().activeConnections).toBe(0);
