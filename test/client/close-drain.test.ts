@@ -479,4 +479,97 @@ describe("a link that fails while the drain is in progress", () => {
     await expect(onTheWire).rejects.toBeInstanceOf(MllpUnknownFateError);
     await expect(heldBack).rejects.toBeInstanceOf(MllpNeverDeliveredError);
   });
+
+  it("does the same when the send held back is waiting for queue room", async () => {
+    const h = harness({
+      highWaterMark: { count: 1 },
+      onBackpressure: "wait",
+      correlateByControlId: true,
+    });
+    const onTheWire = h.client.send(message("M1"));
+    const heldBack = h.client.send(message("M2"));
+
+    const closing = h.client.close({ drainTimeoutMs: LONG_DRAIN_MS });
+    setImmediate(() => {
+      h.local.destroy(Object.assign(new Error("peer reset"), { code: "ECONNRESET" }));
+    });
+
+    const took = await elapsed(async () => {
+      await closing;
+    });
+    expect(took).toBeLessThan(PROMPT_MS);
+    await expect(onTheWire).rejects.toBeInstanceOf(MllpUnknownFateError);
+    await expect(heldBack).rejects.toBeInstanceOf(MllpNeverDeliveredError);
+  });
+});
+
+describe("a drain that one settlement out of several does not end", () => {
+  // Long enough to tell a wait that runs to its bound from one that ends at the first
+  // settlement, and short enough to sit out in a test.
+  const MEASURED_DRAIN_MS = 300;
+
+  it("runs to its bound when only one of two sends on the wire is answered", async () => {
+    const h = harness({ correlateByControlId: true });
+    const answered = h.client.send(message("M1"));
+    const unanswered = h.client.send(message("M2"));
+    const silent = unanswered.catch((e: unknown) => e);
+
+    const closing = h.client.close({ drainTimeoutMs: MEASURED_DRAIN_MS });
+    h.ackSoon(ack("AA", "M1"));
+
+    const took = await elapsed(async () => {
+      await closing;
+    });
+    // Half the bound, as the first case in this file allows, so a coarse timer tick on a
+    // hosted runner cannot fail a wait that did run to its bound.
+    expect(took).toBeGreaterThanOrEqual(MEASURED_DRAIN_MS / 2);
+    await expect(answered).resolves.toBeInstanceOf(Buffer);
+    expect(await silent).toBeInstanceOf(MllpUnknownFateError);
+  });
+
+  it("reports an unknown fate whose elapsed time spans the drain", async () => {
+    const h = harness({ correlateByControlId: true });
+    const caught = h.client.send(message("M1")).catch((e: unknown) => e);
+
+    await h.client.close({ drainTimeoutMs: MEASURED_DRAIN_MS });
+
+    const err = await caught;
+    expect(err).toBeInstanceOf(MllpUnknownFateError);
+    // Measured from the flush to the report, so it covers the wait close() sat out.
+    expect((err as MllpUnknownFateError).elapsedMs).toBeGreaterThanOrEqual(MEASURED_DRAIN_MS / 2);
+  });
+});
+
+describe("a send issued while the drain is in progress", () => {
+  it("is settled rather than left pending by the shutdown", async () => {
+    const h = harness({ pipeline: false, correlateByControlId: true });
+    const onTheWire = h.client.send(message("M1")).catch((e: unknown) => e);
+    const heldBack = h.client.send(message("M2")).catch((e: unknown) => e);
+
+    const closing = h.client.close({ drainTimeoutMs: SHORT_DRAIN_MS });
+    // Issued on the next turn, once close() has begun waiting. The send's promise is wrapped
+    // so that awaiting the wrapper does not await the send, and it is observed at once so a
+    // rejection is never left unhandled.
+    const duringDrain = new Promise<{
+      state: string;
+      outcome: Promise<unknown>;
+      settled: () => boolean;
+    }>((resolve) => {
+      setImmediate(() => {
+        const state = h.client.state;
+        const outcome = h.client.send(message("M3")).catch((e: unknown) => e);
+        resolve({ state, outcome, settled: watch(outcome).settled });
+      });
+    });
+
+    await closing;
+    await onTheWire;
+    await heldBack;
+    const late = await duringDrain;
+    expect(late.state).toBe("DRAINING");
+    await delay(SHORT_DRAIN_MS);
+    expect(late.settled()).toBe(true);
+    // Refused by a client already shutting down, so its bytes never reached the wire.
+    expect(await late.outcome).toBeInstanceOf(Error);
+  });
 });
