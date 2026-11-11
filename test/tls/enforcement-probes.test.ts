@@ -9,7 +9,7 @@
  * - `lenient` accepts every input and applies none of it, the way Deno's `node:tls` takes a
  *   `ciphers` list and a `dhparam` and then negotiates without them;
  * - `no-ffdhe` has no finite-field Diffie-Hellman at all, the way Bun's TLS library refuses the
- *   automatic `dhparam` selection and every DHE suite, and otherwise behaves as Node.js does;
+ *   automatic `dhparam` selection and every DHE suite, and otherwise enforces a list;
  * - `throws-non-error` throws a value that is not an `Error`.
  *
  * `test/tls/runtime-enforcement.test.ts` runs the same configurations against the real runtime
@@ -35,10 +35,16 @@ vi.mock("node:tls", async (importOriginal) => {
         if (options.dhparam === "auto") {
           throw new Error("Automatic DH parameter selection is not supported");
         }
-        if (typeof options.ciphers === "string" && options.ciphers.startsWith("DHE-")) {
+        // A list of DHE suites selects nothing here, and so does a list that removes what it
+        // names; everything else is taken. Modelled rather than delegated, so the model behaves
+        // the same under whichever runtime runs the suite.
+        if (
+          typeof options.ciphers === "string" &&
+          (options.ciphers.startsWith("DHE-") || options.ciphers.includes("!"))
+        ) {
           throw new Error("no cipher match");
         }
-        return actual.createSecureContext(options);
+        return {};
       case "throws-non-error":
         // eslint-disable-next-line @typescript-eslint/only-throw-error -- the case under test
         throw "not an Error";
