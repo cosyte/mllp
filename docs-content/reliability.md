@@ -86,7 +86,9 @@ Classified **permanent** (reconnection halts):
 | `ENOTFOUND`, `EACCES` | The name does not resolve; the port is not permitted.                                                                                                                       |
 
 Everything else (`ECONNRESET`, `ETIMEDOUT`, `ECONNREFUSED`, `EPIPE`, …) is treated as transient and
-retried: Postel's Law, applied to peer behavior.
+retried: Postel's Law, applied to peer behavior. That includes an expired `connectTimeoutMs`
+(`connect-timeout`, see [Bounding a connect that never
+completes](#bounding-a-connect-that-never-completes)).
 
 Supply `retryStrategy` for full control. It receives a frozen `RetryContext` and returns the next
 delay, or `null` to stop retrying.
@@ -106,6 +108,51 @@ correlates:
   `MSH-10`. The one exception is an enhanced-mode send whose accept acknowledgment (`CA`) already
   arrived: the peer holds it, so it is failed with `MllpApplicationAckError` instead of being sent
   again.
+
+## Bounding a connect that never completes
+
+`connectTimeoutMs` bounds how long the client waits to establish a connection: the TCP connect and,
+with TLS on, the handshake after it. Without it, nothing of ours bounds that wait. A connect to an
+address that drops packets waits as long as the operating system keeps retrying its SYN (about two
+minutes by default on Linux), and a TLS handshake against a peer that accepts the TCP connection and then
+never answers waits indefinitely. It is off by default, so nothing changes until you set it.
+
+```ts runnable
+import { createServer, type Socket } from "node:net";
+import { createClient, MllpConnectionError } from "@cosyte/mllp";
+
+// A peer that accepts the TCP connection and never answers the TLS handshake.
+const held: Socket[] = [];
+const peer = createServer((socket) => held.push(socket));
+await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
+const address = peer.address();
+const port = typeof address === "object" && address !== null ? address.port : 0;
+
+const client = createClient({ host: "127.0.0.1", port, tls: true, connectTimeoutMs: 200 });
+client.on("error", () => {}); // the same failure also arrives as an 'error' event
+
+let cause = "";
+try {
+  await client.connect();
+} catch (err) {
+  cause = err instanceof MllpConnectionError ? (err.connectionCause ?? "none") : "other";
+}
+cause; // => "connect-timeout"
+
+for (const socket of held) socket.destroy();
+peer.close();
+```
+
+On expiry the socket is destroyed and `connect()` rejects with an `MllpConnectionError` whose
+`phase` is `connect` and whose `connectionCause` is `connect-timeout`. Nothing was written, so no
+message can have reached the peer. On an auto-reconnect attempt the expiry is handled like any other
+connect failure: its error carries `code: "ETIMEDOUT"`, the code of the operating system's own
+connect timeout, so it is classified **transient**, your `retryStrategy` sees it as
+`RetryContext.lastError`, and the client backs off and tries again.
+
+The value is an integer number of milliseconds from 1 to 2147483647; anything else throws a
+`RangeError` when the client is created. Pick it above the slowest connect and handshake you expect
+on a healthy link, since a handshake that is slow but would have succeeded is cut off too.
 
 ## Detecting a peer that is gone but not closed
 

@@ -345,6 +345,15 @@ the permanence classification below still applies to them, but they do not carry
   server, …). The exact boundary is `isTlsProtocolError`, exported for callers who want the same
   classification. Like `'tls-verify'`, TLS-protocol-shaped errors are classified **permanent** for
   the reconnect classifier.
+- **`'connect-timeout'`**: the handshake, or the TCP connect before it, did not complete within
+  `connectTimeoutMs`. The clock runs from the moment the socket is created to `'secureConnect'`, so
+  a peer that accepts the TCP connection and then never answers the handshake is bounded too; without
+  the option that handshake waits indefinitely. The socket is destroyed, nothing was written, and
+  the error is classified **transient**: an unanswered handshake is a peer that is down or
+  overloaded, not a configuration fault, so an `autoReconnect` client backs off and tries again.
+  On a reconnect attempt it reaches your `retryStrategy` as `lastError` with `code: "ETIMEDOUT"`.
+  See [Bounding a connect that never
+  completes](./reliability.md#bounding-a-connect-that-never-completes).
 - **No `connectionCause`**: pure TCP-level failures (`ECONNREFUSED`, `ETIMEDOUT`,
   `EHOSTUNREACH`, a plain `ECONNRESET`, …) even on a TLS-configured connection. These carry the
   same shape as plaintext connect failures and stay **transient**. A network blip during a
@@ -454,6 +463,6 @@ material, and it is emitted at handshake-completion time, before any HL7 byte ha
 - **With the option off, the cipher list is the runtime's**, and the runtime's is configurable at
   build time by a Node distribution and replaceable from outside the process. See
   "TLS 1.2 floor and cipher suites" above.
-- **Reconnect-path errors do not yet carry `connectionCause`.** The `tls-verify`/`tls-handshake`
-  labels are attached on the initial `connect()` path only; auto-reconnect failures surface as raw
+- **Reconnect-path errors do not yet carry `connectionCause`.** The `tls-verify`/`tls-handshake`/
+  `connect-timeout` labels are attached on the initial `connect()` path only; auto-reconnect failures surface as raw
   socket errors (their transient/permanent classification still applies).

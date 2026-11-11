@@ -124,6 +124,7 @@ failure, such as `ECONNREFUSED`.
 | `tls-verify`       | certificate verification failed on the initial `connect()`                             | no: permanent          |
 | `tls-handshake`    | the TLS handshake failed for a protocol reason on the initial `connect()`              | no: permanent          |
 | `framing-fatal`    | the peer sent bytes the decoder could not accept, or a frame past the size cap         | no: permanent          |
+| `connect-timeout`  | the TCP connect or TLS handshake outran `connectTimeoutMs` on the initial `connect()`  | yes: transient         |
 
 `isTransientConnectionError(err)` gives the same classification the client's reconnect uses, and
 [Connection, reconnect and backpressure](./reliability.md#auto-reconnect) has the full table.

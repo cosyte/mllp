@@ -923,6 +923,9 @@ Rejects with:
   TLS failures carry a `connectionCause`: `'tls-verify'` for certificate
   verification failures, `'tls-handshake'` for TLS-protocol-shaped failures
   ([isTlsProtocolError](#istlsprotocolerror)); pure TCP failures carry none.
+- `MllpConnectionError({ phase: 'connect', connectionCause: 'connect-timeout' })` if
+  [ClientOptions.connectTimeoutMs](#connecttimeoutms) is set and the TCP connect, or the TLS handshake
+  after it, did not complete in time. The socket is destroyed; nothing was written.
 - `MllpTlsConfigurationError` if the configured cipher-suite list cannot be
   honoured (the runtime rejects it, or `atnaTransportSecurity` and `ciphers`
   both declare one). Raised **before** a socket is opened, so nothing is left
@@ -2809,6 +2812,32 @@ with exponential backoff unless overridden by
 [ClientOptions.retryStrategy](#retrystrategy). Permanent errors halt and
 transition directly to `CLOSED`.
 
+##### connectTimeoutMs?
+
+> `readonly` `optional` **connectTimeoutMs?**: `number`
+
+Bound, in milliseconds, on establishing each connection: the TCP connect and, when
+`ClientOptions.tls` is set, the TLS handshake after it. The clock starts when the
+socket is created and stops at `'connect'` (plaintext) or `'secureConnect'` (TLS).
+
+On expiry the socket is destroyed. On `connect()` the promise rejects with an
+`MllpConnectionError` whose `phase` is `'connect'` and whose `connectionCause` is
+`'connect-timeout'`; nothing was written, so no message can have reached the peer. On an
+auto-reconnect attempt the failure feeds the reconnect policy like any other connect
+failure: `RetryContext.lastError` carries `code: 'ETIMEDOUT'` and it is classified
+**transient**, so the client backs off and tries again.
+
+Must be an integer from 1 to 2147483647 (the largest delay a Node timer takes); anything else
+throws a `RangeError` at construction. Unset means no bound of our own: a connect waits on
+the operating system, and a TLS handshake against a peer that accepts the TCP connection and
+never answers waits indefinitely.
+
+###### Default
+
+```ts
+undefined (no bound)
+```
+
 ##### correlateByControlId?
 
 > `readonly` `optional` **correlateByControlId?**: `boolean`
@@ -4668,6 +4697,13 @@ Override default `true` (auto-reconnect on transient errors).
 
 Override default `false` (FIFO mode).
 
+##### connectTimeoutMs?
+
+> `readonly` `optional` **connectTimeoutMs?**: `number`
+
+Bound on the TCP connect and TLS handshake, in ms. Passthrough to
+`ClientOptions.connectTimeoutMs`; unset means no bound, as there.
+
 ##### deadPeerTimeoutMs?
 
 > `readonly` `optional` **deadPeerTimeoutMs?**: `number`
@@ -5491,7 +5527,7 @@ const mode: ClientAuth = 'MUST'; // ATNA ITI-19 mutual node authentication
 
 ### ConnectionErrorCause
 
-> **ConnectionErrorCause** = `"fifo-unsafe"` \| `"in-flight-orphan"` \| `"tls-verify"` \| `"tls-handshake"` \| `"framing-fatal"`
+> **ConnectionErrorCause** = `"fifo-unsafe"` \| `"in-flight-orphan"` \| `"tls-verify"` \| `"tls-handshake"` \| `"framing-fatal"` \| `"connect-timeout"`
 
 Stable cause codes for `MllpConnectionError`.
 
@@ -5518,9 +5554,18 @@ removing a member is a breaking change.
   server, …). See `isTlsProtocolError` for the boundary. Pure TCP-level
   failures (`ECONNREFUSED`, `ETIMEDOUT`, …) on a TLS-configured
   connection carry **no** `connectionCause`, the same shape as plaintext.
+- `'framing-fatal'`, the peer sent bytes the decoder could not accept, or a
+  frame past the size cap. Classified **permanent**.
+- `'connect-timeout'`, the connection was not established within
+  `ClientOptions.connectTimeoutMs`: the TCP connect, or the TLS handshake
+  after it, did not complete in time and the socket was destroyed. Nothing
+  was written, so no message reached the peer. The `cause` carries
+  `code: 'ETIMEDOUT'`, and it is classified **transient** by
+  `isTransientConnectionError`, like the operating system's own connect
+  timeout: a peer that is down or unreachable now may answer later.
 
-Scope note: the `'tls-verify'`/`'tls-handshake'` values are attached on
-the client's **initial `connect()` path**. Failures on the auto-reconnect
+Scope note: the `'tls-verify'`/`'tls-handshake'`/`'connect-timeout'` values
+are attached on the client's **initial `connect()` path**. Failures on the auto-reconnect
 path surface as raw socket errors, their transient/permanent
 classification still applies, but they do not (yet) carry a
 `connectionCause`.
@@ -6638,7 +6683,9 @@ their own retry policies.
 Classification table:
 - `ENOTFOUND`, `EACCES` → **permanent** (`false`)
 - `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EHOSTUNREACH`,
-  `ENETUNREACH`, `EPIPE` → **transient** (`true`)
+  `ENETUNREACH`, `EPIPE` → **transient** (`true`). An expired
+  `ClientOptions.connectTimeoutMs` is one of these: its error carries
+  `ETIMEDOUT`, the code of the operating system's own connect timeout.
 - `CERT_*` and `UNABLE_TO_VERIFY_LEAF_SIGNATURE` /
   `DEPTH_ZERO_SELF_SIGNED_CERT` / `SELF_SIGNED_CERT_IN_CHAIN`
   (any [isTlsVerificationErrorCode](#istlsverificationerrorcode) code) → **permanent** (`false`),

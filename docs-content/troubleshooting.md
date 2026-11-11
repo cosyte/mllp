@@ -44,6 +44,17 @@ Read its `phase` and `connectionCause`:
   never written. See
   [What happens to pending sends when the link drops](./reliability.md#what-happens-to-pending-sends-when-the-link-drops).
 
+## `connect()` hangs, or rejects with `connect-timeout`
+
+A connect to an address that drops packets, or a TLS handshake against a peer that accepts the TCP
+connection and never answers, waits on the operating system or indefinitely unless you set
+`connectTimeoutMs`. With it set, the attempt is abandoned at the bound and `connect()` rejects with
+an `MllpConnectionError` whose `connectionCause` is `connect-timeout`; nothing was sent. Check that
+the host and port are right and reachable from this machine, and that the peer expects TLS when you
+use it (a plaintext listener never answers a handshake). An auto-reconnecting client retries this
+failure with backoff. See [Bounding a connect that never
+completes](./reliability.md#bounding-a-connect-that-never-completes).
+
 ## The client stopped reconnecting
 
 Auto-reconnect retries only failures it classifies as transient. It stops, and the client goes to
