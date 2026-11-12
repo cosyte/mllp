@@ -1,4 +1,8 @@
+import { fileURLToPath } from "node:url";
+
 import { cosyteStryker } from "@cosyte/vitest-config/stryker";
+
+import { withMutantShards } from "./scripts/mutation-shards.mjs";
 
 // Mutation testing for @cosyte/mllp, on the shared StrykerJS config: per-test coverage, static
 // mutants ignored, the JSON report at reports/mutation/mutation.json, and no score threshold of its
@@ -10,7 +14,12 @@ import { cosyteStryker } from "@cosyte/vitest-config/stryker";
 //
 // The files mutated are the shared default: every `.ts` file under `src/` but tests, declarations,
 // fixtures, generated code and the barrels the shared config finds by reading `src/`.
-export default cosyteStryker({
+//
+// With MLLP_MUTANT_SHARD=<k>/<n> set, as each part of the pull request mutation job sets it, the
+// run tests only part k of n of the mutants and lists the rest as left to their part
+// (scripts/mutation-shards.mjs). The files mutated and every other option stay the same, and with
+// the variable unset, as in every other run, this is the shared config as it was.
+const config = cosyteStryker({
   // The suite without the build, the tooling tests and the files that read the built package (see
   // that file).
   vitestConfig: "vitest.mutation.config.ts",
@@ -26,3 +35,9 @@ export default cosyteStryker({
     timeoutMS: 10_000,
   },
 });
+
+export default withMutantShards(
+  config,
+  process.env,
+  fileURLToPath(new URL("./scripts/mutation-shards.mjs", import.meta.url)),
+);

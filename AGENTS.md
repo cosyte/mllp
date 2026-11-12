@@ -46,10 +46,13 @@ pages. The `version` script regenerates them, since they print `VERSION`.
 ## Mutation testing and the floor
 
 `quality-floor.json` holds the coverage and mutation floors, which only rise. On a pull request CI
-holds coverage to it (`ci / coverage-ratchet`) and mutates the source files the change touched
-(`ci / mutation`, with `stryker.config.mjs` and `vitest.mutation.config.ts`): every mutant in the
-changed lines must be killed. `weekly-mutation.yml` mutates every source file in eight shards and
-holds the score to the floor. To raise a floor after a full run:
+holds coverage to it (`ci / coverage-ratchet`) and mutates the source files the change touched, with
+`stryker.config.mjs` and `vitest.mutation.config.ts`: every mutant in the changed lines must be
+killed. That run is split by mutant across four `mutation (part <k>)` jobs, which
+`scripts/mutation-shards.mjs` shares the mutants out to, and `mutation` merges them with
+`scripts/merge-mutation-parts.mjs`, which fails when a mutant was tested by no part or by two.
+`weekly-mutation.yml` mutates every source file in eight shards and holds the score to the floor. To
+raise a floor after a full run:
 
 ```sh
 pnpm mutate:full

@@ -23,8 +23,9 @@ pnpm check:no-emdash && pnpm check:no-internal-refs && pnpm check:documents && p
 Lines 2 and 3 are the shared `ci / verify` job (Node 22, 24 and 26, on Linux and macOS; the
 `windows` job runs the same steps but attw) and the `examples` job; line 4 is `no-emdash.yml` (it
 also reads the PR text), `no-internal-refs.yml` and the `documents` job. CI also runs the suite
-under Bun and Deno, `ci / coverage-ratchet` and `ci / mutation` against `quality-floor.json`, which
-only rises; never run `pnpm mutate:full` locally, `weekly-mutation.yml` runs it in shards.
+under Bun and Deno, `ci / coverage-ratchet` and `mutation` (in four parts) against
+`quality-floor.json`, which only rises; never run `pnpm mutate:full` locally, `weekly-mutation.yml`
+runs it in shards.
 The tool scripts delegate to `cosyte-process`, which owns the tsup, vitest, eslint and prettier
 versions; their globs live in `cosyte-process.config.json`, never in a script body.
 
