@@ -4,7 +4,7 @@
  * A receiver that read one 4 MiB message used to keep a 4 MiB buffer for the life of the
  * connection, and up to the 16 MiB frame limit after a message that size: the accumulator grew to
  * fit the largest frame and never shrank. These read the accumulator's size after a large frame is
- * delivered, discarded or reset, and hold it to the 4 KiB the reader starts with. Every byte is
+ * delivered, refused or reset, and hold it to the 4 KiB the reader starts with. Every byte is
  * synthetic.
  */
 
@@ -53,13 +53,16 @@ describe("FrameReader releases a large frame's buffer", () => {
     expect(held(reader)).toBeLessThanOrEqual(INITIAL);
   });
 
-  it("after a mid-payload VT discards a large partial frame", () => {
+  it("after a mid-payload VT refuses a large partial frame", () => {
     const got: Buffer[] = [];
     const reader = new FrameReader({ onFrame: (p) => got.push(p) });
     reader.push(Buffer.concat([Buffer.from([VT]), LARGE.subarray(0, 512 * 1024)]));
     reader.push(LARGE.subarray(512 * 1024));
-    reader.push(Buffer.from([VT]));
+    expect(() => reader.push(Buffer.from([VT]))).toThrow(
+      expect.objectContaining({ code: "MLLP_PAYLOAD_CONTAINS_VT" }),
+    );
     expect(held(reader)).toBeLessThanOrEqual(INITIAL);
+    reader.push(Buffer.from([VT]));
     reader.push(Buffer.from([0x4d, FS, CR]));
     expect(got.map((p) => p.toString("latin1"))).toEqual(["M"]);
   });

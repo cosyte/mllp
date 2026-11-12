@@ -79,26 +79,24 @@ A tolerated deviation is never silent. It surfaces as a frozen `MllpWarning` car
 code** and the **absolute stream byte offset** where the anomaly was detected. Renaming or removing
 a code is a breaking change. Log pipelines and dashboards key on them.
 
-| Code                            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MLLP_MISSING_LEADING_VT`       | Frame began without `<VT>` (requires `allowMissingLeadingVt`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `MLLP_FS_WITHOUT_CR`            | Frame ended `<FS>` with no trailing `<CR>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `MLLP_LF_AFTER_FS`              | A stray `<LF>` followed `<FS>`, common from line-oriented senders.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `MLLP_LEADING_WHITESPACE`       | Padding bytes before `<VT>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `MLLP_TRAILING_BYTES`           | **Not benign junk: read this one.** **Reserved** for a `<VT>` appearing _mid-payload_: the partial payload accumulated so far is **discarded** and a new frame started, i.e. the delivered payload is only the **remnant** of a truncated message. It is frame-scoped (attached to the delivered remnant, never a neighbor) and is what the server's auto-ACK path keys on to refuse a positive `AA` for a destroyed message. (A stray byte after `<FS>` under `allowFsOnly` is reported by `MLLP_FS_WITHOUT_CR`, not this code.) |
-| `MLLP_PAYLOAD_CONTAINS_VT`      | **Encoder, strict:** payload contains `0x0B`. Throws.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `MLLP_PAYLOAD_CONTAINS_FS`      | **Encoder, strict:** payload contains `0x1C`. Throws.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `MLLP_EMPTY_PAYLOAD`            | Nothing between `<VT>` and `<FS>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `MLLP_FRAME_TOO_LARGE`          | Accumulator exceeded `maxFrameSizeBytes`. **Throws**. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `MLLP_ACK_UNMATCHED_CONTROL_ID` | An inbound ACK's MSA-2 matched no pending send.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `MLLP_ACK_AFTER_TIMEOUT`        | A late ACK arrived after its send had already timed out.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Code                            | Meaning                                                                                                                                                                                                                                      |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MLLP_MISSING_LEADING_VT`       | Frame began without `<VT>` (requires `allowMissingLeadingVt`).                                                                                                                                                                               |
+| `MLLP_FS_WITHOUT_CR`            | Frame ended `<FS>` with no trailing `<CR>`, the next frame's `<VT>` straight after it.                                                                                                                                                       |
+| `MLLP_LF_AFTER_FS`              | A stray `<LF>` followed `<FS>`, common from line-oriented senders.                                                                                                                                                                           |
+| `MLLP_LEADING_WHITESPACE`       | Padding bytes before `<VT>`.                                                                                                                                                                                                                 |
+| `MLLP_TRAILING_BYTES`           | No longer raised by the decoder. It named a frame delivered as the fragment after a mid-payload `<VT>`; such a frame is now refused whole (`MLLP_PAYLOAD_CONTAINS_VT`). The code stays in the registry so code that names it still compiles. |
+| `MLLP_PAYLOAD_CONTAINS_VT`      | **Encoder, strict:** payload contains `0x0B`. **Decoder:** a `<VT>` inside a frame, which is refused whole. Throws.                                                                                                                          |
+| `MLLP_PAYLOAD_CONTAINS_FS`      | **Encoder, strict:** payload contains `0x1C`. **Decoder, with `allowFsOnly`:** an `<FS>` that no `<CR>`, `<LF>` or next `<VT>` follows, so the frame is refused whole. Throws.                                                               |
+| `MLLP_EMPTY_PAYLOAD`            | Nothing between `<VT>` and `<FS>`.                                                                                                                                                                                                           |
+| `MLLP_FRAME_TOO_LARGE`          | Accumulator exceeded `maxFrameSizeBytes`. **Throws**. See below.                                                                                                                                                                             |
+| `MLLP_ACK_UNMATCHED_CONTROL_ID` | An inbound ACK's MSA-2 matched no pending send.                                                                                                                                                                                              |
+| `MLLP_ACK_AFTER_TIMEOUT`        | A late ACK arrived after its send had already timed out.                                                                                                                                                                                     |
 
 [Tolerate a sender's framing quirks](./tolerate-sender-quirks.md) shows the flags in use, and
 [Warning and error codes](./warning-and-error-codes.md) lists every code the package reports.
 
-`MLLP_EMPTY_PAYLOAD` and `MLLP_TRAILING_BYTES` remain _warnings_ (never throws) even under
-`strict: true`. Do not read `MLLP_TRAILING_BYTES` as cosmetic, though: its mid-payload `<VT>` case
-means a message was **truncated**, and it is worth alerting on.
+`MLLP_EMPTY_PAYLOAD` remains a _warning_ (never throws) even under `strict: true`.
 
 Three further codes (`MLLP_ACK_INBOUND_UNPARSEABLE`, `MLLP_ACK_CONTROL_ID_NOT_VERBATIM`, and
 `MLLP_ACK_CONTROL_ID_UNVERIFIABLE`) are scoped to the [`ack-from-hl7`](./acks.md) subpath and appear
@@ -106,7 +104,7 @@ in `MllpAck.warnings`, not in the framing registry.
 
 ## What throws, and what happens when it does
 
-`FrameReader.push()` **throws** `MllpFramingError` in two situations:
+`FrameReader.push()` **throws** `MllpFramingError` in three situations:
 
 1. **`MLLP_FRAME_TOO_LARGE`**: the accumulator crossed `maxFrameSizeBytes`. A decoder that buffers
    until it sees `<FS>` is otherwise a memory-exhaustion vector: a peer that opens a socket, sends
@@ -122,6 +120,9 @@ in `MllpAck.warnings`, not in the framing registry.
    _all three_ throw unless you enable them. On an `MllpServer`, two are enabled by default, but
    `allowMissingLeadingVt` is **not**, so a single non-whitespace byte where a `<VT>` was expected
    throws on a default server.
+
+3. **A frame whose end cannot be told**: a stray `<VT>` or `<FS>` inside it, whatever the
+   tolerances. See the next section.
 
 **A throw kills the connection, never the process.** `Connection` catches it, surfaces it as a
 frozen `'error'` event (`phase: 'receive'`, `connectionCause: 'framing-fatal'`, with the
@@ -150,9 +151,43 @@ how a clinical message gets silently mis-split.
 speaking something that is not MLLP (an HTTP probe on the wrong port, a health check) would otherwise
 be retried forever. See [Connection, reconnect and backpressure](./reliability.md).
 
-If a peer's quirk is _expected_ (it pads with junk, omits the leading `<VT>`, sends bare `<FS>`)
+If a peer's quirk is _expected_ (it pads with whitespace, omits the leading `<VT>`, ends a frame
+with a bare `<FS>` before the next `<VT>`)
 the tolerance opt-ins above are the supported answer. They turn the throw into a warning and recover
 the payload.
+
+## A stray `<FS>` or `<VT>` inside a frame
+
+Two messages joined inside one frame, by a bare `<FS>` or by a `<VT>`, leave no way to tell where the
+sender meant the frame to end. The bytes before the stray byte may be a whole message whose trailer
+went missing, or a fragment the sender gave up on, and the bytes after it may be a second message
+or the rest of the first. Keeping either part is a guess, and each guess loses a message with
+nothing said: a delivered first message whose acknowledgement never goes out, or a second message
+handed on as though it were the frame.
+
+So a receiver refuses such a frame **whole**:
+
+| Bytes inside one frame         | `MllpServer` default (`allowFsOnly` on) | Bare `FrameReader` (strict default) |
+| ------------------------------ | --------------------------------------- | ----------------------------------- |
+| `<VT> A <VT> B <FS> <CR>`      | refused, `MLLP_PAYLOAD_CONTAINS_VT`     | refused, `MLLP_PAYLOAD_CONTAINS_VT` |
+| `<VT> A <FS> B <FS> <CR>`      | refused, `MLLP_PAYLOAD_CONTAINS_FS`     | refused, `MLLP_FS_WITHOUT_CR`       |
+| `<VT> A <FS> <VT> B <FS> <CR>` | two frames, `A` then `B`, each answered | refused, `MLLP_FS_WITHOUT_CR`       |
+
+- **Nothing of a refused frame is delivered**, so no handler commits any part of it and no
+  acknowledgement names it. Frames delivered before it are untouched.
+- **The caller sees a coded error.** `push()` throws an `MllpFramingError` whose `code` names the
+  stray byte and whose `byteOffset` is that byte's own offset; its `snippet` is that one framing
+  byte, and its `message` holds the offset and nothing of the payload.
+- **The connection's state is defined afterwards.** On a server or a client the error arrives on
+  `'error'` with `connectionCause: 'framing-fatal'`, and that connection is closed (`CLOSED`) with
+  no acknowledgement sent. A sender that waits for one times out and resends; if it resends the same
+  bytes, the same refusal follows, so alert on the code. A bare `FrameReader` is left scanning for the
+  next `<VT>`; call `reset()` before reusing it, as after any throw.
+- **However the bytes arrive.** The outcome is the same whether the frame comes in one read or is
+  split across reads at the stray byte or anywhere else.
+
+An `<FS>` followed by the next frame's `<VT>` is the quirk `allowFsOnly` exists for, and stays two
+frames, delivered and acknowledged in order.
 
 ## Diagnostics never echo a run of payload bytes
 

@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { FrameReader } from "../../src/framing/decoder.js";
 import { MllpFramingError } from "../../src/framing/error.js";
-import { must } from "../helpers/tracked-servers.js";
 
 // Helper: wrap a payload in canonical MLLP framing
 function frame(payload: number[]): Buffer {
@@ -441,69 +440,72 @@ describe("FrameReader, reset()", () => {
   });
 });
 
-describe("FrameReader, MLLP_TRAILING_BYTES (always a warning)", () => {
-  it("VT mid-payload emits MLLP_TRAILING_BYTES warning (never throws)", () => {
+describe("FrameReader, a VT or a stray FS inside a frame refuses it whole", () => {
+  it("VT mid-payload throws MLLP_PAYLOAD_CONTAINS_VT, delivers nothing and warns nothing", () => {
+    const frames: Buffer[] = [];
     const warnCodes: string[] = [];
     const r = new FrameReader({
-      onFrame: () => {},
+      onFrame: (p) => frames.push(p),
       onWarning: (w) => warnCodes.push(w.code),
     });
-    // [VT, A, VT, B, FS, CR], VT mid-payload discards partial frame A, starts fresh with B
-    r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]));
-    expect(warnCodes).toContain("MLLP_TRAILING_BYTES");
+    // [VT, A, VT, B, FS, CR]: neither A nor B is delivered, and nothing is guessed.
+    expect(() => r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]))).toThrow(
+      expect.objectContaining({ code: "MLLP_PAYLOAD_CONTAINS_VT", byteOffset: 2 }),
+    );
+    expect(frames).toEqual([]);
+    expect(warnCodes).toEqual([]);
   });
 
-  it("VT mid-payload does not throw even without any tolerance opt-in", () => {
-    const r = new FrameReader({ onFrame: () => {} });
-    expect(() => r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]))).not.toThrow();
+  it("VT mid-payload throws with every tolerance on as well", () => {
+    const r = new FrameReader({
+      onFrame: () => {},
+      allowFsOnly: true,
+      allowLfAfterFs: true,
+      allowMissingLeadingVt: true,
+      allowLeadingWhitespace: true,
+    });
+    expect(() => r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]))).toThrow(
+      expect.objectContaining({ code: "MLLP_PAYLOAD_CONTAINS_VT" }),
+    );
   });
 
-  it("VT mid-payload: payload after the embedded VT is delivered as complete frame", () => {
-    const frames: Buffer[] = [];
-    const r = new FrameReader({ onFrame: (p) => frames.push(p) });
-    // Discard partial, deliver [B]
-    r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]));
-    expect(frames).toHaveLength(1);
-    expect(frames[0]).toEqual(Buffer.from([0x42]));
-  });
-
-  it("MLLP_TRAILING_BYTES is delivered on the discarded frame itself, not bled to the next", () => {
-    // [VT A VT B FS CR VT C FS CR]: frame1 (B) had a mid-payload discard; frame2 (C) is clean.
+  it("the warnings of a refused frame never reach the next frame", () => {
     const perFrame: Array<{ payload: string; codes: string[] }> = [];
     const r = new FrameReader({
+      allowLeadingWhitespace: true,
       onFrame: (p, _off, warnings) => {
         perFrame.push({ payload: p.toString("latin1"), codes: warnings.map((w) => w.code) });
       },
     });
-    r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d, 0x0b, 0x43, 0x1c, 0x0d]));
-    expect(perFrame).toHaveLength(2);
-    expect(must(perFrame[0]).payload).toBe("B");
-    expect(must(perFrame[0]).codes).toContain("MLLP_TRAILING_BYTES");
-    expect(must(perFrame[1]).payload).toBe("C");
-    // The discard belongs to frame 1 ONLY, it must not bleed onto the clean frame 2.
-    expect(must(perFrame[1]).codes).not.toContain("MLLP_TRAILING_BYTES");
+    // [SP VT A VT]: a warned frame, refused; then [VT C FS CR], clean.
+    expect(() => r.push(Buffer.from([0x20, 0x0b, 0x41, 0x0b]))).toThrow(
+      expect.objectContaining({ code: "MLLP_PAYLOAD_CONTAINS_VT" }),
+    );
+    r.push(Buffer.from([0x0b, 0x43, 0x1c, 0x0d]));
+    expect(perFrame).toEqual([{ payload: "C", codes: [] }]);
   });
 
-  it("an FS-without-CR stray byte does NOT emit MLLP_TRAILING_BYTES (reserved for mid-payload VT)", () => {
-    // [VT A FS X VT B FS CR]: frame1 (A) is FS-without-CR + stray 'X'; frame2 (B) is clean.
-    // MLLP_TRAILING_BYTES is reserved for a mid-payload VT discard, so neither frame may carry it,
-    // the stray byte is reported by MLLP_FS_WITHOUT_CR instead, and must not bleed onto frame 2.
-    const perFrame: Array<{ payload: string; codes: string[] }> = [];
+  it("an FS then a stray byte throws MLLP_PAYLOAD_CONTAINS_FS at the FS and delivers nothing", () => {
+    // [VT A FS X VT B FS CR]: the FS sat inside the frame, so A is not delivered with X dropped.
+    const frames: Buffer[] = [];
     const all: string[] = [];
     const r = new FrameReader({
       allowFsOnly: true,
       onWarning: (w) => all.push(w.code),
-      onFrame: (p, _off, warnings) => {
-        perFrame.push({ payload: p.toString("latin1"), codes: warnings.map((w) => w.code) });
-      },
+      onFrame: (p) => frames.push(p),
     });
-    r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x58, 0x0b, 0x42, 0x1c, 0x0d]));
-    expect(perFrame).toHaveLength(2);
-    expect(must(perFrame[0]).payload).toBe("A");
-    expect(must(perFrame[0]).codes).toContain("MLLP_FS_WITHOUT_CR");
-    expect(must(perFrame[1]).payload).toBe("B");
-    expect(all).not.toContain("MLLP_TRAILING_BYTES");
-    expect(must(perFrame[1]).codes).not.toContain("MLLP_TRAILING_BYTES");
+    let thrown: unknown;
+    try {
+      r.push(Buffer.from([0x0b, 0x41, 0x1c, 0x58, 0x0b, 0x42, 0x1c, 0x0d]));
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MllpFramingError);
+    expect(thrown).toMatchObject({ code: "MLLP_PAYLOAD_CONTAINS_FS", byteOffset: 2 });
+    expect((thrown as MllpFramingError).snippet).toEqual(Buffer.from([0x1c]));
+    expect((thrown as MllpFramingError).message).not.toContain("58");
+    expect(frames).toEqual([]);
+    expect(all).toEqual([]);
   });
 });
 

@@ -166,13 +166,9 @@ const ENCODING_CHAR_SUBSTITUTE = "#";
  *
  * **Where such a payload comes from.** The plainest route is that `buildRawAck` is a
  * **public export**: a caller can hand it any `Buffer` at all, having never gone near the
- * decoder. It can also arrive off the wire, a mid-payload `VT` makes `FrameReader` discard
- * what it accumulated and start over (`MLLP_TRAILING_BYTES`), so a *delivered* payload never
- * contains a `VT`, but a delivered payload CAN contain an `FS`: under the
- * `allowMissingLeadingVt` tolerance a non-VT, non-whitespace first byte becomes payload byte 0,
- * and `FS` (0x1C) is neither. (The `MLLP_PAYLOAD_CONTAINS_VT`/`_FS` codes are thrown by
- * **`encodeFrame`**, on the way out, never by the decoder, on the way in.) The guard does not
- * rest on the decoder screening these out; it rests on the public export.
+ * decoder. Off the wire, a *delivered* payload holds neither byte: `FrameReader` refuses a
+ * frame with a `VT` or a stray `FS` inside it (`MLLP_PAYLOAD_CONTAINS_VT`/`_FS`). The guard does
+ * not rest on the decoder screening these out; it rests on the public export.
  *
  * **It guards the DELIMITERS ONLY, it is not a guarantee that the ACK frames.** A
  * `VT`/`FS` inside echoed field *content* (MSH-3..6, MSH-10) is still copied verbatim,
@@ -202,8 +198,8 @@ const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
  * uncorrelatable, all peer-reachable off the wire:
  *
  *   1. **No readable `MSH`.** `readMshSegment` returns `null`, e.g. a `SP`/`TAB` before
- *      `MSH` (which shares the `MSH`'s segment line, so `MSH` heads no segment), or a bare
- *      fragment delivered after a mid-payload `VT` discard (`MLLP_TRAILING_BYTES`). A UTF-8
+ *      `MSH` (which shares the `MSH`'s segment line, so `MSH` heads no segment), or a frame
+ *      that holds only part of a message. A UTF-8
  *      byte order mark at byte 0 is not one of these: the scan skips it and reads the `MSH`.
  *      MSA-2 would be empty: an ACK that correlates to nothing.
  *   2. **Empty MSH-10.** The `MSH` is readable but carries no message control ID, so there

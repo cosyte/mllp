@@ -168,10 +168,10 @@ export interface MessageMeta {
  *   (no readable `MSH`, an empty MSH-10, or a batch/concatenated-message shape). A positive
  *   `AA` here names a control ID the sender cannot match → timeout → resend → **duplicate
  *   clinical message**. See {@link rawAckUncorrelatable}.
- * - `'discarded-bytes'`, the decoder flagged `MLLP_TRAILING_BYTES` for this frame: a
- *   mid-payload `VT` made it **discard accumulated bytes** and deliver only the fragment
- *   after it. The clinical message was destroyed in transit; a positive `AA` would tell the
- *   sender a message we never received was delivered.
+ * - `'discarded-bytes'`, no longer sent. It named a frame the decoder delivered as the fragment
+ *   after a mid-payload `VT`. The decoder now refuses such a frame whole
+ *   (`MLLP_PAYLOAD_CONTAINS_VT`) and closes the connection, so no fragment reaches the
+ *   acknowledgement path. The value stays in the type so code that names it still compiles.
  */
 export type NackReason = "handler-rejected" | "uncorrelatable-inbound" | "discarded-bytes";
 
@@ -190,7 +190,7 @@ export type NackReason = "handler-rejected" | "uncorrelatable-inbound" | "discar
  * @example
  * ```typescript
  * server.on('nack', ({ connectionId, ackCode, reason }) => {
- *   metrics.increment('mllp.nack', { code: ackCode, reason }); // e.g. reason='discarded-bytes'
+ *   metrics.increment('mllp.nack', { code: ackCode, reason }); // e.g. reason='handler-rejected'
  * });
  * ```
  */
@@ -579,7 +579,7 @@ const SERVER_DEFAULT_FRAMING: Omit<FrameReaderOptions, "onFrame" | "onWarning"> 
  * The `'nack'` event ({@link NackEvent}) fires whenever the server returns a negative ACK
  * instead of `AA` on the auto-ACK path, a commit-gated `autoAck: 'AA'` handler failing, or
  * a positive auto-ACK **downgraded** because the inbound could not be correlated (an
- * unreadable/uncorrelatable message, or one whose bytes the decoder discarded). The
+ * unreadable or uncorrelatable message). The
  * {@link NackReason} distinguishes the causes.
  *
  * **`'error'` contract:** underlying `net.Server`/`tls.Server` errors are forwarded to the
@@ -1645,7 +1645,7 @@ export class MllpServer extends EventEmitter {
     if (handler === undefined) {
       this._dispatchAck(
         conn,
-        buildRawAckFrom(inbound, this._resolveAutoAckPositive(inbound, meta, conn, selectCode)),
+        buildRawAckFrom(inbound, this._resolveAutoAckPositive(inbound, conn, selectCode)),
       );
       return;
     }
@@ -1656,7 +1656,7 @@ export class MllpServer extends EventEmitter {
       await handler(payload, meta, conn); // durable-commit step
       settled = readInbound(payload);
       // Commit succeeded, but only answer `AA` if the message is one we could correlate.
-      code = this._resolveAutoAckPositive(settled, meta, conn, selectCode);
+      code = this._resolveAutoAckPositive(settled, conn, selectCode);
     } catch (err: unknown) {
       const nack: NegativeAckCode = resolveNackCode(err);
       code = selectCode(nack);
@@ -1691,36 +1691,23 @@ export class MllpServer extends EventEmitter {
    * cannot carry a correlatable positive ACK, so `AA` never names a control ID the sender
    * cannot match (→ timeout → resend → **duplicate clinical message**).
    *
-   * Two independent disqualifiers, one from the bytes and one from the frame:
-   *
-   *   - **`rawAckUncorrelatable(payload)`**, no readable `MSH`, an empty MSH-10, or a
-   *     batch/concatenated-message shape. This is the SAME predicate `buildRawAck` enforces
-   *     on the wire; it is re-checked here so the downgrade is **observable** (a `'nack'`
-   *     event) rather than a silent code change inside the builder.
-   *   - **`MLLP_TRAILING_BYTES`** in the frame's warnings, a mid-payload `VT` made the
-   *     decoder discard accumulated bytes and deliver only the fragment after it. The
-   *     clinical message was destroyed in transit, so even a fragment that happens to carry
-   *     a readable MSH must not be positively acknowledged. This condition is invisible to
-   *     `buildRawAck` (it sees only the fragment), which is why it lives here. The code is
-   *     **reserved** for that discard (see the decoder's `_readPayload`) and is emitted while
-   *     accumulating the delivered frame, so it is frame-scoped: it names *this* payload's own
-   *     discard, never a neighbouring frame's trailing junk.
-   *
-   * `'discarded-bytes'` takes precedence in the reason when both hold, it is the root cause.
+   * The disqualifier is **`rawAckUncorrelatable(payload)`**: no readable `MSH`, an empty
+   * MSH-10, or a batch/concatenated-message shape. This is the SAME predicate `buildRawAck`
+   * enforces on the wire; it is re-checked here so the downgrade is **observable** (a `'nack'`
+   * event) rather than a silent code change inside the builder. A frame with a `VT` or a stray
+   * `FS` inside it never gets here: the decoder refuses it whole and the connection closes.
    *
    * `selectCode` puts the resolved disposition in the half of HL7 Table 0008 the inbound
    * asked for; it is the identity for a message that asked for nothing.
    */
   private _resolveAutoAckPositive(
     inbound: InboundRead,
-    meta: MessageMeta,
     conn: Connection,
     selectCode: (disposition: AckCode) => AckCode,
   ): AckCode {
-    const discarded = meta.warnings.some((w) => w.code === "MLLP_TRAILING_BYTES");
-    if (!discarded && !uncorrelatable(inbound)) return selectCode("AA");
+    if (!uncorrelatable(inbound)) return selectCode("AA");
 
-    const reason: NackReason = discarded ? "discarded-bytes" : "uncorrelatable-inbound";
+    const reason: NackReason = "uncorrelatable-inbound";
     const code = selectCode("AE");
     // CONTAINED, this runs inside `_sendCommitAck`, a `void`-ed async task. A throwing `'nack'`
     // subscriber must not unwind into it (unhandled rejection → process death) nor skip the `AE`
@@ -1857,13 +1844,10 @@ export class MllpServer extends EventEmitter {
     // what makes that safe.** `buildRawAck` decodes and encodes as `latin1`, a 1:1 byte↔code-unit
     // map, so it cannot *synthesize* a framing byte the way `ascii` masking once did
     // (`0x8B & 0x7F` = VT, the Phase 10 bug): it only ever echoes bytes that were already in the
-    // inbound. A delivered payload never contains a VT (`FrameReader` discards its accumulator on a
-    // mid-payload VT, `MLLP_TRAILING_BYTES`), so an echoed VT is not a concern here. It CAN,
-    // however, contain an FS: under the `allowMissingLeadingVt` tolerance a non-VT, non-whitespace
-    // first byte becomes payload byte 0, and FS (0x1C) qualifies, so an FS echoed out of MSH-10
-    // into MSA-2 reaches this `encodeFrame`, which throws `MLLP_PAYLOAD_CONTAINS_FS`. (Those codes
-    // are thrown by `encodeFrame`, on the way out; the decoder never emits them.) And a caller's
-    // `autoAck: fn` can of course return arbitrary bytes.
+    // inbound. A delivered payload holds neither a VT nor an FS (`FrameReader` refuses a frame with
+    // either inside it, `MLLP_PAYLOAD_CONTAINS_VT`/`_FS`), so an echoed framing byte is not a
+    // concern on this path today. The guard does not rest on that: a caller's `autoAck: fn` can
+    // return arbitrary bytes, and the reader's contract may change.
     //
     // Whichever route, defending the process must not depend on the caller's, or the peer's,
     // discipline. A build/frame failure is surfaced as a connection `'error'` and the message goes

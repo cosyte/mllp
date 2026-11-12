@@ -304,9 +304,9 @@ envelope, or a second `MSH` in the same frame, yields the warned, non-positive `
 positive `AA` correlated to the first message, which would tell the sender the whole batch was
 accepted while messages 2..N went unread. `buildMllpAck` refuses via its unparseable fallback;
 `buildRawAck` and the server's auto-ACK path refuse by downgrading a requested positive code. A raw
-`VT` inside a payload is the same class of hazard from the transport side: the decoder discards the
-accumulated bytes (`MLLP_TRAILING_BYTES`) and delivers only the fragment after it, and the auto-ACK
-path downgrades that frame rather than positively acknowledge a destroyed message. Batch ACK is its
+`VT`, or a bare `FS`, inside a frame is the same class of hazard from the transport side: the
+decoder refuses that frame whole (`MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`) and the
+connection closes, so no part of it is acknowledged. Batch ACK is its
 own unbuilt feature: see [It does not acknowledge an HL7 batch](#it-does-not-acknowledge-an-hl7-batch).
 
 ## API stability

@@ -4,8 +4,11 @@
  * A production MLLP listener faces hostile, corrupt, and adversarial byte streams.
  * The hard guarantee: feeding ARBITRARY random bytes into the decoder, whole or
  * split across arbitrary chunk boundaries, must never throw an *unexpected* error
- * and must never hang. The only sanctioned throw is the bounded-accumulator fatal
- * `MLLP_FRAME_TOO_LARGE` (FRAME-11), which random sub-cap noise cannot reach.
+ * and must never hang. The sanctioned throws are the bounded-accumulator fatal
+ * `MLLP_FRAME_TOO_LARGE` (FRAME-11), which random sub-cap noise cannot reach, and the
+ * refusal of a frame with a `VT` or a bare `FS` inside it (`MLLP_PAYLOAD_CONTAINS_VT`,
+ * `MLLP_PAYLOAD_CONTAINS_FS`), which noise reaches often. Over a `Connection` a sanctioned
+ * refusal is never thrown: it is one `'error'` event with `connectionCause: 'framing-fatal'`.
  *
  * This is driven over the **in-memory transport** wherever possible (per the mllp
  * guardrail "every test that can run over it must run over it"): random bytes are
@@ -20,6 +23,7 @@ import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 
 import { Connection } from "../../src/connection/connection.js";
+import { MllpConnectionError } from "../../src/connection/error.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { MllpFramingError } from "../../src/framing/error.js";
 import { FrameReader } from "../../src/framing/decoder.js";
@@ -43,17 +47,37 @@ const ALL_TOLERANCES = {
   allowLeadingWhitespace: true,
 } as const;
 
-/** The single fatal a tolerant decoder may throw on sub-cap input: never, in practice. */
-const SANCTIONED_FATAL: WarningCode = "MLLP_FRAME_TOO_LARGE";
+/**
+ * The fatals a tolerant decoder may throw: the oversized frame (never, in practice, on sub-cap
+ * input), and a frame refused whole for a `VT` or a bare `FS` inside it.
+ */
+const SANCTIONED_FATALS: ReadonlySet<string> = new Set<WarningCode>([
+  "MLLP_FRAME_TOO_LARGE",
+  "MLLP_PAYLOAD_CONTAINS_VT",
+  "MLLP_PAYLOAD_CONTAINS_FS",
+]);
 
 /**
- * Assert a thrown value is the one sanctioned framing fatal; rethrow anything else
+ * Assert a thrown value is a sanctioned framing fatal; rethrow anything else
  * so fast-check reports it as a counterexample (an *unexpected* throw is the bug
  * the fuzzer hunts).
  */
 function assertSanctioned(err: unknown): void {
-  if (err instanceof MllpFramingError && err.code === SANCTIONED_FATAL) return;
+  if (err instanceof MllpFramingError && SANCTIONED_FATALS.has(err.code)) return;
   throw err;
+}
+
+/**
+ * The connection's `'error'` events: at most one, and only a framing fatal whose cause is a
+ * sanctioned refusal. Anything else is an internal error the fuzzer hunts.
+ */
+function expectOnlySanctionedErrors(errors: readonly Error[]): void {
+  expect(errors.length).toBeLessThanOrEqual(1);
+  for (const e of errors) {
+    expect(e).toBeInstanceOf(MllpConnectionError);
+    expect((e as MllpConnectionError).connectionCause).toBe("framing-fatal");
+    assertSanctioned(e.cause);
+  }
 }
 
 /**
@@ -90,7 +114,7 @@ function makeFuzzConnection(): {
 
 describe("fuzz: arbitrary random bytes over the in-memory transport never crash the decoder", () => {
   it(
-    "whole-buffer random noise: only MLLP_FRAME_TOO_LARGE may throw; no hang",
+    "whole-buffer random noise: only a sanctioned refusal may throw; no hang",
     () => {
       fc.assert(
         fc.property(randomBytes(), (bytes) => {
@@ -101,9 +125,9 @@ describe("fuzz: arbitrary random bytes over the in-memory transport never crash 
           } catch (err) {
             assertSanctioned(err);
           }
-          // No internal error should have leaked through the connection's error event
-          // either (a framing fatal is thrown, not emitted, so this stays empty).
-          expect(errors).toEqual([]);
+          // No internal error leaked through the connection's error event either: the only
+          // one allowed is a sanctioned refusal, reported once as a framing fatal.
+          expectOnlySanctionedErrors(errors);
         }),
         amplified(NUM_RUNS),
       );
@@ -122,7 +146,7 @@ describe("fuzz: arbitrary random bytes over the in-memory transport never crash 
           } catch (err) {
             assertSanctioned(err);
           }
-          expect(errors).toEqual([]);
+          expectOnlySanctionedErrors(errors);
         }),
         amplified(NUM_RUNS),
       );
@@ -144,7 +168,7 @@ describe("fuzz: arbitrary random bytes over the in-memory transport never crash 
           } catch (err) {
             assertSanctioned(err);
           }
-          expect(errors).toEqual([]);
+          expectOnlySanctionedErrors(errors);
         }),
         amplified(400),
       );

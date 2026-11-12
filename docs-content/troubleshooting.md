@@ -114,8 +114,9 @@ Watch the server's `nack` event; its `reason` says why:
   several messages in one frame. A positive acknowledgment there could not be matched by the sender,
   so it is never sent. Split batches before they reach you, or answer them yourself with
   `autoAck` as a function.
-- `discarded-bytes`: a `VT` arrived inside a frame and the decoder discarded the bytes before it
-  (`MLLP_TRAILING_BYTES`). The message that arrived is a fragment.
+- `discarded-bytes`: no longer sent. A `VT` or a stray `FS` inside a frame now refuses the frame
+  whole: watch the server's `error` event for `MLLP_PAYLOAD_CONTAINS_VT` or
+  `MLLP_PAYLOAD_CONTAINS_FS` instead.
 
 ## The sender cannot match your acknowledgments and resends
 

@@ -90,17 +90,19 @@ describe("FrameReader, strict mode (WARN-08)", () => {
     });
   });
 
-  describe("MLLP_TRAILING_BYTES stays a warning in strict mode", () => {
-    it("does not throw for trailing bytes with strict: true", () => {
+  describe("a VT inside a frame is refused in strict mode as in any other", () => {
+    it("throws MLLP_PAYLOAD_CONTAINS_VT with strict: true and warns nothing", () => {
       const warnings: string[] = [];
       const r = new FrameReader({
         onFrame: () => {},
         onWarning: (w) => warnings.push(w.code),
         strict: true,
       });
-      // Feed: [VT, A, VT, B, FS, CR], second VT triggers MLLP_TRAILING_BYTES for 'A'
-      expect(() => r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]))).not.toThrow();
-      expect(warnings).toContain("MLLP_TRAILING_BYTES");
+      // Feed: [VT, A, VT, B, FS, CR], the second VT refuses the frame whole
+      expect(() => r.push(Buffer.from([0x0b, 0x41, 0x0b, 0x42, 0x1c, 0x0d]))).toThrow(
+        expect.objectContaining({ code: "MLLP_PAYLOAD_CONTAINS_VT" }),
+      );
+      expect(warnings).toEqual([]);
     });
   });
 

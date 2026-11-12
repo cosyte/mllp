@@ -2,8 +2,10 @@
  * Property tests for the Postel's-Law DECODE side: the `FrameReader` is liberal in
  * what it accepts. With its tolerance opt-ins enabled, feeding malformed-but-
  * recoverable frames must NEVER throw, every deviation is recovered into a
- * warning, except for the one sanctioned fatal `MLLP_FRAME_TOO_LARGE` (FRAME-11
- * DoS guard), which throws even under full tolerance.
+ * warning, except for the sanctioned refusals no tolerance turns off: the
+ * oversized frame `MLLP_FRAME_TOO_LARGE` (FRAME-11 DoS guard), and a frame with a
+ * `VT` or a bare `FS` inside it, whose end cannot be told, refused whole as
+ * `MLLP_PAYLOAD_CONTAINS_VT` or `MLLP_PAYLOAD_CONTAINS_FS`.
  *
  * This is the generative analogue of `test/framing/decoder.test.ts` and
  * `test/framing/strict-mode.test.ts`. Invariants on the warnings themselves:
@@ -14,8 +16,8 @@
  * Wiring to the `@cosyte/test-utils` `lenientNeverThrowsProperty` runner:
  *   - `parse`       , drive a tolerant `FrameReader` over the bytes; collect
  *                      emitted warnings; return `{ warnings }`.
- *   - `isFatal`     , `err instanceof MllpFramingError && err.code === 'MLLP_FRAME_TOO_LARGE'`
- *                      (the only code the decoder may throw under full tolerance).
+ *   - `isFatal`     , `err instanceof MllpFramingError` with a code in `SANCTIONED_FATALS`
+ *                      (the only codes the decoder may throw under full tolerance).
  *   - `getWarnings` , the collected `MllpWarning[]` (mapped to `{ code, position }`).
  *   - `isKnownCode` , membership in the 11-code registry.
  *   - `hasPositionalContext`, `byteOffset` is a finite number.
@@ -65,8 +67,23 @@ const ALL_TOLERANCES = {
   allowLeadingWhitespace: true,
 } as const;
 
-/** The single fatal code the decoder may throw even under full tolerance. */
+/** The single fatal code a well-delimited frame may still throw under full tolerance. */
 const SANCTIONED_FATAL: WarningCode = "MLLP_FRAME_TOO_LARGE";
+
+/**
+ * Every code the decoder may throw under full tolerance: the oversized frame, and a frame whose
+ * end cannot be told because a `VT` or a bare `FS` sits inside it, refused whole.
+ */
+const SANCTIONED_FATALS: ReadonlySet<string> = new Set<WarningCode>([
+  SANCTIONED_FATAL,
+  "MLLP_PAYLOAD_CONTAINS_VT",
+  "MLLP_PAYLOAD_CONTAINS_FS",
+]);
+
+/** Whether `err` is one of the decoder's sanctioned refusals. */
+function isSanctioned(err: unknown): boolean {
+  return err instanceof MllpFramingError && SANCTIONED_FATALS.has(err.code);
+}
 
 /**
  * Drive a maximally-tolerant `FrameReader` over `bytes` and return every warning
@@ -107,11 +124,11 @@ function hasByteOffset(w: LenientWarning): boolean {
 usePropertyBudget();
 
 describe("property: lenient decoder never throws except the sanctioned fatal", () => {
-  it("every malformed-but-recoverable frame recovers into warnings (or throws only MLLP_FRAME_TOO_LARGE)", () => {
+  it("every malformed-but-recoverable frame recovers into warnings (or throws only a sanctioned refusal)", () => {
     lenientNeverThrowsProperty<MalformedFrame>({
       arbitrary: malformedFrame(),
       parse: (mf) => parseTolerant(mf.bytes, mf.maxFrameSizeBytes),
-      isFatal: (err) => err instanceof MllpFramingError && err.code === SANCTIONED_FATAL,
+      isFatal: isSanctioned,
       getWarnings: toLenientWarnings,
       isKnownCode: (code) => KNOWN_CODES.has(code),
       hasPositionalContext: hasByteOffset,
@@ -144,9 +161,10 @@ describe("property: lenient decoder never throws except the sanctioned fatal", (
       "fs-without-cr": "MLLP_FS_WITHOUT_CR",
       "lf-after-fs": "MLLP_LF_AFTER_FS",
       "leading-whitespace": "MLLP_LEADING_WHITESPACE",
-      "trailing-bytes": "MLLP_TRAILING_BYTES",
       "empty-payload": "MLLP_EMPTY_PAYLOAD",
       "frame-too-large": null, // throws instead of warning
+      "vt-inside-frame": null, // refused whole, see below
+      "fs-inside-frame": null, // refused whole, see below
     };
     checkProperty(
       fc.property(malformedFrame(), (mf) => {
@@ -159,11 +177,40 @@ describe("property: lenient decoder never throws except the sanctioned fatal", (
   });
 });
 
+describe("property: a VT or a bare FS inside a frame is refused whole under full tolerance", () => {
+  it("delivers nothing of the frame and throws its code, with a one-byte snippet", () => {
+    checkProperty(
+      fc.property(
+        malformedFrame().filter(
+          (mf) => mf.kind === "vt-inside-frame" || mf.kind === "fs-inside-frame",
+        ),
+        (mf) => {
+          let delivered = 0;
+          let thrown: unknown;
+          try {
+            new FrameReader({ ...ALL_TOLERANCES, onFrame: () => delivered++ }).push(mf.bytes);
+          } catch (err) {
+            thrown = err;
+          }
+          expect(delivered).toBe(0);
+          expect(thrown).toBeInstanceOf(MllpFramingError);
+          const fe = thrown as MllpFramingError;
+          expect(fe.code).toBe(
+            mf.kind === "vt-inside-frame" ? "MLLP_PAYLOAD_CONTAINS_VT" : "MLLP_PAYLOAD_CONTAINS_FS",
+          );
+          expect(fe.snippet.length).toBe(1);
+        },
+      ),
+    );
+  });
+});
+
 describe("property: lenient decoder vs hostile byte noise", () => {
   it("arbitrary random bytes (and chunk-splits) never throw a non-sanctioned error", () => {
-    // The decoder under full tolerance must treat ANY byte stream as recoverable:
-    // every deviation is a warning, the only legal throw is MLLP_FRAME_TOO_LARGE
-    // (which random <=512-byte noise under the default 16 MB cap cannot reach).
+    // The decoder under full tolerance treats ANY byte stream as recoverable or refuses
+    // a frame by a sanctioned code: every other deviation is a warning. Random noise holds
+    // VT and FS bytes at random places, so the refusals of a frame with one inside it are
+    // reachable here; MLLP_FRAME_TOO_LARGE is not (<=512 bytes under the 16 MB cap).
     lenientNeverThrowsProperty<Buffer[]>({
       arbitrary: hostileBytesOrChunks(),
       parse: (chunks) => {
@@ -176,7 +223,7 @@ describe("property: lenient decoder vs hostile byte noise", () => {
         for (const chunk of chunks) reader.push(chunk);
         return { warnings };
       },
-      isFatal: (err) => err instanceof MllpFramingError && err.code === SANCTIONED_FATAL,
+      isFatal: isSanctioned,
       getWarnings: toLenientWarnings,
       isKnownCode: (code) => KNOWN_CODES.has(code),
       hasPositionalContext: hasByteOffset,

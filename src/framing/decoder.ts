@@ -8,6 +8,11 @@
  * unless the matching tolerance option is explicitly enabled (Postel's Law, liberal receiver
  * means explicit tolerance, not silent acceptance).
  *
+ * A frame whose end cannot be told is refused whole whatever the tolerances: a `VT` inside it
+ * throws `MLLP_PAYLOAD_CONTAINS_VT`, and an `FS` followed by anything but `CR`, `LF` or the next
+ * frame's `VT` throws `MLLP_PAYLOAD_CONTAINS_FS`. Nothing of that frame is delivered, the reader
+ * is left scanning for the next `VT`, and the error names only the framing byte and its offset.
+ *
  * @example
  * ```typescript
  * import { FrameReader } from '@cosyte/mllp';
@@ -84,7 +89,11 @@ export interface FrameReaderOptions {
    * Default: 16 MiB (DoS prevention).
    */
   maxFrameSizeBytes?: number;
-  /** Tolerate FS without trailing CR; emits `MLLP_FS_WITHOUT_CR`. */
+  /**
+   * Tolerate FS without trailing CR when the next frame's VT follows it; emits
+   * `MLLP_FS_WITHOUT_CR`. Any other byte after the FS means the FS sat inside the frame, and the
+   * frame is refused whole with `MLLP_PAYLOAD_CONTAINS_FS`.
+   */
   allowFsOnly?: boolean;
   /** Tolerate FS+LF instead of FS+CR; emits `MLLP_LF_AFTER_FS`. */
   allowLfAfterFs?: boolean;
@@ -101,7 +110,7 @@ export interface FrameReaderOptions {
    * - `MLLP_LF_AFTER_FS`
    * - `MLLP_LEADING_WHITESPACE` (leading whitespace escalates as `MLLP_MISSING_LEADING_VT`)
    *
-   * `MLLP_EMPTY_PAYLOAD` and `MLLP_TRAILING_BYTES` remain warnings even in strict mode.
+   * `MLLP_EMPTY_PAYLOAD` remains a warning even in strict mode.
    *
    * @example
    * ```typescript
@@ -465,21 +474,16 @@ export class FrameReader {
     }
 
     if (byte === VT) {
-      // VT mid-payload: the current partial payload is abandoned and accumulation restarts after
-      // this VT, so the frame that eventually delivers is only the REMNANT after the discard.
-      // Emit MLLP_TRAILING_BYTES (always a warning, never a throw), this is the code's **reserved**
-      // meaning: "bytes were discarded; the delivered payload is a fragment." It is emitted while
-      // accumulating the remnant frame, so it attaches to that frame (never bled onto another), and
-      // `MllpServer`'s auto-ACK path keys on it to refuse a positive `AA` for a destroyed message.
-      this._emitWarning(
-        "MLLP_TRAILING_BYTES",
+      // A VT inside a frame. Where the frame was meant to end cannot be told from here: the bytes
+      // before it may be a whole message whose trailer went missing, or a fragment a sender gave
+      // up on. Keeping either part is a guess, and both guesses lose a message without a word (the
+      // bytes before it, or the frame the sender believes it sent). So the frame is refused whole.
+      this._refuse(
+        "MLLP_PAYLOAD_CONTAINS_VT",
         this._byteOffset,
-        `Unexpected VT (0x0B) mid-payload at offset ${this._byteOffset}; discarding ${this._writePos} accumulated bytes`,
+        VT,
+        `VT (0x0B) inside a frame at offset ${this._byteOffset}; the frame is refused whole`,
       );
-      this._discard();
-      // Remain in READING_PAYLOAD, the VT starts a new frame payload accumulation
-      this._state = "READING_PAYLOAD";
-      return;
     }
 
     // Regular payload byte, enforce size cap BEFORE appending
@@ -570,26 +574,18 @@ export class FrameReader {
           `Strict mode: FS without CR at offset ${this._byteOffset}`,
         );
       }
-      // Deliver the completed frame and flag the missing CR; the stray byte is then dropped and
-      // we return to scanning. The single FS_WITHOUT_CR warning names the stray byte and is
-      // attached to the frame it followed.
-      //
-      // We deliberately do NOT also emit MLLP_TRAILING_BYTES here. That code is **reserved for a
-      // VT appearing mid-payload** (see `_readPayload`), where it means "this delivered payload is
-      // only the remnant after accumulated bytes were discarded", a signal `MllpServer`'s
-      // auto-ACK path keys on to refuse a positive `AA` for a message whose bytes were destroyed.
-      // Emitting it for an inter-frame stray byte overloaded that meaning AND mis-attributed it:
-      // it was emitted *after* `_deliverFrame()`, so it landed in the NEXT frame's warning
-      // accumulator and made a subsequent, perfectly good message look discarded. FS_WITHOUT_CR
-      // already, correctly, reports this deviation.
-      this._emitWarning(
-        "MLLP_FS_WITHOUT_CR",
-        this._byteOffset,
-        `FS not followed by CR at offset ${this._byteOffset}; got 0x${byte.toString(16).padStart(2, "0")} (dropped)`,
+      // `allowFsOnly` tolerates an FS that the next frame's VT follows. Any other byte here means
+      // the FS sat inside the frame: two messages joined by a bare FS, or a stray FS in a field.
+      // Delivering the bytes before it and dropping this one used to hand on the first message
+      // and cut the first byte off the next, after which the reader threw and the connection
+      // closed before the first could be acknowledged. Where the frame ends cannot be told, so it
+      // is refused whole, named at the FS, and nothing of it is delivered.
+      this._refuse(
+        "MLLP_PAYLOAD_CONTAINS_FS",
+        this._byteOffset - 1,
+        FS,
+        `FS (0x1C) inside a frame at offset ${this._byteOffset - 1}; the frame is refused whole`,
       );
-      this._deliverFrame();
-      this._state = "SCANNING_FOR_VT";
-      return;
     }
 
     const snippet = Buffer.from([byte]);
@@ -636,6 +632,23 @@ export class FrameReader {
     const frameWarnings: readonly MllpWarning[] = this._frameWarnings;
     this._frameWarnings = []; // reset for next frame
     this._opts.onFrame(payload, frameStart, frameWarnings);
+  }
+
+  /**
+   * Refuse the current frame whole: forget its bytes and its warnings, go back to scanning for a
+   * VT, and throw. The error names the framing byte (`delimiter`) and its offset, never a byte of
+   * the frame's content, and nothing of the frame is delivered.
+   */
+  private _refuse(
+    code: WarningCode,
+    byteOffset: number,
+    delimiter: number,
+    message: string,
+  ): never {
+    this._discard();
+    this._frameWarnings = [];
+    this._state = "SCANNING_FOR_VT";
+    throw new MllpFramingError(code, byteOffset, Buffer.from([delimiter]), message);
   }
 
   /** Emit a warning via the `onWarning` callback, swallowing any handler exceptions. */

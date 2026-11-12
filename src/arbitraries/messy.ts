@@ -52,9 +52,9 @@ export interface MessyStream extends GeneratedStream {
 /** How a frame opens. */
 type Opening = "vt" | "whitespace" | "no-vt" | "whitespace-no-vt";
 /** What sits between the opening and the payload. */
-type Body = "plain" | "empty" | "discarded";
+type Body = "plain" | "empty";
 /** How a frame ends. */
-type Ending = "cr" | "lf" | "fs-only" | "stray";
+type Ending = "cr" | "lf" | "fs-only";
 
 /** One frame's choices, before the stream fixes them up so that they read as intended. */
 interface FrameChoice {
@@ -62,9 +62,7 @@ interface FrameChoice {
   readonly body: Body;
   readonly ending: Ending;
   readonly whitespace: readonly number[];
-  readonly discarded: readonly number[];
   readonly payload: readonly number[];
-  readonly stray: number;
 }
 
 /** The parts of a messy stream built so far. */
@@ -87,7 +85,7 @@ function quirks(options: MessyStreamOptions): {
   if (ws && noVt) openings.push("whitespace-no-vt");
   const endings: Ending[] = ["cr"];
   if (options.allowLfAfterFs !== false) endings.push("lf");
-  if (options.allowFsOnly !== false) endings.push("fs-only", "stray");
+  if (options.allowFsOnly !== false) endings.push("fs-only");
   return { openings, endings };
 }
 
@@ -96,13 +94,10 @@ function frameChoice(options: MessyStreamOptions): fc.Arbitrary<FrameChoice> {
   const { openings, endings } = quirks(options);
   return fc.record({
     opening: fc.constantFrom(...openings),
-    body: fc.constantFrom<Body>("plain", "empty", "discarded"),
+    body: fc.constantFrom<Body>("plain", "empty"),
     ending: fc.constantFrom(...endings),
     whitespace: fc.array(fc.constantFrom(...WHITESPACE), { minLength: 1, maxLength: 4 }),
-    discarded: payloadBytes({ ...options, minLength: 0, maxLength: 16 }),
     payload: payloadBytes(options),
-    // After FS, any byte but CR and LF (which end the frame properly) and VT (which opens the next).
-    stray: fc.integer({ min: 0, max: 0xff }).filter((b) => b !== CR && b !== LF && b !== VT),
   });
 }
 
@@ -111,7 +106,6 @@ function frameChoice(options: MessyStreamOptions): fc.Arbitrary<FrameChoice> {
  *
  * - a frame after an `fs-only` ending opens with its `VT`, which is what ends the frame before;
  * - a frame with no `VT` cannot open on whitespace a reader skips, so such a payload gets its `VT`;
- * - a frame with no `VT` has nothing to discard, since discarding starts at a `VT`;
  * - the last frame does not end `fs-only`, which only the next frame's `VT` completes.
  */
 function append(built: Built, choice: FrameChoice, mustOpenWithVt: boolean, last: boolean): void {
@@ -119,10 +113,7 @@ function append(built: Built, choice: FrameChoice, mustOpenWithVt: boolean, last
   let opening = mustOpenWithVt ? "vt" : choice.opening;
   const noVt = opening === "no-vt" || opening === "whitespace-no-vt";
   const first = payload[0];
-  if (
-    noVt &&
-    (choice.body === "discarded" || (first !== undefined && WHITESPACE.includes(first)))
-  ) {
+  if (noVt && first !== undefined && WHITESPACE.includes(first)) {
     opening = opening === "no-vt" ? "vt" : "whitespace";
   }
   const ending = last && choice.ending === "fs-only" ? "cr" : choice.ending;
@@ -137,10 +128,6 @@ function append(built: Built, choice: FrameChoice, mustOpenWithVt: boolean, last
   } else if (!mustOpenWithVt) {
     built.bytes.push(VT);
   }
-  if (choice.body === "discarded") {
-    built.bytes.push(...choice.discarded, VT);
-    warnings.push("MLLP_TRAILING_BYTES");
-  }
   built.bytes.push(...payload, FS);
   if (payload.length === 0) warnings.push("MLLP_EMPTY_PAYLOAD");
   if (ending === "cr") built.bytes.push(CR);
@@ -149,8 +136,7 @@ function append(built: Built, choice: FrameChoice, mustOpenWithVt: boolean, last
     warnings.push("MLLP_LF_AFTER_FS");
   } else {
     // `fs-only` is ended by the next frame's VT, which that frame writes as its opening.
-    if (ending === "stray") built.bytes.push(choice.stray);
-    else built.bytes.push(VT);
+    built.bytes.push(VT);
     warnings.push("MLLP_FS_WITHOUT_CR");
   }
   built.payloads.push(Buffer.from(payload));
@@ -174,10 +160,11 @@ function buildMessy(choices: readonly FrameChoice[]): Built {
  * payloads it must deliver and the warnings each must carry.
  *
  * Each frame may open with spaces, tabs, line feeds or carriage returns before its `VT`, or with no
- * `VT` at all; carry an empty payload; carry bytes before a second `VT` that the reader discards
- * (`MLLP_TRAILING_BYTES`, the payload delivered is what follows that `VT`); and end with `FS` and
- * `LF`, with `FS` and the next frame's `VT`, or with `FS` and a stray byte the reader drops. Give it
- * the tolerances your reader has, and it generates only what that reader accepts.
+ * `VT` at all; carry an empty payload; and end with `FS` and `LF`, or with `FS` and the next frame's
+ * `VT`. Give it the tolerances your reader has, and it generates only what that reader accepts. It
+ * never puts a `VT` inside a frame, nor an `FS` with anything but `CR`, `LF` or the next `VT` after
+ * it: a reader refuses such a frame whole (`MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`),
+ * so no reader accepts it.
  *
  * @param options - The payloads, frames, cuts and tolerances.
  * @returns An arbitrary of messy streams.

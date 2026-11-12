@@ -76,8 +76,9 @@ Our rule that a positive acknowledgment can never go out before the message is c
 `autoAck: "AA"` and an `onMessage` handler, the server awaits the handler and answers `AA` (or
 `CA`) only if it resolved; a handler that throws is answered `AE` (or `CE`), and one that throws an
 `MllpAckError` with `ackCode: "AR"` is answered `AR` (or `CR`). The server also never answers
-positively for a message it cannot correlate: no readable `MSH`, an empty `MSH-10`, a batch, several
-messages in one frame, or a frame whose bytes the decoder had to discard. The contract is explained
+positively for a message it cannot correlate: no readable `MSH`, an empty `MSH-10`, a batch, or
+several messages in one frame. A frame with a stray `VT` or `FS` inside it is refused whole and not
+acknowledged at all. The contract is explained
 in [ACKs and the commit contract](./acks.md#the-commit-contract).
 
 ### Transport accept
