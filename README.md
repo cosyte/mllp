@@ -111,7 +111,8 @@ const msa = ack
   .split("\r")
   .find((segment) => segment.startsWith("MSA|"))
   ?.split("|");
-console.log("acknowledgement code:", msa?.[1]);
+const code = msa?.[1];
+console.log("acknowledgement code:", code);
 console.log("MSA-2 echoes the control id sent:", msa?.[2] === "CTRL0001");
 console.log("messages committed:", committed.length);
 

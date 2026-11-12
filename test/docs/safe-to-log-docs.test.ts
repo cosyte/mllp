@@ -146,6 +146,7 @@ describe("no example prints an identifying value or a whole message", () => {
     ["a control id read off a live event", "client.on('ack', (e) => logger.info(e.controlId));"],
     ["the control id an ACK echoes", "console.log(ack.code, ack.correlationId);"],
     ["a framing error's snippet", "logger.error({ bytes: err.snippet });"],
+    ["MSA-2 read off a split MSA segment", "console.log(`MSA-2 ${String(msa?.[2])}`);"],
   ])("holds this package's own names, so %s printed is found", (_what, code) => {
     expect(findings([{ where: "own.ts", code }])).toHaveLength(1);
   });
@@ -155,6 +156,7 @@ describe("no example prints an identifying value or a whole message", () => {
       "console.log('received', payload.length, 'bytes from', meta.connectionId);",
       "logger.info({ code: ack.code, latencyMs: e.latencyMs });",
       "logger.warn({ idBytes: err.messageControlIdBytes });",
+      'console.log("MSA-2 echoes it:", msa?.[2] === "CTRL0001");',
     ].join("\n");
     expect(findings([{ where: "own.ts", code }])).toEqual([]);
   });
@@ -194,6 +196,72 @@ function emittedEvents(): string[] {
     for (const m of readFileSync(file, "utf8").matchAll(emit)) names.add(m[1] ?? "");
   }
   return [...names].sort();
+}
+
+/** A TypeScript text with its comments blanked to spaces, strings and templates kept. */
+function withoutComments(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i] ?? "";
+    const next = text[i + 1] ?? "";
+    if (c === "/" && (next === "/" || next === "*")) {
+      const end = next === "/" ? text.indexOf("\n", i) : text.indexOf("*/", i + 2) + 2;
+      const stop = end <= 1 || end === -1 ? text.length : end;
+      out += text.slice(i, stop).replace(/[^\n]/gu, " ");
+      i = stop;
+    } else if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j + 1;
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** The keys at the top level of the object literal whose `{` is at `open`. */
+function literalKeys(text: string, open: number): string[] {
+  const keys: string[] = [];
+  let depth = 0;
+  let piece = "";
+  for (let i = open; i < text.length; i++) {
+    const c = text[i] ?? "";
+    if ("({[".includes(c)) depth += 1;
+    if (")}]".includes(c)) depth -= 1;
+    if (depth === 0 || (depth === 1 && c === ",")) {
+      const key = /^\s*(\w+)\s*(?::|$)/u.exec(piece)?.[1];
+      if (key !== undefined) keys.push(key);
+      piece = "";
+      if (depth === 0) break;
+      continue;
+    }
+    if (depth === 1 && i !== open) piece += c;
+  }
+  return keys;
+}
+
+/**
+ * Every field of every event payload `src/` builds inline where it emits it, as event name to
+ * field names: the `error` event's `{ connectionId, error, controlIdBytes }` among them.
+ */
+function emittedFields(): Map<string, Set<string>> {
+  const emit =
+    /(?:(?:\.emit|_emitContained|emitSubscriberSafe)\(\s*"(\w+)",|safeEmit\(\s*\w+,\s*"(\w+)",|(?:safeEmitError\(\s*\w+,|_emitErrorIfListened\())\s*Object\.freeze\(\{/gu;
+  const out = new Map<string, Set<string>>();
+  for (const file of sourceFiles()) {
+    const text = withoutComments(readFileSync(file, "utf8"));
+    for (const m of text.matchAll(emit)) {
+      const event = m[1] ?? m[2] ?? "error";
+      const fields = out.get(event) ?? new Set<string>();
+      for (const key of literalKeys(text, m.index + m[0].length - 1)) fields.add(key);
+      out.set(event, fields);
+    }
+  }
+  return out;
 }
 
 /** Every error class the published entry points export. */
@@ -242,6 +310,24 @@ describe("What is safe to log", () => {
     expect(
       events.filter((event) => !table.some((cells) => (cells[0] ?? "").includes(`\`${event}\``))),
     ).toEqual([]);
+  });
+
+  it("names every field of every event payload the source builds where it emits it", () => {
+    const fields = emittedFields();
+    expect([...(fields.get("error") ?? [])].sort()).toEqual([
+      "connectionId",
+      "controlIdBytes",
+      "error",
+    ]);
+    const events = rows(text.slice(text.indexOf("### Events"), text.indexOf("### Hooks")));
+    const missing: string[] = [];
+    for (const [event, keys] of fields) {
+      const row = rowFor(events, event);
+      const said = (row ?? []).slice(1).join(" ");
+      if (said.includes("every field")) continue;
+      for (const key of keys) if (!said.includes(`\`${key}\``)) missing.push(`${event}.${key}`);
+    }
+    expect(missing).toEqual([]);
   });
 
   it("names every exported error with every field it declares", () => {
@@ -522,13 +608,16 @@ const OUTPUT_FENCE = /^(?:|text|console|output)$/u;
 /** A plain trailing comment that shows a value after code: `read(x); // "CTRL0001"`. */
 const TRAILING_VALUE = /\S\s+\/\/\s+(["[{].*)$/u;
 
+/** Any trailing comment after code: `send(m); // prints MSA|AA|CTRL0001`. */
+const TRAILING_COMMENT = /\S\s+\/\/\s?(.*)$/u;
+
 /**
  * Every shown value on the pages, as `[where, value]`: `// =>` annotations, plain trailing comments
- * that show a value, and output blocks.
+ * that show a value, any other trailing comment that holds a whole segment, and output blocks.
  */
-function shownValues(): [string, string][] {
+function shownValues(from: readonly [string, string][] = pages()): [string, string][] {
   const out: [string, string][] = [];
-  for (const [label, text] of pages()) {
+  for (const [label, text] of from) {
     let fence: string | undefined;
     text.split("\n").forEach((line, i) => {
       const where = `${label}:${String(i + 1)}`;
@@ -546,6 +635,9 @@ function shownValues(): [string, string][] {
         out.push([where, line.slice(at + "// =>".length).trim()]);
       } else if (trailing) {
         out.push([where, (trailing[1] ?? "").trim()]);
+      } else {
+        const comment = (TRAILING_COMMENT.exec(line)?.[1] ?? "").trim();
+        if (SHOWN_SEGMENT.test(comment)) out.push([where, comment]);
       }
     });
   }
@@ -563,7 +655,7 @@ describe("a shown value", () => {
     expect(ids.literals.has("900000001")).toBe(true);
     expect(ids.dates.has("19700101")).toBe(true);
     expect(shown.length).toBeGreaterThan(100);
-    expect(shown.some(([where]) => where === "README.md:123")).toBe(true);
+    expect(shown.some(([where]) => where === "README.md:124")).toBe(true);
   });
 
   it("is caught holding a planted name, record number, birth date or segment", () => {
@@ -577,6 +669,18 @@ describe("a shown value", () => {
     expect(SHOWN_SEGMENT.test('"MSA|AA|CTRL0001"')).toBe(true);
     expect(SHOWN_SEGMENT.test('"ADT^A01"')).toBe(false);
     expect(SHOWN_SEGMENT.test('"MLLP_ACK_FIFO_MSA1_UNREADABLE"')).toBe(false);
+  });
+
+  it("is read from any trailing comment that holds a whole segment", () => {
+    const planted = [
+      "```ts",
+      "await client.send(message); // prints MSA|AA|CTRL0001",
+      "await client.close(); // the link drains first",
+      "```",
+    ].join("\n");
+    expect(shownValues([["planted.md", planted]])).toEqual([
+      ["planted.md:2", "prints MSA|AA|CTRL0001"],
+    ]);
   });
 
   it("never holds an identifying value from the synthetic data", () => {

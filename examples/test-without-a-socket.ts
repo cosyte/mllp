@@ -52,9 +52,10 @@ const msa = acks[0]
   .find((segment) => segment.startsWith("MSA|"))
   ?.split("|");
 console.log(`acknowledgements received: ${String(acks.length)}`);
-console.log(`MSA-1 ${String(msa?.[1])}, MSA-2 ${String(msa?.[2])}`);
+const code = msa?.[1];
+console.log(`MSA-1 ${String(code)}, MSA-2 echoes it: ${String(msa?.[2] === "CTRL0001")}`);
 assert.equal(acks.length, 1);
-assert.equal(msa?.[1], "AA");
+assert.equal(code, "AA");
 assert.equal(msa?.[2], "CTRL0001", "MSA-2 echoes the control id sent");
 
 const stats = connection.getStats();
