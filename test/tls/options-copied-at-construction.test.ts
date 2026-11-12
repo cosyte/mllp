@@ -19,6 +19,7 @@ import { RUNTIME } from "../_helpers/runtime.js";
 import { createClient, type ClientOptions, type MllpClient } from "../../src/client/client.js";
 import { createServer, type MllpServer } from "../../src/server/server.js";
 import { buildPfx } from "../helpers/pkcs12-fixtures.js";
+import * as tlsOptionsModule from "../helpers/tls-options-module.js";
 import {
   MLLP_TLS_OPTIONS_NOT_AN_OBJECT,
   MllpTlsConfigurationError,
@@ -382,6 +383,158 @@ describe.skipIf(RUNTIME !== "node")(
       await waitFor(() => presented.length >= 2 && client.state === "CONNECTED");
       expect(presented.slice(0, 2)).toEqual([OTHER_CN, OTHER_CN]);
     });
+
+    it("cert and key given as plain Uint8Arrays and overwritten after construction do not change the identity on reconnect", async () => {
+      const { cert, clientCert, clientKey } = mutual();
+      const { port, presented, dropFirst } = await recordingServer();
+      // Outside the declared type, but Node.js accepts any byte array, so a caller can pass one.
+      const certBytes = new Uint8Array(Buffer.from(clientCert));
+      const keyBytes = new Uint8Array(Buffer.from(clientKey));
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        tls: {
+          ca: cert,
+          servername: "localhost",
+          cert: certBytes as unknown as Buffer,
+          key: keyBytes as unknown as Buffer,
+        },
+        autoReconnect: true,
+        initialDelayMs: 5,
+        maxDelayMs: 20,
+      });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => presented.length === 1);
+
+      certBytes.fill(0);
+      keyBytes.fill(0);
+      dropFirst();
+
+      await waitFor(() => presented.length >= 2 && client.state === "CONNECTED");
+      expect(presented.slice(0, 2)).toEqual(["test-client", "test-client"]);
+    });
+
+    it("pfx given as a plain Uint8Array and overwritten after construction does not change the identity on reconnect", async () => {
+      const { cert } = mutual();
+      const { port, presented, dropFirst } = await recordingServer();
+      const pfx = new Uint8Array(buildPfx(other(), PASSPHRASE));
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        tls: {
+          ca: cert,
+          servername: "localhost",
+          pfx: pfx as unknown as Buffer,
+          passphrase: PASSPHRASE,
+        },
+        autoReconnect: true,
+        initialDelayMs: 5,
+        maxDelayMs: 20,
+      });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => presented.length === 1);
+
+      pfx.fill(0);
+      dropFirst();
+
+      await waitFor(() => presented.length >= 2 && client.state === "CONNECTED");
+      expect(presented.slice(0, 2)).toEqual([OTHER_CN, OTHER_CN]);
+    });
+
+    it("a module namespace object as tls is accepted by both constructors, which connect over TLS", async () => {
+      const server = createServer({ tls: tlsOptionsModule, autoAck: "AA" });
+      servers.push(server);
+      const connections: unknown[] = [];
+      server.on("connection", (e: unknown) => connections.push(e));
+      await server.listen(0, "127.0.0.1");
+      const client = createClient({
+        host: "127.0.0.1",
+        port: must(server.getStats().port),
+        tls: tlsOptionsModule,
+      });
+      clients.push(client);
+      await client.connect();
+      expect(client.state).toBe("CONNECTED");
+      await waitFor(() => connections.length === 1);
+    });
+
+    it("a class instance with its own Symbol.toStringTag as tls is accepted by both constructors, which connect over TLS", async () => {
+      const { cert, key } = mutual();
+      class TaggedServerTls {
+        get [Symbol.toStringTag](): string {
+          return "SyntheticServerTls";
+        }
+        get cert(): string {
+          return cert;
+        }
+        get key(): string {
+          return key;
+        }
+      }
+      class TaggedClientTls {
+        get [Symbol.toStringTag](): string {
+          return "SyntheticClientTls";
+        }
+        get ca(): string {
+          return cert;
+        }
+        get servername(): string {
+          return "localhost";
+        }
+      }
+      const server = createServer({ tls: new TaggedServerTls(), autoAck: "AA" });
+      servers.push(server);
+      const connections: unknown[] = [];
+      server.on("connection", (e: unknown) => connections.push(e));
+      await server.listen(0, "127.0.0.1");
+      const client = createClient({
+        host: "127.0.0.1",
+        port: must(server.getStats().port),
+        tls: new TaggedClientTls(),
+      });
+      clients.push(client);
+      await client.connect();
+      expect(client.state).toBe("CONNECTED");
+      await waitFor(() => connections.length === 1);
+    });
+
+    it.each([
+      ["an empty array", (): unknown => []],
+      ["an array holding the options", (): unknown => [{ cert: mutual().cert, key: mutual().key }]],
+      ["a Map of the options", (): unknown => new Map([["cert", mutual().cert]])],
+      ["a Set", (): unknown => new Set([mutual().cert])],
+      ["a Buffer", (): unknown => Buffer.from(mutual().cert)],
+      ["a plain Uint8Array", (): unknown => new Uint8Array(Buffer.from(mutual().cert))],
+      ["a DataView", (): unknown => new DataView(new ArrayBuffer(4))],
+      ["an ArrayBuffer", (): unknown => new ArrayBuffer(4)],
+      ["a Date", (): unknown => new Date(0)],
+      ["a Promise", (): unknown => Promise.resolve({ cert: mutual().cert, key: mutual().key })],
+      ["a boxed string", (): unknown => Object("synthetic-tls") as object],
+    ])(
+      "tls given as %s is refused by both constructors with a configuration error",
+      (_label, make) => {
+        for (const create of [
+          () =>
+            createClient({
+              host: "127.0.0.1",
+              port: 1,
+              tls: make() as NonNullable<ClientOptions["tls"]>,
+            }),
+          () => createServer({ tls: make() as { cert: string; key: string } }),
+        ]) {
+          let thrown: unknown;
+          try {
+            create();
+          } catch (err) {
+            thrown = err;
+          }
+          expect(thrown).toBeInstanceOf(MllpTlsConfigurationError);
+          expect((thrown as MllpTlsConfigurationError).code).toBe(MLLP_TLS_OPTIONS_NOT_AN_OBJECT);
+        }
+      },
+    );
 
     it("tls null is refused by both constructors with a configuration error", () => {
       const tls = null as unknown as NonNullable<ClientOptions["tls"]>;

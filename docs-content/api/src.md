@@ -5540,9 +5540,10 @@ TLS, in place of [TlsOptions.cert](#cert-1) and [TlsOptions.key](#key-1), unlock
 [TlsOptions.passphrase](#passphrase-1). The file's bytes, as `readFileSync` returns them; this package
 reads no file itself.
 
-The file is loaded before a socket is opened. One the TLS library cannot load rejects
-`connect()` with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose
-message names this option and never its value: a wrong passphrase, bytes that are not
+The file is loaded once, when the client is created, from the copy of the options it takes
+then. One the TLS library cannot load rejects every `connect()`, before a socket is opened,
+with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose message
+names this option and never its value: a wrong passphrase, bytes that are not
 PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
 older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
 file with AES-256. The refusal is permanent: a client does not retry it.
@@ -6398,9 +6399,13 @@ if (err.code === MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE) logger.error('run this se
 
 > `const` **MLLP\_TLS\_OPTIONS\_NOT\_AN\_OBJECT**: `"MLLP_TLS_OPTIONS_NOT_AN_OBJECT"` = `"MLLP_TLS_OPTIONS_NOT_AN_OBJECT"`
 
-`tls` was `null` or another value that is not an object of TLS options (for a client, `true`
-also asks for the defaults). Without this check such a value reached the options' property reads
-and failed there with a bare `TypeError`, or was taken as TLS with no options at all.
+`tls` was `null`, an array, a byte array (a `Buffer`, any other typed array, a `DataView`, an
+`ArrayBuffer` or a `SharedArrayBuffer`), a `Map`, a `Set`, a `Date`, a `Promise`, a boxed
+primitive or a value that is no object, rather than an object of TLS options (for a client,
+`true` also asks for the defaults). Any other object is an object of options: a literal, a class
+instance, an `Object.create` object or a module namespace object, whatever its
+`Symbol.toStringTag`. Without this check such a value reached the options' property reads and
+failed there with a bare `TypeError`, or was taken as TLS with no options at all.
 
 Like [MLLP\_TLS\_CREDENTIAL\_CONFLICT](#mllp_tls_credential_conflict), this one is thrown by the constructor
 (`createClient`, `createServer`, `new MllpClient`, `new MllpServer`). The message never carries

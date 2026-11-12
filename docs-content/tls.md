@@ -80,8 +80,10 @@ without the legacy provider that holds RC2, so it refuses the file. Re-export it
 `openssl pkcs12 -export` on OpenSSL 3 uses by default. A server refused this way stays refused:
 every `listen()` on it rejects the same way.
 
-On a client the file is loaded before a socket is opened, and a file that cannot be loaded rejects
-`connect()` with the same error and code. The refusal is permanent, so a client does not retry it.
+On a client the file is loaded once, when the client is created, and a file that cannot be loaded
+rejects every `connect()` with the same error and code, before a socket is opened. The refusal is
+permanent, so a client does not retry it. A reconnect does not load the file again: the client
+holds its own copy of the bytes (below), so they cannot have changed.
 
 ```ts no-run needs a PKCS#12 file and a TLS server of your own
 import { readFileSync } from "node:fs";
@@ -107,13 +109,23 @@ now drop either `pfx` or the `cert` and `key` pair.
 A client or a server copies its `tls` options when it is created, and the check above runs on that
 copy. Each option is read once, by name, so options a class instance supplies through getters, or
 an object inherits from its prototype, are copied like its own fields; a name that is no TLS option
-is left out. The copy takes new arrays and new bytes for every `Buffer` (`cert`, `key`, `ca`, `pfx`,
-`dhParameters`). A change you make to your `tls` object afterwards, bytes you overwrite in one of
-its `Buffer`s, or a new object you put in your options' `tls`, has no effect: a client reconnects
-with the options it was created with. To connect with different TLS options, create a new client.
-A `tls` that is `null`, or another value that is not an object (or `true`, for a client's
-defaults), throws `MllpTlsConfigurationError` with the code `MLLP_TLS_OPTIONS_NOT_AN_OBJECT` when
-the client or server is created.
+is left out. The copy takes new arrays and new bytes for every byte array (`cert`, `key`, `ca`,
+`pfx`, `dhParameters`): a `Buffer`, and also a plain `Uint8Array`, another typed array or a
+`DataView`, which Node.js accepts too; each is copied as a `Buffer`. A change you make to your
+`tls` object afterwards, bytes you overwrite in one of its byte arrays, or a new object you put in
+your options' `tls`, has no effect: a client reconnects with the options it was created with. To
+connect with different TLS options, create a new client.
+
+`tls` must be an object of options. These are refused: `null`, a value that is no object (other
+than `true`, for a client's defaults), an array, a byte array (a `Buffer`, any other typed array, a
+`DataView`, an `ArrayBuffer` or a `SharedArrayBuffer`), a `Map`, a `Set`, a `Date`, a `Promise` and
+a boxed primitive. Each throws `MllpTlsConfigurationError` with the code
+`MLLP_TLS_OPTIONS_NOT_AN_OBJECT` when the client or server is created. Before, a client given an
+array connected with TLS defaults, and a server given one threw a `TypeError` asking for `cert` and
+`key`. Every other object is read as options, as before: a literal, a class instance, an
+`Object.create` object and a module namespace object (`import * as tlsOptions from "./tls.js"`).
+Each kind is recognised by what it is, not by its `Symbol.toStringTag`, so a class that sets its
+own tag is still accepted.
 
 When TLS is configured, the server consumes `tls.Server`'s `'secureConnection'` event (post-handshake
 sockets) instead of `net.Server`'s `'connection'`, and the client's `onConnect` transport hook maps
