@@ -24,6 +24,7 @@ import {
   buildNamedServerCertFixture,
   buildUntrustedCertFixture,
   type MutualTlsFixture,
+  type ServerCertFixture,
 } from "../helpers/tls-fixtures.js";
 
 const PASSPHRASE = "synthetic-pfx-passphrase";
@@ -73,9 +74,16 @@ describe.skipIf(RUNTIME !== "node")(
       return sharedMutual;
     }
 
+    /** A second client identity, trusted by the recording server, carried in a PKCS#12 file. */
+    let sharedOther: ServerCertFixture | undefined;
+    function other(): ServerCertFixture {
+      sharedOther ??= buildNamedServerCertFixture(OTHER_CN);
+      return sharedOther;
+    }
+
     /**
-     * A TLS server that asks for a client certificate without enforcing it and records the subject
-     * CN each client presents. `dropFirst` ends the first session, so a reconnecting client comes
+     * A TLS server that requires a client certificate, trusts both the test client's and the other
+     * identity's, and records the subject CN each client presents. `dropFirst` ends the first session, so a reconnecting client comes
      * back.
      */
     async function recordingServer(): Promise<{
@@ -87,7 +95,7 @@ describe.skipIf(RUNTIME !== "node")(
       const presented: Array<string | null> = [];
       const sockets: TLSSocket[] = [];
       const raw = tlsCreateServer(
-        { cert, key, requestCert: true, rejectUnauthorized: false },
+        { cert, key, ca: [cert, other().cert], requestCert: true },
         (socket: TLSSocket) => {
           const subject = socket.getPeerCertificate().subject as { CN?: string } | undefined;
           presented.push(subject?.CN ?? null);
@@ -128,7 +136,7 @@ describe.skipIf(RUNTIME !== "node")(
       await waitFor(() => presented.length === 1);
 
       // The combination the constructor refuses, made after it ran.
-      tls.pfx = buildPfx(buildNamedServerCertFixture(OTHER_CN), PASSPHRASE);
+      tls.pfx = buildPfx(other(), PASSPHRASE);
       tls.passphrase = PASSPHRASE;
       dropFirst();
 
@@ -157,7 +165,7 @@ describe.skipIf(RUNTIME !== "node")(
         servername: "localhost",
         cert: clientCert,
         key: clientKey,
-        pfx: buildPfx(buildNamedServerCertFixture(OTHER_CN), PASSPHRASE),
+        pfx: buildPfx(other(), PASSPHRASE),
         passphrase: PASSPHRASE,
       };
       dropFirst();
@@ -167,13 +175,13 @@ describe.skipIf(RUNTIME !== "node")(
     });
 
     it("a ca array changed after construction does not change what a client trusts", async () => {
-      const { cert } = mutual();
-      const { port } = await recordingServer();
+      const { cert, clientCert, clientKey } = mutual();
+      const { port, presented } = await recordingServer();
       const ca = [cert];
       const client = createClient({
         host: "127.0.0.1",
         port,
-        tls: { ca, servername: "localhost" },
+        tls: { ca, servername: "localhost", cert: clientCert, key: clientKey },
       });
       clients.push(client);
 
@@ -181,6 +189,8 @@ describe.skipIf(RUNTIME !== "node")(
 
       await expect(client.connect()).resolves.toBeUndefined();
       expect(client.state).toBe("CONNECTED");
+      await waitFor(() => presented.length === 1);
+      expect(presented).toEqual(["test-client"]);
     });
 
     it("a server's clientAuth changed after construction does not change the connection event", async () => {
