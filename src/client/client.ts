@@ -61,6 +61,7 @@ import {
   MllpCommitRejectedError,
   MllpNeverDeliveredError,
   MllpUnknownFateError,
+  MllpUnreadableAckError,
   isTransientConnectionError,
   isTlsVerificationErrorCode,
   isTlsProtocolError,
@@ -364,6 +365,24 @@ export interface ClientOptions {
    */
   readonly correlateByControlId?: boolean;
   /**
+   * What a client correlating in order (FIFO, the default) does when the frame that settles a
+   * send carries no readable MSA-1: no HL7 Table 0008 code can be read from it, as with a lone
+   * `0x06` or `0x15` byte, an `MSH` with no `MSA`, an empty MSA-1, or a value outside the table.
+   * Such a frame is not an HL7 acknowledgement of the message.
+   *
+   * - `'warn'` (default): the send resolves with the frame, as it always has, and the client
+   *   emits the `'warning'` `MLLP_ACK_FIFO_MSA1_UNREADABLE` (an {@link AckModeWarning}).
+   * - `'reject'`: the client emits the same warning and the send rejects with
+   *   {@link MllpUnreadableAckError}. The frame still takes that send's turn, so the next send
+   *   settles on the next frame.
+   *
+   * Has no effect with `correlateByControlId: true`, which matches by MSA-2 and settles nothing
+   * on a frame that has none. Any other value throws a `TypeError` at construction.
+   *
+   * @default 'warn'
+   */
+  readonly fifoUnreadableAck?: "warn" | "reject";
+  /**
    * Auto-reconnect on transient disconnect. Default `false`.
    *
    * When `true`, dropped connections caused by transient errors (per
@@ -596,6 +615,8 @@ export class MllpClient extends EventEmitter {
   private readonly _applicationAckTimeoutMs: number | undefined;
   /** controlId-mode flag. `false` → FIFO. */
   private readonly _correlateByControlId: boolean;
+  /** Whether a FIFO send settled on a frame with no readable MSA-1 rejects rather than resolves. */
+  private readonly _rejectUnreadableAck: boolean;
   /** Unified ACK correlator. Built during `_attachConnection`. */
   private _correlator: Correlator | null = null;
   /**
@@ -728,6 +749,16 @@ export class MllpClient extends EventEmitter {
           "for no bound",
       );
     }
+    const fifoUnreadableAck: unknown = opts.fifoUnreadableAck;
+    if (
+      fifoUnreadableAck !== undefined &&
+      fifoUnreadableAck !== "warn" &&
+      fifoUnreadableAck !== "reject"
+    ) {
+      throw new TypeError(
+        "ClientOptions.fifoUnreadableAck must be 'warn' or 'reject', or left unset for 'warn'",
+      );
+    }
     // Copied before it is checked, and read from the copy from here on: a change the caller makes
     // to their object later would otherwise reach the next connect or reconnect unchecked.
     const tls = copyTlsOptions(opts.tls);
@@ -742,6 +773,7 @@ export class MllpClient extends EventEmitter {
     this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
     this._applicationAckTimeoutMs = opts.applicationAckTimeoutMs;
     this._correlateByControlId = opts.correlateByControlId === true;
+    this._rejectUnreadableAck = fifoUnreadableAck === "reject";
     this._autoReconnect = opts.autoReconnect === true;
     this._initialDelayMs = opts.initialDelayMs ?? 100;
     this._maxDelayMs = opts.maxDelayMs ?? 30_000;
@@ -1359,6 +1391,25 @@ export class MllpClient extends EventEmitter {
         onAckModeWarning: (code, ctx) => {
           this._emitAckModeWarning(code, ctx, conn);
         },
+        ...(this._rejectUnreadableAck
+          ? {
+              onUnreadableAck: (
+                entry: PendingAck,
+                msa1Bytes: number,
+                byteOffset: number,
+                elapsedMs: number,
+              ) => {
+                entry.reject(
+                  new MllpUnreadableAckError(
+                    "the frame that settled this send in order carried no readable MSA-1, so " +
+                      "the peer has not acknowledged it in HL7 terms",
+                    { msa1Bytes, byteOffset, elapsedMs },
+                  ),
+                );
+                this._maybeEmitDrain();
+              },
+            }
+          : {}),
       });
     }
 
@@ -1961,6 +2012,12 @@ export class MllpClient extends EventEmitter {
    *   client's). The clock starts at the underlying `write()` flush callback, NOT at
    *   the `send()` call.
    * - `MllpConnectionError({ phase: 'send' })` if the client is not connected.
+   * - `MllpUnreadableAckError` with `fifoUnreadableAck: 'reject'`, when the frame that settles
+   *   this send in order carries no readable MSA-1.
+   *
+   * Resolving is not acceptance: read MSA-1 off the acknowledgement you are handed. In FIFO
+   * mode a frame with no readable MSA-1 still resolves by default, with the warning
+   * `MLLP_ACK_FIFO_MSA1_UNREADABLE`.
    *
    * Emits a frozen `'ack'` event on every successful match.
    *
@@ -2793,6 +2850,8 @@ export interface StarterClientOptions {
   readonly ackTimeoutMs?: number;
   /** Override default `false` (FIFO mode). */
   readonly correlateByControlId?: boolean;
+  /** Passthrough to `ClientOptions.fifoUnreadableAck`, default `'warn'`. */
+  readonly fifoUnreadableAck?: "warn" | "reject";
   /** Override default `true` (parallel up to highWaterMark). */
   readonly pipeline?: boolean;
   /** Override default `64`. */
@@ -2864,6 +2923,7 @@ export async function createStarterClient(opts: StarterClientOptions): Promise<M
     pipeline: opts.pipeline ?? true,
     highWaterMark: opts.highWaterMark ?? 64,
     onBackpressure: opts.onBackpressure ?? "reject",
+    fifoUnreadableAck: opts.fifoUnreadableAck ?? "warn",
     ...(opts.drainTimeoutMs !== undefined ? { drainTimeoutMs: opts.drainTimeoutMs } : {}),
     ...(opts.framing !== undefined ? { framing: opts.framing } : {}),
     ...(opts.retryStrategy !== undefined ? { retryStrategy: opts.retryStrategy } : {}),

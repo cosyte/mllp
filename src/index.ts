@@ -144,6 +144,7 @@ export {
 export {
   MllpApplicationAckError,
   MllpCommitRejectedError,
+  MllpUnreadableAckError,
   ackModeDiagnosticMessage,
   type ApplicationAckFailure,
   type AckModeCode,

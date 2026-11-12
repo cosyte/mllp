@@ -10,8 +10,10 @@
  *     positive `AA` becomes the non-positive `AE`;
  *   - a client correlating by control ID finds no MSA-2 in it, reports it as unmatched and settles
  *     nothing, so the send waits for its real acknowledgment;
- *   - a FIFO client (the default) settles the next send on it, as it settles on any next frame, and
- *     hands the caller the one byte with no MSA-1 to read.
+ *   - a FIFO client (the default) settles the next send on it, as it settles on any next frame,
+ *     hands the caller the one byte, and warns `MLLP_ACK_FIFO_MSA1_UNREADABLE` because there is no
+ *     MSA-1 to read; with `fifoUnreadableAck: "reject"` the send rejects with
+ *     `MllpUnreadableAckError` instead.
  *
  * Every payload here is synthetic.
  */
@@ -25,6 +27,7 @@ import type { MllpFramingError } from "../../src/framing/index.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { encodeFrame } from "../../src/framing/index.js";
 import { buildRawAck, rawAckUncorrelatable } from "../../src/server/ack.js";
+import { MllpUnreadableAckError } from "../../src/client/error.js";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const LIMITATIONS = readFileSync(join(ROOT, "docs-content", "limitations.md"), "utf8");
@@ -58,7 +61,10 @@ const REAL_ACK = Buffer.from(
   "ascii",
 );
 
-function clientOverPair(correlateByControlId: boolean): {
+function clientOverPair(
+  correlateByControlId: boolean,
+  fifoUnreadableAck?: "warn" | "reject",
+): {
   client: MllpClient;
   fromPeer: (payload: Buffer) => void;
 } {
@@ -69,6 +75,7 @@ function clientOverPair(correlateByControlId: boolean): {
     port: 0,
     ackTimeoutMs: 1_000,
     correlateByControlId,
+    ...(fifoUnreadableAck === undefined ? {} : { fifoUnreadableAck }),
   });
   client._attachExistingConnection(conn);
   conn.notifyConnect("127.0.0.1", 2575);
@@ -131,13 +138,39 @@ describe("a Release 2 commit block reaching a Release 1 client", () => {
     await client.close();
   });
 
-  it("FIFO, the default: settles the next send on the block, with no MSA-1 to read", async () => {
+  it("FIFO, the default: settles the next send on the block and warns that it has no MSA-1", async () => {
     const { client, fromPeer } = clientOverPair(false);
+    const warnings: Array<{ code: string; msa1Bytes: number | null }> = [];
+    client.on("warning", (w: { code: string; msa1Bytes: number | null }) => warnings.push(w));
     const sent = client.send(MESSAGE);
     fromPeer(COMMIT_NAK_BLOCK);
     const answer = await sent;
     expect([...answer]).toEqual([0x15]);
     expect(answer.includes("MSA|")).toBe(false);
+    expect(warnings).toEqual([
+      expect.objectContaining({ code: "MLLP_ACK_FIFO_MSA1_UNREADABLE", msa1Bytes: 0 }),
+    ]);
     await client.close();
+  });
+
+  it('FIFO with fifoUnreadableAck: "reject": the send rejects on the block', async () => {
+    const { client, fromPeer } = clientOverPair(false, "reject");
+    client.on("warning", () => undefined);
+    for (const block of [COMMIT_ACK_BLOCK, COMMIT_NAK_BLOCK]) {
+      const sent = client.send(MESSAGE);
+      fromPeer(block);
+      await expect(sent).rejects.toBeInstanceOf(MllpUnreadableAckError);
+    }
+    await client.close();
+  });
+});
+
+describe("the limitations page says what a FIFO client does with the block", () => {
+  it("names the warning, the opt-in rejection, and recommends correlating by control ID", () => {
+    const body = section("It does not speak MLLP Release 2");
+    expect(body).toContain("`MLLP_ACK_FIFO_MSA1_UNREADABLE`");
+    expect(body).toContain('`fifoUnreadableAck: "reject"`');
+    expect(body).toContain("`MllpUnreadableAckError`");
+    expect(body).toContain("correlate by control ID");
   });
 });

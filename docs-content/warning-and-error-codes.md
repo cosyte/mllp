@@ -58,7 +58,9 @@ Codes about the enhanced acknowledgment protocol, of type [`AckModeCode`](./api/
 The client reports them on its `warning` event as an
 [`AckModeWarning`](./api/src.md#ackmodewarning); the server reports
 `MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED` on its `ackModeWarning` event. Their text is
-`ackModeDiagnosticMessage(code)`. None of them refuses or changes a message.
+`ackModeDiagnosticMessage(code)`. None of them refuses or changes a message, except that
+`MLLP_ACK_FIFO_MSA1_UNREADABLE` comes with a rejected send when you set
+`fifoUnreadableAck: "reject"`.
 
 | Code                                     | Raised when                                                                                               |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -69,6 +71,7 @@ The client reports them on its `warning` event as an
 | `MLLP_ACK_MSA1_ABSENT`                   | an acknowledgment for an enhanced-mode send has no `MSA-1`; the send stays pending                        |
 | `MLLP_ACK_MSA1_UNCLASSIFIABLE`           | an acknowledgment for an enhanced-mode send has an `MSA-1` outside HL7 Table 0008; the send stays pending |
 | `MLLP_ACK_SEND_ALREADY_DISPOSED`         | an acknowledgment arrives for a send already settled or failed; it is dropped                             |
+| `MLLP_ACK_FIFO_MSA1_UNREADABLE`          | a FIFO client settles a send on a frame with no readable `MSA-1`; the send resolves unless set to reject  |
 
 ## ack-from-hl7 warnings
 
@@ -158,6 +161,7 @@ Narrow with `instanceof`, never on the text of a message.
 | `MllpTimeoutError`                   | no acknowledgment arrives within `ackTimeoutMs` of the write                                          | `messageControlIdBytes`    |
 | `MllpBackpressureError`              | a send would pass `highWaterMark` with `onBackpressure: "reject"`                                     | `queueDepth`, `queueBytes` |
 | `MllpCommitRejectedError`            | the peer answers an enhanced-mode send with `CE` or `CR`                                              | `commitCode`               |
+| `MllpUnreadableAckError`             | with `fifoUnreadableAck: "reject"`, a FIFO send is settled on a frame with no readable `MSA-1`        | `msa1Bytes`, `byteOffset`  |
 | `MllpApplicationAckError`            | the peer committed an enhanced-mode send and its application acknowledgment never came                | `commitCode`, `reason`     |
 | `MllpNeverDeliveredError`            | `close()` ends with this send never written; resending it is safe                                     | `byteCount`                |
 | `MllpUnknownFateError`               | `close()` ends with this send written and unacknowledged; it may be committed                         | `flushedAt`, `byteCount`   |
