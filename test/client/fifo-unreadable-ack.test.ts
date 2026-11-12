@@ -10,7 +10,7 @@
  * Every payload here is synthetic.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createClient, type ClientOptions, type MllpClient } from "../../src/client/client.js";
 import { Connection } from "../../src/connection/index.js";
 import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
@@ -217,6 +217,22 @@ describe('FIFO with fifoUnreadableAck: "reject"', () => {
     expect((await sent).toString("latin1")).toContain("MSA|AE|");
     expect(warnings).toEqual([]);
     await client.close();
+  });
+});
+
+describe("MllpUnreadableAckError", () => {
+  it("captures its stack from the caller, without its own constructor frame", () => {
+    const capture = vi.spyOn(Error, "captureStackTrace");
+    try {
+      const err = new MllpUnreadableAckError("no readable MSA-1", {
+        msa1Bytes: 0,
+        byteOffset: 0,
+        elapsedMs: 0,
+      });
+      expect(capture).toHaveBeenCalledWith(err, MllpUnreadableAckError);
+    } finally {
+      capture.mockRestore();
+    }
   });
 });
 
