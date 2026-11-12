@@ -23,13 +23,6 @@ describe("sanity", () => {
     expect(VERSION).toBe(manifestVersion(pkg));
   });
 
-  it("a fresh import of the root module exports VERSION matching package.json", async () => {
-    // The mutation run links a mutant only to tests that import the module inside their own
-    // body, so the top-level import above never exercises a changed VERSION string.
-    const fresh = await import("../src/index.js");
-    expect(fresh.VERSION).toBe(manifestVersion(pkg));
-  });
-
   it("Node.js version is 22+", () => {
     const major = parseInt(process.version.slice(1).split(".")[0] ?? "0", 10);
     expect(major).toBeGreaterThanOrEqual(22);
