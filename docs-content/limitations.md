@@ -68,9 +68,11 @@ awaits no ACK and honors no drain timeout. Use it when you need the socket gone 
 ## A fatal framing error drops the connection, and is not retried
 
 If the decoder throws (an oversized frame, or a structural violation whose tolerance opt-in is off),
-that **connection** is destroyed. It is not resynchronized: after a throw the reader's position in
+that **connection** is closed. It is not resynchronized: after a throw the reader's position in
 the byte stream is untrustworthy, and guessing where the next message starts is how one gets silently
-mis-split. Bytes already accumulated in that connection's partial frame are **lost**.
+mis-split. Bytes already accumulated in that connection's partial frame, and every byte after it,
+are **lost**. Frames delivered before it are still answered first, for up to `drainTimeoutMs`; see
+[Framing and tolerance](./framing.md#frames-before-the-refused-one-are-still-answered).
 
 The failure is contained to the one connection (a server keeps serving every other peer) and it is
 classified `framing-fatal`, i.e. **permanent**, so a client does not reconnect into it. That is

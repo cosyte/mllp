@@ -126,8 +126,32 @@ in `MllpAck.warnings`, not in the framing registry.
 
 **A throw kills the connection, never the process.** `Connection` catches it, surfaces it as a
 frozen `'error'` event (`phase: 'receive'`, `connectionCause: 'framing-fatal'`, with the
-`MllpFramingError` preserved as `cause` so the stable `code` and `byteOffset` survive), and destroys
+`MllpFramingError` preserved as `cause` so the stable `code` and `byteOffset` survive), and closes
 **that connection only**. A server drops the one bad peer and keeps serving everyone else.
+
+### Frames before the refused one are still answered
+
+A sender that writes its next frame before the previous acknowledgement arrives can put a good
+frame and a refused one in the same read. The good frame has been delivered by then and its handler
+is running; its acknowledgement goes out only once the handler settles. So the connection does not
+close at once:
+
+1. **It reads nothing more.** Bytes after the refused one, in the same read or later, are dropped
+   unread, and no further frame reaches a handler.
+2. **It answers what it delivered.** Every frame delivered before the refused one has its handler
+   run to the end and its acknowledgement written: `AA` on a commit, `AE` or `AR` on a handler that
+   throws, the builder's bytes in custom-ACK mode, and whatever a manual-mode handler sends. The
+   connection is `DRAINING` meanwhile.
+3. **It closes.** Once that work has settled the connection goes to `CLOSED` and the socket is
+   ended gracefully, so the acknowledgements written reach the sender.
+4. **The wait is bounded** by the server's `drainTimeoutMs` (30 seconds by default). A handler that
+   has not settled by then is abandoned, its acknowledgement is never sent, and the socket is
+   destroyed. A handler that never settles cannot hold the connection open past it.
+
+With no handler still running the connection is destroyed at once, as before. The refused frame
+itself is never delivered and never answered (see the next section). On a bare `Connection` the
+same wait applies to the work you pass to `conn.holdOpenFor(work)`; `MllpServer` passes every
+message's work itself.
 
 This holds even when _your_ code is the thing that throws. Node calls event listeners
 **synchronously**, so a throwing subscriber unwinds the stack it was called from, and on this
@@ -174,13 +198,15 @@ So a receiver refuses such a frame **whole**:
 | `<VT> A <FS> <VT> B <FS> <CR>` | two frames, `A` then `B`, each answered | refused, `MLLP_FS_WITHOUT_CR`       |
 
 - **Nothing of a refused frame is delivered**, so no handler commits any part of it and no
-  acknowledgement names it. Frames delivered before it are untouched.
+  acknowledgement names it. Frames delivered before it are untouched and still answered before the
+  connection closes, as [the section above](#frames-before-the-refused-one-are-still-answered)
+  says.
 - **The caller sees a coded error.** `push()` throws an `MllpFramingError` whose `code` names the
   stray byte and whose `byteOffset` is that byte's own offset; its `snippet` is that one framing
   byte, and its `message` holds the offset and nothing of the payload.
 - **The connection's state is defined afterwards.** On a server or a client the error arrives on
   `'error'` with `connectionCause: 'framing-fatal'`, and that connection is closed (`CLOSED`) with
-  no acknowledgement sent. A sender that waits for one times out and resends; if it resends the same
+  no acknowledgement sent for the refused frame. A sender that waits for one times out and resends; if it resends the same
   bytes, the same refusal follows, so alert on the code. A bare `FrameReader` is left scanning for the
   next `<VT>`; call `reset()` before reusing it, as after any throw.
 - **However the bytes arrive.** The outcome is the same whether the frame comes in one read or is

@@ -448,6 +448,10 @@ export interface ServerOptions {
   /**
    * Graceful drain timeout passed to `conn.close()` during `server.close()`.
    * Default: 30 000 ms.
+   *
+   * It also bounds the wait after a fatal framing error: frames delivered before the refused one
+   * are still answered, and a connection waits at most this long for their handlers before it is
+   * destroyed.
    */
   drainTimeoutMs?: number;
 
@@ -1430,7 +1434,12 @@ export class MllpServer extends EventEmitter {
       this._opts.onWarning !== undefined
         ? { transport, framing: mergedFraming, onWarning: this._opts.onWarning }
         : { transport, framing: mergedFraming };
-    const conn = new Connection(connOpts);
+    // `drainTimeoutMs` also bounds the wait for delivered frames' answers after a fatal framing
+    // error.
+    const conn = new Connection({
+      ...connOpts,
+      drainTimeoutMs: this._opts.drainTimeoutMs ?? 30_000,
+    });
 
     // The Connection's transport has just replaced every 'close' listener on the socket, the cap's
     // own included when the cap counted this very socket. Under Node.js that is never so for TLS:
@@ -1531,15 +1540,17 @@ export class MllpServer extends EventEmitter {
           );
         }
 
+        // Every piece of work answering this frame is held by the connection, so a fatal framing
+        // error later in the stream closes it only after that work settles and its ACK is out.
         const autoAck = this._opts.autoAck;
         if (autoAck === "AA") {
           // Commit-gated: onMessage is the durable-commit step; AA only on success,
           // AE/AR on failure, a positive ACK can never precede commit.
-          void this._sendCommitAck(payload, meta, conn);
+          conn.holdOpenFor(this._sendCommitAck(payload, meta, conn));
         } else if (autoAck !== undefined) {
           // Custom-ACK mode: onMessage is observation only; the fn owns the ACK bytes.
           this._observeMessage(payload, meta, conn);
-          void this._sendCustomAck(autoAck, payload, meta, conn);
+          conn.holdOpenFor(this._sendCustomAck(autoAck, payload, meta, conn));
         } else {
           // Manual mode: onMessage owns the response via conn.send().
           this._observeMessage(payload, meta, conn);
@@ -1796,7 +1807,8 @@ export class MllpServer extends EventEmitter {
   private _observeMessage(payload: Buffer, meta: MessageMeta, conn: Connection): void {
     const handler = this._opts.onMessage;
     if (handler === undefined) return;
-    void Promise.resolve()
+    // Held by the connection: in manual mode the handler writes the response itself.
+    const work = Promise.resolve()
       .then(() => handler(payload, meta, conn))
       .catch((err: unknown) => {
         const connErr = err instanceof Error ? err : new Error(String(err));
@@ -1805,6 +1817,7 @@ export class MllpServer extends EventEmitter {
         // (unhandled rejection → process death).
         safeEmitError(conn, Object.freeze({ connectionId: conn.connectionId, error: connErr }));
       });
+    conn.holdOpenFor(work);
   }
 
   /**

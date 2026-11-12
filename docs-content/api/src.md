@@ -200,6 +200,42 @@ const stats = conn.getStats();
 console.log(JSON.stringify(stats)); // log-pipeline friendly
 ```
 
+##### holdOpenFor()
+
+> **holdOpenFor**(`work`): `void`
+
+Hold the connection open, should a fatal framing error arrive, until `work` settles.
+
+Pass the work that answers a frame this connection delivered: the handler and the write of
+its acknowledgement. When a later frame on the same connection has a fatal framing error, the
+connection reads nothing more, waits for every piece of work passed here to settle, and only
+then closes, so the acknowledgement of a frame delivered before the refused one still goes
+out. The wait is bounded by `drainTimeoutMs` (default 30 seconds): work that has not settled
+by then is abandoned and the connection is destroyed. `MllpServer` passes every message's
+work here itself; a caller driving a bare `Connection` may do the same.
+
+A rejection of `work` is not reported here; it only ends the wait for it.
+
+###### Parameters
+
+###### work
+
+`PromiseLike`\<`unknown`\>
+
+The work answering one delivered frame.
+
+###### Returns
+
+`void`
+
+###### Example
+
+```typescript
+conn.on('message', ({ payload }) => {
+  conn.holdOpenFor(commit(payload).then(() => conn.send(encodeFrame(ackFor(payload)))));
+});
+```
+
 ##### notifyConnect()
 
 > **notifyConnect**(`remoteAddress`, `remotePort`): `void`
@@ -4605,6 +4641,10 @@ Resets on every `'message'` event. Distinct from `keepaliveIntervalMs` (OS TCP p
 Graceful drain timeout passed to `conn.close()` during `server.close()`.
 Default: 30 000 ms.
 
+It also bounds the wait after a fatal framing error: frames delivered before the refused one
+are still answered, and a connection waits at most this long for their handlers before it is
+destroyed.
+
 ##### framing?
 
 > `optional` **framing?**: `Omit`\<[`FrameReaderOptions`](#framereaderoptions), `"onFrame"` \| `"onWarning"`\>
@@ -5283,6 +5323,10 @@ Resets on every `'message'` event. Distinct from `keepaliveIntervalMs` (OS TCP p
 
 Graceful drain timeout passed to `conn.close()` during `server.close()`.
 Default: 30 000 ms.
+
+It also bounds the wait after a fatal framing error: frames delivered before the refused one
+are still answered, and a connection waits at most this long for their handlers before it is
+destroyed.
 
 ###### Inherited from
 
