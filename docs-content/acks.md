@@ -198,6 +198,11 @@ server.on("nack", ({ connectionId, ackCode, reason }) =>
   `MLLP_ACK_UNMATCHED_CONTROL_ID`; a late ACK for an already-timed-out send raises
   `MLLP_ACK_AFTER_TIMEOUT` and is dropped.
 
+In both modes, and on the server's auto-ACK path, a UTF-8 byte order mark (`EF BB BF`) at the start
+of a payload is skipped for reading the `MSH`, MSA-1 and MSA-2, so an acknowledgment an engine wrote
+as UTF-8 with a mark still matches its send. Only a whole mark at byte 0 counts. The bytes you get
+from `send()` or in a handler are the bytes as received, mark included.
+
 `ackTimeoutMs` (default 30 s) bounds the wait. Its clock starts at the socket **write-flush**, not
 at the `send()` call. Time a message spent queued behind backpressure is not charged against the
 peer's response budget. A send can set its own: `client.send(payload, { ackTimeoutMs: 5_000 })`

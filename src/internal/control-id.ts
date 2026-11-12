@@ -140,6 +140,25 @@ function segmentEnds(buf: Buffer): (i: number) => number {
 }
 
 /**
+ * Where the first segment of a payload begins: `3` when the payload opens with a UTF-8 byte
+ * order mark (`EF BB BF`), else `0`.
+ *
+ * Some interface engines write the mark before the `MSH` when they encode a message as UTF-8.
+ * It carries no data, but it shares the `MSH`'s line, so without this the first segment reads
+ * as `EF BB BF M S` and `MSH` heads no segment: an acknowledgement behind the mark matched no
+ * send, and an inbound message behind it drew a downgraded `AE` with an empty MSA-2. Every scan
+ * in this module starts here, so they all agree on where the message begins.
+ *
+ * Only a whole mark at byte 0 is skipped. A mark after a leading `CR`, a second mark, or a
+ * partial one is not a byte order mark (the mark belongs at the start of the encoded text) and
+ * still hides the `MSH`. The payload itself is never changed: callers get the bytes as received.
+ * @internal
+ */
+function firstSegmentStart(buf: Buffer): number {
+  return buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf ? 3 : 0;
+}
+
+/**
  * Locate the message's `MSH` segment: the **first** `CR`/`LF`-delimited segment whose
  * first three bytes are `MSH` and whose 4th byte is a usable field separator. Returns
  * its `[start, end)` bounds, or `null` if the payload has no such segment.
@@ -170,7 +189,7 @@ function segmentEnds(buf: Buffer): (i: number) => number {
  */
 function findMshSegment(buf: Buffer): { start: number; end: number } | null {
   const segmentEnd = segmentEnds(buf);
-  let segStart = 0;
+  let segStart = firstSegmentStart(buf);
   while (segStart < buf.length) {
     const end = segmentEnd(segStart);
     if (isMshSegmentAt(buf, segStart)) return { start: segStart, end };
@@ -240,7 +259,7 @@ function isBatchEnvelopeSegmentAt(buf: Buffer, i: number): boolean {
 export function containsBatchOrExtraMessage(buf: Buffer): boolean {
   const segmentEnd = segmentEnds(buf);
   let mshCount = 0;
-  let segStart = 0;
+  let segStart = firstSegmentStart(buf);
   while (segStart < buf.length) {
     const end = segmentEnd(segStart);
     if (isMshSegmentAt(buf, segStart)) {
@@ -484,7 +503,7 @@ export function readMsaSegment(buf: Buffer): MshSegment | null {
   if (msh === null) return null;
   const fieldSep = msh.fieldSep.charCodeAt(0);
   const end = buf.length;
-  let segStart = 0;
+  let segStart = firstSegmentStart(buf);
   while (segStart < end) {
     let segEnd = segStart;
     while (
