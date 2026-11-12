@@ -719,12 +719,17 @@ export class MllpServer extends EventEmitter {
       }
     }
 
-    if (tlsInput !== undefined && cipherPolicy === null) {
+    if (tlsInput === undefined) {
+      this._netServer = netCreateServer();
+      this._netServer.on("connection", (socket: Socket) => {
+        this._onSocketAccepted(socket);
+      });
+    } else if (cipherPolicy === null) {
       // Refused configuration: an unbound, connection-less placeholder that
       // exists only so the field is definitely assigned. listen() rejects
       // before it is ever touched.
       this._netServer = netCreateServer();
-    } else if (tlsInput !== undefined && cipherPolicy !== null) {
+    } else {
       const tlsOpts: ServerTlsOptions = tlsInput;
       const clientAuth = tlsOpts.clientAuth ?? "NONE";
       const tlsServer = tlsCreateServer({
@@ -771,11 +776,6 @@ export class MllpServer extends EventEmitter {
         // subscriber would kill the process on a failed handshake, flatly contradicting this
         // handler's whole purpose ("MUST NOT crash and MUST keep accepting other connections").
         this._emitContained("tlsClientError", event);
-      });
-    } else {
-      this._netServer = netCreateServer();
-      this._netServer.on("connection", (socket: Socket) => {
-        this._onSocketAccepted(socket);
       });
     }
 
@@ -1550,7 +1550,7 @@ export class MllpServer extends EventEmitter {
     // Phase 8, surface a minimal, content-free peer-certificate summary
     // (WANT/MUST only) on the 'connection' event. Never the full cert object.
     const peerCertificate: PeerCertificateSummary | null =
-      this._isTls && (this._tls?.clientAuth ?? "NONE") !== "NONE"
+      (this._tls?.clientAuth ?? "NONE") !== "NONE"
         ? this._extractPeerCertificateSummary(socket as TLSSocket)
         : null;
 

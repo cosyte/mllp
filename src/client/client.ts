@@ -1217,6 +1217,7 @@ export class MllpClient extends EventEmitter {
    * built at handshake-completion time, before any HL7 byte crosses the link.
    */
   private _emitNegotiatedTlsParameters(socket: Socket | TLSSocket): void {
+    // Stryker disable next-line ConditionalExpression: equivalent. On a plaintext client the socket is a net.Socket, which readNegotiatedTlsParameters answers with null, so the line below returns all the same.
     if (this._tls === undefined) return;
     const params = readNegotiatedTlsParameters(socket, this._opts.host, this._opts.port);
     /* v8 ignore next -- a completed TLS handshake always reports its protocol and suite */
