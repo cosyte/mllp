@@ -913,6 +913,11 @@ describe("PHI: the ack-from-hl7 subpath forwards no inbound bytes", () => {
 describe("PHI: the negotiated-TLS record carries no content", () => {
   /** Exactly the fields the record is allowed to have. */
   const ALLOWED_KEYS = ["protocolVersion", "cipherSuite", "host", "port", "timestamp"];
+  /**
+   * The one field a client record may add, where the runtime names the group. A server record
+   * never carries it: Node reports the group on a client socket only.
+   */
+  const CLIENT_OPTIONAL_KEY = "keyExchangeGroup";
 
   beforeAll(() => {
     vi.useRealTimers();
@@ -972,8 +977,18 @@ describe("PHI: the negotiated-TLS record carries no content", () => {
         ).toString("latin1");
         expect(der).toContain(SHORT_MARKER);
 
-        for (const record of [...clientSeen, ...serverSeen]) {
+        for (const record of serverSeen) {
           expect(Object.keys(record).sort()).toEqual([...ALLOWED_KEYS].sort());
+        }
+        for (const record of clientSeen) {
+          const keys = Object.keys(record).filter((k) => k !== CLIENT_OPTIONAL_KEY);
+          expect(keys.sort()).toEqual([...ALLOWED_KEYS].sort());
+          if (CLIENT_OPTIONAL_KEY in record) {
+            // A registry name, not caller data.
+            expect(record[CLIENT_OPTIONAL_KEY]).toMatch(/^[A-Za-z0-9_-]+$/);
+          }
+        }
+        for (const record of [...clientSeen, ...serverSeen]) {
           expect(Object.isFrozen(record)).toBe(true);
           const rendered = JSON.stringify(record);
           expect(rendered).not.toContain(SHORT_MARKER);
