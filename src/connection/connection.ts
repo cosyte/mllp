@@ -207,9 +207,12 @@ export class Connection extends EventEmitter {
   /** Work answering a frame this connection delivered, still running. See {@link Connection.holdOpenFor}. */
   private readonly _answering = new Set<PromiseLike<unknown>>();
   /**
-   * Set once a fatal framing error has been met: from then on no byte the peer sends is read.
+   * Set once a fatal framing error has been met, or {@link Connection.stopReading} called: from
+   * then on no byte the peer sends is read.
    */
   private _refusing = false;
+  /** When the `close()` drain began (`Date.now()`), or `undefined` when no `close()` is draining. */
+  private _closeBegan: number | undefined;
   /** Ends the wait after a fatal framing error: destroys the transport once the bound passes. */
   private _refusalBound: ReturnType<typeof setTimeout> | undefined;
 
@@ -369,9 +372,13 @@ export class Connection extends EventEmitter {
    *
    * - If `CONNECTING` or `RECONNECTING`: cancels the pending attempt, transitions
    *   directly to `CLOSED`, and calls `transport.destroy()`.
-   * - If `CONNECTED`: transitions to `DRAINING`, calls `beforeClose(drainTimeoutMs)`,
-   *   then `DRAINING → DISCONNECTED` once the hook resolves, or `DRAINING → CLOSED`
-   *   if the drain timeout elapses first.
+   * - If `CONNECTED`: transitions to `DRAINING`, calls `beforeClose(drainTimeoutMs)` and
+   *   waits for it and for every piece of work passed to {@link Connection.holdOpenFor} that is
+   *   still running, then `DRAINING → DISCONNECTED` and ends the transport gracefully, so what
+   *   that work wrote reaches the peer. If the drain timeout elapses first: `DRAINING → CLOSED`
+   *   and the transport is destroyed. Work still running when the drain ends that way (the
+   *   timeout or a `destroy()`) is abandoned, and an `MllpConnectionError` with `phase: 'close'`
+   *   on `'error'` says how many were left and that what they would write is not sent.
    * - If `DRAINING`: waits for the existing drain to complete (idempotent).
    *
    * Every pending `close()` resolves as soon as the connection leaves `DRAINING`, by whatever
@@ -392,7 +399,7 @@ export class Connection extends EventEmitter {
     // Terminal states, nothing to do
     if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
 
-    // CONNECTING or RECONNECTING, cancel the pending attempt (LIFE-05)
+    // CONNECTING or RECONNECTING: cancel the pending attempt, there is nothing to drain
     if (this._state === "CONNECTING" || this._state === "RECONNECTING") {
       this._transition("CLOSED", "close() during " + this._state);
       this._transport.destroy();
@@ -405,6 +412,7 @@ export class Connection extends EventEmitter {
     }
 
     // CONNECTED → DRAINING
+    this._closeBegan = Date.now();
     this._transition("DRAINING");
     this._drainPromise = this._drainWithTimeout(timeout).finally(() => {
       this._drainPromise = null;
@@ -413,19 +421,19 @@ export class Connection extends EventEmitter {
   }
 
   /**
-   * Race `beforeClose()` against the drain timeout.
+   * Race `beforeClose()` and the held work against the drain timeout.
    *
    * On normal completion: `DRAINING → DISCONNECTED` + `transport.close()`.
    * On timeout: `DRAINING → CLOSED` + `transport.destroy()`.
    */
   private async _drainWithTimeout(timeoutMs: number): Promise<void> {
-    const drainPromise = this.beforeClose(timeoutMs);
+    const drainPromise = Promise.all([this.beforeClose(timeoutMs), this._heldWorkSettled()]);
     let handle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<"timeout">((resolve) => {
       handle = setTimeout(() => {
         resolve("timeout");
       }, timeoutMs);
-      // Unref so this timer does not keep the process alive (T-03-04-01)
+      // Unref so this timer does not keep the process alive
       handle.unref();
     });
 
@@ -443,11 +451,12 @@ export class Connection extends EventEmitter {
       if (this._state !== "DRAINING") return;
 
       if (result === "timeout") {
-        // Drain timed out, force to CLOSED (DRAINING → CLOSED per LIFE-02)
+        // Drain timed out: force DRAINING → CLOSED, abandoning whatever is still running
+        this._reportAbandonedWork("drain timeout");
         this._transition("CLOSED", "drain timeout");
         this._transport.destroy();
       } else {
-        // Drain completed, DRAINING → DISCONNECTED (LIFE-02)
+        // Drain completed: DRAINING → DISCONNECTED, ending the transport gracefully
         this._transition("DISCONNECTED");
         this._transport.close();
       }
@@ -472,20 +481,23 @@ export class Connection extends EventEmitter {
    */
   destroy(reason?: Error): void {
     if (this._state === "CLOSED") return;
+    if (this._state === "DRAINING") this._reportAbandonedWork(reason?.message ?? "destroy()");
     this._transition("CLOSED", reason?.message ?? "destroy()");
     this._transport.destroy(reason);
   }
 
   /**
-   * Hold the connection open, should a fatal framing error arrive, until `work` settles.
+   * Hold the connection open, on `close()` or a fatal framing error, until `work` settles.
    *
    * Pass the work that answers a frame this connection delivered: the handler and the write of
-   * its acknowledgement. When a later frame on the same connection has a fatal framing error, the
-   * connection reads nothing more, waits for every piece of work passed here to settle, and only
-   * then closes, so the acknowledgement of a frame delivered before the refused one still goes
-   * out. The wait is bounded by `drainTimeoutMs` (default 30 seconds): work that has not settled
-   * by then is abandoned and the connection is destroyed. `MllpServer` passes every message's
-   * work here itself; a caller driving a bare `Connection` may do the same.
+   * its acknowledgement. A `close()` waits for every piece of work passed here to settle before
+   * it ends the transport, so an acknowledgement written by that work still goes out. When a
+   * later frame on the same connection has a fatal framing error, the connection reads nothing
+   * more, waits the same way, and only then closes, so the acknowledgement of a frame delivered
+   * before the refused one still goes out. Either wait is bounded by `drainTimeoutMs` (default 30
+   * seconds): work that has not settled by then is abandoned and the connection is destroyed.
+   * `MllpServer` passes every message's work here itself; a caller driving a bare `Connection`
+   * may do the same.
    *
    * A rejection of `work` is not reported here; it only ends the wait for it.
    *
@@ -504,6 +516,25 @@ export class Connection extends EventEmitter {
     };
     this._answering.add(work);
     work.then(done, done);
+  }
+
+  /**
+   * Read nothing more from the peer: every byte that arrives from now on is dropped unread, and
+   * no further frame is delivered. It cannot be undone.
+   *
+   * `MllpServer.close()` calls this on each connection before closing it, so no new message
+   * reaches a handler while the ones already running finish and their acknowledgements are
+   * written. A client must not call it before a `close()` that waits for acknowledgements, since
+   * it would then never read them.
+   *
+   * @example
+   * ```typescript
+   * conn.stopReading();
+   * await conn.close();
+   * ```
+   */
+  stopReading(): void {
+    this._refusing = true;
   }
 
   /**
@@ -545,11 +576,46 @@ export class Connection extends EventEmitter {
   // Private FSM helpers
   // ---------------------------------------------------------------------------
 
+  /**
+   * Settle once no work passed to {@link Connection.holdOpenFor} is running. Work registered while
+   * waiting (a frame decoded from bytes already read) is waited for too.
+   */
+  private async _heldWorkSettled(): Promise<void> {
+    while (this._answering.size > 0) {
+      await Promise.allSettled([...this._answering]);
+    }
+  }
+
+  /**
+   * Report, on `'error'`, the held work a `close()` drain abandons because the drain ended before
+   * that work settled: what it would have written (an acknowledgement) is not sent. Nothing is
+   * reported when no `close()` is draining or nothing is still running.
+   */
+  private _reportAbandonedWork(reason: string): void {
+    const began = this._closeBegan;
+    const running = this._answering.size;
+    if (began === undefined || running === 0) return;
+    const elapsedMs = Date.now() - began;
+    const what =
+      running === 1
+        ? "1 handler still running; its acknowledgement was not sent"
+        : `${String(running)} handlers still running; their acknowledgements were not sent`;
+    this._emitErrorIfListened(
+      new MllpConnectionError(
+        `close() ended after ${String(elapsedMs)} ms (${reason}) with ${what}`,
+        {
+          cause: new Error(reason),
+          phase: "close",
+        },
+      ),
+    );
+  }
+
   private _transition(to: ConnectionState, reason?: string): void {
     const from = this._state;
     const legal = LEGAL_TRANSITIONS.get(from);
     if (legal === undefined || !legal.has(to)) {
-      // Illegal transition, silently ignore to preserve FSM integrity (T-03-03-04)
+      // Illegal transition, silently ignore to preserve FSM integrity
       return;
     }
     // The state is committed BEFORE any subscriber runs, so a throwing subscriber can never leave

@@ -257,9 +257,21 @@ await client.send(payload, { signal: AbortSignal.timeout(5_000) });
 // disposed on scope exit (including on throw), which closes, and so drains
 ```
 
-Server-side, `close()` stops accepting new connections and closes existing ones. A commit-gated
-`onMessage` handler that is mid-`await` is **not** waited on, so the same rule applies: durability is
-your handler's job, and it must not depend on the process staying alive to finish.
+Server-side, `close()` stops accepting new connections, and on each open connection it reads nothing
+more: bytes a sender writes from then on are dropped unread, so no new message reaches a handler and
+none is answered. It then waits for every handler still running and the acknowledgement it writes
+(`AA` on a commit, `AE` or `AR` on a handler that rejects, a custom builder's bytes), and only then
+ends the socket, so the sender gets the answer to a message you committed during the shutdown and
+does not resend it. A manual-mode handler's acknowledgement is waited for only until the handler's
+promise settles: send it before you return or resolve.
+
+The wait is bounded by `drainTimeoutMs` (default 30 s, or `server.close({ drainTimeoutMs })` for
+one call). A handler still running then is abandoned: its acknowledgement is not sent, the socket is
+destroyed, and the server's `'error'` event carries an `MllpConnectionError` with `phase: 'close'`
+saying how many handlers were still running. If one of them settles later anyway, its
+acknowledgement is reported on `'error'` as not sent because the connection closed, not as
+backpressure. The sender will resend those messages, so durability is still your handler's job, and
+de-duplication the receiver's.
 
 ## Observability
 

@@ -446,8 +446,10 @@ export interface ServerOptions {
   deadPeerTimeoutMs?: number;
 
   /**
-   * Graceful drain timeout passed to `conn.close()` during `server.close()`.
-   * Default: 30 000 ms.
+   * Graceful drain timeout passed to `conn.close()` during `server.close()`: the longest
+   * `close()` waits for the handlers still running and their acknowledgements. A handler still
+   * running then is abandoned, its acknowledgement is not sent, and an `MllpConnectionError`
+   * with `phase: 'close'` on `'error'` says so. Default: 30 000 ms.
    *
    * It also bounds the wait after a fatal framing error: frames delivered before the refused one
    * are still answered, and a connection waits at most this long for their handlers before it is
@@ -799,7 +801,7 @@ export class MllpServer extends EventEmitter {
     //     which throws, Node's fail-loud convention is deliberately kept
     //     for runtime accept-loop errors (EMFILE/ENFILE): a silent accept
     //     outage on a healthcare listener must be impossible.
-    // MLLP-10 refinement: the deliberate fail-loud branch below is PRESERVED exactly (unlistened +
+    // The deliberate fail-loud branch below is PRESERVED exactly (unlistened +
     // serving ⇒ unguarded re-emit ⇒ throw), but a *throwing subscriber* is a different thing from
     // an unobservable accept outage, and it must not crash the server. When a listener exists, the
     // emit is contained.
@@ -953,7 +955,7 @@ export class MllpServer extends EventEmitter {
       return Promise.reject(this._tlsConfigError);
     }
 
-    // Phase 8 bind safety, SINGLE-FLIGHT guard. Two concurrent listen()
+    // Bind safety, SINGLE-FLIGHT guard. Two concurrent listen()
     // calls on one server race each other's post-bind checks: the losing
     // call's 'listening' handler can observe the winner's (or a just-closed)
     // socket and record listening state for a bind that no longer exists,
@@ -973,7 +975,7 @@ export class MllpServer extends EventEmitter {
       );
     }
 
-    // Phase 8 bind safety, pre-bind FAST PATH: reject a literal wildcard
+    // Bind safety, pre-bind FAST PATH: reject a literal wildcard
     // host BEFORE binding unless the operator explicitly opted in via
     // allowWildcardBind. isWildcardHost normalizes IP literals ('::0',
     // '0:0:0:0:0:0:0:0', '::ffff:0.0.0.0' …); getaddrinfo shorthands it
@@ -1110,7 +1112,7 @@ export class MllpServer extends EventEmitter {
         const actualPort = addr.port;
         const actualHost = addr.address;
 
-        // Phase 8 bind safety, POST-BIND enforcement against the
+        // Bind safety, POST-BIND enforcement against the
         // OS-NORMALIZED bound address. getaddrinfo/inet_aton resolves
         // shorthands the pre-bind string check cannot see ('0', '0.0',
         // '0.0.0', '00.0.0.0', '0x0.0.0.0', hostnames that resolve to the
@@ -1151,7 +1153,7 @@ export class MllpServer extends EventEmitter {
         // guard would wedge every later listen()) and must not suppress a
         // LATER emission: each emit is contained SEPARATELY (a throw in
         // 'listening' cannot swallow the securityWarning), surfaced via the
-        // guarded 'error' tap (D-04, a handler error never crashes the
+        // guarded 'error' tap (a handler error never crashes the
         // server) with the tap itself contained too (a throwing 'error'
         // listener on top of a throwing subscriber drops rather than
         // strands), so listen() always resolves.
@@ -1171,7 +1173,7 @@ export class MllpServer extends EventEmitter {
           }
         };
 
-        // Phase 8, loud, one-time notice when a wildcard host is actually
+        // A loud, one-time notice when a wildcard host is actually
         // bound (keyed off the OS-normalized actualHost so shorthand
         // spellings warn too; single emission site). The operator channel
         // (process.emitWarning) fires FIRST, it has no subscribers, so no
@@ -1217,8 +1219,15 @@ export class MllpServer extends EventEmitter {
    * Sequence:
    * 1. `net.Server.close()`, stops accepting new connections immediately
    * 2. If `_connections` is empty: resolves immediately (no drain needed)
-   * 3. Calls `_drainAll(drainTimeoutMs)`, Promise.all + side-effect setTimeout
-   *    that force-destroys stragglers after the drain window
+   * 3. Every connection stops reading: bytes the peer sends from now on are dropped unread, so no
+   *    new message reaches a handler.
+   * 4. Every connection waits for its handlers still running and the acknowledgements they write
+   *    (`AA`, a negative ACK for a handler that rejects, a custom builder's bytes), then ends its
+   *    socket gracefully so those acknowledgements reach the sender. In manual mode the wait lasts
+   *    until the handler's promise settles: a `conn.send()` made after that is not waited for.
+   * 5. The wait is bounded by `drainTimeoutMs`. A connection still waiting then is destroyed, and
+   *    the server's `'error'` event carries an `MllpConnectionError` with `phase: 'close'` saying
+   *    how many handlers were still running and that their acknowledgements were not sent.
    *
    * Calling `close()` while a `listen()` is still in flight proactively
    * settles that `listen()` with a typed `MllpConnectionError` rejection
@@ -1247,7 +1256,7 @@ export class MllpServer extends EventEmitter {
       return Promise.reject(new DOMException("Aborted", "AbortError"));
     }
 
-    // Phase 8, settle an in-flight listen() FIRST (typed rejection). A
+    // Settle an in-flight listen() FIRST (typed rejection). A
     // close racing startup (SIGTERM handler, test teardown, an `await using`
     // scope exiting before listen() was awaited) would otherwise leave the
     // listen() promise hung forever: net.Server.close() nulls the handle and
@@ -1296,7 +1305,7 @@ export class MllpServer extends EventEmitter {
         signal.removeEventListener("abort", abortHandler);
       }
     }
-    // Emit 'close' after all connections have drained (SERVER-10: frozen payload). Contained.
+    // Emit 'close' after all connections have drained, with a frozen payload. Contained.
     this._emitContained("close", Object.freeze({}));
   }
 
@@ -1311,15 +1320,20 @@ export class MllpServer extends EventEmitter {
    * @param drainTimeoutMs - Maximum time to wait for connections to drain.
    */
   private async _drainAll(drainTimeoutMs: number): Promise<void> {
-    // Snapshot connections for the close() call map (fixed at call time)
+    // Snapshot connections for the close() call map (fixed at call time). Each stops reading
+    // first, so the handlers it waits for are the ones already running.
     const snapshot = [...this._connections];
-    const closePromises = snapshot.map((conn) => conn.close({ drainTimeoutMs }));
+    const closePromises = snapshot.map((conn) => {
+      conn.stopReading();
+      return conn.close({ drainTimeoutMs });
+    });
 
     // Side-effect timeout: iterate LIVE this._connections (not snapshot) to only
-    // destroy() connections that haven't already closed during the drain window
+    // destroy() connections that haven't already closed during the drain window. The reason
+    // names the timeout, so a connection that reports abandoned handlers says why.
     const timeoutHandle = setTimeout(() => {
       for (const conn of this._connections) {
-        conn.destroy();
+        conn.destroy(new Error("drain timeout"));
       }
     }, drainTimeoutMs);
     // Do not keep the process alive just for this drain timer
@@ -1358,7 +1372,7 @@ export class MllpServer extends EventEmitter {
    * ```
    */
   getStats(): ServerStats {
-    // Aggregate totalBytesIn/Out from live connections at call time (OBS-02, D-13)
+    // Aggregate totalBytesIn/Out from the live connections at call time
     let totalBytesIn = 0;
     let totalBytesOut = 0;
     for (const conn of this._connections) {
@@ -1416,7 +1430,7 @@ export class MllpServer extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   private _onSocketAccepted(socket: Socket | TLSSocket): void {
-    // TCP keepalive, must be set on the raw socket BEFORE passing to NetTransport (D-10)
+    // TCP keepalive, must be set on the raw socket BEFORE passing to NetTransport
     if (this._opts.keepaliveIntervalMs !== undefined) {
       socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
     }
@@ -1449,13 +1463,13 @@ export class MllpServer extends EventEmitter {
     const release = this._capRelease.get(socket);
     if (release !== undefined) socket.once("close", release);
 
-    // Set beforeClose no-op hook (Plan 04 will wire autoAck drain here if needed)
-    conn.beforeClose = () => Promise.resolve();
+    // No beforeClose hook: every message's handler and ACK write is passed to
+    // conn.holdOpenFor() below, and conn.close() waits for that work itself.
 
     // Default 'error' handler on connection, prevents ERR_UNHANDLED_ERROR when
     // auto-ACK or transport errors are emitted on a connection with no user-attached
     // error listener. Forwards to server's 'error' event only when listeners exist;
-    // otherwise silently swallows (D-04: server never crashes on connection errors).
+    // otherwise silently swallows (the server never crashes on a connection error).
     conn.on("error", (errEvent: unknown) => {
       this._emitErrorIfListened(errEvent);
     });
@@ -1478,7 +1492,7 @@ export class MllpServer extends EventEmitter {
     conn.once("close", _onConnEnded);
     conn.once("disconnect", _onConnEnded);
 
-    // Wire dead-peer idle timeout (D-11), reset on every message
+    // Wire the dead-peer idle timeout, reset on every message
     if (this._opts.deadPeerTimeoutMs !== undefined) {
       const timeoutMs = this._opts.deadPeerTimeoutMs;
       let deadPeerTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
@@ -1503,7 +1517,7 @@ export class MllpServer extends EventEmitter {
     conn.notifyConnect(socket.remoteAddress ?? null, socket.remotePort ?? null);
 
     // Wire message handler: always emit 'message' (received+framed) first, then route the
-    // ACK by mode (the commit contract, see ServerOptions.autoAck). D-04: a handler error
+    // ACK by mode (the commit contract, see ServerOptions.autoAck). A handler error
     // never crashes the server. Async dispatch is wrapped in void; rejections are handled
     // inside the dispatch methods.
     conn.on(
@@ -1521,7 +1535,7 @@ export class MllpServer extends EventEmitter {
           warnings,
         });
 
-        // D-03: emit 'message' BEFORE any ACK dispatch.
+        // Emit 'message' BEFORE any ACK dispatch.
         //
         // Contained: a `'message'` subscriber is an OBSERVER (a metrics tap, a logger). The ACK
         // decision belongs to the commit contract below, `ServerOptions.onMessage` is the
@@ -1558,7 +1572,7 @@ export class MllpServer extends EventEmitter {
       },
     );
 
-    // Phase 8, surface a minimal, content-free peer-certificate summary
+    // Surface a minimal, content-free peer-certificate summary
     // (WANT/MUST only) on the 'connection' event. Never the full cert object.
     const peerCertificate: PeerCertificateSummary | null =
       (this._tls?.clientAuth ?? "NONE") !== "NONE"
@@ -1842,10 +1856,12 @@ export class MllpServer extends EventEmitter {
   }
 
   /**
-   * Frame an ACK payload and write it to the connection. `Connection.send()` returns
-   * `false` under backpressure (socket write buffer full); that drops the ACK and emits
-   * a `MllpConnectionError({ phase: 'send' })` on the connection, the peer will
-   * time out waiting and may retry. The server never crashes.
+   * Frame an ACK payload and write it to the connection. When the connection has already
+   * closed (a handler that settled after `server.close()` gave up on it, or after the peer
+   * left), the ACK is not sent and a `MllpConnectionError({ phase: 'send' })` saying so is
+   * emitted on the connection. `Connection.send()` returns `false` under backpressure (socket
+   * write buffer full); that is reported the same way, as backpressure. Either way the peer
+   * will time out waiting and may retry. The server never crashes.
    */
   private _dispatchAck(conn: Connection, ackPayload: Buffer): void {
     // TOTAL by contract: this is reached from `void`-ed async tasks (`_sendCommitAck`, the
@@ -1856,7 +1872,7 @@ export class MllpServer extends EventEmitter {
     // On the auto-ACK path this is **hard to provoke, but not impossible, and the containment is
     // what makes that safe.** `buildRawAck` decodes and encodes as `latin1`, a 1:1 byte↔code-unit
     // map, so it cannot *synthesize* a framing byte the way `ascii` masking once did
-    // (`0x8B & 0x7F` = VT, the Phase 10 bug): it only ever echoes bytes that were already in the
+    // (`0x8B & 0x7F` = VT, an earlier bug): it only ever echoes bytes that were already in the
     // inbound. A delivered payload holds neither a VT nor an FS (`FrameReader` refuses a frame with
     // either inside it, `MLLP_PAYLOAD_CONTAINS_VT`/`_FS`), so an echoed framing byte is not a
     // concern on this path today. The guard does not rest on that: a caller's `autoAck: fn` can
@@ -1877,6 +1893,20 @@ export class MllpServer extends EventEmitter {
         Object.freeze({
           connectionId: conn.connectionId,
           error: new MllpConnectionError("ACK could not be framed", { cause, phase: "send" }),
+        }),
+      );
+      return;
+    }
+
+    if (conn.state === "CLOSED" || conn.state === "DISCONNECTED") {
+      safeEmitError(
+        conn,
+        Object.freeze({
+          connectionId: conn.connectionId,
+          error: new MllpConnectionError(
+            "ACK not sent: the connection closed before the handler settled",
+            { cause: new Error("connection closed"), phase: "send" },
+          ),
         }),
       );
       return;
@@ -1945,7 +1975,7 @@ export async function createStarterServer(opts: StarterServerOptions): Promise<M
   });
 
   if (opts.handleSignals === true) {
-    // D-09: register process.once('SIGTERM'/'SIGINT') so signal fires close() + exit(0).
+    // Register process.once('SIGTERM'/'SIGINT') so a signal fires close() + exit(0).
     // Use once() (not on()) so handlers self-remove after first fire, preventing accumulation
     // across multiple server instances.
     const sigHandler = (): void => {
