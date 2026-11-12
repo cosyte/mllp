@@ -4133,7 +4133,7 @@ Frozen payload of the `'tlsNegotiated'` event, emitted by both
 including every reconnect. Never emitted on a plaintext connection.
 
 Carries no HL7 payload content and no certificate or key material: only the
-two negotiated names and the same routing metadata a `SecurityWarning`
+negotiated names and the same routing metadata a `SecurityWarning`
 carries. It is emitted at handshake-completion time, before any HL7 byte has
 crossed the link.
 
@@ -4162,6 +4162,27 @@ in, is a different rendering of the same suite.
 > `readonly` **host**: `string`
 
 Host associated with the link (the target host for clients; the bind host for servers).
+
+##### keyExchangeGroup?
+
+> `readonly` `optional` **keyExchangeGroup?**: `string`
+
+The key-exchange group the handshake used, as the TLS library names it,
+e.g. `'X25519'`, `'prime256v1'`, or a post-quantum hybrid such as
+`'X25519MLKEM768'`. Standardized group names are the ones the IANA TLS
+Supported Groups registry lists.
+
+Present only where the runtime reports the group, and **absent** (the key
+is not on the object) everywhere else:
+
+- only on a **client** record: Node.js reports the group on a client socket
+  alone, so a server record never carries it;
+- a classic elliptic-curve group (`'X25519'`, `'prime256v1'` and the like)
+  is reported on every supported Node.js line;
+- a group with no classic key, such as a post-quantum hybrid, is reported
+  from Node.js 24.19.0 and 26.5.0; on Node.js 22 it is absent;
+- a TLS 1.2 finite-field Diffie-Hellman exchange (a `DHE` suite) has no
+  group name to report, so it is absent there too.
 
 ##### port
 

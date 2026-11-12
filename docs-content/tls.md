@@ -23,7 +23,9 @@ need none run in our tests. The reference entries used here are
 
 Spec anchor: IHE ATNA, **ITI-19 Authenticate Node**
 (https://profiles.ihe.net/ITI/TF/Volume2/ITI-19.html), the "STX: TLS 1.2 floor using BCP195 Option"
-(ITI TF-2 §3.19.6.2.3), spelled here as the published text spells it. What this package supplies
+(ITI TF-2 §3.19.6.2.3), spelled here as the published text spells it. We checked it against the
+current Final Text, ITI Technical Framework Revision 20.0 (August 4, 2023), in November 2026: the
+option, its TLS 1.2 floor and its four cipher suites are unchanged there. What this package supplies
 against that option, and what stays yours, is declared on the
 [Conformance statement](./conformance.md).
 
@@ -512,13 +514,14 @@ and it never serves on some other list.
 ### What each link actually negotiated
 
 Both the client and the server emit a frozen `'tlsNegotiated'` event once per completed TLS
-handshake, carrying the protocol version and cipher suite that link agreed on. That is what turns a
+handshake, carrying the protocol version and cipher suite that link agreed on and, on a client,
+the key-exchange group. That is what turns a
 conformance claim into something a deployment can evidence from its own logs rather than assert.
 
 ```ts no-run needs a TLS client and server to observe
-client.on("tlsNegotiated", ({ protocolVersion, cipherSuite, host, port }) => {
-  logger.info({ tls: protocolVersion, suite: cipherSuite, host, port });
-  // e.g. { tls: 'TLSv1.2', suite: 'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256', ... }
+client.on("tlsNegotiated", ({ protocolVersion, cipherSuite, keyExchangeGroup, host, port }) => {
+  logger.info({ tls: protocolVersion, suite: cipherSuite, group: keyExchangeGroup, host, port });
+  // e.g. { tls: 'TLSv1.3', suite: 'TLS_AES_256_GCM_SHA384', group: 'X25519MLKEM768', ... }
 });
 
 server.on("tlsNegotiated", ({ protocolVersion, cipherSuite }) => {
@@ -530,6 +533,22 @@ server.on("tlsNegotiated", ({ protocolVersion, cipherSuite }) => {
 - `cipherSuite`, in its **IANA** spelling, the one ITI TF-2 §3.19.6.2.3 prints, so it compares
   against a conformance claim directly. The OpenSSL spelling is a different rendering of the same
   suite; see the table above.
+- `keyExchangeGroup`, the group the key exchange used, as the TLS library names it: `'X25519'`,
+  `'prime256v1'`, or a post-quantum hybrid such as `'X25519MLKEM768'`. This is how you see whether
+  a link is post-quantum. It is optional: the key is on the record only where Node.js reports the
+  group, and missing everywhere else.
+  - On a **client** only. Node.js reports the group on a client socket alone, so a server record
+    never carries it; read it on the client end of the link.
+  - A classic elliptic-curve group is reported on every Node.js line we support. A group with no
+    classic key, which is what a post-quantum hybrid is, is reported from Node.js 24.19.0 and
+    26.5.0; on Node.js 22 the key is missing for it.
+  - A TLS 1.2 `DHE` suite exchanges keys over a finite-field Diffie-Hellman group that the runtime
+    does not name, so the key is missing there too.
+  - Under Bun and Deno the key is on the record only if their `node:tls` reports a group name.
+
+  Nothing to change in code that reads the record: the field is new and optional. Code that checks
+  the record's exact set of keys has to allow it on a client.
+
 - `host` / `port`, the same routing metadata a `'securityWarning'` carries: the target address for a
   client, the bound address for a server.
 - `timestamp`, wall-clock time at emission.

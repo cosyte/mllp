@@ -7,15 +7,15 @@
  * version and which cipher suite that link negotiated. This is that record,
  * emitted once per completed handshake on both the client and the server.
  *
- * It is a **log line**, so it carries no field content: both values are read
- * from the TLS session and are names out of a closed registry, never anything
+ * It is a **log line**, so it carries no field content: every value is read
+ * from the TLS session and is a name out of a closed registry, never anything
  * derived from the payload, the certificate, or the key.
  *
  * @example
  * ```typescript
  * import type { NegotiatedTlsParameters } from '@cosyte/mllp';
  * client.on('tlsNegotiated', (p: NegotiatedTlsParameters) => {
- *   logger.info({ tls: p.protocolVersion, suite: p.cipherSuite });
+ *   logger.info({ tls: p.protocolVersion, suite: p.cipherSuite, group: p.keyExchangeGroup });
  * });
  * ```
  *
@@ -31,7 +31,7 @@ import type { TLSSocket } from "node:tls";
  * including every reconnect. Never emitted on a plaintext connection.
  *
  * Carries no HL7 payload content and no certificate or key material: only the
- * two negotiated names and the same routing metadata a `SecurityWarning`
+ * negotiated names and the same routing metadata a `SecurityWarning`
  * carries. It is emitted at handshake-completion time, before any HL7 byte has
  * crossed the link.
  *
@@ -56,6 +56,25 @@ export interface NegotiatedTlsParameters {
    * in, is a different rendering of the same suite.
    */
   readonly cipherSuite: string;
+  /**
+   * The key-exchange group the handshake used, as the TLS library names it,
+   * e.g. `'X25519'`, `'prime256v1'`, or a post-quantum hybrid such as
+   * `'X25519MLKEM768'`. Standardized group names are the ones the IANA TLS
+   * Supported Groups registry lists.
+   *
+   * Present only where the runtime reports the group, and **absent** (the key
+   * is not on the object) everywhere else:
+   *
+   * - only on a **client** record: Node.js reports the group on a client socket
+   *   alone, so a server record never carries it;
+   * - a classic elliptic-curve group (`'X25519'`, `'prime256v1'` and the like)
+   *   is reported on every supported Node.js line;
+   * - a group with no classic key, such as a post-quantum hybrid, is reported
+   *   from Node.js 24.19.0 and 26.5.0; on Node.js 22 it is absent;
+   * - a TLS 1.2 finite-field Diffie-Hellman exchange (a `DHE` suite) has no
+   *   group name to report, so it is absent there too.
+   */
+  readonly keyExchangeGroup?: string;
   /** Host associated with the link (the target host for clients; the bind host for servers). */
   readonly host: string;
   /** Port associated with the link. */
@@ -96,11 +115,42 @@ export function readNegotiatedTlsParameters(
   // the library's own suite registry, so neither can carry caller data.
   const cipherSuite = cipher.standardName === "" ? cipher.name : cipher.standardName;
   if (cipherSuite === "") return null;
+  const keyExchangeGroup = readKeyExchangeGroup(socket);
   return Object.freeze({
     protocolVersion,
     cipherSuite,
+    ...(keyExchangeGroup === undefined ? {} : { keyExchangeGroup }),
     host,
     port,
     timestamp: new Date(),
   });
+}
+
+/**
+ * Read the name of the key-exchange group a completed handshake used, where
+ * the runtime reports one.
+ *
+ * Node.js answers `getEphemeralKeyInfo()` with `null` on a server socket, with
+ * `{}` when it has nothing to describe, with a `type` of `'DH'` and no name for
+ * a finite-field exchange, and with a `name` for an elliptic-curve exchange
+ * (`type: 'ECDH'`) and, from Node.js 24.19.0 and 26.5.0, for a group with no
+ * classic key such as a post-quantum hybrid (`type: 'TLSGroup'`). Only a
+ * non-empty string `name` is reported; every other answer, and a runtime with
+ * no such method, reads as no group.
+ *
+ * @param socket - A TLS socket whose handshake completed.
+ * @returns The group's name, or `undefined` when there is none to report.
+ *
+ * @example
+ * ```typescript
+ * readKeyExchangeGroup(tlsSocket); // => 'X25519' on a client, undefined on a server
+ * ```
+ */
+function readKeyExchangeGroup(socket: TLSSocket): string | undefined {
+  if (typeof socket.getEphemeralKeyInfo !== "function") return undefined;
+  const info: unknown = socket.getEphemeralKeyInfo();
+  if (typeof info !== "object" || info === null || !("name" in info)) return undefined;
+  // The name comes from the TLS library's own group registry, so it cannot carry caller data.
+  const { name } = info;
+  return typeof name === "string" && name !== "" ? name : undefined;
 }
