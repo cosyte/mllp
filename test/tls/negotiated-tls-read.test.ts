@@ -60,3 +60,61 @@ describe("readNegotiatedTlsParameters refusals", () => {
     expect(Object.isFrozen(params)).toBe(true);
   });
 });
+
+/**
+ * A socket that completed a TLS 1.3 handshake and answers `getEphemeralKeyInfo`
+ * with `info`, or has no such method at all when `info` is the string `"absent"`.
+ */
+function groupStub(info: unknown): TLSSocket {
+  const socket: Record<string, unknown> = {
+    getProtocol: () => "TLSv1.3",
+    getCipher: () => ({
+      name: "TLS_AES_256_GCM_SHA384",
+      standardName: "TLS_AES_256_GCM_SHA384",
+      version: "TLSv1.3",
+    }),
+  };
+  if (info !== "absent") socket["getEphemeralKeyInfo"] = () => info;
+  return socket as unknown as TLSSocket;
+}
+
+describe("readNegotiatedTlsParameters key-exchange group", () => {
+  it("reports an elliptic-curve group by its name", () => {
+    const params = readNegotiatedTlsParameters(
+      groupStub({ type: "ECDH", name: "X25519", size: 253 }),
+      "127.0.0.1",
+      2575,
+    );
+    expect(params?.keyExchangeGroup).toBe("X25519");
+    expect(Object.isFrozen(params)).toBe(true);
+  });
+
+  it("reports a group with no classic key, such as a post-quantum hybrid", () => {
+    const params = readNegotiatedTlsParameters(
+      groupStub({ type: "TLSGroup", name: "X25519MLKEM768" }),
+      "127.0.0.1",
+      2575,
+    );
+    expect(params?.keyExchangeGroup).toBe("X25519MLKEM768");
+  });
+
+  // Each of these is a shape the runtime really answers with, or a runtime with no such method,
+  // and none of them names a group: the key must then be missing, not present as undefined.
+  const noGroup: ReadonlyArray<readonly [string, unknown]> = [
+    ["a runtime with no getEphemeralKeyInfo", "absent"],
+    ["a server socket, which Node answers with null", null],
+    ["an empty answer", {}],
+    ["a finite-field exchange, which has a size and no name", { type: "DH", size: 2048 }],
+    ["an empty name", { type: "ECDH", name: "", size: 256 }],
+    ["a name that is not a string", { type: "ECDH", name: 25519, size: 253 }],
+    ["an answer that is not an object", "X25519"],
+  ];
+  for (const [label, info] of noGroup) {
+    it(`omits the group for ${label}`, () => {
+      const params = readNegotiatedTlsParameters(groupStub(info), "127.0.0.1", 2575);
+      expect(params).not.toBeNull();
+      expect(params?.cipherSuite).toBe("TLS_AES_256_GCM_SHA384");
+      expect(Object.keys(params ?? {})).not.toContain("keyExchangeGroup");
+    });
+  }
+});
