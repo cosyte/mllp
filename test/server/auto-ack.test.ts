@@ -666,12 +666,15 @@ describe("MLLP-ACK-FAILSAFE, buildRawAck refuses a positive ACK it cannot correl
     expect(rawAckUncorrelatable(Buffer.from(CONCATENATED_TWO_MSH, "latin1"))).toBe(true);
   });
 
-  it("(3) a SP/TAB/BOM before MSH downgrades AA -> AE (MSH heads no segment)", () => {
+  it("(3) a SP/TAB before MSH downgrades AA -> AE (MSH heads no segment)", () => {
     positiveDowngrades(` ${ADT_A01_PAYLOAD}`); // leading space
     positiveDowngrades(`\t${ADT_A01_PAYLOAD}`); // leading TAB
-    positiveDowngrades(
-      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(ADT_A01_PAYLOAD, "latin1")]),
-    ); // UTF-8 BOM
+  });
+
+  it("a UTF-8 byte order mark before MSH is skipped, so AA stays AA and echoes MSH-10", () => {
+    const bom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(ADT_A01_PAYLOAD)]);
+    expect(buildRawAck(bom, "AA").toString("latin1")).toContain("MSA|AA|MSG001");
+    expect(rawAckUncorrelatable(bom)).toBe(false);
   });
 
   it("an FHS/BHS batch envelope downgrades AA -> AE (MLLP-BATCH stays a loud refusal)", () => {

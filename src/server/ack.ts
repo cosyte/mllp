@@ -201,9 +201,10 @@ const UNSAFE_DELIMITER = /[\r\n\v\x1c]/;
  * destroyed message was delivered). Three payload-shaped reasons make a positive ACK
  * uncorrelatable, all peer-reachable off the wire:
  *
- *   1. **No readable `MSH`.** `readMshSegment` returns `null`, e.g. a `BOM`/`SP`/`TAB`
- *      before `MSH` (which shares the `MSH`'s segment line, so `MSH` heads no segment), or
- *      a bare fragment delivered after a mid-payload `VT` discard (`MLLP_TRAILING_BYTES`).
+ *   1. **No readable `MSH`.** `readMshSegment` returns `null`, e.g. a `SP`/`TAB` before
+ *      `MSH` (which shares the `MSH`'s segment line, so `MSH` heads no segment), or a bare
+ *      fragment delivered after a mid-payload `VT` discard (`MLLP_TRAILING_BYTES`). A UTF-8
+ *      byte order mark at byte 0 is not one of these: the scan skips it and reads the `MSH`.
  *      MSA-2 would be empty: an ACK that correlates to nothing.
  *   2. **Empty MSH-10.** The `MSH` is readable but carries no message control ID, so there
  *      is nothing to echo, again `MSA|AA|` with an empty MSA-2.

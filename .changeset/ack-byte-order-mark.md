@@ -1,0 +1,5 @@
+---
+"@cosyte/mllp": patch
+---
+
+**An acknowledgment or message that starts with a UTF-8 byte order mark is now read.** Some engines write `EF BB BF` before the `MSH` when they encode a message as UTF-8. Before this, the mark hid the `MSH`, so a healthy acknowledgment behind one could not be matched by control ID under `correlateByControlId: true`, and in FIFO mode it drew the `MLLP_ACK_FIFO_MSA1_UNREADABLE` warning (or rejected the send under `fifoUnreadableAck: "reject"`); on the server, a positive auto-ACK for an inbound message behind one was downgraded to `AE` with an empty MSA-2, and `buildRawAck` and `rawAckUncorrelatable` did the same. Now a whole mark at byte 0 is skipped for reading the `MSH`, MSA-1 and MSA-2 in both client modes and on the server, so those acknowledgments settle their sends with no warning and those messages get an `AA` that echoes MSH-10. The bytes handed to the caller stay exactly as received, mark included. A mark anywhere else (after a leading `CR`, a second mark, or part of one) still hides the `MSH`, as before. Nothing for a caller to change: a handler that counted on the `AE` downgrade for such a message now sees `AA`.
