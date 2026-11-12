@@ -870,9 +870,8 @@ export class Connection extends EventEmitter {
     // ERR_UNHANDLED_ERROR straight out of the socket's 'error' listener and kill the process. A
     // bare Connection (no 'error' listener) previously died on an ordinary ECONNRESET.
     this._emitErrorIfListened(new MllpConnectionError(err.message, { cause: err, phase }));
-    if (this._state === "DRAINING") {
-      this._reportAbandonedWork(`when the connection failed (${err.message})`, err.message);
-    }
+    // Reports only during a close() drain: no other state still standing here has begun one.
+    this._reportAbandonedWork(`when the connection failed (${err.message})`, err.message);
 
     // CONNECTING and RECONNECTING have no path to DISCONNECTED, use CLOSED
     const target: ConnectionState =

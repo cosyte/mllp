@@ -275,8 +275,9 @@ describe("what the held work owes", () => {
     ]);
   });
 
-  it("names one manual handler and one observer in the singular", async () => {
+  it("names one of each kind in the singular", async () => {
     const h = harness(200);
+    h.conn.holdOpenFor(new Promise<void>(() => undefined));
     h.conn.holdOpenFor(new Promise<void>(() => undefined), { kind: "manual" });
     h.conn.holdOpenFor(new Promise<void>(() => undefined), { kind: "observer" });
     const closing = h.conn.close();
@@ -284,6 +285,7 @@ describe("what the held work owes", () => {
     await closing;
     expect(h.errors.map((e) => e.message)).toEqual([
       "close() ended after 200 ms (drain timeout): " +
+        "1 message was delivered and its acknowledgement was not sent; " +
         "1 manual-mode handler was still running, so its acknowledgement may not have been sent; " +
         "1 observer that owes no acknowledgement was still running",
     ]);
@@ -343,6 +345,14 @@ describe("the peer ending a close() drain", () => {
     ]);
     expect(h.errors[1]?.cause).toEqual(new Error("synthetic reset"));
     expect(h.errors[1]?.phase).toBe("close");
+  });
+
+  it("a transport error outside a close() drain reports only itself", () => {
+    const h = harness();
+    h.conn.holdOpenFor(new Promise<void>(() => undefined));
+    h.fails(new Error("synthetic reset"));
+    expect(h.conn.state).toBe("DISCONNECTED");
+    expect(h.errors.map((e) => e.message)).toEqual(["synthetic reset"]);
   });
 
   it("reports nothing when the peer closes after the work settled", async () => {
