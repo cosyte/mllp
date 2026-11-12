@@ -28,7 +28,14 @@ They measure what the performance standard names, for a transport:
 - **Memory**: allocations per operation, the peak of one message on each side of the socket as a
   multiple of its size (the bytes of a frame sit outside the JavaScript heap, so both are counted),
   and a long run that checks memory stays flat.
-- **Import time and bundle size** of the root entry point.
+- **Import time and bundle size** of the root entry point and of each subpath (`testing`,
+  `ack-from-hl7` and `arbitraries`), each read on its own.
+- **The socket paths** one client and one server do not show: 16, 128 and 512 connections to one
+  server at once, with the server's memory for each idle connection; the time a TLS handshake
+  takes, one at a time and 16 at once, beside a plain TCP connect; the same traffic over TLS and
+  over TCP; the acknowledgment latency when your `onMessage` handler takes 5 or 25 ms, with one
+  message in flight, 8 and 64; and a reconnect storm, 100 and 500 clients whose server is killed
+  and started again on the same port, timed until every client is back and answered.
 
 Frames are decoded whole and split across reads the way a socket delivers them: small messages many
 to a 1,460 byte TCP segment, a large message in 64 KiB reads.
@@ -38,6 +45,8 @@ To take a reading yourself, after `pnpm build`:
 ```sh
 pnpm bench:reading --out bench-results/reading.json
 pnpm bench:socket
+pnpm bench:socket-cases
+pnpm bench:import --target dist/testing/index.mjs
 pnpm bench:profile
 ```
 

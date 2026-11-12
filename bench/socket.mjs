@@ -18,12 +18,22 @@
 
 import { fork } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { cpus, platform, arch } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { KIB, MIB, adtMessage, documentMessage, oruMessage } from "./corpus.mjs";
+import {
+  bytes,
+  machine,
+  median,
+  ms,
+  peakTracker,
+  quantile,
+  settle,
+  theilSen,
+  topPeak,
+} from "./socket-measure.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -38,57 +48,6 @@ const mllp = await import(pathToFileURL(resolve(values.target)).href);
 
 if (typeof globalThis.gc !== "function") {
   throw new Error("run with --expose-gc: the memory measures need gc()");
-}
-
-/** Collect until a round frees less than 64 KiB, twice running, letting freed buffers go between. */
-async function settle() {
-  let quiet = 0;
-  let last = process.memoryUsage();
-  for (let round = 0; round < 30 && quiet < 2; round++) {
-    globalThis.gc();
-    await new Promise((done) => setImmediate(done));
-    const now = process.memoryUsage();
-    const freed = last.heapUsed + last.arrayBuffers - (now.heapUsed + now.arrayBuffers);
-    quiet = freed < 64 * KIB ? quiet + 1 : 0;
-    last = now;
-  }
-  return { heapUsed: last.heapUsed, arrayBuffers: last.arrayBuffers };
-}
-
-/**
- * The highest heap and outside-heap memory seen since `start`, above the settled baseline: sampled
- * every millisecond, and whenever `sample()` is called at a moment a peak is likely (a frame just
- * delivered, a send just resolved).
- */
-function peakTracker() {
-  let base = null;
-  let peak = { heapUsed: 0, arrayBuffers: 0, total: 0 };
-  let timer = null;
-  const sample = () => {
-    if (base === null) return;
-    const now = process.memoryUsage();
-    const heapUsed = now.heapUsed - base.heapUsed;
-    const arrayBuffers = now.arrayBuffers - base.arrayBuffers;
-    peak = {
-      heapUsed: Math.max(peak.heapUsed, heapUsed),
-      arrayBuffers: Math.max(peak.arrayBuffers, arrayBuffers),
-      total: Math.max(peak.total, heapUsed + arrayBuffers),
-    };
-  };
-  return {
-    sample,
-    async start() {
-      base = await settle();
-      peak = { heapUsed: 0, arrayBuffers: 0, total: 0 };
-      timer = setInterval(sample, 1);
-    },
-    stop() {
-      sample();
-      clearInterval(timer);
-      base = null;
-      return peak;
-    },
-  };
 }
 
 // The server side: listen, answer every message with the auto-ACK, and report memory when asked.
@@ -113,41 +72,6 @@ if (values.serve) {
   process.send({ type: "ready", port: server.getStats().port });
 } else {
   await main();
-}
-
-/** The value at quantile `q` of sorted `xs`, nearest rank; null without 10 values above it. */
-function quantile(sorted, q) {
-  if (sorted.length * (1 - q) < 10) return null;
-  return sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];
-}
-
-/** The median of `xs`. */
-function median(xs) {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-}
-
-/** The Theil-Sen slope of `ys` over their index: the median of every pairwise slope. */
-function theilSen(ys) {
-  const slopes = [];
-  for (let i = 0; i < ys.length; i++) {
-    for (let j = i + 1; j < ys.length; j++) slopes.push((ys[j] - ys[i]) / (j - i));
-  }
-  return median(slopes);
-}
-
-function ms(x) {
-  if (x === null) return "n/a";
-  return x >= 1 ? `${x.toFixed(3)} ms` : `${(x * 1000).toFixed(1)} us`;
-}
-
-function bytes(x) {
-  const sign = x < 0 ? "-" : "";
-  const a = Math.abs(x);
-  if (a >= MIB) return `${sign}${(a / MIB).toFixed(2)} MiB`;
-  if (a >= KIB) return `${sign}${(a / KIB).toFixed(1)} KiB`;
-  return `${sign}${String(Math.round(a))} B`;
 }
 
 async function main() {
@@ -277,22 +201,14 @@ async function main() {
     // time: each side settled before each send, and the highest peak of any one send kept, as
     // @cosyte/bench takes its peak per call. Many in flight: the peak over one whole round.
     const peak = { per: c.window === 1 ? "message" : "round", sender: null, receiver: null };
-    const top = (a, b) =>
-      a === null
-        ? b
-        : {
-            heapUsed: Math.max(a.heapUsed, b.heapUsed),
-            arrayBuffers: Math.max(a.arrayBuffers, b.arrayBuffers),
-            total: Math.max(a.total, b.total),
-          };
     const batches = c.window === 1 ? distinct.slice(0, 8).map((p) => [p]) : [payloads];
     for (const batch of batches) {
       await peaks.start();
       await ask("peak-start");
       await run(batch, c.window);
-      peak.sender = top(peak.sender, peaks.stop());
+      peak.sender = topPeak(peak.sender, peaks.stop());
       const { id: _id, ...receiver } = await ask("peak-stop");
-      peak.receiver = top(peak.receiver, receiver);
+      peak.receiver = topPeak(peak.receiver, receiver);
     }
     latencies.sort((a, b) => a - b);
     const opsPerSec = median(rates);
@@ -345,14 +261,12 @@ async function main() {
   child.send({ id: ++nextId, type: "stop" });
   await exited;
 
-  const cpu = cpus()[0]?.model ?? "unknown CPU";
-  const runner = process.env.ImageOS
-    ? `GitHub-hosted ${process.env.ImageOS} ${process.env.ImageVersion ?? ""}`.trim()
-    : `local-${platform()}-${arch()}`;
+  const host = machine();
+  const { runner, cpu } = host;
   const document = {
     suite: "@cosyte/mllp over a 127.0.0.1 socket",
     node: process.version,
-    machine: { runner, cpu, logicalCpus: cpus().length },
+    machine: host,
     date: new Date().toISOString(),
     cases: results,
     peakFloor: floor,
