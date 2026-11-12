@@ -480,7 +480,7 @@ describe("what close() reports it abandoned", () => {
     expect(seen.errors[0]?.message).toMatch(
       /1 manual-mode handler was still running, so its acknowledgement may not have been sent/,
     );
-    expect(seen.errors[0]?.message).not.toMatch(/was not sent/);
+    expect(seen.errors[0]?.message).not.toMatch(/not sent|message/);
   });
 
   it("counts every message on the connection", async () => {

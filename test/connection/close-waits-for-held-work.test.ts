@@ -291,6 +291,20 @@ describe("what the held work owes", () => {
     ]);
   });
 
+  it("names no message when only manual work and an observer were left", async () => {
+    const h = harness(200);
+    h.conn.holdOpenFor(new Promise<void>(() => undefined), { kind: "manual" });
+    h.conn.holdOpenFor(new Promise<void>(() => undefined), { kind: "observer" });
+    const closing = h.conn.close();
+    await vi.advanceTimersByTimeAsync(200);
+    await closing;
+    expect(h.errors.map((e) => e.message)).toEqual([
+      "close() ended after 200 ms (drain timeout): " +
+        "1 manual-mode handler was still running, so its acknowledgement may not have been sent; " +
+        "1 observer that owes no acknowledgement was still running",
+    ]);
+  });
+
   it("reports nothing when only observers are left at the bound", async () => {
     const h = harness(200);
     h.conn.beforeClose = () => new Promise<void>(() => undefined);
