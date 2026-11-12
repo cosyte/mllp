@@ -36,7 +36,7 @@ import type { Transport } from "../transport/index.js";
 import type { TlsOptions } from "../transport/tls-options.js";
 import { MLLP_TLS_VERIFY_DISABLED, type SecurityWarning } from "../transport/security-warnings.js";
 import { resolveTlsCipherPolicy } from "../transport/tls-cipher-policy.js";
-import { checkPfx } from "../transport/pfx.js";
+import { checkCredentialMix, checkPfx } from "../transport/pfx.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import { MllpFramingError } from "../framing/index.js";
@@ -722,6 +722,8 @@ export class MllpClient extends EventEmitter {
           "for no bound",
       );
     }
+    // pfx with cert or key: Node.js would load the file last and its certificate would win.
+    checkCredentialMix(opts.tls);
     this._opts = opts;
     this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
     this._applicationAckTimeoutMs = opts.applicationAckTimeoutMs;

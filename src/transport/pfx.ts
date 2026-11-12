@@ -6,7 +6,33 @@
 
 import { createSecureContext } from "node:tls";
 
-import { MLLP_TLS_PFX_REJECTED, MllpTlsConfigurationError } from "./error.js";
+import {
+  MLLP_TLS_CREDENTIAL_CONFLICT,
+  MLLP_TLS_PFX_REJECTED,
+  MllpTlsConfigurationError,
+} from "./error.js";
+
+/**
+ * Refuse a TLS configuration that sets `pfx` together with `cert` or `key`, with
+ * {@link MllpTlsConfigurationError} and {@link MLLP_TLS_CREDENTIAL_CONFLICT}.
+ *
+ * Node.js loads the PKCS#12 file after the PEM pair, so the file's certificate would win and the
+ * `cert` the caller passed would go unused, with nothing to say so. Called by both constructors.
+ * The error carries the code only: no option's value reaches it.
+ *
+ * @param tls - The configured TLS options, `true` for a client's defaults, or `undefined`.
+ * @throws {MllpTlsConfigurationError} when `pfx` is set with `cert` or `key`.
+ * @internal
+ */
+export function checkCredentialMix(
+  tls:
+    { readonly cert?: unknown; readonly key?: unknown; readonly pfx?: Buffer } | true | undefined,
+): void {
+  if (typeof tls !== "object" || tls.pfx === undefined) return;
+  if (tls.cert !== undefined || tls.key !== undefined) {
+    throw new MllpTlsConfigurationError(MLLP_TLS_CREDENTIAL_CONFLICT);
+  }
+}
 
 /**
  * Load `pfx` with `passphrase` into a throwaway secure context, and turn a refusal into

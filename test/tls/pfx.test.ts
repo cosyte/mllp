@@ -27,6 +27,7 @@ import { createClient, type MllpClient } from "../../src/client/client.js";
 import { isTransientConnectionError } from "../../src/client/error.js";
 import { createServer, type MllpServer } from "../../src/server/server.js";
 import {
+  MLLP_TLS_CREDENTIAL_CONFLICT,
   MLLP_TLS_PFX_REJECTED,
   MllpTlsConfigurationError,
   tlsConfigurationMessage,
@@ -47,7 +48,11 @@ const PFX_MESSAGE =
   "tls.pfx could not be loaded with tls.passphrase: the passphrase is wrong, the file is not " +
   "PKCS#12, or it uses a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy` and " +
   "older exports write it) that OpenSSL 3 does not load, so re-export it with AES-256; " +
-  "nothing was bound";
+  "no socket was opened";
+
+const CONFLICT_MESSAGE =
+  "tls.pfx was set together with tls.cert or tls.key; the PKCS#12 file carries its own " +
+  "certificate and key, so set either cert and key or pfx, not both";
 
 /** One certificate for the whole file, built on first use: key generation is the slow part. */
 let sharedFixture: ServerCertFixture | undefined;
@@ -95,6 +100,10 @@ describe("tls.pfx: the refusal and its message", () => {
     expect(MLLP_TLS_PFX_REJECTED).toBe("MLLP_TLS_PFX_REJECTED");
     expect(tlsConfigurationMessage(MLLP_TLS_PFX_REJECTED)).toBe(PFX_MESSAGE);
     expect(root.MLLP_TLS_PFX_REJECTED).toBe(MLLP_TLS_PFX_REJECTED);
+  });
+
+  it("reads right on a client as on a server: no wording about binding", () => {
+    expect(tlsConfigurationMessage(MLLP_TLS_PFX_REJECTED)).not.toMatch(/bound|bind/);
   });
 });
 
@@ -290,5 +299,70 @@ describe("ServerOptions.tls needs a certificate", () => {
   it("accepts cert and key, or pfx alone", () => {
     servers.push(createServer({ tls: { cert, key } }));
     servers.push(createServer({ tls: { pfx: Buffer.from("x"), passphrase: PASSPHRASE } }));
+  });
+});
+
+describe("tls.pfx together with cert or key", () => {
+  const { cert, key } = certificate();
+  const pfx = buildPfx(certificate(), PASSPHRASE);
+
+  /** Assert `run` throws the conflict refusal, carrying none of the values it was given. */
+  function expectConflict(run: () => unknown): void {
+    let thrown: unknown = null;
+    try {
+      run();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MllpTlsConfigurationError);
+    const typed = thrown as MllpTlsConfigurationError;
+    expect(typed.code).toBe(MLLP_TLS_CREDENTIAL_CONFLICT);
+    expect(typed.message).toBe(CONFLICT_MESSAGE);
+    expect(typed.cause).toBeUndefined();
+    const everything = [typed.message, String(typed.stack), JSON.stringify(typed)].join("\n");
+    expect(everything).not.toContain(PASSPHRASE);
+    expect(everything).not.toContain(pfx.toString("base64").slice(0, 24));
+    expect(everything).not.toContain(cert.split("\n")[1]);
+    expect(everything).not.toContain(key.split("\n")[1]);
+  }
+
+  it("has a stable code and a fixed message that names the options", () => {
+    expect(MLLP_TLS_CREDENTIAL_CONFLICT).toBe("MLLP_TLS_CREDENTIAL_CONFLICT");
+    expect(tlsConfigurationMessage(MLLP_TLS_CREDENTIAL_CONFLICT)).toBe(CONFLICT_MESSAGE);
+    expect(root.MLLP_TLS_CREDENTIAL_CONFLICT).toBe(MLLP_TLS_CREDENTIAL_CONFLICT);
+  });
+
+  it("a server refuses cert and key with pfx at construction", () => {
+    expectConflict(() => createServer({ tls: { cert, key, pfx, passphrase: PASSPHRASE } }));
+  });
+
+  it("a server refuses cert alone or key alone with pfx at construction", () => {
+    expectConflict(() => createServer({ tls: { cert, pfx, passphrase: PASSPHRASE } }));
+    expectConflict(() => createServer({ tls: { key, pfx, passphrase: PASSPHRASE } }));
+  });
+
+  it("a client refuses cert and key with pfx at construction", () => {
+    expectConflict(() =>
+      createClient({
+        host: "127.0.0.1",
+        port: 2575,
+        tls: { cert, key, pfx, passphrase: PASSPHRASE },
+      }),
+    );
+  });
+
+  it("a client refuses cert alone or key alone with pfx at construction", () => {
+    expectConflict(() =>
+      createClient({ host: "127.0.0.1", port: 2575, tls: { cert, pfx, passphrase: PASSPHRASE } }),
+    );
+    expectConflict(() =>
+      createClient({ host: "127.0.0.1", port: 2575, tls: { key, pfx, passphrase: PASSPHRASE } }),
+    );
+  });
+
+  it("a client takes cert and key, pfx alone, or tls: true", () => {
+    for (const tls of [{ cert, key }, { pfx, passphrase: PASSPHRASE }, true] as const) {
+      clients.push(createClient({ host: "127.0.0.1", port: 2575, tls }));
+    }
   });
 });
