@@ -9,7 +9,7 @@
  * on `'error'`.
  */
 
-import type { Socket } from "node:net";
+import type { Server as NetServer, Socket } from "node:net";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -410,6 +410,36 @@ describe("the bound server.close() gives each connection", () => {
 
     expect(states.at(-1)).toEqual({ from: "DRAINING", to: "CLOSED", reason: "drain timeout" });
   });
+
+  it("reports the handler it abandons on a connection already waiting after a fatal framing error", async () => {
+    const started = latch();
+    const draining = latch();
+    const seen = await start({
+      autoAck: "AA",
+      drainTimeoutMs: 5_000,
+      onMessage: (_payload, _meta, conn) => {
+        conn.on("stateChange", (e: { to: string }) => {
+          if (e.to === "DRAINING") draining.open();
+        });
+        started.open();
+        return new Promise<never>(() => undefined);
+      },
+    });
+    const peer = await connect(seen.port);
+    peer.sock.write(Buffer.concat([frame("SYNMSG0001"), Buffer.from("X", "latin1")]));
+    await started.opened;
+    await draining.opened;
+
+    await seen.server.close({ drainTimeoutMs: 200 });
+    await peer.closed;
+
+    const reports = seen.errors.filter((e) => e.phase === "close");
+    expect(reports).toHaveLength(1);
+    expect(reports[0]?.message).toMatch(
+      /^close\(\) ended after \d+ ms \(drain timeout\): 1 message was delivered and its acknowledgement was not sent$/,
+    );
+    expect(msas(peer.received())).toEqual([]);
+  });
 });
 
 describe("what close() reports it abandoned", () => {
@@ -565,6 +595,73 @@ describe("a connection accepted after close() began", () => {
     expect(outcome).toBe("closed");
     expect(seen.server.getStats().connections).toBe(0);
   });
+
+  it("never delivers or acknowledges a whole frame written on it", async () => {
+    const { buildServerCertFixture } = await import("../helpers/tls-fixtures.js");
+    const net = await import("node:net");
+    const tls = await import("node:tls");
+    const { cert, key } = buildServerCertFixture();
+    const started = latch();
+    const handled: string[] = [];
+    const delivered: string[] = [];
+    const seen = await start(
+      {
+        tls: { cert, key },
+        autoAck: "AA",
+        drainTimeoutMs: 30_000,
+        onMessage: async (payload) => {
+          handled.push(idOf(payload));
+          started.open();
+          await pause(300);
+        },
+      },
+      handled,
+    );
+    seen.server.on("message", ({ payload }: { payload: Buffer }) => delivered.push(idOf(payload)));
+    const first = tls.connect({
+      host: "127.0.0.1",
+      port: seen.port,
+      ca: cert,
+      servername: "localhost",
+    });
+    first.on("error", () => undefined);
+    await new Promise<void>((resolve) => first.once("secureConnect", () => resolve()));
+    const firstChunks: Buffer[] = [];
+    first.on("data", (b: Buffer) => firstChunks.push(b));
+    first.write(frame("SYNMSG0001"));
+    await started.opened;
+
+    // Connected before close() began, its handshake not yet started: the server accepts it only
+    // once close() is already waiting. The whole frame goes out once the handshake is done.
+    const raw = await new Promise<Socket>((resolve, reject) => {
+      const s = net.createConnection({ host: "127.0.0.1", port: seen.port });
+      s.once("connect", () => resolve(s));
+      s.once("error", reject);
+    });
+    const closing = seen.server.close();
+    const late = tls.connect({ socket: raw, ca: cert, servername: "localhost" });
+    late.on("error", () => undefined);
+    const lateChunks: Buffer[] = [];
+    late.on("data", (b: Buffer) => lateChunks.push(b));
+    let written = false;
+    late.once("secureConnect", () => {
+      late.write(frame("SYNMSG0002"));
+      written = true;
+    });
+    const lateClosed = new Promise<void>((resolve) => late.once("close", () => resolve()));
+
+    await closing;
+    await Promise.race([lateClosed, pause(1_500)]);
+    await pause(100);
+    late.destroy();
+    first.destroy();
+
+    expect(written).toBe(true);
+    expect(handled).toEqual(["SYNMSG0001"]);
+    expect(delivered).toEqual(["SYNMSG0001"]);
+    expect(msas(Buffer.concat(firstChunks).toString("latin1"))).toEqual(["MSA|AA|SYNMSG0001"]);
+    expect(Buffer.concat(lateChunks).toString("latin1")).toBe("");
+  });
 });
 
 describe("a server listening again after close()", () => {
@@ -612,5 +709,58 @@ describe("a sender that half-closes while close() waits", () => {
     expect(messages).toContain(
       "close() ended when the sender closed the connection: 1 message was delivered and its acknowledgement was not sent",
     );
+  });
+});
+
+describe("a sender that half-closes as its handler settles", () => {
+  // The handler settles after the sender's FIN has ended our side of the socket, and before the
+  // socket has finished closing: the connection is still open, but nothing written now can reach
+  // the sender. The ACK is reported as not sent on a closed connection, never as backpressure.
+  it.each([
+    ["with the connection open", false],
+    ["while close() waits", true],
+  ])("reports the ACK as not sent, %s", async (_when, closing) => {
+    const started = latch();
+    const peerEnded = latch();
+    let settled!: () => void;
+    const handlerDone = new Promise<void>((resolve) => {
+      settled = resolve;
+    });
+    let endedOurSide: boolean | undefined;
+    let serverSocket: Socket | undefined;
+    const seen = await start({
+      autoAck: "AA",
+      onMessage: async () => {
+        started.open();
+        await peerEnded.opened;
+        // One tick on: the sender's FIN has ended our side by now, and the socket is not closed.
+        await new Promise<void>((resolve) => process.nextTick(resolve));
+        endedOurSide = serverSocket?.writableEnded === true && !serverSocket.destroyed;
+        setImmediate(settled);
+      },
+    });
+    const internals = seen.server as unknown as { _netServer: NetServer };
+    internals._netServer.on("connection", (socket: Socket) => {
+      serverSocket = socket;
+      socket.once("end", () => peerEnded.open());
+    });
+    const peer = await connect(seen.port);
+    peer.sock.write(frame("SYNMSG0001"));
+    await started.opened;
+
+    const closed = closing ? seen.server.close() : Promise.resolve();
+    peer.sock.end();
+    await handlerDone;
+    await closed;
+    await peer.closed;
+    await pause(50);
+
+    expect(endedOurSide).toBe(true);
+    const messages = seen.errors.map((e) => e.message);
+    expect(messages.some((m) => /backpressure/.test(m))).toBe(false);
+    expect(messages.some((m) => /ended by the other party|write after end/i.test(m))).toBe(false);
+    expect(messages).toContain("ACK not sent: the connection closed before the handler settled");
+    expect(seen.causes).toContain("connection closed");
+    expect(peer.received()).toBe("");
   });
 });

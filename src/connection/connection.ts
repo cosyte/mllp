@@ -382,7 +382,9 @@ export class Connection extends EventEmitter {
    *   and the transport is destroyed. Work still running when the drain ends that way (the
    *   timeout or a `destroy()`) is abandoned, and an `MllpConnectionError` with `phase: 'close'`
    *   on `'error'` says how many were left and that what they would write is not sent.
-   * - If `DRAINING`: waits for the existing drain to complete (idempotent).
+   * - If `DRAINING`: waits for the existing drain to complete (idempotent). When that is the
+   *   wait after a fatal framing error, the work it abandons, if it ends by its bound, a
+   *   `destroy()` or the peer closing before that work settles, is reported the same way.
    *
    * Every pending `close()` resolves as soon as the connection leaves `DRAINING`, by whatever
    * route: the hook resolving, the drain timeout, a `destroy()`, or the peer closing. A
@@ -409,8 +411,11 @@ export class Connection extends EventEmitter {
       return;
     }
 
-    // DRAINING already, join the in-progress drain rather than starting a second beforeClose call
+    // DRAINING already, join the in-progress drain rather than starting a second beforeClose call.
+    // A connection waiting after a fatal framing error has no close() drain yet: from now on it
+    // has one, so the work it abandons when that wait ends unsettled is reported like any other.
     if (this._state === "DRAINING") {
+      this._closeBegan ??= Date.now();
       return this._drainPromise ?? Promise.resolve();
     }
 
@@ -814,8 +819,10 @@ export class Connection extends EventEmitter {
     // A close() called meanwhile waits for the same end.
     this._drainPromise = this._leftDraining.then(() => undefined);
     this._refusalBound = setTimeout(() => {
-      // Past the bound: whatever is still running is abandoned. Already `CLOSED` once the work
-      // settled, the transition is refused and only the transport, still open, is destroyed.
+      // Past the bound: whatever is still running is abandoned, and reported when a close() is
+      // waiting on it. Already `CLOSED` once the work settled, nothing is left to report, the
+      // transition is refused and only the transport, still open, is destroyed.
+      this._reportAbandonedAfter("drain timeout");
       this._transition("CLOSED", err.message);
       this._transport.destroy(err);
     }, boundMs);

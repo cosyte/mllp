@@ -280,7 +280,13 @@ reported alone. The same report is made if the sender closes the connection befo
 settles, including a half-close: the server's sockets are not half-open, so when the sender ends its
 side ours ends too, and an acknowledgement written after that could not reach it. If abandoned work
 settles later anyway, its acknowledgement is reported on `'error'` as not sent because the
-connection closed, not as backpressure. The sender will resend those messages, so durability is
+connection closed, not as backpressure. So is the acknowledgement of a handler that settles in the
+moment after a sender's half-close has ended our side and before the socket has finished closing:
+it is not written, and it is reported as not sent, whether or not `close()` was called. A connection
+already waiting after a fatal framing error when `close()` is called (see
+[Frames before the refused one are still answered](./framing.md#frames-before-the-refused-one-are-still-answered)) is held to the same report: the
+work it abandons when its wait ends by the bound, by the server's own `drainTimeoutMs`, or by the
+sender closing, is counted the same way. The sender will resend those messages, so durability is
 still your handler's job, and de-duplication the receiver's.
 
 ## Observability

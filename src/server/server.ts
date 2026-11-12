@@ -662,6 +662,12 @@ export class MllpServer extends EventEmitter {
   /** Sockets the connection cap closed at accept, so a runtime's report of them is recognised. */
   private readonly _closedAtAccept = new WeakSet<object>();
   /**
+   * The socket under each connection, read by {@link MllpServer._dispatchAck}: a socket that can
+   * no longer be written to (the sender's end has ended ours, the socket not being half-open) has
+   * closed for its ACK while the connection still reads as open.
+   */
+  private readonly _socketOf = new WeakMap<Connection, Socket | TLSSocket>();
+  /**
    * For each socket the connection cap counted, what gives its place back. Released once, however
    * many times it is called.
    */
@@ -1497,6 +1503,7 @@ export class MllpServer extends EventEmitter {
 
     this._acceptedTotal++;
     this._connections.add(conn);
+    this._socketOf.set(conn, socket);
 
     // Remove from tracking when connection closes (CLOSED) or disconnects (DISCONNECTED).
     // Connection transitions to DISCONNECTED when peer closes gracefully (CONNECTED → DISCONNECTED).
@@ -1886,10 +1893,12 @@ export class MllpServer extends EventEmitter {
   /**
    * Frame an ACK payload and write it to the connection. When the connection has already
    * closed (a handler that settled after `server.close()` gave up on it, or after the peer
-   * left), the ACK is not sent and a `MllpConnectionError({ phase: 'send' })` saying so is
-   * emitted on the connection. `Connection.send()` returns `false` under backpressure (socket
-   * write buffer full); that is reported the same way, as backpressure. Either way the peer
-   * will time out waiting and may retry. The server never crashes.
+   * left), or its socket can no longer be written to (the sender half-closed, which ends our
+   * side too, and the socket has not finished closing), the ACK is not written and a
+   * `MllpConnectionError({ phase: 'send' })` saying it was not sent is emitted on the connection.
+   * `Connection.send()` returns `false` under backpressure (socket write buffer full); that is
+   * reported the same way, as backpressure. Either way the peer will time out waiting and may
+   * retry. The server never crashes.
    */
   private _dispatchAck(conn: Connection, ackPayload: Buffer): void {
     // TOTAL by contract: this is reached from `void`-ed async tasks (`_sendCommitAck`, the
@@ -1926,7 +1935,14 @@ export class MllpServer extends EventEmitter {
       return;
     }
 
-    if (conn.state === "CLOSED" || conn.state === "DISCONNECTED") {
+    // Read off the socket, not the connection's state. A connection that is `CLOSED` or
+    // `DISCONNECTED` has destroyed or ended its socket, so the socket is no longer writable. But
+    // the socket also stops being writable before the connection sees it close: when the sender
+    // half-closes, its end ends our side too (the socket is not half-open), and for a moment the
+    // connection still reads as open. An ACK written then only fails, and the `false` the write
+    // returned was reported as backpressure. Either way the ACK cannot reach the sender.
+    // Stryker disable next-line OptionalChaining: equivalent. Every connection this server answers on was accepted by it, so its socket is always in the map.
+    if (this._socketOf.get(conn)?.writable === false) {
       safeEmitError(
         conn,
         Object.freeze({

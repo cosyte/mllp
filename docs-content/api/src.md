@@ -126,7 +126,9 @@ Initiate graceful close of the connection.
   and the transport is destroyed. Work still running when the drain ends that way (the
   timeout or a `destroy()`) is abandoned, and an `MllpConnectionError` with `phase: 'close'`
   on `'error'` says how many were left and that what they would write is not sent.
-- If `DRAINING`: waits for the existing drain to complete (idempotent).
+- If `DRAINING`: waits for the existing drain to complete (idempotent). When that is the
+  wait after a fatal framing error, the work it abandons, if it ends by its bound, a
+  `destroy()` or the peer closing before that work settles, is reported the same way.
 
 Every pending `close()` resolves as soon as the connection leaves `DRAINING`, by whatever
 route: the hook resolving, the drain timeout, a `destroy()`, or the peer closing. A

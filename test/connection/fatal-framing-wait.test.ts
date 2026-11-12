@@ -13,6 +13,7 @@ import type { Mock } from "vitest";
 
 import { Connection } from "../../src/connection/connection.js";
 import type { ConnectionOptions, StateChangeEvent } from "../../src/connection/connection.js";
+import type { MllpConnectionError } from "../../src/connection/error.js";
 import type { Transport } from "../../src/transport/index.js";
 
 const VT = 0x0b;
@@ -200,6 +201,104 @@ describe("a fatal framing error with delivered work still running", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(closed).toBe(true);
     expect(h.conn.state).toBe("CLOSED");
+  });
+});
+
+/** The `phase: 'close'` reports a connection emits from now on, as `[message, cause message]`. */
+function closeReports(conn: Connection): [string, string][] {
+  const out: [string, string][] = [];
+  conn.on("error", ({ error }: { error: MllpConnectionError }) => {
+    if (error.phase === "close") out.push([error.message, error.cause.message]);
+  });
+  return out;
+}
+
+describe("a close() called while the connection waits after a fatal framing error", () => {
+  it("reports the work it abandons when the wait's bound passes", async () => {
+    const h = harness({ drainTimeoutMs: 500 });
+    const reports = closeReports(h.conn);
+    h.conn.on("message", () => h.conn.holdOpenFor(new Promise<never>(() => undefined)));
+    h.data(Buffer.concat([GOOD, JUNK]));
+
+    await vi.advanceTimersByTimeAsync(100);
+    let closed = false;
+    void h.conn.close().then(() => {
+      closed = true;
+    });
+    await vi.advanceTimersByTimeAsync(399);
+    expect(closed).toBe(false);
+    expect(reports).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(closed).toBe(true);
+    expect(h.conn.state).toBe("CLOSED");
+    expect(reports).toEqual([
+      [
+        "close() ended after 400 ms (drain timeout): 1 message was delivered and its acknowledgement was not sent",
+        "drain timeout",
+      ],
+    ]);
+  });
+
+  it("reports the work it abandons when the connection is destroyed meanwhile", async () => {
+    const h = harness({ drainTimeoutMs: 5_000 });
+    const reports = closeReports(h.conn);
+    h.conn.on("message", () => h.conn.holdOpenFor(new Promise<never>(() => undefined)));
+    h.data(Buffer.concat([GOOD, GOOD, JUNK]));
+
+    void h.conn.close();
+    await vi.advanceTimersByTimeAsync(200);
+    h.conn.destroy(new Error("drain timeout"));
+
+    expect(reports).toEqual([
+      [
+        "close() ended after 200 ms (drain timeout): 2 messages were delivered and their acknowledgements were not sent",
+        "drain timeout",
+      ],
+    ]);
+  });
+
+  it("reports the work it abandons when the sender closes the connection", async () => {
+    const h = harness({ drainTimeoutMs: 5_000 });
+    const reports = closeReports(h.conn);
+    h.conn.on("message", () =>
+      h.conn.holdOpenFor(new Promise<never>(() => undefined), { kind: "manual" }),
+    );
+    h.data(Buffer.concat([GOOD, JUNK]));
+
+    void h.conn.close();
+    await vi.advanceTimersByTimeAsync(0);
+    h.peerCloses();
+
+    expect(reports).toEqual([
+      [
+        "close() ended when the sender closed the connection: 1 manual-mode handler was still running, so its acknowledgement may not have been sent",
+        "peer closed",
+      ],
+    ]);
+  });
+
+  it("reports nothing when the work settles before the bound", async () => {
+    const h = harness({ drainTimeoutMs: 500 });
+    const reports = closeReports(h.conn);
+    const work = deferred();
+    h.conn.on("message", () => h.conn.holdOpenFor(work.promise));
+    h.data(Buffer.concat([GOOD, JUNK]));
+    void h.conn.close();
+    work.resolve();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.conn.state).toBe("CLOSED");
+    expect(reports).toEqual([]);
+  });
+
+  it("reports nothing at the bound when no close() was called", async () => {
+    const h = harness({ drainTimeoutMs: 500 });
+    const reports = closeReports(h.conn);
+    h.conn.on("message", () => h.conn.holdOpenFor(new Promise<never>(() => undefined)));
+    h.data(Buffer.concat([GOOD, JUNK]));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(h.conn.state).toBe("CLOSED");
+    expect(reports).toEqual([]);
   });
 });
 
