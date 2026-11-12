@@ -158,6 +158,9 @@ describe('FIFO with fifoUnreadableAck: "reject"', () => {
     expect(err).toBeInstanceOf(RootExport);
     const e = err as MllpUnreadableAckError;
     expect(e.name).toBe("MllpUnreadableAckError");
+    // The constructor frame is captured away, as for every other error of ours.
+    expect(e.stack).toBeDefined();
+    expect(e.stack).not.toMatch(/at new MllpUnreadableAckError/);
     expect(e.msa1Bytes).toBe(0);
     expect(e.byteOffset).toBe(0);
     expect(e.elapsedMs).toBeGreaterThanOrEqual(20);
@@ -271,7 +274,9 @@ describe("the option is checked at construction", () => {
 });
 
 describe("the correlator, FIFO mode", () => {
-  function correlator(onUnreadableAck?: (entry: PendingAck, msa1: number, at: number) => void): {
+  function correlator(
+    onUnreadableAck?: (entry: PendingAck, msa1: number, at: number, elapsed: number) => void,
+  ): {
     c: Correlator;
     warnings: Array<{ code: string; ctx: AckModeWarningContext }>;
   } {
@@ -328,21 +333,26 @@ describe("the correlator, FIFO mode", () => {
   });
 
   it("hands the entry to onUnreadableAck, returns null, and keeps the counters straight", () => {
-    const handed: Array<[PendingAck, number, number]> = [];
-    const { c } = correlator((entry, msa1, at) => handed.push([entry, msa1, at]));
+    const handed: Array<[PendingAck, number, number, number]> = [];
+    const { c, warnings } = correlator((entry, msa1, at, elapsed) =>
+      handed.push([entry, msa1, at, elapsed]),
+    );
     const key = c.enqueue(
       MESSAGE,
       null,
       () => undefined,
       () => undefined,
     );
-    c.markFlushed(key as number);
+    c.markFlushed(key as number, 1_000);
     expect(c.getStats().inFlight).toBe(1);
     expect(c.matchAck(ack("MSA|ZZ|SYNTH0001\r"), null, 9)).toBeNull();
     expect(handed).toHaveLength(1);
     expect(handed[0]?.[0].key).toBe(key);
     expect(handed[0]?.[1]).toBe(2);
     expect(handed[0]?.[2]).toBe(9);
+    // The same elapsed time the warning carries: the clock reads 1_010 when it is taken.
+    expect(handed[0]?.[3]).toBe(10);
+    expect(warnings[0]?.ctx.elapsedSinceSendMs).toBe(10);
     expect(c.getStats()).toMatchObject({ size: 0, inFlight: 0, queueBytes: 0 });
   });
 

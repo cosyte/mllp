@@ -1393,16 +1393,17 @@ export class MllpClient extends EventEmitter {
         },
         ...(this._rejectUnreadableAck
           ? {
-              onUnreadableAck: (entry: PendingAck, msa1Bytes: number, byteOffset: number) => {
+              onUnreadableAck: (
+                entry: PendingAck,
+                msa1Bytes: number,
+                byteOffset: number,
+                elapsedMs: number,
+              ) => {
                 entry.reject(
                   new MllpUnreadableAckError(
                     "the frame that settled this send in order carried no readable MSA-1, so " +
                       "the peer has not acknowledged it in HL7 terms",
-                    {
-                      msa1Bytes,
-                      byteOffset,
-                      elapsedMs: entry.sentAt === null ? 0 : Date.now() - entry.sentAt,
-                    },
+                    { msa1Bytes, byteOffset, elapsedMs },
                   ),
                 );
                 this._maybeEmitDrain();

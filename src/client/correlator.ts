@@ -187,7 +187,12 @@ export interface CorrelatorOptions {
    *
    * Left unset, such a frame settles the send like any other, which is the default.
    */
-  readonly onUnreadableAck?: (entry: PendingAck, msa1Bytes: number, byteOffset: number) => void;
+  readonly onUnreadableAck?: (
+    entry: PendingAck,
+    msa1Bytes: number,
+    byteOffset: number,
+    elapsedSinceSendMs: number,
+  ) => void;
   /** Injected clock; default `Date.now`. Tests inject deterministic clock. */
   readonly now?: () => number;
 }
@@ -407,15 +412,21 @@ export class Correlator {
       // otherwise settle it unremarked.
       const classification = classifyMsa1(payload);
       if (classification.kind === "code") return entry;
+      const elapsedSinceSendMs = entry.sentAt === null ? 0 : this._opts.now() - entry.sentAt;
       this._ackModeWarn("MLLP_ACK_FIFO_MSA1_UNREADABLE", {
         msa1Bytes: classification.byteLength,
         ackCode: null,
         controlIdBytes: null,
         byteOffset: byteOffsetFromAck,
-        elapsedSinceSendMs: entry.sentAt === null ? 0 : this._opts.now() - entry.sentAt,
+        elapsedSinceSendMs,
       });
       if (this._opts.onUnreadableAck === undefined) return entry;
-      this._opts.onUnreadableAck(entry, classification.byteLength, byteOffsetFromAck);
+      this._opts.onUnreadableAck(
+        entry,
+        classification.byteLength,
+        byteOffsetFromAck,
+        elapsedSinceSendMs,
+      );
       return null;
     }
     // controlId mode (PLAN-03)

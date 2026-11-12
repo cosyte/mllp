@@ -48,6 +48,7 @@ export type AckModeCode =
  *
  * Do **not** add a value parameter to anything that reads this table.
  */
+// Stryker disable next-line ObjectLiteral: a module-level initializer runs once, when the module is first loaded, so per-test coverage credits it to whichever test loaded the module first rather than to the tests that assert this value (test/client/fifo-unreadable-ack.test.ts asserts it literally).
 const ACK_MODE_MESSAGES: Readonly<Record<AckModeCode, string>> = Object.freeze({
   MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED:
     "MSH-15 (accept acknowledgment type) carried a value outside HL7 Table 0155; it was read " +
@@ -77,12 +78,14 @@ const ACK_MODE_MESSAGES: Readonly<Record<AckModeCode, string>> = Object.freeze({
     "An acknowledgement arrived for a send that had already been settled or failed; it was " +
     "dropped and that outcome was left unchanged. " +
     "Field values are withheld: a control ID is payload content and this diagnostic goes to a log.",
+  // Stryker disable StringLiteral: a module-level initializer runs once, when the module is first loaded, so per-test coverage credits it to whichever test loaded the module first rather than to the tests that assert this value (test/client/fifo-unreadable-ack.test.ts asserts it literally).
   MLLP_ACK_FIFO_MSA1_UNREADABLE:
     "A client correlating acknowledgements in order settled its oldest pending send on a frame " +
     "with no readable MSA-1 acknowledgement code, so the peer has not acknowledged that message " +
     "in HL7 terms. The send resolved with the frame, or rejected when fifoUnreadableAck is " +
     "'reject'. Set correlateByControlId to match acknowledgements by MSA-2 instead. " +
     "Field values are withheld; msa1Bytes gives the field's length.",
+  // Stryker restore StringLiteral
 });
 
 /**
