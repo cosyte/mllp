@@ -520,10 +520,11 @@ A messy MLLP byte stream a lenient reader accepts, split into chunks at random p
 payloads it must deliver and the warnings each must carry.
 
 Each frame may open with spaces, tabs, line feeds or carriage returns before its `VT`, or with no
-`VT` at all; carry an empty payload; carry bytes before a second `VT` that the reader discards
-(`MLLP_TRAILING_BYTES`, the payload delivered is what follows that `VT`); and end with `FS` and
-`LF`, with `FS` and the next frame's `VT`, or with `FS` and a stray byte the reader drops. Give it
-the tolerances your reader has, and it generates only what that reader accepts.
+`VT` at all; carry an empty payload; and end with `FS` and `LF`, or with `FS` and the next frame's
+`VT`. Give it the tolerances your reader has, and it generates only what that reader accepts. It
+never puts a `VT` inside a frame, nor an `FS` with anything but `CR`, `LF` or the next `VT` after
+it: a reader refuses such a frame whole (`MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`),
+so no reader accepts it.
 
 #### Parameters
 

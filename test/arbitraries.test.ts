@@ -22,6 +22,7 @@ import { FrameReader } from "../src/framing/decoder.js";
 const VT = 0x0b;
 const FS = 0x1c;
 const CR = 0x0d;
+const LF = 0x0a;
 
 /** Draw `n` values from an arbitrary on a fixed seed. */
 function draw<T>(arbitrary: fc.Arbitrary<T>, n = 300, seed = 7): T[] {
@@ -222,13 +223,29 @@ describe("messyStream()", () => {
       "MLLP_LEADING_WHITESPACE",
       "MLLP_LF_AFTER_FS",
       "MLLP_MISSING_LEADING_VT",
-      "MLLP_TRAILING_BYTES",
     ]);
   });
 
   it("opens a frame with no VT on text that starts with a line break only by giving it its VT", () => {
     for (const s of draw(messyStream({ content: "text", minLength: 1, maxLength: 2 }), 500)) {
       expect(read(s.bytes, {}).codes).toEqual(s.warnings);
+    }
+  });
+
+  it("generates frames with a payload and frames without one", () => {
+    const lengths = draw(messyStream(), 200).flatMap((s) => s.payloads.map((p) => p.length));
+    expect(lengths.some((n) => n === 0)).toBe(true);
+    expect(lengths.some((n) => n > 0)).toBe(true);
+  });
+
+  it("never follows an FS with anything but CR, LF or the next frame's VT", () => {
+    // A reader refuses a frame with a stray FS whole, so a stream holding one is not one it
+    // accepts. (A VT inside a frame is refused too; the read-back above would throw on one.)
+    for (const s of draw(messyStream(), 500)) {
+      for (const [i, byte] of s.bytes.entries()) {
+        if (byte !== FS) continue;
+        expect([CR, LF, VT, undefined]).toContain(s.bytes[i + 1]);
+      }
     }
   });
 
@@ -241,9 +258,7 @@ describe("messyStream()", () => {
     };
     for (const s of draw(messyStream(strict), 500)) {
       const codes = s.warnings.flat();
-      expect(codes.every((c) => c === "MLLP_EMPTY_PAYLOAD" || c === "MLLP_TRAILING_BYTES")).toBe(
-        true,
-      );
+      expect(codes.every((c) => c === "MLLP_EMPTY_PAYLOAD")).toBe(true);
       expect(read(s.bytes, strict).codes).toEqual(s.warnings);
     }
     for (const flag of Object.keys(strict) as (keyof typeof strict)[]) {

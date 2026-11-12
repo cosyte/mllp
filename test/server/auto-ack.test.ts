@@ -718,17 +718,20 @@ describe("MLLP-ACK-FAILSAFE, server auto-ACK downgrades + emits a PHI-safe 'nack
     return ack;
   }
 
-  it("(4) a raw VT mid-payload: the discarded fragment is downgraded to AE, reason 'discarded-bytes'", async () => {
-    const nacks: Array<{ ackCode: string; reason: string }> = [];
+  it("(4) a raw VT mid-payload: the frame is refused whole, no fragment is acknowledged, no 'nack'", async () => {
+    const nacks: unknown[] = [];
+    const codes: unknown[] = [];
     const server = createServer({ autoAck: "AA" });
-    server.on("nack", (evt: { ackCode: string; reason: string }) => nacks.push(evt));
+    server.on("nack", (evt) => nacks.push(evt));
+    server.on("error", (e: unknown) => {
+      codes.push((e as { error?: { cause?: { code?: unknown } } }).error?.cause?.code);
+    });
     await server.listen(0);
     const port = must(server.getStats().port);
 
-    // VT + <clinical bytes that get discarded> + VT + <valid fragment MSH> + FS + CR.
-    // The decoder abandons the accumulator on the mid-payload VT (MLLP_TRAILING_BYTES) and
-    // delivers only FRAG01, which parses cleanly, so this isolates the discarded-bytes rule
-    // from the uncorrelatable-inbound rule.
+    // VT + <clinical bytes> + VT + <valid fragment MSH> + FS + CR. The decoder used to discard
+    // the first part and deliver FRAG01 under an AE; it now refuses the frame whole, so neither
+    // part reaches the acknowledgement path and the connection closes with a coded error.
     const discarded = Buffer.from(
       "MSH|^~\\&|SENDER|SFAC|RECV|RFAC|20260424120000||ADT^A01|REALMSG|P|2.5\rPID|||12345^^^FAC||DOE^JOHN\r",
       "latin1",
@@ -742,12 +745,9 @@ describe("MLLP-ACK-FAILSAFE, server auto-ACK downgrades + emits a PHI-safe 'nack
       Buffer.from([FSb, CRb]),
     ]);
 
-    const ack = (await sendAndAwaitAck(port, frame)).toString("latin1");
-    expect(ack).toContain("MSA|AE");
-    expect(ack).not.toContain("MSA|AA");
-    expect(nacks).toHaveLength(1);
-    expect(must(nacks[0]).ackCode).toBe("AE");
-    expect(must(nacks[0]).reason).toBe("discarded-bytes");
+    await expect(sendAndAwaitAck(port, frame)).rejects.toThrow("timeout");
+    expect(nacks).toHaveLength(0);
+    expect(codes).toEqual(["MLLP_PAYLOAD_CONTAINS_VT"]);
 
     await server.close();
   });
@@ -782,19 +782,18 @@ describe("MLLP-ACK-FAILSAFE, server auto-ACK downgrades + emits a PHI-safe 'nack
     await server.close();
   });
 
-  it("a valid message pipelined after an FS-without-CR stray-byte frame still gets AA (no bleed)", async () => {
-    // Regression for the conformance-refuter finding: MLLP_TRAILING_BYTES must be reserved for a
-    // mid-payload VT discard. The default `allowFsOnly` path used to also emit it for an
-    // inter-frame stray byte AND mis-attribute it to the NEXT frame, so a perfectly good message
-    // pipelined after `... FS <stray> VT ...` was wrongly downgraded to AE (a duplicate-message bug
-    // introduced by the fix). Both frames here are complete and correlatable → both must be AA.
+  it("a valid message pipelined after an FS-without-CR frame still gets AA (no bleed)", async () => {
+    // Regression for the conformance-refuter finding: the default `allowFsOnly` path once
+    // mis-attributed a warning to the NEXT frame, so a perfectly good message pipelined after
+    // `... FS VT ...` was wrongly downgraded to AE (a duplicate-message bug introduced by the
+    // fix). Both frames here are complete and correlatable → both must be AA.
     const msg1 = "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|ID1|P|2.5\rPID|||111\r";
     const msg2 = "MSH|^~\\&|A|B|C|D|20260424120000||ADT^A01|ID2|P|2.5\rPID|||222\r";
-    // VT msg1 FS <stray 0x58 'X'> VT msg2 FS CR , frame1 is FS-without-CR + a stray byte.
+    // VT msg1 FS VT msg2 FS CR, frame1 is FS-without-CR.
     const frame = Buffer.concat([
       Buffer.from([VTb]),
       Buffer.from(msg1, "latin1"),
-      Buffer.from([FSb, 0x58, VTb]),
+      Buffer.from([FSb, VTb]),
       Buffer.from(msg2, "latin1"),
       Buffer.from([FSb, CRb]),
     ]);

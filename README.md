@@ -171,10 +171,11 @@ receiver must never send one before the message is durably handled, or the messa
 **awaits your handler and only then acknowledges**.
 
 Handler resolves, you get `AA`, **unless the inbound could not carry a correlatable positive
-acknowledgment** (no readable `MSH`, an empty `MSH-10`, a batch or concatenated payload, or trailing
-bytes the framer discarded). In that case the commit still happened, but the acknowledgment is
-downgraded to `AE` and a `nack` event names the reason, because a positive acknowledgment the sender
-cannot match is one it will resend. Handler throws, you get `AE`, or `AR` via `MllpAckError`.
+acknowledgment** (no readable `MSH`, an empty `MSH-10`, or a batch or concatenated payload). In that
+case the commit still happened, but the acknowledgment is downgraded to `AE` and a `nack` event names
+the reason, because a positive acknowledgment the sender cannot match is one it will resend. A frame
+with a stray `VT` or `FS` inside it never reaches your handler: it is refused whole with a coded
+error and the connection closes. Handler throws, you get `AE`, or `AR` via `MllpAckError`.
 `autoAck: 'AA'` _without_ a handler is documented as a transport-accept: "received and framed", not
 "processed".
 

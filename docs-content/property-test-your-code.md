@@ -74,8 +74,9 @@ HL7 v2 messages with a control id in `MSH-10`.
 ## Check your code against senders' framing quirks
 
 `messyStream()` generates the framing quirks real senders produce: padding before a `VT`, a frame
-with no `VT`, an empty frame, bytes a second `VT` makes the reader discard, and a frame ended by
-`FS` and a line feed, by `FS` and the next `VT`, or by `FS` and a stray byte. Give it the
+with no `VT`, an empty frame, and a frame ended by `FS` and a line feed or by `FS` and the next
+`VT`. It never puts a `VT` or a bare `FS` inside a frame, since a reader refuses such a frame
+whole. Give it the
 tolerances your reader has, and it generates only what that reader accepts, with the payloads and
 the warning codes the reader must report for each frame. The flags below are a server's defaults.
 

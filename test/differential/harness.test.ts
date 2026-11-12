@@ -173,11 +173,6 @@ describe("differential harness: a peer that deviates from the canonical block", 
       wire: (ack) => Buffer.concat([ack, Buffer.from([FS, CR])]),
     },
     {
-      name: "ends at FS with no CR, then a stray byte",
-      code: "MLLP_FS_WITHOUT_CR",
-      wire: (ack) => Buffer.concat([Buffer.from([VT]), ack, Buffer.from([FS, 0x20])]),
-    },
-    {
       name: "terminates with LF instead of CR",
       code: "MLLP_LF_AFTER_FS",
       wire: (ack) => Buffer.concat([Buffer.from([VT]), ack, Buffer.from([FS, 0x0a])]),
@@ -208,6 +203,26 @@ describe("differential harness: a peer that deviates from the canonical block", 
       expect(report.result).toBe("deviations-observed");
     });
   }
+
+  it("names a response whose FS a stray byte follows MLLP_PAYLOAD_CONTAINS_FS, decoding none of it", async () => {
+    // Where the frame ends cannot be told, so the reader refuses it whole rather than reading the
+    // bytes before the FS as the response and dropping the byte after it.
+    const report = await run(
+      peerThat((framed) =>
+        Buffer.concat([
+          Buffer.from([VT]),
+          ackPayload(controlIdOf(payloadOf(framed))),
+          Buffer.from([FS, 0x20]),
+        ]),
+      ),
+    );
+
+    const first = report.exchanges[0];
+    expect(first?.outcome).toBe("undecodable-response");
+    expect(first?.byteParity).toBe("deviation");
+    expect(first?.correlation).toBe("not-observed");
+    expect(first?.warningCodes).toContain("MLLP_PAYLOAD_CONTAINS_FS");
+  });
 
   it("names an oversized response MLLP_FRAME_TOO_LARGE and returns a report", async () => {
     const report = await run(
@@ -459,11 +474,11 @@ describe("differential harness: failure paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("differential harness: a stray FS before an unframed response", () => {
-  it("reports the empty frame the FS ends as a deviation, rather than throwing", async () => {
-    // With no leading `VT`, the reader reads the stray `FS` as the end of an empty frame
-    // (`MLLP_MISSING_LEADING_VT`, then `MLLP_EMPTY_PAYLOAD`), never as a payload byte, so no
-    // delivered payload carries a framing byte and re-encoding one for the parity check
-    // cannot throw. That empty frame is the response the exchange judges.
+  it("reports the response undecodable, named MLLP_PAYLOAD_CONTAINS_FS, rather than throwing", async () => {
+    // With no leading `VT`, the reader reads the stray `FS` as the end of an empty frame, never
+    // as a payload byte. The response's first byte then follows that `FS`, which is not where a
+    // frame can end, so the reader refuses it whole: nothing is judged as the response, and the
+    // code says why.
     const report = await run(
       peerThat((framed) =>
         Buffer.concat([
@@ -475,21 +490,15 @@ describe("differential harness: a stray FS before an unframed response", () => {
     );
 
     const first = report.exchanges[0];
-    expect(first?.outcome).toBe("answered");
+    expect(first?.outcome).toBe("undecodable-response");
     expect(first?.byteParity).toBe("deviation");
-    expect(first?.warningCodes).toContain("MLLP_MISSING_LEADING_VT");
-    expect(first?.warningCodes).toContain("MLLP_EMPTY_PAYLOAD");
-    expect(first?.warningCodes).not.toContain("MLLP_PAYLOAD_CONTAINS_FS");
+    expect(first?.warningCodes).toContain("MLLP_PAYLOAD_CONTAINS_FS");
     // Still located by offset, every one of them.
     for (const deviation of first?.deviations ?? []) {
       expect(typeof deviation.byteOffset).toBe("number");
     }
-    // And correlation is reported honestly as ABSENT rather than as a mismatch: the frame
-    // judged is empty, so it has no readable MSA at all and there is no acknowledged control
-    // ID to compare. Reporting a mismatch here
-    // would claim the peer echoed the wrong id when it echoed nothing this reader could find.
-    expect(first?.correlation).toBe("absent");
-    expect(first?.warningCodes).toContain("MLLP_ACK_UNMATCHED_CONTROL_ID");
+    // No frame was judged, so correlation was not observed.
+    expect(first?.correlation).toBe("not-observed");
   });
 });
 

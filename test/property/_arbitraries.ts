@@ -13,11 +13,13 @@
  * 2. **Well-formed frames** ({@link wellFormedFrame}), `encodeFrame(payload)` output,
  *    the canonical `VT + payload + FS + CR` shape the decoder must accept losslessly.
  *
- * 3. **Malformed-but-recoverable frames** ({@link malformedFrame}, {@link hostileBytesOrChunks})
+ * 3. **Malformed frames** ({@link malformedFrame}, {@link hostileBytesOrChunks})
  *    one generator per tolerance path the decoder recovers from (missing leading VT,
- *    FS-without-CR, LF-after-FS, leading whitespace, trailing bytes, empty payload), plus
- *    pure random byte noise and an oversized frame that legitimately trips the one
- *    sanctioned fatal `MLLP_FRAME_TOO_LARGE`. These drive the lenient + fuzz invariants.
+ *    FS-without-CR, LF-after-FS, leading whitespace, empty payload), plus pure random byte
+ *    noise and the frames no tolerance recovers: an oversized frame (`MLLP_FRAME_TOO_LARGE`)
+ *    and a frame with a `VT` or a bare `FS` inside it, which the decoder refuses whole
+ *    (`MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`). These drive the lenient + fuzz
+ *    invariants.
  *
  * Nothing here is mllp-package-internal: these are exactly the format-specific
  * arbitraries the shared `@cosyte/test-utils` runners are designed to consume.
@@ -76,14 +78,15 @@ function safePayloadBytes(): fc.Arbitrary<number[]> {
 }
 
 /**
- * One malformed-but-recoverable frame, tagged with the tolerance path it exercises.
+ * One malformed frame, tagged with the tolerance path it exercises.
  *
- * Every variant here is recoverable by a `FrameReader` with the matching tolerance
+ * Most variants are recoverable by a `FrameReader` with the matching tolerance
  * enabled (the lenient invariant runs with all tolerances on): the decoder must
- * emit a warning (or deliver the frame) rather than throw. The exception is
- * `frame-too-large`, which legitimately throws the one sanctioned fatal
- * `MLLP_FRAME_TOO_LARGE` even under full tolerance, the lenient runner's
- * `isFatal` predicate sanctions exactly that code.
+ * emit a warning (or deliver the frame) rather than throw. Three are not, and throw
+ * even under full tolerance, which the lenient runner's `isFatal` predicate
+ * sanctions by code: `frame-too-large` (`MLLP_FRAME_TOO_LARGE`), and `vt-inside-frame`
+ * and `fs-inside-frame`, two payloads joined by a `VT` or a bare `FS` inside one frame,
+ * which the decoder refuses whole (`MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`).
  *
  * The `maxFrameSizeBytes` field, when present, tells the test harness to construct
  * the reader with that cap so the oversized payload trips the fatal deterministically.
@@ -94,7 +97,8 @@ export interface MalformedFrame {
     | "fs-without-cr"
     | "lf-after-fs"
     | "leading-whitespace"
-    | "trailing-bytes"
+    | "vt-inside-frame"
+    | "fs-inside-frame"
     | "empty-payload"
     | "frame-too-large";
   readonly bytes: Buffer;
@@ -137,17 +141,26 @@ function leadingWhitespace(): fc.Arbitrary<MalformedFrame> {
 }
 
 /**
- * Trailing bytes: a VT appears **mid-payload**, so the accumulated bytes are discarded and only
- * the remnant after it is delivered. This is the **reserved** meaning of `MLLP_TRAILING_BYTES`
- * (see the decoder's `_readPayload`); it is not an inter-frame stray byte (that is
- * `MLLP_FS_WITHOUT_CR`). Always warns, no opt-in required.
+ * A VT inside a frame: two payloads joined by a `VT`, `VT + a + VT + b + FS + CR`. Where the
+ * frame ends cannot be told, so the decoder refuses it whole with `MLLP_PAYLOAD_CONTAINS_VT`,
+ * whatever the tolerances, and delivers neither part.
  */
-function trailingBytes(): fc.Arbitrary<MalformedFrame> {
-  return fc.tuple(safePayloadBytes(), safePayloadBytes()).map(([discarded, remnant]) => ({
-    kind: "trailing-bytes" as const,
-    // VT + discarded + VT + remnant + FS + CR  → the mid-payload VT abandons `discarded`,
-    // warns MLLP_TRAILING_BYTES on the delivered `remnant` frame, then completes it.
-    bytes: Buffer.from([VT, ...discarded, VT, ...remnant, FS, CR]),
+function vtInsideFrame(): fc.Arbitrary<MalformedFrame> {
+  return fc.tuple(safePayloadBytes(), safePayloadBytes()).map(([a, b]) => ({
+    kind: "vt-inside-frame" as const,
+    bytes: Buffer.from([VT, ...a, VT, ...b, FS, CR]),
+  }));
+}
+
+/**
+ * A bare FS inside a frame: two payloads joined by an `FS` that no `CR`, `LF` or `VT` follows,
+ * `VT + a + FS + b + FS + CR`. The decoder refuses it whole with `MLLP_PAYLOAD_CONTAINS_FS` on a
+ * reader that allows FS without CR, and with `MLLP_FS_WITHOUT_CR` on one that does not.
+ */
+function fsInsideFrame(): fc.Arbitrary<MalformedFrame> {
+  return fc.tuple(safePayloadBytes(), safePayloadBytes()).map(([a, b]) => ({
+    kind: "fs-inside-frame" as const,
+    bytes: Buffer.from([VT, ...a, FS, ...b, FS, CR]),
   }));
 }
 
@@ -176,7 +189,7 @@ function frameTooLarge(): fc.Arbitrary<MalformedFrame> {
 
 /**
  * The union of every malformed-frame shape, one generator per decoder tolerance
- * path plus the oversized fatal. The lenient invariant runs against this.
+ * path plus the three frames refused whole. The lenient invariant runs against this.
  */
 export function malformedFrame(): fc.Arbitrary<MalformedFrame> {
   return fc.oneof(
@@ -184,9 +197,25 @@ export function malformedFrame(): fc.Arbitrary<MalformedFrame> {
     fsWithoutCr(),
     lfAfterFs(),
     leadingWhitespace(),
-    trailingBytes(),
+    vtInsideFrame(),
+    fsInsideFrame(),
     emptyPayload(),
     frameTooLarge(),
+  );
+}
+
+/**
+ * The malformed frames a reader with every tolerance on recovers from: every shape but the
+ * three it refuses (`frame-too-large`, `vt-inside-frame`, `fs-inside-frame`). Each one emits at
+ * least one warning.
+ */
+export function recoverableFrame(): fc.Arbitrary<MalformedFrame> {
+  return fc.oneof(
+    missingLeadingVt(),
+    fsWithoutCr(),
+    lfAfterFs(),
+    leadingWhitespace(),
+    emptyPayload(),
   );
 }
 

@@ -185,7 +185,7 @@ describe("PHI-safety: warnings carry structural facts only, never a payload slic
         const payload = markerPayload(len);
         const warnings: MllpWarning[] = [];
         // Maximally tolerant reader over a quirk-laden stream: leading whitespace,
-        // missing VT, FS-without-CR, LF-after-FS, trailing junk, every warning path.
+        // missing VT, FS-without-CR, LF-after-FS, every warning path.
         const reader = new FrameReader({
           onFrame: () => {},
           onWarning: (w) => warnings.push(w),
@@ -200,14 +200,78 @@ describe("PHI-safety: warnings carry structural facts only, never a payload slic
           Buffer.from([FS, LF]), // LF after FS
           Buffer.from([VT]),
           payload,
-          Buffer.from([FS]),
-          Buffer.from([0x7e]), // stray trailing byte → TRAILING_BYTES
+          Buffer.from([FS, VT]), // FS without CR, the next frame's VT after it
+          payload,
+          Buffer.from([FS, CR]),
         ]);
         reader.push(stream);
         for (const w of warnings) {
           expect(leaksMarker(w.message)).toBe(false);
         }
       }),
+    );
+  });
+});
+
+describe("PHI-safety: a frame refused for a VT or a bare FS inside it names no payload byte", () => {
+  it("in every mode and however the stream is split, the snippet is the delimiter and the message holds no marker", () => {
+    checkProperty(
+      fc.property(
+        fc.constantFrom(VT, FS),
+        fc.constantFrom<"default" | "server" | "tolerant">("default", "server", "tolerant"),
+        fc.integer({ min: 4, max: 80 }),
+        fc.integer({ min: 4, max: 80 }),
+        fc.nat(),
+        (delimiter, mode, before, after, cut) => {
+          // Two marker runs joined by the delimiter inside one frame.
+          const stream = Buffer.concat([
+            Buffer.from([VT]),
+            markerPayload(before),
+            Buffer.from([delimiter]),
+            markerPayload(after),
+            Buffer.from([FS, CR]),
+          ]);
+          const at = cut % (stream.length + 1);
+          const tolerances =
+            mode === "default"
+              ? {}
+              : mode === "server"
+                ? { allowFsOnly: true, allowLfAfterFs: true, allowLeadingWhitespace: true }
+                : {
+                    allowFsOnly: true,
+                    allowLfAfterFs: true,
+                    allowLeadingWhitespace: true,
+                    allowMissingLeadingVt: true,
+                  };
+          let delivered = 0;
+          const warnings: MllpWarning[] = [];
+          const reader = new FrameReader({
+            ...tolerances,
+            onFrame: () => delivered++,
+            onWarning: (w) => warnings.push(w),
+          });
+          let caught: MllpFramingError | undefined;
+          try {
+            reader.push(stream.subarray(0, at));
+            reader.push(stream.subarray(at));
+          } catch (err) {
+            expect(err).toBeInstanceOf(MllpFramingError);
+            caught = err as MllpFramingError;
+          }
+          expect(caught).toBeDefined();
+          expect(delivered).toBe(0);
+          const fe = caught as MllpFramingError;
+          expect(fe.snippet.length).toBe(1);
+          // The default reader names a bare FS by the byte after it (FS without CR); a tolerant
+          // reader names the FS itself. Either way it is one byte, never a run.
+          if (mode !== "default" || delimiter === VT) {
+            expect(fe.snippet[0]).toBe(delimiter);
+            expect(fe.byteOffset).toBe(1 + before);
+          }
+          expect(leaksMarker(fe.message)).toBe(false);
+          for (const w of warnings) expect(leaksMarker(w.message)).toBe(false);
+        },
+      ),
     );
   });
 });

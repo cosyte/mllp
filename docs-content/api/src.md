@@ -1611,7 +1611,7 @@ Public events: `'listening'`, `'connection'`, `'message'`, `'nack'`, `'error'`, 
 The `'nack'` event ([NackEvent](#nackevent)) fires whenever the server returns a negative ACK
 instead of `AA` on the auto-ACK path, a commit-gated `autoAck: 'AA'` handler failing, or
 a positive auto-ACK **downgraded** because the inbound could not be correlated (an
-unreadable/uncorrelatable message, or one whose bytes the decoder discarded). The
+unreadable or uncorrelatable message). The
 [NackReason](#nackreason) distinguishes the causes.
 
 **`'error'` contract:** underlying `net.Server`/`tls.Server` errors are forwarded to the
@@ -4007,7 +4007,9 @@ const opts: FrameReaderOptions = {
 
 > `optional` **allowFsOnly?**: `boolean`
 
-Tolerate FS without trailing CR; emits `MLLP_FS_WITHOUT_CR`.
+Tolerate FS without trailing CR when the next frame's VT follows it; emits
+`MLLP_FS_WITHOUT_CR`. Any other byte after the FS means the FS sat inside the frame, and the
+frame is refused whole with `MLLP_PAYLOAD_CONTAINS_FS`.
 
 ##### allowLeadingWhitespace?
 
@@ -4095,7 +4097,7 @@ even if individual opt-ins (`allowFsOnly`, `allowLfAfterFs`, `allowMissingLeadin
 - `MLLP_LF_AFTER_FS`
 - `MLLP_LEADING_WHITESPACE` (leading whitespace escalates as `MLLP_MISSING_LEADING_VT`)
 
-`MLLP_EMPTY_PAYLOAD` and `MLLP_TRAILING_BYTES` remain warnings even in strict mode.
+`MLLP_EMPTY_PAYLOAD` remains a warning even in strict mode.
 
 ###### Example
 
@@ -4225,7 +4227,7 @@ before emission.
 
 ```typescript
 server.on('nack', ({ connectionId, ackCode, reason }) => {
-  metrics.increment('mllp.nack', { code: ackCode, reason }); // e.g. reason='discarded-bytes'
+  metrics.increment('mllp.nack', { code: ackCode, reason }); // e.g. reason='handler-rejected'
 });
 ```
 
@@ -6225,10 +6227,10 @@ metrics on.
   (no readable `MSH`, an empty MSH-10, or a batch/concatenated-message shape). A positive
   `AA` here names a control ID the sender cannot match → timeout → resend → **duplicate
   clinical message**. See [rawAckUncorrelatable](#rawackuncorrelatable).
-- `'discarded-bytes'`, the decoder flagged `MLLP_TRAILING_BYTES` for this frame: a
-  mid-payload `VT` made it **discard accumulated bytes** and deliver only the fragment
-  after it. The clinical message was destroyed in transit; a positive `AA` would tell the
-  sender a message we never received was delivered.
+- `'discarded-bytes'`, no longer sent. It named a frame the decoder delivered as the fragment
+  after a mid-payload `VT`. The decoder now refuses such a frame whole
+  (`MLLP_PAYLOAD_CONTAINS_VT`) and closes the connection, so no fragment reaches the
+  acknowledgement path. The value stays in the type so code that names it still compiles.
 
 ***
 
@@ -7325,8 +7327,8 @@ destroyed message was delivered). Three payload-shaped reasons make a positive A
 uncorrelatable, all peer-reachable off the wire:
 
   1. **No readable `MSH`.** `readMshSegment` returns `null`, e.g. a `SP`/`TAB` before
-     `MSH` (which shares the `MSH`'s segment line, so `MSH` heads no segment), or a bare
-     fragment delivered after a mid-payload `VT` discard (`MLLP_TRAILING_BYTES`). A UTF-8
+     `MSH` (which shares the `MSH`'s segment line, so `MSH` heads no segment), or a frame
+     that holds only part of a message. A UTF-8
      byte order mark at byte 0 is not one of these: the scan skips it and reads the `MSH`.
      MSA-2 would be empty: an ACK that correlates to nothing.
   2. **Empty MSH-10.** The `MSH` is readable but carries no message control ID, so there

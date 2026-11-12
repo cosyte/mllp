@@ -27,7 +27,7 @@ import { InMemoryTransport } from "../../src/testing/in-memory-transport.js";
 import { FrameReader } from "../../src/framing/decoder.js";
 import type { MllpWarning } from "../../src/framing/registry.js";
 
-import { malformedFrame } from "./_arbitraries.js";
+import { recoverableFrame } from "./_arbitraries.js";
 import { checkProperty, usePropertyBudget } from "./_runner.js";
 
 /** All decoder tolerances on, so malformed frames recover into warnings to inspect. */
@@ -65,11 +65,9 @@ usePropertyBudget();
 
 describe("property: emitted MllpWarning objects are frozen (no shared-state mutation)", () => {
   it("a warning's code cannot be mutated through the public surface", () => {
-    // Source warnings from malformed frames that are NOT the oversized fatal (those
-    // throw before emitting), serialized as latin1 to fit the runner's string parse.
-    const warningProducing = malformedFrame()
-      .filter((mf) => mf.kind !== "frame-too-large")
-      .map((mf) => mf.bytes.toString("latin1"));
+    // Source warnings from the malformed frames a tolerant reader recovers from (the ones it
+    // refuses throw instead of warning), serialized as latin1 to fit the runner's string parse.
+    const warningProducing = recoverableFrame().map((mf) => mf.bytes.toString("latin1"));
 
     immutabilityProperty<MllpWarning>({
       arbitrary: warningProducing,
@@ -90,14 +88,11 @@ describe("property: emitted MllpWarning objects are frozen (no shared-state muta
 
   it("every emitted warning is Object.isFrozen", () => {
     checkProperty(
-      fc.property(
-        malformedFrame().filter((mf) => mf.kind !== "frame-too-large"),
-        (mf) => {
-          const w = firstWarning(mf.bytes);
-          expect(w).toBeDefined();
-          if (w !== undefined) expect(Object.isFrozen(w)).toBe(true);
-        },
-      ),
+      fc.property(recoverableFrame(), (mf) => {
+        const w = firstWarning(mf.bytes);
+        expect(w).toBeDefined();
+        if (w !== undefined) expect(Object.isFrozen(w)).toBe(true);
+      }),
     );
   });
 });

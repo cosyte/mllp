@@ -97,9 +97,10 @@ the record that failed. The acknowledgment carries a fixed text instead.
 
 Every time the server answers with a negative code on the auto-ACK path, it emits a `nack` event
 carrying only the connection id, the code it sent and a reason: `handler-rejected` (your handler
-threw), `uncorrelatable-inbound` (no readable `MSH`, an empty `MSH-10`, or a batch or several
-messages in one frame), or `discarded-bytes` (the decoder had to discard part of the frame). Count
-them; never log the payload from here.
+threw) or `uncorrelatable-inbound` (no readable `MSH`, an empty `MSH-10`, or a batch or several
+messages in one frame). Count them; never log the payload from here. A frame with a stray `VT` or
+`FS` inside it never reaches this path: it is refused whole on the `error` event, with no
+acknowledgment (see [Framing and tolerance](./framing.md#a-stray-fs-or-vt-inside-a-frame)).
 
 ```ts runnable
 import { createServer, createStarterClient, type NackEvent } from "@cosyte/mllp";

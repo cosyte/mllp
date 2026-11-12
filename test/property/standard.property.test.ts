@@ -11,14 +11,17 @@
  *    decoded as text anywhere here.
  * 2. **Idempotent normalize.** The library's normalizers are the lenient reader followed by the
  *    encoder (`normalize(stream)` is the canonical frames of the payloads a reader with every
- *    tolerance on delivers), and the segment-terminator trim applied to a payload before its `MSH`
- *    is read. Normalizing twice gives what normalizing once gave, a canonical stream is its own
- *    normal form, and a messy stream normalizes to the canonical frames of its payloads.
- * 3. **Never throws in lenient mode.** A `FrameReader` with every tolerance on, fed any bytes in
- *    any chunks, throws nothing but `MLLP_FRAME_TOO_LARGE`, the one error no tolerance turns off;
- *    every warning carries a registered code and an offset inside the stream; no payload it
- *    delivers holds a `VT` or an `FS`; and how the bytes were split changes nothing it reports.
- *    The encoder with `allowDelimiterBytesInPayload` never throws either.
+ *    tolerance on delivers before it stops, at the end or at a frame it refuses), and the
+ *    segment-terminator trim applied to a payload before its `MSH` is read. Normalizing twice
+ *    gives what normalizing once gave, a canonical stream is its own normal form, and a messy
+ *    stream normalizes to the canonical frames of its payloads.
+ * 3. **Never throws in lenient mode, but for the refusals no tolerance turns off.** A
+ *    `FrameReader` with every tolerance on, fed any bytes in any chunks, throws nothing but
+ *    `MLLP_FRAME_TOO_LARGE` and the refusal of a frame whose end cannot be told, a `VT` or a bare
+ *    `FS` inside it (`MLLP_PAYLOAD_CONTAINS_VT`, `MLLP_PAYLOAD_CONTAINS_FS`); every warning carries
+ *    a registered code and an offset inside the stream; no payload it delivers holds a `VT` or an
+ *    `FS`; and how the bytes were split changes nothing it reports, the refusal included. The
+ *    encoder with `allowDelimiterBytesInPayload` never throws either.
  *
  * Each runs 100 cases by default from a fresh seed; `COSYTE_PROPERTY_RUNS` sets the depth, and a
  * failure prints the seed and path that replay it (see `./_runner.ts`).
@@ -105,10 +108,22 @@ function decode(
   return { frames, warnings };
 }
 
-/** The normalizer: the canonical frames of what a lenient reader delivers. */
+/** The codes a lenient reader may throw: the oversized frame, and a frame refused whole. */
+const REFUSALS: ReadonlySet<string> = new Set<WarningCode>([
+  "MLLP_FRAME_TOO_LARGE",
+  "MLLP_PAYLOAD_CONTAINS_VT",
+  "MLLP_PAYLOAD_CONTAINS_FS",
+]);
+
+/**
+ * The normalizer: the canonical frames of what a lenient reader delivers before it stops, at the
+ * end of the bytes or at a frame it refuses whole.
+ */
 function normalize(chunks: readonly Buffer[]): Buffer {
   const { frames, error } = decode(chunks, LENIENT);
-  assert.equal(error, undefined, `the lenient reader threw ${String(error?.code)}`);
+  if (error !== undefined) {
+    assert.ok(REFUSALS.has(error.code), `the lenient reader threw ${error.code}`);
+  }
   return Buffer.concat(frames.map((f) => encodeFrame(f.payload)));
 }
 
@@ -265,7 +280,7 @@ describe("idempotent normalize: normalizing twice gives what normalizing once ga
 
 describe("never throws in lenient mode", () => {
   it(
-    "the lenient reader throws only MLLP_FRAME_TOO_LARGE, warns only registered codes inside the stream, and never delivers a VT or FS",
+    "the lenient reader throws only its refusals, warns only registered codes inside the stream, and never delivers a VT or FS",
     () => {
       assertProperty(
         "lenient reader never throws",
@@ -279,8 +294,11 @@ describe("never throws in lenient mode", () => {
               ...(cap === undefined ? {} : { maxFrameSizeBytes: cap }),
             });
             if (decoded.error !== undefined) {
-              assert.equal(decoded.error.code, "MLLP_FRAME_TOO_LARGE");
-              assert.notEqual(cap, undefined, "no cap was set, yet a frame was too large");
+              assert.ok(REFUSALS.has(decoded.error.code), `threw ${decoded.error.code}`);
+              assert.ok(decoded.error.snippet.length <= 1, "a run of bytes in the snippet");
+              if (decoded.error.code === "MLLP_FRAME_TOO_LARGE") {
+                assert.notEqual(cap, undefined, "no cap was set, yet a frame was too large");
+              }
             }
             for (const w of decoded.warnings) {
               assert.ok(KNOWN.has(w.code), `unregistered code ${w.code}`);
@@ -313,6 +331,58 @@ describe("never throws in lenient mode", () => {
             };
             const whole = decode([Buffer.concat(chunks)], options);
             assert.deepEqual(summary(decode(chunks, options)), summary(whole));
+          },
+        ),
+      );
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "a frame with a VT or a bare FS inside it is refused whole, however the stream is split",
+    () => {
+      const CR = 0x0d;
+      const LF = 0x0a;
+      // Server defaults, and every tolerance on: a stray framing byte is refused on both.
+      const readers = fc.constantFrom<Omit<FrameReaderOptions, "onFrame" | "onWarning">>(
+        { allowFsOnly: true, allowLfAfterFs: true, allowLeadingWhitespace: true },
+        LENIENT,
+      );
+      // `b` opens on neither CR nor LF, which after an FS would end the frame properly.
+      const second = anyPayload.filter((b) => b[0] !== CR && b[0] !== LF);
+      assertProperty(
+        "stray framing byte refused whole",
+        fc.property(
+          stream({ minFrames: 0, maxFrames: 3 }),
+          fc.constantFrom(VT, FS),
+          anyPayload,
+          second,
+          readers,
+          fc.array(fc.nat(), { maxLength: 8 }),
+          (before, delimiter, a, b, options, at) => {
+            const joined = Buffer.concat([
+              Buffer.from([VT]),
+              a,
+              Buffer.from([delimiter]),
+              b,
+              Buffer.from([FS, CR]),
+            ]);
+            const bytes = Buffer.concat([before.bytes, joined]);
+            const decoded = decode(splitAt(bytes, at), options);
+            // Every frame before the joined one is delivered, exactly, and nothing of it.
+            assert.deepEqual(
+              decoded.frames.map((f) => f.payload.toString("hex")),
+              before.payloads.map((p) => p.toString("hex")),
+            );
+            assert.ok(decoded.error !== undefined, "nothing was refused");
+            assert.equal(
+              decoded.error.code,
+              delimiter === VT ? "MLLP_PAYLOAD_CONTAINS_VT" : "MLLP_PAYLOAD_CONTAINS_FS",
+            );
+            assert.equal(decoded.error.byteOffset, before.bytes.length + 1 + a.length);
+            assert.ok(decoded.error.snippet.equals(Buffer.from([delimiter])));
+            // The same report whole as in pieces, the refusal included.
+            assert.deepEqual(summary(decoded), summary(decode([bytes], options)));
           },
         ),
       );

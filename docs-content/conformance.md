@@ -93,9 +93,10 @@ Two more rules bound the set:
   message gets mis-split.
 
 The warning codes are a **public API** of this package: renaming or removing one is a breaking
-change. Two further framing warnings (`MLLP_EMPTY_PAYLOAD` and `MLLP_TRAILING_BYTES`) are **not**
-tolerance opt-ins, are always warnings and never throw, and are therefore not rows above; see
-[Framing and tolerance](./framing.md) for the full code table.
+change. `MLLP_EMPTY_PAYLOAD` is **not** a tolerance opt-in, is always a warning and never throws, and
+is therefore not a row above. A `VT` inside a frame, or an `FS` that no `CR`, `LF` or next `VT`
+follows, is not tolerable by any flag: the frame is refused whole (`MLLP_PAYLOAD_CONTAINS_VT`,
+`MLLP_PAYLOAD_CONTAINS_FS`). See [Framing and tolerance](./framing.md) for the full code table.
 
 ### Encoder deviations
 

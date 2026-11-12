@@ -69,8 +69,9 @@ reaching for it, reach for the commit-gated form instead.
 
 Whichever form you use, the auto-ACK path **never answers `AA` for a message it could not
 correlate**. A positive `AA`/`CA` is downgraded to a non-positive `AE`/`CE` when the inbound has no
-readable `MSH`, an empty MSH-10, a batch or concatenated-message shape a single MSA-2 cannot
-acknowledge, or bytes the decoder discarded mid-frame (`MLLP_TRAILING_BYTES`). An uncorrelatable
+readable `MSH`, an empty MSH-10, or a batch or concatenated-message shape a single MSA-2 cannot
+acknowledge. A frame with a stray `VT` or `FS` inside it is refused whole before it gets here, and
+gets no acknowledgement at all. An uncorrelatable
 positive ACK is worse than a negative one: the sender believes a message you never received was
 delivered, or resends it as a duplicate. The same downgrade guards `buildRawAck` directly.
 
@@ -175,8 +176,8 @@ event carrying only `{ connectionId, ackCode, reason }`. The payload never appea
 neither does the thrown error's message, which in real systems tends to contain exactly the record
 that failed to write. Nothing from the failure reaches the wire beyond the ACK code itself. The
 `reason` is a PHI-free enum: `'handler-rejected'` (a commit-gated handler threw/rejected),
-`'uncorrelatable-inbound'` (no readable `MSH`, empty MSH-10, or a batch/concatenated frame), or
-`'discarded-bytes'` (a mid-frame `VT` made the decoder discard bytes and deliver only a fragment).
+or `'uncorrelatable-inbound'` (no readable `MSH`, empty MSH-10, or a batch/concatenated frame).
+`'discarded-bytes'` is no longer sent: the decoder now refuses a frame with a mid-frame `VT` whole.
 
 ```ts no-run a fragment: server and metrics stand for your own objects
 server.on("nack", ({ connectionId, ackCode, reason }) =>

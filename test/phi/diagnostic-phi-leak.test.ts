@@ -470,10 +470,10 @@ const CLIENT_SLOTS: readonly Slot[] = [
     }),
   },
   {
-    // An embedded VT mid-payload discards what was accumulated. The discarded
-    // run is payload content and the diagnostic reports its size, not its bytes.
-    name: "framing/inbound embedded VT mid-payload (discarded bytes)",
-    expectCode: "MLLP_TRAILING_BYTES",
+    // An embedded VT mid-payload refuses the frame whole. The refused run is
+    // payload content, and the error names only the VT and its offset.
+    name: "framing/inbound embedded VT mid-payload (frame refused)",
+    expectCode: "MLLP_PAYLOAD_CONTAINS_VT",
     lengthInvariant: false,
     build: (marker) => ({
       inbound: Buffer.concat([
@@ -481,6 +481,22 @@ const CLIENT_SLOTS: readonly Slot[] = [
         Buffer.from(marker, "latin1"),
         Buffer.from([VT]),
         Buffer.from(ackPayload("NOMATCH01")),
+        Buffer.from([FS, CR]),
+      ]),
+    }),
+  },
+  {
+    // Two runs joined by a bare FS inside one frame: refused whole, and the
+    // error names only the FS and its offset, never a byte either side of it.
+    name: "framing/inbound bare FS inside a frame (frame refused)",
+    expectCode: "MLLP_PAYLOAD_CONTAINS_FS",
+    lengthInvariant: false,
+    build: (marker) => ({
+      inbound: Buffer.concat([
+        Buffer.from([VT]),
+        Buffer.from(marker, "latin1"),
+        Buffer.from([FS]),
+        Buffer.from(marker, "latin1"),
         Buffer.from([FS, CR]),
       ]),
     }),
