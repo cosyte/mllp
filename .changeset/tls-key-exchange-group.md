@@ -1,5 +1,0 @@
----
-"@cosyte/mllp": patch
----
-
-**The `'tlsNegotiated'` record now names the key-exchange group, so a post-quantum link can be seen in your logs.** `NegotiatedTlsParameters` gains an optional `keyExchangeGroup`, the group the handshake's key exchange used as the TLS library names it: `'X25519'`, `'prime256v1'`, or a post-quantum hybrid such as `'X25519MLKEM768'`. The key is on the record only where Node.js reports the group, and missing everywhere else: Node.js reports it on a client socket alone, so a server record never carries it; a classic elliptic-curve group is reported on every supported Node.js line, while a group with no classic key, such as a post-quantum hybrid, is reported from Node.js 24.19.0 and 26.5.0 and is missing on Node.js 22; and a TLS 1.2 `DHE` suite has no group name to report. Like the other fields it is a name out of a closed registry, never caller data. Nothing changes for code that reads the record; code that checks its exact set of keys has to allow `keyExchangeGroup` on a client record.

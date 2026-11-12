@@ -6646,7 +6646,7 @@ console.log(TLS13_DEFAULT_CIPHER_SUITES.length); // => 3
 
 ### VERSION
 
-> `const` **VERSION**: `string` = `"0.1.12"`
+> `const` **VERSION**: `string` = `"0.1.13"`
 
 Package version marker exported from the `@cosyte/mllp` root.
 
