@@ -11,24 +11,29 @@ import type { ServerTlsOptions, TlsOptions } from "./tls-options.js";
 type TlsOptionName = keyof TlsOptions | keyof ServerTlsOptions;
 
 /**
- * Every option name either constructor reads, each mapped to itself. A `Record` over the union, so
- * the compiler refuses this list when an option is added to either interface and not here.
+ * Every option name either constructor reads. A `Record` over the union, each name mapped to
+ * itself, so the compiler refuses this list when an option is added to either interface and not
+ * here. Built where it is read rather than at module load, so the tests that read it are the ones
+ * credited with it.
  */
-const TLS_OPTION_NAMES: Readonly<Record<TlsOptionName, TlsOptionName>> = {
-  ca: "ca",
-  cert: "cert",
-  key: "key",
-  passphrase: "passphrase",
-  pfx: "pfx",
-  servername: "servername",
-  minVersion: "minVersion",
-  maxVersion: "maxVersion",
-  atnaTransportSecurity: "atnaTransportSecurity",
-  ciphers: "ciphers",
-  allowUnverified: "allowUnverified",
-  clientAuth: "clientAuth",
-  dhParameters: "dhParameters",
-};
+function tlsOptionNames(): readonly TlsOptionName[] {
+  const names: Readonly<Record<TlsOptionName, TlsOptionName>> = {
+    ca: "ca",
+    cert: "cert",
+    key: "key",
+    passphrase: "passphrase",
+    pfx: "pfx",
+    servername: "servername",
+    minVersion: "minVersion",
+    maxVersion: "maxVersion",
+    atnaTransportSecurity: "atnaTransportSecurity",
+    ciphers: "ciphers",
+    allowUnverified: "allowUnverified",
+    clientAuth: "clientAuth",
+    dhParameters: "dhParameters",
+  };
+  return Object.values(names);
+}
 
 /** A `Buffer` gets new bytes; anything else (a string, a number, a boolean) is kept as it is. */
 function copyValue(value: unknown): unknown {
@@ -67,7 +72,7 @@ export function copyTlsOptions<T extends object | true | undefined>(tls: T): T {
   }
   const source = given as Readonly<Record<TlsOptionName, unknown>>;
   const copy: Partial<Record<TlsOptionName, unknown>> = {};
-  for (const name of Object.values(TLS_OPTION_NAMES)) {
+  for (const name of tlsOptionNames()) {
     const value = source[name];
     if (value === undefined) continue;
     copy[name] = Array.isArray(value) ? value.map(copyValue) : copyValue(value);
