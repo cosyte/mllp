@@ -37,6 +37,7 @@ import type { TlsOptions } from "../transport/tls-options.js";
 import { MLLP_TLS_VERIFY_DISABLED, type SecurityWarning } from "../transport/security-warnings.js";
 import { resolveTlsCipherPolicy } from "../transport/tls-cipher-policy.js";
 import { checkCredentialMix, checkPfx } from "../transport/pfx.js";
+import { copyTlsOptions } from "../transport/tls-options-copy.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import { MllpFramingError } from "../framing/index.js";
@@ -573,6 +574,8 @@ export interface ClientStats {
  */
 export class MllpClient extends EventEmitter {
   private readonly _opts: ClientOptions;
+  /** The TLS options as they were at construction; never read `_opts.tls`, which the caller owns. */
+  private readonly _tls: ClientOptions["tls"];
   private _connection: Connection | null = null;
   private _socket: Socket | null = null;
   /**
@@ -722,8 +725,12 @@ export class MllpClient extends EventEmitter {
           "for no bound",
       );
     }
+    // Copied before it is checked, and read from the copy from here on: a change the caller makes
+    // to their object later would otherwise reach the next connect or reconnect unchecked.
+    const tls = copyTlsOptions(opts.tls);
     // pfx with cert or key: Node.js would load the file last and its certificate would win.
-    checkCredentialMix(opts.tls);
+    checkCredentialMix(tls);
+    this._tls = tls;
     this._opts = opts;
     this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
     this._applicationAckTimeoutMs = opts.applicationAckTimeoutMs;
@@ -869,7 +876,7 @@ export class MllpClient extends EventEmitter {
       const conn = new Connection(connOpts);
       this._attachConnection(conn);
 
-      const connectEventName = this._opts.tls !== undefined ? "secureConnect" : "connect";
+      const connectEventName = this._tls !== undefined ? "secureConnect" : "connect";
       this._armConnectTimeout(socket, connectEventName);
 
       const cleanup = (): void => {
@@ -971,7 +978,7 @@ export class MllpClient extends EventEmitter {
     socket: Socket | TLSSocket;
     transport: Transport;
   } {
-    const tlsOpt = this._opts.tls;
+    const tlsOpt = this._tls;
     if (tlsOpt === undefined) {
       const socket = createConnection({ host: this._opts.host, port: this._opts.port });
       return { socket, transport: new NetTransport(socket) };
@@ -1050,7 +1057,7 @@ export class MllpClient extends EventEmitter {
         connectionCause: "connect-timeout",
       });
     }
-    if (this._opts.tls === undefined) {
+    if (this._tls === undefined) {
       return new MllpConnectionError(err.message, { cause: err, phase });
     }
     const code = (err as NodeJS.ErrnoException).code;
@@ -1178,7 +1185,7 @@ export class MllpClient extends EventEmitter {
    * connections or when verification is on.
    */
   private _emitInsecureWarningIfNeeded(): void {
-    const tlsOpt = this._opts.tls;
+    const tlsOpt = this._tls;
     if (tlsOpt === undefined || tlsOpt === true) return;
     if (tlsOpt.allowUnverified !== true) return;
     const message =
@@ -1210,7 +1217,8 @@ export class MllpClient extends EventEmitter {
    * built at handshake-completion time, before any HL7 byte crosses the link.
    */
   private _emitNegotiatedTlsParameters(socket: Socket | TLSSocket): void {
-    if (this._opts.tls === undefined) return;
+    // Stryker disable next-line ConditionalExpression: equivalent. On a plaintext client the socket is a net.Socket, which readNegotiatedTlsParameters answers with null, so the line below returns all the same.
+    if (this._tls === undefined) return;
     const params = readNegotiatedTlsParameters(socket, this._opts.host, this._opts.port);
     /* v8 ignore next -- a completed TLS handshake always reports its protocol and suite */
     if (params === null) return;
@@ -1549,7 +1557,7 @@ export class MllpClient extends EventEmitter {
     // client's certificate will reject every retry, never reconnect-loop
     // into it. Pure TCP-level errors (ECONNREFUSED, ETIMEDOUT, plain
     // ECONNRESET) stay transient so a network blip still auto-heals.
-    const tlsProtocolShaped = this._opts.tls !== undefined && isTlsProtocolError(err);
+    const tlsProtocolShaped = this._tls !== undefined && isTlsProtocolError(err);
     const classifiedAs: "transient" | "permanent" =
       !tlsProtocolShaped && isTransientConnectionError(err) ? "transient" : "permanent";
     if (classifiedAs === "permanent") {
@@ -1702,7 +1710,7 @@ export class MllpClient extends EventEmitter {
           this._emitInsecureWarningIfNeeded();
           this._emitNegotiatedTlsParameters(socket);
         };
-        const connectEventName = this._opts.tls !== undefined ? "secureConnect" : "connect";
+        const connectEventName = this._tls !== undefined ? "secureConnect" : "connect";
         this._armConnectTimeout(socket, connectEventName);
         socket.once("error", (sErr: Error) => {
           // Phase 8, the raw OS/TLS error (with its original `.code`) is
@@ -2709,7 +2717,7 @@ export class MllpClient extends EventEmitter {
       reconnectAttempts: this._reconnectAttempts,
       lastConnectedAt: this._lastConnectedAt,
       lastAckAt: this._lastAckAt,
-      tls: this._opts.tls !== undefined,
+      tls: this._tls !== undefined,
     };
   }
 

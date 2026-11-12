@@ -93,7 +93,9 @@ Security warnings are emitted on the client's or the server's `securityWarning` 
 | `MLLP_BIND_ALL_INTERFACES` | a server created with `allowWildcardBind: true` binds a wildcard host                  |
 
 TLS configuration errors reject `connect()` or `listen()` with an
-[`MllpTlsConfigurationError`](./api/src.md#mllptlsconfigurationerror) before any socket exists:
+[`MllpTlsConfigurationError`](./api/src.md#mllptlsconfigurationerror) before any socket exists. The
+exceptions are `MLLP_TLS_CREDENTIAL_CONFLICT` and `MLLP_TLS_OPTIONS_NOT_AN_OBJECT`, which the
+constructor throws, from `createClient` or `createServer`:
 
 | Code                                   | Raised when                                                                                                         |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -104,6 +106,7 @@ TLS configuration errors reject `connect()` or `listen()` with an
 | `MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE` | the runtime would not enforce `dhParameters`, or a server's `atnaTransportSecurity` Diffie-Hellman half (Deno, Bun) |
 | `MLLP_TLS_PFX_REJECTED`                | the TLS library cannot load `pfx` with `passphrase`: wrong passphrase, not PKCS#12, or legacy RC2-40                |
 | `MLLP_TLS_CREDENTIAL_CONFLICT`         | `pfx` is set together with `cert` or `key`; thrown when the client or server is created                             |
+| `MLLP_TLS_OPTIONS_NOT_AN_OBJECT`       | `tls` is `null` or another value that is not an object (or `true`, for a client); thrown at creation                |
 
 ## Server connection codes
 

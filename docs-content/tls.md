@@ -104,6 +104,17 @@ server given `pfx` together with `cert` or `key` throws `MllpTlsConfigurationErr
 values. Before this check a mixed configuration was accepted, so code that passed all three must
 now drop either `pfx` or the `cert` and `key` pair.
 
+A client or a server copies its `tls` options when it is created, and the check above runs on that
+copy. Each option is read once, by name, so options a class instance supplies through getters, or
+an object inherits from its prototype, are copied like its own fields; a name that is no TLS option
+is left out. The copy takes new arrays and new bytes for every `Buffer` (`cert`, `key`, `ca`, `pfx`,
+`dhParameters`). A change you make to your `tls` object afterwards, bytes you overwrite in one of
+its `Buffer`s, or a new object you put in your options' `tls`, has no effect: a client reconnects
+with the options it was created with. To connect with different TLS options, create a new client.
+A `tls` that is `null`, or another value that is not an object (or `true`, for a client's
+defaults), throws `MllpTlsConfigurationError` with the code `MLLP_TLS_OPTIONS_NOT_AN_OBJECT` when
+the client or server is created.
+
 When TLS is configured, the server consumes `tls.Server`'s `'secureConnection'` event (post-handshake
 sockets) instead of `net.Server`'s `'connection'`, and the client's `onConnect` transport hook maps
 to `'secureConnect'` (handshake complete) rather than the raw TCP `'connect'`.

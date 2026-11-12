@@ -36,6 +36,7 @@ import {
 } from "../transport/tls-cipher-policy.js";
 import { MllpTlsConfigurationError } from "../transport/error.js";
 import { checkCredentialMix, checkPfx } from "../transport/pfx.js";
+import { copyTlsOptions } from "../transport/tls-options-copy.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
 import type { FrameReaderOptions, MllpWarning } from "../framing/index.js";
@@ -621,6 +622,8 @@ export class MllpServer extends EventEmitter {
   private readonly _netServer: NetServer;
   private readonly _connections: Set<Connection> = new Set();
   private readonly _opts: ServerOptions;
+  /** The TLS options as they were at construction; never read `_opts.tls`, which the caller owns. */
+  private readonly _tls: ServerOptions["tls"];
   /** `true` when `ServerOptions.tls` is set, `_netServer` is actually a `tls.Server`. */
   private readonly _isTls: boolean;
 
@@ -680,7 +683,9 @@ export class MllpServer extends EventEmitter {
         "ServerOptions.maxConnections must be a positive integer, or left unset for no cap",
       );
     }
-    const tlsInput = opts.tls;
+    // Copied before it is checked, and read from the copy from here on, so what was checked is what
+    // the server runs with whatever the caller later does to their object.
+    const tlsInput = copyTlsOptions(opts.tls);
     // A contradiction in the options themselves, so refused here rather than carried to listen().
     checkCredentialMix(tlsInput);
     if (
@@ -691,7 +696,8 @@ export class MllpServer extends EventEmitter {
       throw new TypeError("ServerOptions.tls needs cert and key, or pfx");
     }
     this._opts = opts;
-    this._isTls = opts.tls !== undefined;
+    this._tls = tlsInput;
+    this._isTls = tlsInput !== undefined;
 
     // Resolve and PROVE the offered-suite list before any TLS context exists.
     // A construction-time throw could not reject listen(), which is what a
@@ -700,12 +706,12 @@ export class MllpServer extends EventEmitter {
     // bound, which is what makes "no fallback to the runtime default list" a
     // structural property of a refused configuration rather than a promise.
     let cipherPolicy: ResolvedTlsCipherPolicy | null = null;
-    if (opts.tls !== undefined) {
+    if (tlsInput !== undefined) {
       try {
         // The PKCS#12 file first: a file that cannot load leaves no policy, so no TLS context is
         // built from it below, which would throw out of this constructor rather than reject listen().
-        checkPfx(opts.tls.pfx, opts.tls.passphrase);
-        cipherPolicy = resolveTlsCipherPolicy(opts.tls, "server");
+        checkPfx(tlsInput.pfx, tlsInput.passphrase);
+        cipherPolicy = resolveTlsCipherPolicy(tlsInput, "server");
       } catch (err) {
         /* v8 ignore next -- checkPfx and resolveTlsCipherPolicy throw only MllpTlsConfigurationError */
         if (!(err instanceof MllpTlsConfigurationError)) throw err;
@@ -713,13 +719,18 @@ export class MllpServer extends EventEmitter {
       }
     }
 
-    if (opts.tls !== undefined && cipherPolicy === null) {
+    if (tlsInput === undefined) {
+      this._netServer = netCreateServer();
+      this._netServer.on("connection", (socket: Socket) => {
+        this._onSocketAccepted(socket);
+      });
+    } else if (cipherPolicy === null) {
       // Refused configuration: an unbound, connection-less placeholder that
       // exists only so the field is definitely assigned. listen() rejects
       // before it is ever touched.
       this._netServer = netCreateServer();
-    } else if (opts.tls !== undefined && cipherPolicy !== null) {
-      const tlsOpts: ServerTlsOptions = opts.tls;
+    } else {
+      const tlsOpts: ServerTlsOptions = tlsInput;
       const clientAuth = tlsOpts.clientAuth ?? "NONE";
       const tlsServer = tlsCreateServer({
         cert: tlsOpts.cert,
@@ -765,11 +776,6 @@ export class MllpServer extends EventEmitter {
         // subscriber would kill the process on a failed handshake, flatly contradicting this
         // handler's whole purpose ("MUST NOT crash and MUST keep accepting other connections").
         this._emitContained("tlsClientError", event);
-      });
-    } else {
-      this._netServer = netCreateServer();
-      this._netServer.on("connection", (socket: Socket) => {
-        this._onSocketAccepted(socket);
       });
     }
 
@@ -1544,7 +1550,7 @@ export class MllpServer extends EventEmitter {
     // Phase 8, surface a minimal, content-free peer-certificate summary
     // (WANT/MUST only) on the 'connection' event. Never the full cert object.
     const peerCertificate: PeerCertificateSummary | null =
-      this._isTls && (this._opts.tls?.clientAuth ?? "NONE") !== "NONE"
+      (this._tls?.clientAuth ?? "NONE") !== "NONE"
         ? this._extractPeerCertificateSummary(socket as TLSSocket)
         : null;
 
