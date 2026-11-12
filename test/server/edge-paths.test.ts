@@ -234,7 +234,10 @@ describe("MllpServer: an ACK built after the sender hung up", () => {
 
     await waitFor(() => errors.length === 1);
     expect(errors[0]?.error.phase).toBe("send");
-    expect(errors[0]?.error.message).toBe("ACK dropped: socket backpressure");
+    // The connection is gone, so the error says so; backpressure is not what happened.
+    expect(errors[0]?.error.message).toBe(
+      "ACK not sent: the connection closed before the handler settled",
+    );
   });
 });
 

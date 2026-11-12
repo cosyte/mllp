@@ -141,7 +141,9 @@ close at once:
 2. **It answers what it delivered.** Every frame delivered before the refused one has its handler
    run to the end and its acknowledgement written: `AA` on a commit, `AE` or `AR` on a handler that
    throws, the builder's bytes in custom-ACK mode, and whatever a manual-mode handler sends. The
-   connection is `DRAINING` meanwhile.
+   connection is `DRAINING` meanwhile. A manual-mode handler's acknowledgement is waited for only
+   until the handler's promise settles: a `conn.send()` it makes after that, from a timer or from a
+   promise it did not return, is not waited for and may find the connection closed.
 3. **It closes.** Once that work has settled the connection goes to `CLOSED` and the socket is
    ended gracefully, so the acknowledgements written reach the sender.
 4. **The wait is bounded** by the server's `drainTimeoutMs` (30 seconds by default). A handler that
@@ -151,7 +153,10 @@ close at once:
 With no handler still running the connection is destroyed at once, as before. The refused frame
 itself is never delivered and never answered (see the next section). On a bare `Connection` the
 same wait applies to the work you pass to `conn.holdOpenFor(work)`; `MllpServer` passes every
-message's work itself.
+message's work itself. Unlike `server.close()`, this wait includes a custom-ACK mode `onMessage`
+observer. `server.close()` waits the same way on every connection, manual-mode rule included, but
+not for that observer; see [Connection, reconnect and
+backpressure](./reliability.md#shutdown-and-what-it-does-and-does-not-do-for-in-flight-messages).
 
 This holds even when _your_ code is the thing that throws. Node calls event listeners
 **synchronously**, so a throwing subscriber unwinds the stack it was called from, and on this

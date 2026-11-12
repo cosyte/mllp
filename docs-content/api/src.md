@@ -119,9 +119,13 @@ Initiate graceful close of the connection.
 
 - If `CONNECTING` or `RECONNECTING`: cancels the pending attempt, transitions
   directly to `CLOSED`, and calls `transport.destroy()`.
-- If `CONNECTED`: transitions to `DRAINING`, calls `beforeClose(drainTimeoutMs)`,
-  then `DRAINING → DISCONNECTED` once the hook resolves, or `DRAINING → CLOSED`
-  if the drain timeout elapses first.
+- If `CONNECTED`: transitions to `DRAINING`, calls `beforeClose(drainTimeoutMs)` and
+  waits for it and for every piece of work passed to [Connection.holdOpenFor](#holdopenfor) that is
+  still running, then `DRAINING → DISCONNECTED` and ends the transport gracefully, so what
+  that work wrote reaches the peer. If the drain timeout elapses first: `DRAINING → CLOSED`
+  and the transport is destroyed. Work still running when the drain ends that way (the
+  timeout or a `destroy()`) is abandoned, and an `MllpConnectionError` with `phase: 'close'`
+  on `'error'` says how many were left and that what they would write is not sent.
 - If `DRAINING`: waits for the existing drain to complete (idempotent).
 
 Every pending `close()` resolves as soon as the connection leaves `DRAINING`, by whatever
@@ -202,17 +206,32 @@ console.log(JSON.stringify(stats)); // log-pipeline friendly
 
 ##### holdOpenFor()
 
-> **holdOpenFor**(`work`): `void`
+> **holdOpenFor**(`work`, `options?`): `void`
 
-Hold the connection open, should a fatal framing error arrive, until `work` settles.
+Hold the connection open, on `close()` or a fatal framing error, until `work` settles.
 
 Pass the work that answers a frame this connection delivered: the handler and the write of
-its acknowledgement. When a later frame on the same connection has a fatal framing error, the
-connection reads nothing more, waits for every piece of work passed here to settle, and only
-then closes, so the acknowledgement of a frame delivered before the refused one still goes
-out. The wait is bounded by `drainTimeoutMs` (default 30 seconds): work that has not settled
-by then is abandoned and the connection is destroyed. `MllpServer` passes every message's
-work here itself; a caller driving a bare `Connection` may do the same.
+its acknowledgement. A `close()` waits for every piece of work passed here to settle before
+it ends the transport, so an acknowledgement written by that work still goes out. When a
+later frame on the same connection has a fatal framing error, the connection reads nothing
+more, waits the same way, and only then closes, so the acknowledgement of a frame delivered
+before the refused one still goes out. Either wait is bounded by `drainTimeoutMs` (default 30
+seconds): work that has not settled by then is abandoned and the connection is destroyed.
+`MllpServer` passes every message's work here itself; a caller driving a bare `Connection`
+may do the same.
+
+`options.kind` says what the work owes the peer, which decides whether `close()` waits for it
+and how an abandoned piece is reported:
+
+- `'ack'` (the default): the work writes the frame's acknowledgement as its last step, so
+  while it runs the acknowledgement has not been sent. `close()` waits for it; abandoned, it is
+  counted as a message delivered whose acknowledgement was not sent.
+- `'manual'`: the work writes the acknowledgement itself at a point of its own choosing (a
+  manual-mode handler). `close()` waits for it until it settles; abandoned, it is counted as a
+  handler whose acknowledgement may not have been sent.
+- `'observer'`: the work writes no acknowledgement (an `onMessage` observer in custom-ACK
+  mode). `close()` does not wait for it; still running when a `close()` is abandoned, it is
+  named separately as an observer still running. A fatal framing error still waits for it.
 
 A rejection of `work` is not reported here; it only ends the wait for it.
 
@@ -223,6 +242,14 @@ A rejection of `work` is not reported here; it only ends the wait for it.
 `PromiseLike`\<`unknown`\>
 
 The work answering one delivered frame.
+
+###### options?
+
+`kind`: what the work owes the peer (default `'ack'`).
+
+###### kind?
+
+`"ack"` \| `"manual"` \| `"observer"`
 
 ###### Returns
 
@@ -324,6 +351,29 @@ Returns `false` if the connection is CLOSED or DISCONNECTED (no bytes written).
 ```typescript
 const flushed = conn.send(encodeFrame(payload));
 if (!flushed) logger.warn('backpressure detected');
+```
+
+##### stopReading()
+
+> **stopReading**(): `void`
+
+Read nothing more from the peer: every byte that arrives from now on is dropped unread, and
+no further frame is delivered. It cannot be undone.
+
+`MllpServer.close()` calls this on each connection before closing it, so no new message
+reaches a handler while the ones already running finish and their acknowledgements are
+written. A client must not call it before a `close()` that waits for acknowledgements, since
+it would then never read them.
+
+###### Returns
+
+`void`
+
+###### Example
+
+```typescript
+conn.stopReading();
+await conn.close();
 ```
 
 ***
@@ -1743,10 +1793,23 @@ await server.listen(2575);
 Stop accepting new connections and gracefully close all active connections.
 
 Sequence:
-1. `net.Server.close()`, stops accepting new connections immediately
+1. `net.Server.close()`, stops accepting new connections immediately. A socket the listener
+   still hands over (a TLS handshake that began before `close()` and ends during it) is
+   destroyed at once, before any byte of it is read.
 2. If `_connections` is empty: resolves immediately (no drain needed)
-3. Calls `_drainAll(drainTimeoutMs)`, Promise.all + side-effect setTimeout
-   that force-destroys stragglers after the drain window
+3. Every connection stops reading: bytes the peer sends from now on are dropped unread, so no
+   new message reaches a handler.
+4. Every connection waits for its handlers still running and the acknowledgements they write
+   (`AA`, a negative ACK for a handler that rejects, a custom builder's bytes), then ends its
+   socket gracefully so those acknowledgements reach the sender. In manual mode the wait lasts
+   until the handler's promise settles: a `conn.send()` made after that is not waited for. In
+   custom-ACK mode the `onMessage` observer is not waited for: it writes no acknowledgement.
+5. The wait is bounded by `drainTimeoutMs`. A connection still waiting then is destroyed, and
+   the server's `'error'` event carries an `MllpConnectionError` with `phase: 'close'` saying
+   how many messages were delivered without their acknowledgement being sent, how many
+   manual-mode handlers may not have sent theirs, and how many observers were still running.
+   The same report is made when the sender closes the connection, or half-closes it (the
+   server's sockets are not half-open, so our side ends with it), before that work settles.
 
 Calling `close()` while a `listen()` is still in flight proactively
 settles that `listen()` with a typed `MllpConnectionError` rejection
@@ -4638,8 +4701,12 @@ Resets on every `'message'` event. Distinct from `keepaliveIntervalMs` (OS TCP p
 
 > `optional` **drainTimeoutMs?**: `number`
 
-Graceful drain timeout passed to `conn.close()` during `server.close()`.
-Default: 30 000 ms.
+Graceful drain timeout passed to `conn.close()` during `server.close()`: the longest
+`close()` waits for the handlers still running and their acknowledgements. A handler still
+running then is abandoned, and an `MllpConnectionError` with `phase: 'close'` on `'error'`
+says how many messages were delivered without their acknowledgement being sent (in manual
+mode, how many handlers may not have sent theirs). In custom-ACK mode the `onMessage`
+observer is not waited for, since it writes no acknowledgement. Default: 30 000 ms.
 
 It also bounds the wait after a fatal framing error: frames delivered before the refused one
 are still answered, and a connection waits at most this long for their handlers before it is
@@ -5321,8 +5388,12 @@ Resets on every `'message'` event. Distinct from `keepaliveIntervalMs` (OS TCP p
 
 > `optional` **drainTimeoutMs?**: `number`
 
-Graceful drain timeout passed to `conn.close()` during `server.close()`.
-Default: 30 000 ms.
+Graceful drain timeout passed to `conn.close()` during `server.close()`: the longest
+`close()` waits for the handlers still running and their acknowledgements. A handler still
+running then is abandoned, and an `MllpConnectionError` with `phase: 'close'` on `'error'`
+says how many messages were delivered without their acknowledgement being sent (in manual
+mode, how many handlers may not have sent theirs). In custom-ACK mode the `onMessage`
+observer is not waited for, since it writes no acknowledgement. Default: 30 000 ms.
 
 It also bounds the wait after a fatal framing error: frames delivered before the refused one
 are still answered, and a connection waits at most this long for their handlers before it is

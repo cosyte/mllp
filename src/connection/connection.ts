@@ -204,12 +204,18 @@ export class Connection extends EventEmitter {
     this._leaveDraining = resolve;
   });
 
-  /** Work answering a frame this connection delivered, still running. See {@link Connection.holdOpenFor}. */
-  private readonly _answering = new Set<PromiseLike<unknown>>();
   /**
-   * Set once a fatal framing error has been met: from then on no byte the peer sends is read.
+   * Work answering a frame this connection delivered, still running, with what it owes the peer.
+   * See {@link Connection.holdOpenFor}.
+   */
+  private readonly _answering = new Map<PromiseLike<unknown>, "ack" | "manual" | "observer">();
+  /**
+   * Set once a fatal framing error has been met, or {@link Connection.stopReading} called: from
+   * then on no byte the peer sends is read.
    */
   private _refusing = false;
+  /** When the `close()` drain began (`Date.now()`), or `undefined` when no `close()` is draining. */
+  private _closeBegan: number | undefined;
   /** Ends the wait after a fatal framing error: destroys the transport once the bound passes. */
   private _refusalBound: ReturnType<typeof setTimeout> | undefined;
 
@@ -369,9 +375,13 @@ export class Connection extends EventEmitter {
    *
    * - If `CONNECTING` or `RECONNECTING`: cancels the pending attempt, transitions
    *   directly to `CLOSED`, and calls `transport.destroy()`.
-   * - If `CONNECTED`: transitions to `DRAINING`, calls `beforeClose(drainTimeoutMs)`,
-   *   then `DRAINING → DISCONNECTED` once the hook resolves, or `DRAINING → CLOSED`
-   *   if the drain timeout elapses first.
+   * - If `CONNECTED`: transitions to `DRAINING`, calls `beforeClose(drainTimeoutMs)` and
+   *   waits for it and for every piece of work passed to {@link Connection.holdOpenFor} that is
+   *   still running, then `DRAINING → DISCONNECTED` and ends the transport gracefully, so what
+   *   that work wrote reaches the peer. If the drain timeout elapses first: `DRAINING → CLOSED`
+   *   and the transport is destroyed. Work still running when the drain ends that way (the
+   *   timeout or a `destroy()`) is abandoned, and an `MllpConnectionError` with `phase: 'close'`
+   *   on `'error'` says how many were left and that what they would write is not sent.
    * - If `DRAINING`: waits for the existing drain to complete (idempotent).
    *
    * Every pending `close()` resolves as soon as the connection leaves `DRAINING`, by whatever
@@ -392,7 +402,7 @@ export class Connection extends EventEmitter {
     // Terminal states, nothing to do
     if (this._state === "CLOSED" || this._state === "DISCONNECTED") return;
 
-    // CONNECTING or RECONNECTING, cancel the pending attempt (LIFE-05)
+    // CONNECTING or RECONNECTING: cancel the pending attempt, there is nothing to drain
     if (this._state === "CONNECTING" || this._state === "RECONNECTING") {
       this._transition("CLOSED", "close() during " + this._state);
       this._transport.destroy();
@@ -405,6 +415,7 @@ export class Connection extends EventEmitter {
     }
 
     // CONNECTED → DRAINING
+    this._closeBegan = Date.now();
     this._transition("DRAINING");
     this._drainPromise = this._drainWithTimeout(timeout).finally(() => {
       this._drainPromise = null;
@@ -413,19 +424,19 @@ export class Connection extends EventEmitter {
   }
 
   /**
-   * Race `beforeClose()` against the drain timeout.
+   * Race `beforeClose()` and the held work against the drain timeout.
    *
    * On normal completion: `DRAINING → DISCONNECTED` + `transport.close()`.
    * On timeout: `DRAINING → CLOSED` + `transport.destroy()`.
    */
   private async _drainWithTimeout(timeoutMs: number): Promise<void> {
-    const drainPromise = this.beforeClose(timeoutMs);
+    const drainPromise = Promise.all([this.beforeClose(timeoutMs), this._heldWorkSettled()]);
     let handle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<"timeout">((resolve) => {
       handle = setTimeout(() => {
         resolve("timeout");
       }, timeoutMs);
-      // Unref so this timer does not keep the process alive (T-03-04-01)
+      // Unref so this timer does not keep the process alive
       handle.unref();
     });
 
@@ -443,11 +454,12 @@ export class Connection extends EventEmitter {
       if (this._state !== "DRAINING") return;
 
       if (result === "timeout") {
-        // Drain timed out, force to CLOSED (DRAINING → CLOSED per LIFE-02)
+        // Drain timed out: force DRAINING → CLOSED, abandoning whatever is still running
+        this._reportAbandonedAfter("drain timeout");
         this._transition("CLOSED", "drain timeout");
         this._transport.destroy();
       } else {
-        // Drain completed, DRAINING → DISCONNECTED (LIFE-02)
+        // Drain completed: DRAINING → DISCONNECTED, ending the transport gracefully
         this._transition("DISCONNECTED");
         this._transport.close();
       }
@@ -472,24 +484,43 @@ export class Connection extends EventEmitter {
    */
   destroy(reason?: Error): void {
     if (this._state === "CLOSED") return;
+    if (this._state === "DRAINING") {
+      this._reportAbandonedAfter(reason?.message ?? "destroy()");
+    }
     this._transition("CLOSED", reason?.message ?? "destroy()");
     this._transport.destroy(reason);
   }
 
   /**
-   * Hold the connection open, should a fatal framing error arrive, until `work` settles.
+   * Hold the connection open, on `close()` or a fatal framing error, until `work` settles.
    *
    * Pass the work that answers a frame this connection delivered: the handler and the write of
-   * its acknowledgement. When a later frame on the same connection has a fatal framing error, the
-   * connection reads nothing more, waits for every piece of work passed here to settle, and only
-   * then closes, so the acknowledgement of a frame delivered before the refused one still goes
-   * out. The wait is bounded by `drainTimeoutMs` (default 30 seconds): work that has not settled
-   * by then is abandoned and the connection is destroyed. `MllpServer` passes every message's
-   * work here itself; a caller driving a bare `Connection` may do the same.
+   * its acknowledgement. A `close()` waits for every piece of work passed here to settle before
+   * it ends the transport, so an acknowledgement written by that work still goes out. When a
+   * later frame on the same connection has a fatal framing error, the connection reads nothing
+   * more, waits the same way, and only then closes, so the acknowledgement of a frame delivered
+   * before the refused one still goes out. Either wait is bounded by `drainTimeoutMs` (default 30
+   * seconds): work that has not settled by then is abandoned and the connection is destroyed.
+   * `MllpServer` passes every message's work here itself; a caller driving a bare `Connection`
+   * may do the same.
+   *
+   * `options.kind` says what the work owes the peer, which decides whether `close()` waits for it
+   * and how an abandoned piece is reported:
+   *
+   * - `'ack'` (the default): the work writes the frame's acknowledgement as its last step, so
+   *   while it runs the acknowledgement has not been sent. `close()` waits for it; abandoned, it is
+   *   counted as a message delivered whose acknowledgement was not sent.
+   * - `'manual'`: the work writes the acknowledgement itself at a point of its own choosing (a
+   *   manual-mode handler). `close()` waits for it until it settles; abandoned, it is counted as a
+   *   handler whose acknowledgement may not have been sent.
+   * - `'observer'`: the work writes no acknowledgement (an `onMessage` observer in custom-ACK
+   *   mode). `close()` does not wait for it; still running when a `close()` is abandoned, it is
+   *   named separately as an observer still running. A fatal framing error still waits for it.
    *
    * A rejection of `work` is not reported here; it only ends the wait for it.
    *
    * @param work - The work answering one delivered frame.
+   * @param options - `kind`: what the work owes the peer (default `'ack'`).
    *
    * @example
    * ```typescript
@@ -498,12 +529,34 @@ export class Connection extends EventEmitter {
    * });
    * ```
    */
-  holdOpenFor(work: PromiseLike<unknown>): void {
+  holdOpenFor(
+    work: PromiseLike<unknown>,
+    options?: { readonly kind?: "ack" | "manual" | "observer" },
+  ): void {
     const done = (): void => {
       this._answering.delete(work);
     };
-    this._answering.add(work);
+    this._answering.set(work, options?.kind ?? "ack");
     work.then(done, done);
+  }
+
+  /**
+   * Read nothing more from the peer: every byte that arrives from now on is dropped unread, and
+   * no further frame is delivered. It cannot be undone.
+   *
+   * `MllpServer.close()` calls this on each connection before closing it, so no new message
+   * reaches a handler while the ones already running finish and their acknowledgements are
+   * written. A client must not call it before a `close()` that waits for acknowledgements, since
+   * it would then never read them.
+   *
+   * @example
+   * ```typescript
+   * conn.stopReading();
+   * await conn.close();
+   * ```
+   */
+  stopReading(): void {
+    this._refusing = true;
   }
 
   /**
@@ -545,11 +598,76 @@ export class Connection extends EventEmitter {
   // Private FSM helpers
   // ---------------------------------------------------------------------------
 
+  /**
+   * Settle once no work passed to {@link Connection.holdOpenFor} that owes an acknowledgement is
+   * running; an `'observer'` is not waited for. Work registered while waiting (a frame decoded
+   * from bytes already read) is waited for too.
+   */
+  private async _heldWorkSettled(): Promise<void> {
+    for (;;) {
+      const owing = [...this._answering].filter(([, kind]) => kind !== "observer");
+      if (owing.length === 0) return;
+      await Promise.allSettled(owing.map(([work]) => work));
+    }
+  }
+
+  /**
+   * Report, on `'error'`, the held work a `close()` drain abandons because the drain ended before
+   * that work settled. It counts per delivered message: work that would have written an
+   * acknowledgement (not sent), a manual-mode handler (its acknowledgement may not have been
+   * sent), and, separately, observers that owe none. Nothing is reported when no `close()` is
+   * draining or nothing is still running.
+   *
+   * @param how - How the drain ended, as it reads after "close() ended ".
+   * @param reason - What ended it, the message of the report's `cause`.
+   */
+  private _reportAbandonedWork(how: string, reason: string): void {
+    if (this._closeBegan === undefined) return;
+    const count = { ack: 0, manual: 0, observer: 0 };
+    for (const kind of this._answering.values()) count[kind] += 1;
+    const parts: string[] = [];
+    if (count.ack > 0) {
+      parts.push(
+        count.ack === 1
+          ? "1 message was delivered and its acknowledgement was not sent"
+          : `${String(count.ack)} messages were delivered and their acknowledgements were not sent`,
+      );
+    }
+    if (count.manual > 0) {
+      parts.push(
+        count.manual === 1
+          ? "1 manual-mode handler was still running, so its acknowledgement may not have been sent"
+          : `${String(count.manual)} manual-mode handlers were still running, so their acknowledgements may not have been sent`,
+      );
+    }
+    if (count.observer > 0) {
+      parts.push(
+        count.observer === 1
+          ? "1 observer that owes no acknowledgement was still running"
+          : `${String(count.observer)} observers that owe no acknowledgement were still running`,
+      );
+    }
+    // Only work that owed an acknowledgement makes this worth reporting; observers ride along.
+    if (count.ack + count.manual === 0) return;
+    this._emitErrorIfListened(
+      new MllpConnectionError(`close() ended ${how}: ${parts.join("; ")}`, {
+        cause: new Error(reason),
+        phase: "close",
+      }),
+    );
+  }
+
+  /** Report the work a `close()` drain abandons at the bound or on a `destroy()`. */
+  private _reportAbandonedAfter(reason: string): void {
+    const elapsedMs = Date.now() - (this._closeBegan ?? Date.now());
+    this._reportAbandonedWork(`after ${String(elapsedMs)} ms (${reason})`, reason);
+  }
+
   private _transition(to: ConnectionState, reason?: string): void {
     const from = this._state;
     const legal = LEGAL_TRANSITIONS.get(from);
     if (legal === undefined || !legal.has(to)) {
-      // Illegal transition, silently ignore to preserve FSM integrity (T-03-03-04)
+      // Illegal transition, silently ignore to preserve FSM integrity
       return;
     }
     // The state is committed BEFORE any subscriber runs, so a throwing subscriber can never leave
@@ -593,7 +711,10 @@ export class Connection extends EventEmitter {
   private _onTransportClose(): void {
     clearTimeout(this._refusalBound);
     if (this._state === "DRAINING") {
-      // Transport closed naturally during graceful drain, complete the close
+      // Transport closed during the drain: by our own end once the work settled, or by the peer
+      // (a half-close is ended on our side too, the socket not being half-open) while work owing
+      // an acknowledgement still ran, which can then no longer be sent.
+      this._reportAbandonedWork("when the sender closed the connection", "peer closed");
       this._transition("DISCONNECTED");
       return;
     }
@@ -637,7 +758,7 @@ export class Connection extends EventEmitter {
   }
 
   /**
-   * Handle a fatal framing error thrown out of `FrameReader.push` (FRAME-FATAL).
+   * Handle a fatal framing error thrown out of `FrameReader.push`.
    *
    * Contract: surface it as a connection `'error'` (frozen payload, `phase: 'receive'`,
    * `connectionCause: 'framing-fatal'`, the original `MllpFramingError` preserved as `cause` so
@@ -701,7 +822,7 @@ export class Connection extends EventEmitter {
     this._refusalBound.unref();
 
     // The work snapshot is the whole of it: nothing new can be delivered once refusing.
-    void Promise.allSettled([...this._answering]).then(() => {
+    void Promise.allSettled([...this._answering.keys()]).then(() => {
       // Ended some other way meanwhile: the peer closed, a destroy(), or the bound passed.
       if (this._state !== "DRAINING") return;
       this._transition("CLOSED", err.message);
@@ -749,6 +870,8 @@ export class Connection extends EventEmitter {
     // ERR_UNHANDLED_ERROR straight out of the socket's 'error' listener and kill the process. A
     // bare Connection (no 'error' listener) previously died on an ordinary ECONNRESET.
     this._emitErrorIfListened(new MllpConnectionError(err.message, { cause: err, phase }));
+    // Reports only during a close() drain: no other state still standing here has begun one.
+    this._reportAbandonedWork(`when the connection failed (${err.message})`, err.message);
 
     // CONNECTING and RECONNECTING have no path to DISCONNECTED, use CLOSED
     const target: ConnectionState =
@@ -771,7 +894,7 @@ export class Connection extends EventEmitter {
     // `'data'` listener, killing the process, and on the way it would suppress the ACK for a
     // message the application may already have handled.
     //
-    // Contain each subscriber independently (the WARN-06 pattern already used for warnings): one
+    // Contain each subscriber independently (as warnings already are, below): one
     // bad subscriber cannot silence the other, cannot suppress the ACK, and cannot be mistaken
     // for a peer framing fault.
     this._dispatchContained(() => {
@@ -798,25 +921,25 @@ export class Connection extends EventEmitter {
   }
 
   private _onFramingWarning(w: MllpWarning): void {
-    // Enrich with connectionId (D-09) and re-freeze
+    // Enrich with the connectionId and re-freeze
     const enriched = Object.freeze<MllpWarning>({ ...w, connectionId: this.connectionId });
 
-    // Always update the count map, accurate regardless of ring buffer truncation (OBS-05)
+    // Always update the count map, accurate regardless of ring buffer truncation
     this._warningsByCode.set(enriched.code, (this._warningsByCode.get(enriched.code) ?? 0) + 1);
 
-    // Ring buffer: keep last MAX_WARNINGS entries (OBS-05)
+    // Ring buffer: keep the last MAX_WARNINGS entries
     if (this._warningBuffer.length >= MAX_WARNINGS) {
       this._warningBuffer.shift(); // remove oldest
       this._warningsTruncated = true;
     }
     this._warningBuffer.push(enriched);
 
-    // Per-connection subscriber, swallow exceptions (WARN-06)
+    // Per-connection subscriber: a throw is swallowed
     if (this._onWarningFn !== null) {
       try {
         this._onWarningFn(enriched);
       } catch {
-        // WARN-06: throwing handler must not disrupt frame processing
+        // A throwing handler must not disrupt frame processing
       }
     }
 
@@ -824,9 +947,9 @@ export class Connection extends EventEmitter {
     //
     // Contained for the same reason as the per-connection subscriber above: this runs synchronously
     // inside `FrameReader.push()`, itself inside the socket's 'data' callback, so a throwing
-    // 'warning' listener would unwind out of the data handler and kill the process. WARN-06 already
-    // promises a throwing warning handler "must not disrupt frame processing", it was only half
-    // honored (the `onWarning` option was guarded; the event broadcast was not).
+    // 'warning' listener would unwind out of the data handler and kill the process. A throwing
+    // warning handler "must not disrupt frame processing", and that once held only for the
+    // `onWarning` option, not for the event broadcast.
     this._dispatchContained(() => {
       this.emit("warning", enriched);
     });
