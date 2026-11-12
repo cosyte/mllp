@@ -5,7 +5,47 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  MLLP_TLS_OPTIONS_NOT_AN_OBJECT,
+  MllpTlsConfigurationError,
+} from "../../src/transport/error.js";
 import { copyTlsOptions } from "../../src/transport/tls-options-copy.js";
+
+/** Every option name a client's or a server's `tls` object can carry, sorted. */
+const ALL_NAMES = [
+  "allowUnverified",
+  "atnaTransportSecurity",
+  "ca",
+  "cert",
+  "ciphers",
+  "clientAuth",
+  "dhParameters",
+  "key",
+  "maxVersion",
+  "minVersion",
+  "passphrase",
+  "pfx",
+  "servername",
+];
+
+/** A value for every option, as plain synthetic placeholders. */
+function everyOption(): Record<string, unknown> {
+  return {
+    allowUnverified: true,
+    atnaTransportSecurity: false,
+    ca: ["synthetic-ca", Buffer.from("synthetic-ca-bytes")],
+    cert: Buffer.from("synthetic-cert"),
+    ciphers: "synthetic-cipher-list",
+    clientAuth: "MUST",
+    dhParameters: Buffer.from("synthetic-dh"),
+    key: "synthetic-key",
+    maxVersion: "TLSv1.3",
+    minVersion: "TLSv1.2",
+    passphrase: "synthetic-passphrase",
+    pfx: Buffer.from("synthetic-pfx"),
+    servername: "synthetic.example.com",
+  };
+}
 
 describe("copyTlsOptions", () => {
   it("passes undefined and true through", () => {
@@ -25,7 +65,7 @@ describe("copyTlsOptions", () => {
     expect(copy).not.toBe(original);
     expect(copy).toEqual(original);
     expect(copy.ca).not.toBe(ca);
-    expect(copy.pfx).toBe(pfx);
+    expect(copy.pfx).not.toBe(pfx);
 
     ca.push("synthetic-ca-c");
     original.cert = "synthetic-cert";
@@ -48,5 +88,70 @@ describe("copyTlsOptions", () => {
     expect(copy.cert).toBeUndefined();
     expect(copy.cert).toBeUndefined();
     expect(reads).toBe(1);
+  });
+
+  it("copies every option a class instance supplies through prototype getters", () => {
+    const values = everyOption();
+    class Options {}
+    for (const name of ALL_NAMES) {
+      Object.defineProperty(Options.prototype, name, { get: () => values[name] });
+    }
+    const copy = copyTlsOptions(new Options()) as Record<string, unknown>;
+    expect(Object.keys(copy).sort()).toEqual(ALL_NAMES);
+    expect(copy).toEqual(values);
+  });
+
+  it("copies every option an Object.create object inherits from its prototype", () => {
+    const values = everyOption();
+    const copy = copyTlsOptions(Object.create(values) as object) as Record<string, unknown>;
+    expect(Object.keys(copy).sort()).toEqual(ALL_NAMES);
+    expect(copy).toEqual(values);
+  });
+
+  it("leaves out an option that is undefined and a name no option has", () => {
+    const copy = copyTlsOptions({
+      cert: "synthetic-cert",
+      key: undefined,
+      notAnOption: "synthetic",
+    }) as Record<string, unknown>;
+    expect(Object.keys(copy)).toEqual(["cert"]);
+  });
+
+  it("copies the bytes of every Buffer, alone or in an array", () => {
+    const cert = Buffer.from("synthetic-cert");
+    const caBytes = Buffer.from("synthetic-ca");
+    const pfx = Buffer.from("synthetic-pfx");
+    const dhParameters = Buffer.from("synthetic-dh");
+    const copy = copyTlsOptions({ cert, ca: ["synthetic-ca-text", caBytes], pfx, dhParameters });
+    cert.fill(0);
+    caBytes.fill(0);
+    pfx.fill(0);
+    dhParameters.fill(0);
+    expect(copy.cert).toEqual(Buffer.from("synthetic-cert"));
+    expect(copy.ca).toEqual(["synthetic-ca-text", Buffer.from("synthetic-ca")]);
+    expect(copy.pfx).toEqual(Buffer.from("synthetic-pfx"));
+    expect(copy.dhParameters).toEqual(Buffer.from("synthetic-dh"));
+    expect(Buffer.isBuffer(copy.cert)).toBe(true);
+  });
+
+  it.each([
+    ["null", null],
+    ["false", false],
+    ["a number", 0],
+    ["a string", "synthetic-tls"],
+  ])("refuses %s with a configuration error that does not carry the value", (_label, value) => {
+    let thrown: unknown;
+    try {
+      copyTlsOptions(value as unknown as object);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MllpTlsConfigurationError);
+    expect((thrown as MllpTlsConfigurationError).code).toBe(MLLP_TLS_OPTIONS_NOT_AN_OBJECT);
+    expect((thrown as MllpTlsConfigurationError).code).toBe("MLLP_TLS_OPTIONS_NOT_AN_OBJECT");
+    expect((thrown as Error).message).toBe(
+      "tls must be an object of TLS options, or true for a client's defaults; it was null or " +
+        "another kind of value, and no client or server was created",
+    );
   });
 });

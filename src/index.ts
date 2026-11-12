@@ -67,6 +67,7 @@ export {
   MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE,
   MLLP_TLS_PFX_REJECTED,
   MLLP_TLS_CREDENTIAL_CONFLICT,
+  MLLP_TLS_OPTIONS_NOT_AN_OBJECT,
   MllpTlsConfigurationError,
   tlsConfigurationMessage,
   type TlsConfigurationErrorCode,

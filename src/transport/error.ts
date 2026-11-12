@@ -163,6 +163,24 @@ export const MLLP_TLS_PFX_REJECTED = "MLLP_TLS_PFX_REJECTED";
 export const MLLP_TLS_CREDENTIAL_CONFLICT = "MLLP_TLS_CREDENTIAL_CONFLICT";
 
 /**
+ * `tls` was `null` or another value that is not an object of TLS options (for a client, `true`
+ * also asks for the defaults). Without this check such a value reached the options' property reads
+ * and failed there with a bare `TypeError`, or was taken as TLS with no options at all.
+ *
+ * Like {@link MLLP_TLS_CREDENTIAL_CONFLICT}, this one is thrown by the constructor
+ * (`createClient`, `createServer`, `new MllpClient`, `new MllpServer`). The message never carries
+ * the value that was passed, and there is no `cause`.
+ *
+ * @example
+ * ```typescript
+ * import { MLLP_TLS_OPTIONS_NOT_AN_OBJECT } from '@cosyte/mllp';
+ * if (err.code === MLLP_TLS_OPTIONS_NOT_AN_OBJECT) logger.error('tls must be an options object');
+ * ```
+ */
+// Stryker disable next-line StringLiteral: a module-level initializer runs once, when the module is first loaded, so per-test coverage credits it to whichever test loaded the module first rather than to the tests that assert this value (test/transport/tls-options-copy.test.ts asserts it literally).
+export const MLLP_TLS_OPTIONS_NOT_AN_OBJECT = "MLLP_TLS_OPTIONS_NOT_AN_OBJECT";
+
+/**
  * Union of the stable TLS-configuration error codes.
  *
  * @example
@@ -177,7 +195,8 @@ export type TlsConfigurationErrorCode =
   | typeof MLLP_TLS_CIPHER_LIST_UNENFORCEABLE
   | typeof MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE
   | typeof MLLP_TLS_PFX_REJECTED
-  | typeof MLLP_TLS_CREDENTIAL_CONFLICT;
+  | typeof MLLP_TLS_CREDENTIAL_CONFLICT
+  | typeof MLLP_TLS_OPTIONS_NOT_AN_OBJECT;
 
 /**
  * Fixed, human-readable description for a TLS-configuration code.
@@ -221,6 +240,9 @@ export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string
     [MLLP_TLS_CREDENTIAL_CONFLICT]:
       "tls.pfx was set together with tls.cert or tls.key; the PKCS#12 file carries its own " +
       "certificate and key, so set either cert and key or pfx, not both",
+    [MLLP_TLS_OPTIONS_NOT_AN_OBJECT]:
+      "tls must be an object of TLS options, or true for a client's defaults; it was null or " +
+      "another kind of value, and no client or server was created",
   };
   return messages[code];
 }

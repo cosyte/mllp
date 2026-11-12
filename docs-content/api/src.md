@@ -6141,7 +6141,7 @@ const code: SecurityWarningCode = 'MLLP_TLS_VERIFY_DISABLED';
 
 ### TlsConfigurationErrorCode
 
-> **TlsConfigurationErrorCode** = *typeof* [`MLLP_TLS_CIPHER_LIST_REJECTED`](#mllp_tls_cipher_list_rejected) \| *typeof* [`MLLP_TLS_CIPHER_OPTION_CONFLICT`](#mllp_tls_cipher_option_conflict) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_REJECTED`](#mllp_tls_dh_parameters_rejected) \| *typeof* [`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`](#mllp_tls_cipher_list_unenforceable) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`](#mllp_tls_dh_parameters_unenforceable) \| *typeof* [`MLLP_TLS_PFX_REJECTED`](#mllp_tls_pfx_rejected) \| *typeof* [`MLLP_TLS_CREDENTIAL_CONFLICT`](#mllp_tls_credential_conflict)
+> **TlsConfigurationErrorCode** = *typeof* [`MLLP_TLS_CIPHER_LIST_REJECTED`](#mllp_tls_cipher_list_rejected) \| *typeof* [`MLLP_TLS_CIPHER_OPTION_CONFLICT`](#mllp_tls_cipher_option_conflict) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_REJECTED`](#mllp_tls_dh_parameters_rejected) \| *typeof* [`MLLP_TLS_CIPHER_LIST_UNENFORCEABLE`](#mllp_tls_cipher_list_unenforceable) \| *typeof* [`MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE`](#mllp_tls_dh_parameters_unenforceable) \| *typeof* [`MLLP_TLS_PFX_REJECTED`](#mllp_tls_pfx_rejected) \| *typeof* [`MLLP_TLS_CREDENTIAL_CONFLICT`](#mllp_tls_credential_conflict) \| *typeof* [`MLLP_TLS_OPTIONS_NOT_AN_OBJECT`](#mllp_tls_options_not_an_object)
 
 Union of the stable TLS-configuration error codes.
 
@@ -6390,6 +6390,27 @@ and refused these: the remedy here is a different runtime, or no Diffie-Hellman 
 ```typescript
 import { MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE } from '@cosyte/mllp';
 if (err.code === MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE) logger.error('run this server on Node.js');
+```
+
+***
+
+### MLLP\_TLS\_OPTIONS\_NOT\_AN\_OBJECT
+
+> `const` **MLLP\_TLS\_OPTIONS\_NOT\_AN\_OBJECT**: `"MLLP_TLS_OPTIONS_NOT_AN_OBJECT"` = `"MLLP_TLS_OPTIONS_NOT_AN_OBJECT"`
+
+`tls` was `null` or another value that is not an object of TLS options (for a client, `true`
+also asks for the defaults). Without this check such a value reached the options' property reads
+and failed there with a bare `TypeError`, or was taken as TLS with no options at all.
+
+Like [MLLP\_TLS\_CREDENTIAL\_CONFLICT](#mllp_tls_credential_conflict), this one is thrown by the constructor
+(`createClient`, `createServer`, `new MllpClient`, `new MllpServer`). The message never carries
+the value that was passed, and there is no `cause`.
+
+#### Example
+
+```typescript
+import { MLLP_TLS_OPTIONS_NOT_AN_OBJECT } from '@cosyte/mllp';
+if (err.code === MLLP_TLS_OPTIONS_NOT_AN_OBJECT) logger.error('tls must be an options object');
 ```
 
 ***

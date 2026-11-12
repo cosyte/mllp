@@ -20,6 +20,10 @@ import { createClient, type ClientOptions, type MllpClient } from "../../src/cli
 import { createServer, type MllpServer } from "../../src/server/server.js";
 import { buildPfx } from "../helpers/pkcs12-fixtures.js";
 import {
+  MLLP_TLS_OPTIONS_NOT_AN_OBJECT,
+  MllpTlsConfigurationError,
+} from "../../src/transport/error.js";
+import {
   buildMutualTlsFixture,
   buildNamedServerCertFixture,
   buildUntrustedCertFixture,
@@ -221,6 +225,179 @@ describe.skipIf(RUNTIME !== "node")(
       await client.connect();
       await waitFor(() => peers.length === 1);
       expect(peers[0]?.subjectCN).toBe("test-client");
+    });
+
+    /** Connect a client with no certificate to `port` and resolve once the server has refused it. */
+    async function refusedWithoutCertificate(server: MllpServer, port: number): Promise<void> {
+      const { cert } = mutual();
+      const refusals: unknown[] = [];
+      const connections: unknown[] = [];
+      server.on("tlsClientError", (e: unknown) => refusals.push(e));
+      server.on("connection", (e: unknown) => connections.push(e));
+      const bare = createClient({ host: "127.0.0.1", port, tls: { ca: cert } });
+      clients.push(bare);
+      bare.on("error", () => undefined);
+      // Under TLS 1.3 the client may finish its handshake before the server's alert arrives, so
+      // connect() may resolve or reject; what must hold is that the server refuses the client.
+      await bare.connect().catch(() => undefined);
+      await waitFor(() => refusals.length === 1);
+      expect(connections).toEqual([]);
+    }
+
+    it("a client reads options a class instance supplies through getters", async () => {
+      const { cert, clientCert, clientKey } = mutual();
+      const { port, presented } = await recordingServer();
+      class ClientTls {
+        get ca(): string {
+          return cert;
+        }
+        get servername(): string {
+          return "localhost";
+        }
+        get cert(): string {
+          return clientCert;
+        }
+        get key(): string {
+          return clientKey;
+        }
+      }
+      const client = createClient({ host: "127.0.0.1", port, tls: new ClientTls() });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => presented.length === 1);
+      expect(presented).toEqual(["test-client"]);
+    });
+
+    it("a client reads options an Object.create object inherits", async () => {
+      const { cert, clientCert, clientKey } = mutual();
+      const { port, presented } = await recordingServer();
+      const tls = Object.create({
+        ca: cert,
+        servername: "localhost",
+        cert: clientCert,
+        key: clientKey,
+      }) as NonNullable<Exclude<ClientOptions["tls"], true>>;
+      const client = createClient({ host: "127.0.0.1", port, tls });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => presented.length === 1);
+      expect(presented).toEqual(["test-client"]);
+    });
+
+    it("a server given clientAuth MUST by a class getter refuses a client with no certificate", async () => {
+      const { cert, key, clientCert, clientKey } = mutual();
+      class ServerTls {
+        get cert(): string {
+          return cert;
+        }
+        get key(): string {
+          return key;
+        }
+        get ca(): string {
+          return cert;
+        }
+        get clientAuth(): "MUST" {
+          return "MUST";
+        }
+      }
+      const server = createServer({ tls: new ServerTls(), autoAck: "AA" });
+      servers.push(server);
+      await server.listen(0, "127.0.0.1");
+      const port = must(server.getStats().port);
+      await refusedWithoutCertificate(server, port);
+
+      const peers: Array<{ subjectCN: string | null } | null> = [];
+      server.on("connection", (e: { peerCertificate: { subjectCN: string | null } | null }) => {
+        peers.push(e.peerCertificate);
+      });
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        tls: { ca: cert, servername: "localhost", cert: clientCert, key: clientKey },
+      });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => peers.length === 1);
+      expect(peers[0]?.subjectCN).toBe("test-client");
+    });
+
+    it("a server given clientAuth MUST through its prototype refuses a client with no certificate", async () => {
+      const { cert, key } = mutual();
+      const tls = Object.create({ ca: cert, clientAuth: "MUST" }) as {
+        cert?: string;
+        key?: string;
+      };
+      tls.cert = cert;
+      tls.key = key;
+      const server = createServer({ tls, autoAck: "AA" });
+      servers.push(server);
+      await server.listen(0, "127.0.0.1");
+      await refusedWithoutCertificate(server, must(server.getStats().port));
+    });
+
+    it("cert and key bytes overwritten after construction do not change the identity on reconnect", async () => {
+      const { cert, clientCert, clientKey } = mutual();
+      const { port, presented, dropFirst } = await recordingServer();
+      const certBytes = Buffer.from(clientCert);
+      const keyBytes = Buffer.from(clientKey);
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        tls: { ca: cert, servername: "localhost", cert: certBytes, key: keyBytes },
+        autoReconnect: true,
+        initialDelayMs: 5,
+        maxDelayMs: 20,
+      });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => presented.length === 1);
+
+      certBytes.fill(0);
+      keyBytes.fill(0);
+      dropFirst();
+
+      await waitFor(() => presented.length >= 2 && client.state === "CONNECTED");
+      expect(presented.slice(0, 2)).toEqual(["test-client", "test-client"]);
+    });
+
+    it("pfx bytes overwritten after construction do not change the identity on reconnect", async () => {
+      const { cert } = mutual();
+      const { port, presented, dropFirst } = await recordingServer();
+      const pfx = buildPfx(other(), PASSPHRASE);
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        tls: { ca: cert, servername: "localhost", pfx, passphrase: PASSPHRASE },
+        autoReconnect: true,
+        initialDelayMs: 5,
+        maxDelayMs: 20,
+      });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => presented.length === 1);
+
+      pfx.fill(0);
+      dropFirst();
+
+      await waitFor(() => presented.length >= 2 && client.state === "CONNECTED");
+      expect(presented.slice(0, 2)).toEqual([OTHER_CN, OTHER_CN]);
+    });
+
+    it("tls null is refused by both constructors with a configuration error", () => {
+      const tls = null as unknown as NonNullable<ClientOptions["tls"]>;
+      for (const create of [
+        () => createClient({ host: "127.0.0.1", port: 1, tls }),
+        () => createServer({ tls: null as unknown as { cert: string; key: string } }),
+      ]) {
+        let thrown: unknown;
+        try {
+          create();
+        } catch (err) {
+          thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(MllpTlsConfigurationError);
+        expect((thrown as MllpTlsConfigurationError).code).toBe(MLLP_TLS_OPTIONS_NOT_AN_OBJECT);
+      }
     });
   },
 );
