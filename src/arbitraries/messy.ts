@@ -51,15 +51,14 @@ export interface MessyStream extends GeneratedStream {
 
 /** How a frame opens. */
 type Opening = "vt" | "whitespace" | "no-vt" | "whitespace-no-vt";
-/** What sits between the opening and the payload. */
-type Body = "plain" | "empty";
 /** How a frame ends. */
 type Ending = "cr" | "lf" | "fs-only";
 
 /** One frame's choices, before the stream fixes them up so that they read as intended. */
 interface FrameChoice {
   readonly opening: Opening;
-  readonly body: Body;
+  /** Whether the frame carries no payload. */
+  readonly empty: boolean;
   readonly ending: Ending;
   readonly whitespace: readonly number[];
   readonly payload: readonly number[];
@@ -94,7 +93,7 @@ function frameChoice(options: MessyStreamOptions): fc.Arbitrary<FrameChoice> {
   const { openings, endings } = quirks(options);
   return fc.record({
     opening: fc.constantFrom(...openings),
-    body: fc.constantFrom<Body>("plain", "empty"),
+    empty: fc.boolean(),
     ending: fc.constantFrom(...endings),
     whitespace: fc.array(fc.constantFrom(...WHITESPACE), { minLength: 1, maxLength: 4 }),
     payload: payloadBytes(options),
@@ -109,11 +108,11 @@ function frameChoice(options: MessyStreamOptions): fc.Arbitrary<FrameChoice> {
  * - the last frame does not end `fs-only`, which only the next frame's `VT` completes.
  */
 function append(built: Built, choice: FrameChoice, mustOpenWithVt: boolean, last: boolean): void {
-  const payload = choice.body === "empty" ? [] : [...choice.payload];
+  const payload = choice.empty ? [] : [...choice.payload];
   let opening = mustOpenWithVt ? "vt" : choice.opening;
   const noVt = opening === "no-vt" || opening === "whitespace-no-vt";
-  const first = payload[0];
-  if (noVt && first !== undefined && WHITESPACE.includes(first)) {
+  // An empty payload has no first byte, and `includes(undefined)` is false.
+  if (noVt && WHITESPACE.includes(payload[0] as number)) {
     opening = opening === "no-vt" ? "vt" : "whitespace";
   }
   const ending = last && choice.ending === "fs-only" ? "cr" : choice.ending;

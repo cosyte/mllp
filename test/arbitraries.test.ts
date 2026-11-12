@@ -232,6 +232,12 @@ describe("messyStream()", () => {
     }
   });
 
+  it("generates frames with a payload and frames without one", () => {
+    const lengths = draw(messyStream(), 200).flatMap((s) => s.payloads.map((p) => p.length));
+    expect(lengths.some((n) => n === 0)).toBe(true);
+    expect(lengths.some((n) => n > 0)).toBe(true);
+  });
+
   it("never follows an FS with anything but CR, LF or the next frame's VT", () => {
     // A reader refuses a frame with a stray FS whole, so a stream holding one is not one it
     // accepts. (A VT inside a frame is refused too; the read-back above would throw on one.)
