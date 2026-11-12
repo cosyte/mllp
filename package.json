@@ -114,7 +114,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@changesets/cli": "2.31.0",
-    "@cosyte/bench": "^0.1.1",
+    "@cosyte/bench": "^0.1.5",
     "@cosyte/eslint-config": "^0.1.4",
     "@cosyte/hl7": "^0.1.0",
     "@cosyte/prettier-config": "^0.1",
@@ -170,6 +170,8 @@
     "bench:compare": "cosyte-bench compare --suite bench/mllp.bench.mjs",
     "bench:profile": "node bench/profile.mjs",
     "bench:socket": "node --expose-gc bench/socket.mjs",
+    "bench:socket-cases": "node --expose-gc bench/socket-cases.mjs",
+    "bench:import": "cosyte-bench run --suite bench/import.bench.mjs --no-memory",
     "bench:open-loop": "node bench/open-loop.mjs",
     "certs:gen": "node scripts/generate-test-certs.mjs",
     "clean": "rm -rf dist coverage",

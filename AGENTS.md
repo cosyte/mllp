@@ -73,6 +73,8 @@ is synthetic and built in code by `bench/corpus.mjs`. After `pnpm build`:
 ```sh
 pnpm bench:reading --out bench-results/reading.json   # throughput, latency, memory, import cost
 pnpm bench:socket                                      # the same traffic over a 127.0.0.1 socket
+pnpm bench:socket-cases                                # many connections, TLS, a slow handler, a reconnect storm
+pnpm bench:import --target dist/testing/index.mjs      # the cold import of one subpath
 pnpm bench:open-loop                                   # ACK latency at fixed rates, by TCP_NODELAY
 pnpm bench:profile                                     # CPU and heap profiles of the hot paths
 ```
