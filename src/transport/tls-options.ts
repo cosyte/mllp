@@ -334,4 +334,3 @@ export {
   type SecurityWarning,
   type SecurityWarningCode,
 } from "./security-warnings.js";
-// Measurement only: this line is removed in the next commit.

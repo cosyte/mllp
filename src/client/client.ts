@@ -2886,4 +2886,3 @@ export async function createStarterClient(opts: StarterClientOptions): Promise<M
   await client.connect();
   return client;
 }
-// Measurement only: this line is removed in the next commit.

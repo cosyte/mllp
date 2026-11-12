@@ -32,4 +32,3 @@ export function checkPfx(pfx: Buffer | undefined, passphrase: string | undefined
     throw new MllpTlsConfigurationError(MLLP_TLS_PFX_REJECTED, { cause: err as Error });
   }
 }
-// Measurement only: this line is removed in the next commit.
