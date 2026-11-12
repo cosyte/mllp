@@ -244,23 +244,62 @@ function literalKeys(text: string, open: number): string[] {
   return keys;
 }
 
+/** The keys of every object literal directly inside the parentheses whose `(` is at `open`. */
+function literalsIn(text: string, open: number): string[] {
+  const keys: string[] = [];
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i] ?? "";
+    if (c === "{" && depth === 1) keys.push(...literalKeys(text, i));
+    if ("({[".includes(c)) depth += 1;
+    if (")}]".includes(c)) depth -= 1;
+    if (depth === 0) break;
+  }
+  return keys;
+}
+
 /**
- * Every field of every event payload `src/` builds inline where it emits it, as event name to
- * field names: the `error` event's `{ connectionId, error, controlIdBytes }` among them.
+ * The keys of the payload expression that starts at `at`: an `Object.freeze(...)` call (each
+ * object literal in it, so both arms of a conditional count), a bare object literal, or a name,
+ * read from the nearest `const` or `let` before it that gives that name its value. A spread
+ * (`...w`) adds no key: what it copies is declared where it was built.
+ */
+function payloadKeys(text: string, at: number, depth = 0): string[] {
+  const rest = text.slice(at, at + 200);
+  const frozen = /^Object\.freeze(?:<[^>(]*>)?\(/u.exec(rest);
+  if (frozen) return literalsIn(text, at + frozen[0].length - 1);
+  if (rest.startsWith("{")) return literalKeys(text, at);
+  const name = /^(\w+)\s*[,)]/u.exec(rest)?.[1];
+  if (name === undefined || depth > 0) return [];
+  let found = -1;
+  const declaration = new RegExp(`\\b(?:const|let)\\s+${name}\\b[^=;]*=(?!=)\\s*`, "gu");
+  for (const d of text.slice(0, at).matchAll(declaration)) found = d.index + d[0].length;
+  return found === -1 ? [] : payloadKeys(text, found, depth + 1);
+}
+
+/**
+ * Every field of every event payload a source text builds for an emit, as event name to field
+ * names: the payload built where it is emitted, or built first in a variable the emit passes.
+ */
+function fieldsIn(text: string, into = new Map<string, Set<string>>()): Map<string, Set<string>> {
+  const emit =
+    /(?:(?:\.emit|_emitContained|emitSubscriberSafe)\(\s*"(\w+)",|safeEmit\(\s*\w+,\s*"(\w+)",|safeEmitError\(\s*\w+,|_emitErrorIfListened\()\s*/gu;
+  for (const m of text.matchAll(emit)) {
+    const event = m[1] ?? m[2] ?? "error";
+    const fields = into.get(event) ?? new Set<string>();
+    for (const key of payloadKeys(text, m.index + m[0].length)) fields.add(key);
+    into.set(event, fields);
+  }
+  return into;
+}
+
+/**
+ * Every field of every event payload `src/` builds for an emit, as event name to field names: the
+ * `error` event's `{ connectionId, error, controlIdBytes }` among them.
  */
 function emittedFields(): Map<string, Set<string>> {
-  const emit =
-    /(?:(?:\.emit|_emitContained|emitSubscriberSafe)\(\s*"(\w+)",|safeEmit\(\s*\w+,\s*"(\w+)",|(?:safeEmitError\(\s*\w+,|_emitErrorIfListened\())\s*Object\.freeze\(\{/gu;
   const out = new Map<string, Set<string>>();
-  for (const file of sourceFiles()) {
-    const text = withoutComments(readFileSync(file, "utf8"));
-    for (const m of text.matchAll(emit)) {
-      const event = m[1] ?? m[2] ?? "error";
-      const fields = out.get(event) ?? new Set<string>();
-      for (const key of literalKeys(text, m.index + m[0].length - 1)) fields.add(key);
-      out.set(event, fields);
-    }
-  }
+  for (const file of sourceFiles()) fieldsIn(withoutComments(readFileSync(file, "utf8")), out);
   return out;
 }
 
@@ -312,13 +351,46 @@ describe("What is safe to log", () => {
     ).toEqual([]);
   });
 
-  it("names every field of every event payload the source builds where it emits it", () => {
+  it("reads a payload built in a variable as well as one built where it is emitted", () => {
+    const planted = withoutComments(
+      [
+        "const event = Object.freeze({ payload, connectionId: this.connectionId, byteOffset });",
+        'this.emit("message", event);',
+        "const enriched = Object.freeze<MllpWarning>({ ...w, connectionId: this.connectionId });",
+        'this._dispatchContained(() => { this.emit("warning", enriched); });',
+        "const change = Object.freeze<StateChangeEvent>(reason !== undefined ? { from, to, reason } : { from, to });",
+        'safeEmit(this, "stateChange", change, report);',
+        'this._emitContained("drain", Object.freeze({ queueDepth: 1, queueBytes: 2 }));',
+        "safeEmitError(this, Object.freeze({ connectionId, error: err }));",
+      ].join("\n"),
+    );
+    const read = Object.fromEntries(
+      [...fieldsIn(planted)].map(([event, keys]) => [event, [...keys].sort()]),
+    );
+    expect(read).toEqual({
+      message: ["byteOffset", "connectionId", "payload"],
+      warning: ["connectionId"],
+      stateChange: ["from", "reason", "to"],
+      drain: ["queueBytes", "queueDepth"],
+      error: ["connectionId", "error"],
+    });
+  });
+
+  it("names every field of every event payload the source builds for an emit", () => {
     const fields = emittedFields();
     expect([...(fields.get("error") ?? [])].sort()).toEqual([
       "connectionId",
       "controlIdBytes",
       "error",
     ]);
+    // Built in a variable before the emit: the connection's message and its warnings.
+    expect([...(fields.get("message") ?? [])]).toEqual(
+      expect.arrayContaining(["payload", "connectionId", "byteOffset", "warnings"]),
+    );
+    expect([...(fields.get("warning") ?? [])]).toEqual(
+      expect.arrayContaining(["connectionId", "code", "msa1Bytes", "controlIdBytes"]),
+    );
+    expect([...(fields.get("stateChange") ?? [])].sort()).toEqual(["from", "reason", "to"]);
     const events = rows(text.slice(text.indexOf("### Events"), text.indexOf("### Hooks")));
     const missing: string[] = [];
     for (const [event, keys] of fields) {
