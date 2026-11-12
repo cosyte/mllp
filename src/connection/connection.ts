@@ -204,6 +204,15 @@ export class Connection extends EventEmitter {
     this._leaveDraining = resolve;
   });
 
+  /** Work answering a frame this connection delivered, still running. See {@link Connection.holdOpenFor}. */
+  private readonly _answering = new Set<PromiseLike<unknown>>();
+  /**
+   * Set once a fatal framing error has been met: from then on no byte the peer sends is read.
+   */
+  private _refusing = false;
+  /** Ends the wait after a fatal framing error: destroys the transport once the bound passes. */
+  private _refusalBound: ReturnType<typeof setTimeout> | undefined;
+
   /**
    * beforeClose hook, no-op default that resolves immediately.
    *
@@ -240,6 +249,9 @@ export class Connection extends EventEmitter {
 
     // Wire transport callbacks
     this._transport.onData((chunk) => {
+      // After a fatal framing error the reader's place in the stream is lost, so nothing more is
+      // read while the frames already delivered are answered.
+      if (this._refusing) return;
       this._bytesIn += chunk.length;
       this._lastByteInAt = new Date();
       try {
@@ -465,6 +477,36 @@ export class Connection extends EventEmitter {
   }
 
   /**
+   * Hold the connection open, should a fatal framing error arrive, until `work` settles.
+   *
+   * Pass the work that answers a frame this connection delivered: the handler and the write of
+   * its acknowledgement. When a later frame on the same connection has a fatal framing error, the
+   * connection reads nothing more, waits for every piece of work passed here to settle, and only
+   * then closes, so the acknowledgement of a frame delivered before the refused one still goes
+   * out. The wait is bounded by `drainTimeoutMs` (default 30 seconds): work that has not settled
+   * by then is abandoned and the connection is destroyed. `MllpServer` passes every message's
+   * work here itself; a caller driving a bare `Connection` may do the same.
+   *
+   * A rejection of `work` is not reported here; it only ends the wait for it.
+   *
+   * @param work - The work answering one delivered frame.
+   *
+   * @example
+   * ```typescript
+   * conn.on('message', ({ payload }) => {
+   *   conn.holdOpenFor(commit(payload).then(() => conn.send(encodeFrame(ackFor(payload)))));
+   * });
+   * ```
+   */
+  holdOpenFor(work: PromiseLike<unknown>): void {
+    const done = (): void => {
+      this._answering.delete(work);
+    };
+    this._answering.add(work);
+    work.then(done, done);
+  }
+
+  /**
    * Return a JSON-serializable observability snapshot.
    *
    * All timestamp fields are `Date | null` (not epoch milliseconds). `JSON.stringify()`
@@ -549,6 +591,7 @@ export class Connection extends EventEmitter {
   }
 
   private _onTransportClose(): void {
+    clearTimeout(this._refusalBound);
     if (this._state === "DRAINING") {
       // Transport closed naturally during graceful drain, complete the close
       this._transition("DISCONNECTED");
@@ -612,8 +655,21 @@ export class Connection extends EventEmitter {
    * forever, and the backoff would become an unbounded reconnect storm against an interface
    * engine that is already unwell. A compatibility failure is not a network blip.
    *
-   * If a peer's quirk is *expected* (trailing junk, keepalive bytes, a missing leading VT), the
-   * decoder's tolerance opt-ins are the supported answer, they turn the throw into a warning.
+   * Frames delivered before the refused one are still answered. Their handlers may still be
+   * running (an acknowledgement is written after its handler settles, so even a synchronous
+   * handler's is not out yet), and closing at once dropped every one of those acknowledgements:
+   * the sender resent a message already committed, and it was processed twice. So when work
+   * passed to {@link Connection.holdOpenFor} is still running, the connection reads nothing
+   * more, moves to `DRAINING`, waits for that work to settle, then closes gracefully (`CLOSED`,
+   * the transport ended so the acknowledgements written are flushed). The wait is bounded by
+   * `drainTimeoutMs`: past it the connection is destroyed, settled or not, so a handler that never
+   * settles cannot hold the socket open. With nothing running it is destroyed at once.
+   *
+   * If a peer's quirk is *expected*, the decoder's tolerance opt-ins are the supported answer:
+   * `allowLeadingWhitespace` (padding or keepalive bytes before a frame), `allowMissingLeadingVt`,
+   * `allowFsOnly` (a bare FS that the next frame's VT follows) and `allowLfAfterFs` turn their
+   * throw into a warning. No opt-in accepts other bytes between frames, or a stray FS or VT inside
+   * one: those are always refused.
    */
   private _onFatalFramingError(err: MllpFramingError): void {
     if (this._state === "CLOSED") return;
@@ -624,7 +680,35 @@ export class Connection extends EventEmitter {
         connectionCause: "framing-fatal",
       }),
     );
-    this.destroy(err);
+    // Only a `CONNECTED` connection waits. One already `DRAINING` is in a `close()` that ends it
+    // soon by its own route, and nothing is answered in any other state.
+    if (this._answering.size === 0 || this._state !== "CONNECTED") {
+      this.destroy(err);
+      return;
+    }
+
+    this._refusing = true;
+    const boundMs = this._opts.drainTimeoutMs ?? 30_000;
+    this._transition("DRAINING", err.message);
+    // A close() called meanwhile waits for the same end.
+    this._drainPromise = this._leftDraining.then(() => undefined);
+    this._refusalBound = setTimeout(() => {
+      // Past the bound: whatever is still running is abandoned. Already `CLOSED` once the work
+      // settled, the transition is refused and only the transport, still open, is destroyed.
+      this._transition("CLOSED", err.message);
+      this._transport.destroy(err);
+    }, boundMs);
+    this._refusalBound.unref();
+
+    // The work snapshot is the whole of it: nothing new can be delivered once refusing.
+    void Promise.allSettled([...this._answering]).then(() => {
+      // Ended some other way meanwhile: the peer closed, a destroy(), or the bound passed.
+      if (this._state !== "DRAINING") return;
+      this._transition("CLOSED", err.message);
+      // Ended, not destroyed, so the acknowledgements just written reach the peer. The bound
+      // timer still destroys the transport if the peer never closes its side.
+      this._transport.close();
+    });
   }
 
   /**
