@@ -36,7 +36,8 @@ import type { Transport } from "../transport/index.js";
 import type { TlsOptions } from "../transport/tls-options.js";
 import { MLLP_TLS_VERIFY_DISABLED, type SecurityWarning } from "../transport/security-warnings.js";
 import { resolveTlsCipherPolicy } from "../transport/tls-cipher-policy.js";
-import { checkCredentialMix, checkPfx } from "../transport/pfx.js";
+import { checkCredentialMix, pfxRefusal } from "../transport/pfx.js";
+import type { MllpTlsConfigurationError } from "../transport/error.js";
 import { copyTlsOptions } from "../transport/tls-options-copy.js";
 import { readNegotiatedTlsParameters } from "../transport/negotiated-tls.js";
 import { encodeFrame } from "../framing/index.js";
@@ -576,6 +577,8 @@ export class MllpClient extends EventEmitter {
   private readonly _opts: ClientOptions;
   /** The TLS options as they were at construction; never read `_opts.tls`, which the caller owns. */
   private readonly _tls: ClientOptions["tls"];
+  /** Why `tls.pfx` cannot be loaded, found once at construction; `undefined` when it loads or is unset. */
+  private readonly _pfxRefusal: MllpTlsConfigurationError | undefined;
   private _connection: Connection | null = null;
   private _socket: Socket | null = null;
   /**
@@ -730,6 +733,10 @@ export class MllpClient extends EventEmitter {
     const tls = copyTlsOptions(opts.tls);
     // pfx with cert or key: Node.js would load the file last and its certificate would win.
     checkCredentialMix(tls);
+    // The PKCS#12 file is loaded once, here, from the copy: its bytes cannot change after this, so
+    // loading it again on every connect and reconnect would prove nothing new. A refusal is kept and
+    // rejects connect() before a socket is opened.
+    this._pfxRefusal = typeof tls === "object" ? pfxRefusal(tls.pfx, tls.passphrase) : undefined;
     this._tls = tls;
     this._opts = opts;
     this._ackTimeoutMs = opts.ackTimeoutMs ?? 30_000;
@@ -990,9 +997,10 @@ export class MllpClient extends EventEmitter {
     // lands in connect()'s promise executor (a rejection) and in
     // _beginReconnectAttempt's catch (a permanent classification, MLLP_* code).
     const cipherPolicy = resolveTlsCipherPolicy(tlsOpts, "client");
-    // The PKCS#12 file the same way: a file the TLS library cannot load rejects connect() with
-    // MLLP_TLS_PFX_REJECTED here, rather than failing as a socket error on every attempt.
-    checkPfx(tlsOpts.pfx, tlsOpts.passphrase);
+    // The PKCS#12 file the same way: a file the TLS library could not load at construction rejects
+    // connect() with MLLP_TLS_PFX_REJECTED here, rather than failing as a socket error on every
+    // attempt.
+    if (this._pfxRefusal !== undefined) throw this._pfxRefusal;
     const socket = tlsConnect({
       host: this._opts.host,
       port: this._opts.port,

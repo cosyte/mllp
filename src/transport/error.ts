@@ -163,9 +163,12 @@ export const MLLP_TLS_PFX_REJECTED = "MLLP_TLS_PFX_REJECTED";
 export const MLLP_TLS_CREDENTIAL_CONFLICT = "MLLP_TLS_CREDENTIAL_CONFLICT";
 
 /**
- * `tls` was `null` or another value that is not an object of TLS options (for a client, `true`
- * also asks for the defaults). Without this check such a value reached the options' property reads
- * and failed there with a bare `TypeError`, or was taken as TLS with no options at all.
+ * `tls` was `null`, an array, another kind of object (a byte array, a `Map`, a `Date`, a boxed
+ * primitive) or a value that is no object, rather than an object of TLS options (for a client,
+ * `true` also asks for the defaults). An object of options is one whose built-in tag is `Object`:
+ * a literal, a class instance or an `Object.create` object. Without this check such a value reached
+ * the options' property reads and failed there with a bare `TypeError`, or was taken as TLS with no
+ * options at all.
  *
  * Like {@link MLLP_TLS_CREDENTIAL_CONFLICT}, this one is thrown by the constructor
  * (`createClient`, `createServer`, `new MllpClient`, `new MllpServer`). The message never carries
@@ -241,8 +244,9 @@ export function tlsConfigurationMessage(code: TlsConfigurationErrorCode): string
       "tls.pfx was set together with tls.cert or tls.key; the PKCS#12 file carries its own " +
       "certificate and key, so set either cert and key or pfx, not both",
     [MLLP_TLS_OPTIONS_NOT_AN_OBJECT]:
-      "tls must be an object of TLS options, or true for a client's defaults; it was null or " +
-      "another kind of value, and no client or server was created",
+      "tls must be an object of TLS options, or true for a client's defaults; it was null, an " +
+      "array, another kind of object or a value that is no object, and no client or server was " +
+      "created",
   };
   return messages[code];
 }

@@ -70,9 +70,10 @@ export interface TlsOptions {
    * {@link TlsOptions.passphrase}. The file's bytes, as `readFileSync` returns them; this package
    * reads no file itself.
    *
-   * The file is loaded before a socket is opened. One the TLS library cannot load rejects
-   * `connect()` with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose
-   * message names this option and never its value: a wrong passphrase, bytes that are not
+   * The file is loaded once, when the client is created, from the copy of the options it takes
+   * then. One the TLS library cannot load rejects every `connect()`, before a socket is opened,
+   * with a typed `MllpTlsConfigurationError` carrying `MLLP_TLS_PFX_REJECTED`, whose message
+   * names this option and never its value: a wrong passphrase, bytes that are not
    * PKCS#12, or a legacy encryption (RC2-40, as `openssl pkcs12 -export -legacy`, OpenSSL 1.x and
    * older Windows exports write it) that Node.js, on OpenSSL 3, does not load. Re-export such a
    * file with AES-256. The refusal is permanent: a client does not retry it.

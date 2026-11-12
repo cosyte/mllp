@@ -36,12 +36,39 @@ export function checkCredentialMix(
 
 /**
  * Load `pfx` with `passphrase` into a throwaway secure context, and turn a refusal into
- * {@link MllpTlsConfigurationError} with {@link MLLP_TLS_PFX_REJECTED}.
+ * {@link MllpTlsConfigurationError} with {@link MLLP_TLS_PFX_REJECTED}, returned rather than thrown.
+ *
+ * A client calls this once, in its constructor, and keeps the result: its options are a copy no one
+ * else can change, so a later connect or reconnect would only load the same bytes again. A refusal
+ * rejects `connect()`, which is what a caller awaits. The library's error becomes the `cause`; the
+ * message is the fixed registry text, which names the option and never its value.
+ *
+ * @param pfx - The PKCS#12 bytes, or `undefined` when none is configured (nothing to check).
+ * @param passphrase - The configured passphrase, if any.
+ * @returns The refusal when the TLS library cannot load the file, otherwise `undefined`.
+ * @internal
+ */
+export function pfxRefusal(
+  pfx: Buffer | undefined,
+  passphrase: string | undefined,
+): MllpTlsConfigurationError | undefined {
+  // Stryker disable next-line ConditionalExpression: equivalent. Without the guard a context is built with no pfx at all, which loads; only the time it takes differs.
+  if (pfx === undefined) return undefined;
+  try {
+    createSecureContext({ pfx, passphrase });
+    return undefined;
+  } catch (err) {
+    // The TLS library throws an Error for a file it cannot load.
+    return new MllpTlsConfigurationError(MLLP_TLS_PFX_REJECTED, { cause: err as Error });
+  }
+}
+
+/**
+ * Throw {@link pfxRefusal}'s refusal, if there is one.
  *
  * Without this a file the TLS library cannot load (a wrong passphrase, or a legacy RC2-40
  * encryption OpenSSL 3 does not load) would throw out of the server's constructor, where the
- * caller awaits `listen()`. The library's error becomes
- * the `cause`; the message is the fixed registry text, which names the option and never its value.
+ * caller awaits `listen()`.
  *
  * @param pfx - The PKCS#12 bytes, or `undefined` when none is configured (nothing to check).
  * @param passphrase - The configured passphrase, if any.
@@ -49,12 +76,6 @@ export function checkCredentialMix(
  * @internal
  */
 export function checkPfx(pfx: Buffer | undefined, passphrase: string | undefined): void {
-  // Stryker disable next-line ConditionalExpression: equivalent. Without the guard a context is built with no pfx at all, which loads; only the time it takes differs.
-  if (pfx === undefined) return;
-  try {
-    createSecureContext({ pfx, passphrase });
-  } catch (err) {
-    // The TLS library throws an Error for a file it cannot load.
-    throw new MllpTlsConfigurationError(MLLP_TLS_PFX_REJECTED, { cause: err as Error });
-  }
+  const refusal = pfxRefusal(pfx, passphrase);
+  if (refusal !== undefined) throw refusal;
 }

@@ -383,6 +383,93 @@ describe.skipIf(RUNTIME !== "node")(
       expect(presented.slice(0, 2)).toEqual([OTHER_CN, OTHER_CN]);
     });
 
+    it("cert and key given as plain Uint8Arrays and overwritten after construction do not change the identity on reconnect", async () => {
+      const { cert, clientCert, clientKey } = mutual();
+      const { port, presented, dropFirst } = await recordingServer();
+      // Outside the declared type, but Node.js accepts any byte array, so a caller can pass one.
+      const certBytes = new Uint8Array(Buffer.from(clientCert));
+      const keyBytes = new Uint8Array(Buffer.from(clientKey));
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        tls: {
+          ca: cert,
+          servername: "localhost",
+          cert: certBytes as unknown as Buffer,
+          key: keyBytes as unknown as Buffer,
+        },
+        autoReconnect: true,
+        initialDelayMs: 5,
+        maxDelayMs: 20,
+      });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => presented.length === 1);
+
+      certBytes.fill(0);
+      keyBytes.fill(0);
+      dropFirst();
+
+      await waitFor(() => presented.length >= 2 && client.state === "CONNECTED");
+      expect(presented.slice(0, 2)).toEqual(["test-client", "test-client"]);
+    });
+
+    it("pfx given as a plain Uint8Array and overwritten after construction does not change the identity on reconnect", async () => {
+      const { cert } = mutual();
+      const { port, presented, dropFirst } = await recordingServer();
+      const pfx = new Uint8Array(buildPfx(other(), PASSPHRASE));
+      const client = createClient({
+        host: "127.0.0.1",
+        port,
+        tls: {
+          ca: cert,
+          servername: "localhost",
+          pfx: pfx as unknown as Buffer,
+          passphrase: PASSPHRASE,
+        },
+        autoReconnect: true,
+        initialDelayMs: 5,
+        maxDelayMs: 20,
+      });
+      clients.push(client);
+      await client.connect();
+      await waitFor(() => presented.length === 1);
+
+      pfx.fill(0);
+      dropFirst();
+
+      await waitFor(() => presented.length >= 2 && client.state === "CONNECTED");
+      expect(presented.slice(0, 2)).toEqual([OTHER_CN, OTHER_CN]);
+    });
+
+    it.each([
+      ["an empty array", (): unknown => []],
+      ["an array holding the options", (): unknown => [{ cert: mutual().cert, key: mutual().key }]],
+      ["a Map of the options", (): unknown => new Map([["cert", mutual().cert]])],
+    ])(
+      "tls given as %s is refused by both constructors with a configuration error",
+      (_label, make) => {
+        for (const create of [
+          () =>
+            createClient({
+              host: "127.0.0.1",
+              port: 1,
+              tls: make() as NonNullable<ClientOptions["tls"]>,
+            }),
+          () => createServer({ tls: make() as { cert: string; key: string } }),
+        ]) {
+          let thrown: unknown;
+          try {
+            create();
+          } catch (err) {
+            thrown = err;
+          }
+          expect(thrown).toBeInstanceOf(MllpTlsConfigurationError);
+          expect((thrown as MllpTlsConfigurationError).code).toBe(MLLP_TLS_OPTIONS_NOT_AN_OBJECT);
+        }
+      },
+    );
+
     it("tls null is refused by both constructors with a configuration error", () => {
       const tls = null as unknown as NonNullable<ClientOptions["tls"]>;
       for (const create of [
