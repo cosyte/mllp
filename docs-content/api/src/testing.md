@@ -32,7 +32,7 @@ backpressure simulation, and `destroy(reason)` for abrupt-disconnect simulation.
 ```typescript
 const [client, server] = InMemoryTransport.pair();
 server.onData((chunk) => server.write(chunk)); // echo
-client.onData((echo) => console.log('echo:', echo));
+client.onData((echo) => console.log('echoed', echo.length, 'bytes'));
 client.write(Buffer.from('hello'));
 ```
 

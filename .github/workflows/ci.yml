@@ -282,7 +282,12 @@ jobs:
   # when the API reference committed in docs-content/api/ differs from what the TSDoc comments of
   # the root and every subpath in `exports` generate (an export changed and `pnpm docs:reference`
   # was not run), when an export has no TSDoc summary, or when a TSDoc comment holds a heading.
-  # `pnpm check:documents` runs the reference check after the three document checks.
+  # `pnpm check:docs-content` (@cosyte/script-utils's `cosyte-docs-content`) holds docs-content/ to
+  # the docs-content standard, and the samples in the README and the pages to its print rule: no
+  # sample prints a value that identifies a person or a whole message, frame or payload. The rule
+  # is required here, with this package's own names, in cosyte-docs-content.config.json.
+  # `pnpm check:documents` runs the docs-content and reference checks after the three document
+  # checks.
   documents:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -300,4 +305,5 @@ jobs:
       - run: pnpm check:claude-card
       - run: pnpm check:catalog
       - run: pnpm check:process
+      - run: pnpm check:docs-content
       - run: pnpm check:docs-reference

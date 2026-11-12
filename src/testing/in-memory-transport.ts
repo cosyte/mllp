@@ -9,7 +9,7 @@
  * ```typescript
  * import { InMemoryTransport } from '@cosyte/mllp/testing';
  * const [a, b] = InMemoryTransport.pair();
- * b.onData((chunk) => console.log('received:', chunk));
+ * b.onData((chunk) => console.log('received', chunk.length, 'bytes'));
  * a.write(Buffer.from([0x0b, 0x41, 0x1c, 0x0d]));
  * // b's onData fired synchronously, log printed before this line
  * ```
@@ -33,7 +33,7 @@ import type { Transport } from "../transport/index.js";
  * ```typescript
  * const [client, server] = InMemoryTransport.pair();
  * server.onData((chunk) => server.write(chunk)); // echo
- * client.onData((echo) => console.log('echo:', echo));
+ * client.onData((echo) => console.log('echoed', echo.length, 'bytes'));
  * client.write(Buffer.from('hello'));
  * ```
  */

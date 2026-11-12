@@ -1,0 +1,19 @@
+{
+  "examplePrint": {
+    "required": true,
+    "accessors": ["controlId", "correlationId", "snippet"],
+    "wholeValues": [
+      "payload",
+      "payloads",
+      "frame",
+      "frames",
+      "ack",
+      "acks",
+      "msa",
+      "chunk",
+      "echo",
+      "inbound",
+      "raw"
+    ]
+  }
+}

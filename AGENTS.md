@@ -43,6 +43,13 @@ check fails when the committed pages differ from a fresh generation or an export
 summary. After changing a public export or its comment, run `pnpm docs:reference` and commit the
 pages. The `version` script regenerates them, since they print `VERSION`.
 
+Before it, `pnpm check:docs-content` holds `docs-content/` to the shared docs-content standard, and
+the samples in the README and the pages to its print rule, which `cosyte-docs-content.config.json`
+makes required with this package's own names: no sample prints a value that identifies a person or
+a whole message, frame or payload. `test/docs/safe-to-log-docs.test.ts` holds the example scripts
+and the TSDoc samples to the same rule, and the "What is safe to log" section of
+`docs-content/options-and-events.md` to the fields `src/` declares.
+
 ## Mutation testing and the floor
 
 `quality-floor.json` holds the coverage and mutation floors, which only rise. On a pull request CI

@@ -48,12 +48,16 @@ const client = await createStarterClient({ host: "127.0.0.1", port: server.getSt
 
 try {
   const kept = readMsa(await client.send(adtHeader("CTRL0001")));
-  console.log(`CTRL0001 answered ${String(kept.code)}, MSA-2 ${String(kept.controlId)}`);
+  console.log(
+    `CTRL0001 answered ${String(kept.code)}, MSA-2 echoes it: ${String(kept.controlId === "CTRL0001")}`,
+  );
   assert.equal(kept.code, "AA", "a committed message is acknowledged AA");
   assert.equal(kept.controlId, "CTRL0001", "MSA-2 echoes the control id sent");
 
   const lost = readMsa(await client.send(adtHeader("CTRL0002")));
-  console.log(`CTRL0002 answered ${String(lost.code)}, MSA-2 ${String(lost.controlId)}`);
+  console.log(
+    `CTRL0002 answered ${String(lost.code)}, MSA-2 echoes it: ${String(lost.controlId === "CTRL0002")}`,
+  );
   assert.equal(lost.code, "AE", "a message whose commit threw is never acknowledged AA");
   assert.equal(lost.controlId, "CTRL0002", "MSA-2 echoes the control id sent");
 

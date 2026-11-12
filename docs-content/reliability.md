@@ -292,8 +292,11 @@ go straight into a log pipeline or a metrics exporter.
 logger.info(client.getStats());
 ```
 
-Nothing in the stats, the warnings, or the frozen event payloads carries message content. See
-[Framing](./framing.md) for the PHI contract on diagnostics.
+Nothing in the stats or the warnings carries message content, and neither does any event payload
+except the `message` and `ack` events and the `onCommitAck` report, which hand you a message or an
+acknowledgment by design. Log a count or a code from those, never the bytes. [What is safe to
+log](./options-and-events.md#what-is-safe-to-log) goes field by field, and
+[Framing](./framing.md) has the PHI contract on diagnostics.
 
 ## Guides that apply this
 

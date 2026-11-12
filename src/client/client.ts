@@ -2039,7 +2039,8 @@ export class MllpClient extends EventEmitter {
    * @example
    * ```typescript
    * const ack = await client.send(payloadBuffer);
-   * logger.info({ ack: ack.toString('utf8') });
+   * // Log the acknowledgement's size, never its bytes: they echo your MSH-10.
+   * logger.info({ ackBytes: ack.length });
    * ```
    *
    * @param payload Raw bytes; MLLP framing is added internally via `encodeFrame`.

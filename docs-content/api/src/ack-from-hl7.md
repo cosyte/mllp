@@ -334,7 +334,8 @@ metadata needed to log or assert on what was actually emitted. Frozen
 import { buildAckAA } from '@cosyte/mllp/ack-from-hl7';
 const ack = buildAckAA(inbound);
 socket.write(ack.frame);
-console.log(ack.code, ack.correlationId);
+// The code is safe to log; correlationId is the inbound MSH-10, message content.
+console.log(ack.code, ack.correlationId !== undefined);
 ```
 
 #### Properties
