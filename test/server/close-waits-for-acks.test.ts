@@ -53,13 +53,17 @@ interface Started {
   readonly handled: string[];
   /** The messages of every error the server reported. */
   readonly errors: { message: string; phase?: string }[];
+  /** The messages of the causes of those errors. */
+  readonly causes: string[];
 }
 
 async function start(opts: ServerOptions, handled: string[] = []): Promise<Started> {
   const server = tracker.track(createServer(opts));
   const errors: { message: string; phase?: string }[] = [];
+  const causes: string[] = [];
   server.on("error", (e: unknown) => {
     const error = (e as { error?: unknown }).error;
+    if (error instanceof Error && error.cause instanceof Error) causes.push(error.cause.message);
     if (error instanceof MllpConnectionError) {
       errors.push({ message: error.message, phase: error.phase });
     } else if (error instanceof Error) {
@@ -67,7 +71,7 @@ async function start(opts: ServerOptions, handled: string[] = []): Promise<Start
     }
   });
   await server.listen(0, "127.0.0.1");
-  return { server, port: must(server.getStats().port), handled, errors };
+  return { server, port: must(server.getStats().port), handled, errors, causes };
 }
 
 interface Peer {
@@ -251,6 +255,7 @@ describe("server.close() with a handler still running", () => {
     const messages = seen.errors.map((e) => e.message);
     expect(messages.some((m) => /backpressure/.test(m))).toBe(false);
     expect(messages).toContain("ACK not sent: the connection closed before the handler settled");
+    expect(seen.causes).toContain("connection closed");
     expect(peer.received()).toBe("");
   });
 
@@ -350,5 +355,58 @@ describe("an ACK the open connection could not flush", () => {
     for (let i = 0; i < 400 && seen.errors.length === 0; i++) await pause(5);
 
     expect(seen.errors).toEqual([{ message: "ACK dropped: socket backpressure", phase: "send" }]);
+  });
+});
+
+describe("the bound server.close() gives each connection", () => {
+  it("is the one passed to close(), not the server's option", async () => {
+    const got: number[] = [];
+    const started = latch();
+    const seen = await start({
+      autoAck: "AA",
+      drainTimeoutMs: 5_000,
+      onMessage: (_payload, _meta, conn) => {
+        conn.beforeClose = (ms) => {
+          got.push(ms);
+          return Promise.resolve();
+        };
+        started.open();
+      },
+    });
+    const peer = await connect(seen.port);
+    peer.sock.write(frame("SYNMSG0001"));
+    await started.opened;
+    await pause(20);
+
+    await seen.server.close({ drainTimeoutMs: 1_234 });
+    await peer.closed;
+
+    expect(got).toEqual([1_234]);
+  });
+
+  it("ends a connection already waiting after a fatal framing error, and names the timeout", async () => {
+    const states: { to: string; reason?: string }[] = [];
+    const started = latch();
+    const seen = await start({
+      autoAck: "AA",
+      drainTimeoutMs: 5_000,
+      onMessage: (_payload, _meta, conn) => {
+        conn.on("stateChange", (e: { to: string; reason?: string }) => states.push(e));
+        started.open();
+        return new Promise<never>(() => undefined);
+      },
+    });
+    const peer = await connect(seen.port);
+    peer.sock.write(Buffer.concat([frame("SYNMSG0001"), Buffer.from("X", "latin1")]));
+    await started.opened;
+    for (let i = 0; i < 400 && states.length === 0; i++) await pause(5);
+    expect(states.map((e) => e.to)).toEqual(["DRAINING"]);
+
+    const began = Date.now();
+    await seen.server.close({ drainTimeoutMs: 200 });
+    expect(Date.now() - began).toBeLessThan(3_000);
+    await peer.closed;
+
+    expect(states.at(-1)).toEqual({ from: "DRAINING", to: "CLOSED", reason: "drain timeout" });
   });
 });

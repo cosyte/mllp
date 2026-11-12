@@ -25,6 +25,7 @@ const frame = (text: string): Buffer =>
 
 function harness(drainTimeoutMs = 1_000) {
   let dataFn: ((c: Buffer) => void) | null = null;
+  let closeFn: (() => void) | null = null;
   const close: Mock<() => void> = vi.fn<() => void>();
   const destroy: Mock<(reason?: Error) => void> = vi.fn<(reason?: Error) => void>();
   const transport: Transport = {
@@ -35,7 +36,9 @@ function harness(drainTimeoutMs = 1_000) {
       dataFn = fn;
     },
     onConnect: () => undefined,
-    onClose: () => undefined,
+    onClose: (fn) => {
+      closeFn = fn;
+    },
     onError: () => undefined,
   };
   const conn = new Connection({ transport, drainTimeoutMs });
@@ -48,7 +51,16 @@ function harness(drainTimeoutMs = 1_000) {
     messages.push(payload.toString("latin1")),
   );
   conn.notifyConnect(null, null);
-  return { conn, close, destroy, states, errors, messages, data: (c: Buffer) => dataFn?.(c) };
+  return {
+    conn,
+    close,
+    destroy,
+    states,
+    errors,
+    messages,
+    data: (c: Buffer) => dataFn?.(c),
+    peerCloses: () => closeFn?.(),
+  };
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void; reject: (e: Error) => void } {
@@ -184,6 +196,32 @@ describe("close() with held work", () => {
     h.conn.destroy();
     expect(h.conn.state).toBe("CLOSED");
     expect(h.errors).toEqual([]);
+  });
+});
+
+describe("no report outside a close() drain", () => {
+  it("a destroy() after the peer ended the drain reports nothing", async () => {
+    const h = harness();
+    h.conn.holdOpenFor(new Promise<void>(() => undefined));
+    const closing = h.conn.close();
+    h.peerCloses();
+    await closing;
+    expect(h.conn.state).toBe("DISCONNECTED");
+
+    h.conn.destroy();
+    expect(h.conn.state).toBe("CLOSED");
+    expect(h.errors).toEqual([]);
+  });
+
+  it("a destroy() during the wait after a fatal framing error reports only the framing error", () => {
+    const h = harness();
+    h.conn.on("message", () => h.conn.holdOpenFor(new Promise<void>(() => undefined)));
+    h.data(Buffer.concat([frame("MSH|SYNTHETIC1"), Buffer.from("X", "latin1")]));
+    expect(h.conn.state).toBe("DRAINING");
+
+    h.conn.destroy();
+    expect(h.conn.state).toBe("CLOSED");
+    expect(h.errors.map((e) => e.connectionCause)).toEqual(["framing-fatal"]);
   });
 });
 
