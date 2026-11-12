@@ -134,11 +134,69 @@ call, from your own processing outcome. See [the commit contract](./acks.md).
 
 ## It does not speak MLLP Release 2
 
-Only **Release 1** (framing, with reliability delegated to the HL7 v2 ACK) is implemented: the
-universal default for HL7 v2. The R2 commit-acknowledgment blocks (`<SB><ACK 0x06><EB><CR>` /
-`<SB><NAK 0x15><EB><CR>`) and R2's synchronous "no new content until ack" discipline are **not
-supported**. R2 is used mainly with HL7 v3 and is rarely needed for v2; if it ships, it will be
-opt-in and off by default, and R1 framing will never silently downgrade to it.
+Only **Release 1** is implemented: the frame (`VT` + payload + `FS` + `CR`), with reliability left to
+the HL7 v2 acknowledgment inside it. This section is the decision on Release 2, recorded so that it
+is a choice a reader can check rather than a gap a reader has to discover.
+
+**Decision.** Release 2 is not built: not its commit-acknowledgment blocks, not its synchronous "no
+new content until acknowledged" discipline, and no option selects it.
+
+**Why.** Release 2 adds a second acknowledgment below the HL7 one, and the one guarantee this
+package exists for (never a positive acknowledgment before a durable commit) is built and tested
+around the HL7 acknowledgment alone. A second positive signal would need that guarantee proved
+again, for a link shape that nobody using this package has asked for: no issue on this repository
+asks for Release 2.
+
+**What would change it.** A user with a named peer that requires Release 2 on an HL7 v2 link, and
+the Release 2 specification read for the build, not summarized from secondary sources. It would then
+be its own piece of work, opt-in and off by default.
+
+**Release 1 never silently downgrades.** There is no Release 2 code path for a Release 1 link to fall
+into. A peer that answers with a frame holding a single `ACK` (`0x06`) or `NAK` (`0x15`) byte, which
+is how Release 2 commit blocks are commonly described, gets Release 1 treatment:
+
+- **The server** reads it as an ordinary frame with no readable `MSH`. The automatic acknowledgment
+  never answers that `AA`: a requested `AA` becomes the non-positive `AE`, as for any frame it cannot
+  correlate.
+- **A client with `correlateByControlId: true`** finds no MSA-2 in it, reports it on `error` as
+  `MLLP_ACK_UNMATCHED_CONTROL_ID` and settles nothing. The send keeps waiting for its real
+  acknowledgment, or times out.
+- **A FIFO client (the default)** settles the next send on whatever frame comes next, this one
+  included, and `send()` resolves with that one byte. Resolving is not acceptance: `send()` hands you
+  the acknowledgment and its MSA-1 is yours to read, and here there is none. If a peer may send such
+  blocks, correlate by control ID.
+
+## It does not acknowledge an HL7 batch
+
+An HL7 batch (`FHS`/`BHS`, HL7 v2.5.1 §2.10.3) carries many messages in one frame. This section is
+the decision on acknowledging one.
+
+**Decision.** Batch acknowledgment is not built. A batch envelope, or a frame holding a second
+`MSH`, is refused with a non-positive answer and is never acknowledged as a batch.
+
+**Why.** An honest positive answer to a batch says every message in it was committed, and this
+package cannot know that. It moves bytes and never parses a payload, the server's commit step is
+one `onMessage` call per frame, and the one MSA-2 an acknowledgment carries can echo only one control
+ID. The answer that fits in what we know is the one we give: a positive acknowledgment correlated to
+the first message would tell the sender the whole batch was accepted while messages 2..N went
+unread. No issue on this repository asks for batch acknowledgment.
+
+**What would change it.** A user whose peer sends batches over MLLP and needs an answer it accepts,
+with the batch acknowledgment rules read in the HL7 v2 standard for the build. Splitting a batch is
+parsing, which belongs to `@cosyte/hl7`, and a positive answer would have to wait until every message
+in it was committed. It would be its own piece of work.
+
+**Release 1 never silently downgrades.** A Release 1 link stays one message per frame. A batch is
+never split, never re-based on its first `MSH`, and never answered `AA`:
+
+- **The server's automatic acknowledgment, and `buildRawAck` behind it,** downgrade a requested
+  positive `AA` or `CA` to the non-positive `AE` or `CE`.
+- **`buildMllpAck` on the `@cosyte/mllp/ack-from-hl7` subpath** answers a batch envelope with the
+  warned, non-positive `AE`. A second `MSH` behind a readable first one is the exception it does not
+  detect; [Batch and concatenated frames, route by
+  route](./conformance.md#batch-and-concatenated-frames-route-by-route) records it, with
+  `rawAckUncorrelatable(payload)` as the check to run first.
+- **Enhanced mode over a batch frame** stays refused, as above.
 
 ## It is not differentially verified against Epic or Cerner, so verify your own engine
 
@@ -245,7 +303,7 @@ accepted while messages 2..N went unread. `buildMllpAck` refuses via its unparse
 `VT` inside a payload is the same class of hazard from the transport side: the decoder discards the
 accumulated bytes (`MLLP_TRAILING_BYTES`) and delivers only the fragment after it, and the auto-ACK
 path downgrades that frame rather than positively acknowledge a destroyed message. Batch ACK is its
-own unbuilt feature.
+own unbuilt feature: see [It does not acknowledge an HL7 batch](#it-does-not-acknowledge-an-hl7-batch).
 
 ## API stability
 
