@@ -179,6 +179,27 @@ describe("MllpClient: a subscriber that throws a non-Error", () => {
     expect(h.client.state).toBe("DISCONNECTED");
     expect(errors.map((e) => e.error)).toContainEqual(new Error("subscriber broke"));
   });
+
+  it("is re-surfaced with the connectionId of the connection it was reported on", () => {
+    const h = seamedClient({ autoReconnect: false });
+    clients.push(h.client);
+    const connectionId = h.client.getStats().connectionId;
+    expect(connectionId).toEqual(expect.any(String));
+    const errors: Array<{ connectionId?: unknown; error: unknown }> = [];
+    h.client.on("error", (e: { connectionId?: unknown; error: unknown }) => errors.push(e));
+    h.client.on("stateChange", () => {
+      throw new Error("subscriber broke");
+    });
+
+    h.peer().close();
+
+    const thrown = errors.filter((e) => (e.error as Error).message === "subscriber broke");
+    expect(thrown.length).toBeGreaterThan(0);
+    for (const e of thrown) {
+      expect(Object.keys(e).sort()).toEqual(["connectionId", "error"]);
+      expect(e.connectionId).toBe(connectionId);
+    }
+  });
 });
 
 describe("MllpClient: a retry strategy that throws", () => {

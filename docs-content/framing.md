@@ -148,7 +148,9 @@ close at once:
    ended gracefully, so the acknowledgements written reach the sender.
 4. **The wait is bounded** by the server's `drainTimeoutMs` (30 seconds by default). A handler that
    has not settled by then is abandoned, its acknowledgement is never sent, and the socket is
-   destroyed. A handler that never settles cannot hold the connection open past it.
+   destroyed. A handler that never settles cannot hold the connection open past it. If
+   `server.close()` is called during the wait, the work abandoned when the wait ends unsettled is
+   reported as a shutdown's is, with an `MllpConnectionError` with `phase: 'close'` on `'error'`.
 
 With no handler still running the connection is destroyed at once, as before. The refused frame
 itself is never delivered and never answered (see the next section). On a bare `Connection` the
