@@ -188,7 +188,11 @@ server.on("nack", ({ connectionId, ackCode, reason }) =>
 
 `client.send()` resolves with **the ACK for your message**, not with whatever bytes arrive next.
 
-- **FIFO (default).** ACKs are matched to sends in order.
+- **FIFO (default).** ACKs are matched to sends in order. Nothing but its turn ties a frame to a
+  send, so a frame with no readable MSA-1 (a lone `0x06` or `0x15` byte, an `MSH` with no `MSA`, a
+  code outside HL7 Table 0008) still settles the next send. The client warns
+  `MLLP_ACK_FIFO_MSA1_UNREADABLE` when it does, and `send()` resolves with the frame; set
+  `fifoUnreadableAck: "reject"` to have it reject with `MllpUnreadableAckError` instead.
 - **`correlateByControlId: true`.** ACKs are matched by **MSH-10 → MSA-2**, which supports a peer
   that acknowledges out of order. An ACK whose MSA-2 matches nothing pending raises
   `MLLP_ACK_UNMATCHED_CONTROL_ID`; a late ACK for an already-timed-out send raises

@@ -162,9 +162,13 @@ is how Release 2 commit blocks are commonly described, gets Release 1 treatment:
   `MLLP_ACK_UNMATCHED_CONTROL_ID` and settles nothing. The send keeps waiting for its real
   acknowledgment, or times out.
 - **A FIFO client (the default)** settles the next send on whatever frame comes next, this one
-  included, and `send()` resolves with that one byte. Resolving is not acceptance: `send()` hands you
-  the acknowledgment and its MSA-1 is yours to read, and here there is none. If a peer may send such
-  blocks, correlate by control ID.
+  included, because in order nothing but its turn ties a frame to a send. It does not settle it
+  quietly: the client warns `MLLP_ACK_FIFO_MSA1_UNREADABLE`, since the frame has no MSA-1 to read and
+  so does not acknowledge the message in HL7 terms. By default `send()` still resolves with that one
+  byte, and resolving is not acceptance: read MSA-1 off what you are handed. Set
+  `fifoUnreadableAck: "reject"` and the send rejects with `MllpUnreadableAckError` instead. The
+  same holds for any frame with no readable MSA-1, such as an `MSH` with no `MSA`. If a peer may
+  send such blocks, correlate by control ID.
 
 ## It does not acknowledge an HL7 batch
 

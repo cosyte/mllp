@@ -40,7 +40,8 @@ export type AckModeCode =
   | "MLLP_ACK_COMMIT_ALREADY_REPORTED"
   | "MLLP_ACK_MSA1_ABSENT"
   | "MLLP_ACK_MSA1_UNCLASSIFIABLE"
-  | "MLLP_ACK_SEND_ALREADY_DISPOSED";
+  | "MLLP_ACK_SEND_ALREADY_DISPOSED"
+  | "MLLP_ACK_FIFO_MSA1_UNREADABLE";
 
 /**
  * Frozen diagnostic text, one literal per code, no interpolation.
@@ -76,6 +77,12 @@ const ACK_MODE_MESSAGES: Readonly<Record<AckModeCode, string>> = Object.freeze({
     "An acknowledgement arrived for a send that had already been settled or failed; it was " +
     "dropped and that outcome was left unchanged. " +
     "Field values are withheld: a control ID is payload content and this diagnostic goes to a log.",
+  MLLP_ACK_FIFO_MSA1_UNREADABLE:
+    "A client correlating acknowledgements in order settled its oldest pending send on a frame " +
+    "with no readable MSA-1 acknowledgement code, so the peer has not acknowledged that message " +
+    "in HL7 terms. The send resolved with the frame, or rejected when fifoUnreadableAck is " +
+    "'reject'. Set correlateByControlId to match acknowledgements by MSA-2 instead. " +
+    "Field values are withheld; msa1Bytes gives the field's length.",
 });
 
 /**

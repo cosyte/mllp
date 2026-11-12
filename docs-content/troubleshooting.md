@@ -26,6 +26,21 @@ A timeout does not tell you the message was lost: the peer may have committed it
 the receiver de-duplicates on `MSH-10` and `MSH-7`. See
 [Known limitations](./limitations.md#it-cannot-guarantee-delivery).
 
+## `send()` rejects with `MllpUnreadableAckError`, or warns `MLLP_ACK_FIFO_MSA1_UNREADABLE`
+
+The client correlates in order, and the frame that settled this send has no `MSA-1` it can read: a
+lone `0x06` or `0x15` byte, an `MSH` with no `MSA`, or a code outside HL7 Table 0008. By default the
+send resolves with that frame and the client warns; with `fifoUnreadableAck: "reject"` it rejects.
+
+- **The peer sends MLLP Release 2 commit blocks.** We speak Release 1 only; see
+  [Known limitations](./limitations.md#it-does-not-speak-mllp-release-2).
+- **The peer sends something other than acknowledgments on this link**, so frames and sends fall
+  out of step. Set `correlateByControlId: true`, which matches by `MSA-2` and settles nothing on a
+  frame that has none.
+
+The peer wrote that frame in this send's turn, so it may hold the message. Resend only when the
+receiver de-duplicates on `MSH-10` and `MSH-7`.
+
 ## `send()` rejects with `MllpBackpressureError`
 
 The client already holds `highWaterMark` messages (64 by default) in flight and queued, and

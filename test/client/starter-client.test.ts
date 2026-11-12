@@ -18,6 +18,7 @@ import {
   type MllpClient,
 } from "../../src/client/client.js";
 import { encodeFrame, FrameReader } from "../../src/framing/index.js";
+import { MllpUnreadableAckError } from "../../src/client/error.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -224,5 +225,18 @@ describe("createStarterClient (PLAN-06, CLIENT-10, D-22)", () => {
     await client.send(Buffer.from("PAY"));
     expect(messages.length).toBeGreaterThanOrEqual(1);
     expect(messages[0]?.toString()).toBe("AA");
+  });
+
+  it("Test 9: fifoUnreadableAck passes through, so the bare 'AA' frame rejects the send", async () => {
+    const peer = await startEchoAckPeer();
+    peers.push(peer);
+    const client = await createStarterClient({
+      host: "127.0.0.1",
+      port: peer.port,
+      fifoUnreadableAck: "reject",
+    });
+    clients.push(client);
+    client.on("warning", () => undefined);
+    await expect(client.send(Buffer.from("PAY"))).rejects.toBeInstanceOf(MllpUnreadableAckError);
   });
 });

@@ -1051,6 +1051,12 @@ Resolves with the ACK Buffer (framing stripped). Rejects with:
   client's). The clock starts at the underlying `write()` flush callback, NOT at
   the `send()` call.
 - `MllpConnectionError({ phase: 'send' })` if the client is not connected.
+- `MllpUnreadableAckError` with `fifoUnreadableAck: 'reject'`, when the frame that settles
+  this send in order carries no readable MSA-1.
+
+Resolving is not acceptance: read MSA-1 off the acknowledgement you are handed. In FIFO
+mode a frame with no readable MSA-1 still resolves by default, with the warning
+`MLLP_ACK_FIFO_MSA1_UNREADABLE`.
 
 Emits a frozen `'ack'` event on every successful match.
 
@@ -2141,6 +2147,106 @@ The control ID itself is deliberately not here, for the reason given on
 
 ***
 
+### MllpUnreadableAckError
+
+Rejects a `send()` on a client correlating in order (FIFO, the default) when the frame that
+settled it carries no readable MSA-1: no HL7 Table 0008 code could be read from it. A lone
+`0x06` or `0x15` byte, an `MSH` with no `MSA`, an empty MSA-1 and a value outside the table
+all qualify.
+
+Only raised with `fifoUnreadableAck: 'reject'`; by default the send resolves with the frame
+and the client warns `MLLP_ACK_FIFO_MSA1_UNREADABLE`. The frame was written in reply to this
+send's turn, so the peer may hold the message: resending it may deliver it twice, and the
+receiver's de-duplication on MSH-10 is what makes a resend safe.
+
+Every field is a number. The frame itself is on the client's `'message'` event.
+
+#### Example
+
+```typescript
+try {
+  await client.send(payload);
+} catch (err) {
+  if (err instanceof MllpUnreadableAckError) {
+    logger.warn({ msa1Bytes: err.msa1Bytes, at: err.byteOffset });
+  }
+}
+```
+
+#### Extends
+
+- `Error`
+
+#### Constructors
+
+##### Constructor
+
+> **new MllpUnreadableAckError**(`message`, `opts`): [`MllpUnreadableAckError`](#mllpunreadableackerror)
+
+Construct an unreadable-acknowledgement error.
+
+###### Parameters
+
+###### message
+
+`string`
+
+Human-readable error message. Structural facts only, never field content.
+
+###### opts
+
+Failure context (MSA-1 byte length, stream offset, elapsed time).
+
+###### byteOffset
+
+`number`
+
+###### elapsedMs
+
+`number`
+
+###### msa1Bytes
+
+`number`
+
+###### Returns
+
+[`MllpUnreadableAckError`](#mllpunreadableackerror)
+
+###### Overrides
+
+`Error.constructor`
+
+#### Properties
+
+##### byteOffset
+
+> `readonly` **byteOffset**: `number`
+
+Stream byte offset of the frame that settled the send.
+
+##### elapsedMs
+
+> `readonly` **elapsedMs**: `number`
+
+Milliseconds between the send's write-flush and that frame.
+
+##### msa1Bytes
+
+> `readonly` **msa1Bytes**: `number`
+
+Byte length of the MSA-1 field read, `0` when the frame has no `MSH` or no `MSA`.
+
+##### name
+
+> `readonly` **name**: `"MllpUnreadableAckError"`
+
+###### Overrides
+
+`Error.name`
+
+***
+
 ### NetTransport
 
 Wraps a `net.Socket` as a `Transport`, mapping socket EventEmitter events
@@ -2639,7 +2745,7 @@ Absolute stream byte offset where the anomaly was detected.
 
 ###### Inherited from
 
-[`MllpWarning`](#mllpwarning).[`byteOffset`](#byteoffset-5)
+[`MllpWarning`](#mllpwarning).[`byteOffset`](#byteoffset-6)
 
 ##### code
 
@@ -3015,6 +3121,30 @@ undefined (off)
 Bound on the acknowledgement wait [MllpClient.close](#close-1) performs (default: `30_000`
 ms). Sends already written to the transport are awaited until it elapses; the wait ends
 early the moment the last of them is answered.
+
+##### fifoUnreadableAck?
+
+> `readonly` `optional` **fifoUnreadableAck?**: `"reject"` \| `"warn"`
+
+What a client correlating in order (FIFO, the default) does when the frame that settles a
+send carries no readable MSA-1: no HL7 Table 0008 code can be read from it, as with a lone
+`0x06` or `0x15` byte, an `MSH` with no `MSA`, an empty MSA-1, or a value outside the table.
+Such a frame is not an HL7 acknowledgement of the message.
+
+- `'warn'` (default): the send resolves with the frame, as it always has, and the client
+  emits the `'warning'` `MLLP_ACK_FIFO_MSA1_UNREADABLE` (an [AckModeWarning](#ackmodewarning)).
+- `'reject'`: the client emits the same warning and the send rejects with
+  [MllpUnreadableAckError](#mllpunreadableackerror). The frame still takes that send's turn, so the next send
+  settles on the next frame.
+
+Has no effect with `correlateByControlId: true`, which matches by MSA-2 and settles nothing
+on a frame that has none. Any other value throws a `TypeError` at construction.
+
+###### Default
+
+```ts
+'warn'
+```
 
 ##### framing?
 
@@ -4957,6 +5087,12 @@ Application-idle dead-peer timeout ms.
 
 Drain timeout for `close()` (default `30_000`).
 
+##### fifoUnreadableAck?
+
+> `readonly` `optional` **fifoUnreadableAck?**: `"reject"` \| `"warn"`
+
+Passthrough to `ClientOptions.fifoUnreadableAck`, default `'warn'`.
+
 ##### framing?
 
 > `readonly` `optional` **framing?**: `Omit`\<[`FrameReaderOptions`](#framereaderoptions), `"onFrame"` \| `"onWarning"`\>
@@ -5774,7 +5910,7 @@ correlation code cannot be added without a message for it.
 
 ### AckModeCode
 
-> **AckModeCode** = `"MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED"` \| `"MLLP_ACK_APPLICATION_TYPE_UNRECOGNISED"` \| `"MLLP_ACK_TWO_PHASE_UNAVAILABLE"` \| `"MLLP_ACK_COMMIT_ALREADY_REPORTED"` \| `"MLLP_ACK_MSA1_ABSENT"` \| `"MLLP_ACK_MSA1_UNCLASSIFIABLE"` \| `"MLLP_ACK_SEND_ALREADY_DISPOSED"`
+> **AckModeCode** = `"MLLP_ACK_ACCEPT_TYPE_UNRECOGNISED"` \| `"MLLP_ACK_APPLICATION_TYPE_UNRECOGNISED"` \| `"MLLP_ACK_TWO_PHASE_UNAVAILABLE"` \| `"MLLP_ACK_COMMIT_ALREADY_REPORTED"` \| `"MLLP_ACK_MSA1_ABSENT"` \| `"MLLP_ACK_MSA1_UNCLASSIFIABLE"` \| `"MLLP_ACK_SEND_ALREADY_DISPOSED"` \| `"MLLP_ACK_FIFO_MSA1_UNREADABLE"`
 
 The stable codes acknowledgement-mode reporting emits.
 

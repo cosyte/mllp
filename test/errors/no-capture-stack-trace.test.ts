@@ -23,6 +23,7 @@ import {
   MllpTimeoutError,
   MllpTlsConfigurationError,
   MllpUnknownFateError,
+  MllpUnreadableAckError,
 } from "../../src/index.js";
 import { MllpPeerMissingError } from "../../src/ack-from-hl7/index.js";
 
@@ -78,6 +79,20 @@ describe("public errors on a runtime without Error.captureStackTrace", () => {
     });
     expect(err.commitCode).toBe("CR");
     expect(err.messageControlIdBytes).toBe(2);
+  });
+
+  it("MllpUnreadableAckError keeps its numbers", () => {
+    const err = new MllpUnreadableAckError("no readable MSA-1", {
+      msa1Bytes: 3,
+      byteOffset: 7,
+      elapsedMs: 2,
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("MllpUnreadableAckError");
+    expect(err.message).toBe("no readable MSA-1");
+    expect(err.msa1Bytes).toBe(3);
+    expect(err.byteOffset).toBe(7);
+    expect(err.elapsedMs).toBe(2);
   });
 
   it("MllpNeverDeliveredError and MllpUnknownFateError keep their byte counts", () => {

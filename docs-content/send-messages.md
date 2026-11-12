@@ -178,7 +178,11 @@ latency.
 ## Match acknowledgments by control ID
 
 By default the client matches acknowledgments to sends in order (FIFO), which is what most engines
-do. For a peer that acknowledges out of order, set `correlateByControlId: true`: each acknowledgment
+do. In order, a frame is matched to a send by its turn alone, so the client warns
+`MLLP_ACK_FIFO_MSA1_UNREADABLE` when the frame that settles a send has no readable `MSA-1`, and
+`fifoUnreadableAck: "reject"` makes that send reject with `MllpUnreadableAckError` rather than
+resolve. Matching by control ID is the safer choice whenever the peer echoes `MSH-10` in `MSA-2`.
+For a peer that acknowledges out of order, set `correlateByControlId: true`: each acknowledgment
 is matched by its `MSA-2` to the `MSH-10` of the message it answers. An acknowledgment that matches
 nothing pending is reported with the warning `MLLP_ACK_UNMATCHED_CONTROL_ID`, and a late one for a
 send that already timed out with `MLLP_ACK_AFTER_TIMEOUT`.

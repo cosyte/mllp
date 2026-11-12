@@ -180,6 +180,14 @@ export interface CorrelatorOptions {
    * second wait is bounded whatever the caller wires.
    */
   readonly onApplicationAckTimeout?: (entry: PendingAck, elapsedSinceCommitMs: number) => void;
+  /**
+   * FIFO mode only. Fired when the frame that settles the oldest pending send carries no
+   * readable MSA-1, after `MLLP_ACK_FIFO_MSA1_UNREADABLE` has been reported. The entry has
+   * already been removed and `matchAck()` returns `null`: the handler fails the send.
+   *
+   * Left unset, such a frame settles the send like any other, which is the default.
+   */
+  readonly onUnreadableAck?: (entry: PendingAck, msa1Bytes: number, byteOffset: number) => void;
   /** Injected clock; default `Date.now`. Tests inject deterministic clock. */
   readonly now?: () => number;
 }
@@ -232,6 +240,7 @@ export class Correlator {
     readonly onCommitReported: CorrelatorOptions["onCommitReported"];
     readonly onCommitRejected: CorrelatorOptions["onCommitRejected"];
     readonly onApplicationAckTimeout: CorrelatorOptions["onApplicationAckTimeout"];
+    readonly onUnreadableAck: CorrelatorOptions["onUnreadableAck"];
     readonly now: () => number;
   };
   private readonly _pending: Map<CorrelationKey, PendingAck> = new Map();
@@ -274,6 +283,7 @@ export class Correlator {
       onCommitReported: opts.onCommitReported,
       onCommitRejected: opts.onCommitRejected,
       onApplicationAckTimeout: opts.onApplicationAckTimeout,
+      onUnreadableAck: opts.onUnreadableAck,
       now: opts.now ?? Date.now,
     };
   }
@@ -358,6 +368,9 @@ export class Correlator {
    *
    * - FIFO: returns first pending entry by insertion order; entry is
    *   removed from live store. Caller calls `entry.resolve(ackPayload)`.
+   *   A frame with no readable MSA-1 is reported as
+   *   `MLLP_ACK_FIFO_MSA1_UNREADABLE` first, and when `onUnreadableAck` is
+   *   wired it is handed the entry instead and `null` is returned.
    * - controlId: keyed lookup by `controlIdFromAck`. Live-store hit returns
    *   the entry; graveyard hit fires `MLLP_ACK_AFTER_TIMEOUT` warning
    *   and returns `null`; otherwise fires `onUnmatchedAck` with the id's
@@ -389,7 +402,21 @@ export class Correlator {
       this._queueBytes -= entry.byteCount;
       // PLAN-06 (D-26): only flushed entries count toward _inFlight.
       if (entry.sentAt !== null) this._inFlight -= 1;
-      return entry;
+      // In order, nothing ties this frame to this send except its turn, so a frame that is not
+      // an HL7 acknowledgement at all (a lone 0x06 or 0x15 byte, an MSH with no MSA) would
+      // otherwise settle it unremarked.
+      const classification = classifyMsa1(payload);
+      if (classification.kind === "code") return entry;
+      this._ackModeWarn("MLLP_ACK_FIFO_MSA1_UNREADABLE", {
+        msa1Bytes: classification.byteLength,
+        ackCode: null,
+        controlIdBytes: null,
+        byteOffset: byteOffsetFromAck,
+        elapsedSinceSendMs: entry.sentAt === null ? 0 : this._opts.now() - entry.sentAt,
+      });
+      if (this._opts.onUnreadableAck === undefined) return entry;
+      this._opts.onUnreadableAck(entry, classification.byteLength, byteOffsetFromAck);
+      return null;
     }
     // controlId mode (PLAN-03)
     if (controlIdFromAck === null) {

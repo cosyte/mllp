@@ -6,6 +6,7 @@
  * - `MllpBackpressureError`, high-water mark exceeded
  * - `MllpNeverDeliveredError`, a send that never reached the transport
  * - `MllpUnknownFateError`, a send whose bytes went out and drew no answer
+ * - `MllpUnreadableAckError`, a FIFO send settled on a frame with no readable MSA-1
  * - `isTransientConnectionError`, transient/permanent classifier
  *
  * Re-exported from `src/client/index.ts` and `src/index.ts`.
@@ -170,6 +171,59 @@ export class MllpApplicationAckError extends Error {
     this.commitReceivedAt = opts.commitReceivedAt;
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, MllpApplicationAckError);
+    }
+  }
+}
+
+/**
+ * Rejects a `send()` on a client correlating in order (FIFO, the default) when the frame that
+ * settled it carries no readable MSA-1: no HL7 Table 0008 code could be read from it. A lone
+ * `0x06` or `0x15` byte, an `MSH` with no `MSA`, an empty MSA-1 and a value outside the table
+ * all qualify.
+ *
+ * Only raised with `fifoUnreadableAck: 'reject'`; by default the send resolves with the frame
+ * and the client warns `MLLP_ACK_FIFO_MSA1_UNREADABLE`. The frame was written in reply to this
+ * send's turn, so the peer may hold the message: resending it may deliver it twice, and the
+ * receiver's de-duplication on MSH-10 is what makes a resend safe.
+ *
+ * Every field is a number. The frame itself is on the client's `'message'` event.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.send(payload);
+ * } catch (err) {
+ *   if (err instanceof MllpUnreadableAckError) {
+ *     logger.warn({ msa1Bytes: err.msa1Bytes, at: err.byteOffset });
+ *   }
+ * }
+ * ```
+ */
+export class MllpUnreadableAckError extends Error {
+  override readonly name = "MllpUnreadableAckError" as const;
+
+  /** Byte length of the MSA-1 field read, `0` when the frame has no `MSH` or no `MSA`. */
+  readonly msa1Bytes: number;
+
+  /** Stream byte offset of the frame that settled the send. */
+  readonly byteOffset: number;
+
+  /** Milliseconds between the send's write-flush and that frame. */
+  readonly elapsedMs: number;
+
+  /**
+   * Construct an unreadable-acknowledgement error.
+   *
+   * @param message - Human-readable error message. Structural facts only, never field content.
+   * @param opts - Failure context (MSA-1 byte length, stream offset, elapsed time).
+   */
+  constructor(message: string, opts: { msa1Bytes: number; byteOffset: number; elapsedMs: number }) {
+    super(message);
+    this.msa1Bytes = opts.msa1Bytes;
+    this.byteOffset = opts.byteOffset;
+    this.elapsedMs = opts.elapsedMs;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, MllpUnreadableAckError);
     }
   }
 }
