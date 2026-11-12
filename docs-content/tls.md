@@ -116,12 +116,16 @@ is left out. The copy takes new arrays and new bytes for every byte array (`cert
 your options' `tls`, has no effect: a client reconnects with the options it was created with. To
 connect with different TLS options, create a new client.
 
-`tls` must be an object of options: a literal, a class instance or an `Object.create` object. A
-`tls` that is `null`, an array, another kind of object (a byte array, a `Map`, a `Date`, a boxed
-primitive) or a value that is no object (other than `true`, for a client's defaults) throws
-`MllpTlsConfigurationError` with the code `MLLP_TLS_OPTIONS_NOT_AN_OBJECT` when the client or
-server is created. Before, a client given an array connected with TLS defaults, and a server given
-one threw a `TypeError` asking for `cert` and `key`.
+`tls` must be an object of options. These are refused: `null`, a value that is no object (other
+than `true`, for a client's defaults), an array, a byte array (a `Buffer`, any other typed array, a
+`DataView`, an `ArrayBuffer` or a `SharedArrayBuffer`), a `Map`, a `Set`, a `Date`, a `Promise` and
+a boxed primitive. Each throws `MllpTlsConfigurationError` with the code
+`MLLP_TLS_OPTIONS_NOT_AN_OBJECT` when the client or server is created. Before, a client given an
+array connected with TLS defaults, and a server given one threw a `TypeError` asking for `cert` and
+`key`. Every other object is read as options, as before: a literal, a class instance, an
+`Object.create` object and a module namespace object (`import * as tlsOptions from "./tls.js"`).
+Each kind is recognised by what it is, not by its `Symbol.toStringTag`, so a class that sets its
+own tag is still accepted.
 
 When TLS is configured, the server consumes `tls.Server`'s `'secureConnection'` event (post-handshake
 sockets) instead of `net.Server`'s `'connection'`, and the client's `onConnect` transport hook maps

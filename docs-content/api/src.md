@@ -6399,12 +6399,13 @@ if (err.code === MLLP_TLS_DH_PARAMETERS_UNENFORCEABLE) logger.error('run this se
 
 > `const` **MLLP\_TLS\_OPTIONS\_NOT\_AN\_OBJECT**: `"MLLP_TLS_OPTIONS_NOT_AN_OBJECT"` = `"MLLP_TLS_OPTIONS_NOT_AN_OBJECT"`
 
-`tls` was `null`, an array, another kind of object (a byte array, a `Map`, a `Date`, a boxed
-primitive) or a value that is no object, rather than an object of TLS options (for a client,
-`true` also asks for the defaults). An object of options is one whose built-in tag is `Object`:
-a literal, a class instance or an `Object.create` object. Without this check such a value reached
-the options' property reads and failed there with a bare `TypeError`, or was taken as TLS with no
-options at all.
+`tls` was `null`, an array, a byte array (a `Buffer`, any other typed array, a `DataView`, an
+`ArrayBuffer` or a `SharedArrayBuffer`), a `Map`, a `Set`, a `Date`, a `Promise`, a boxed
+primitive or a value that is no object, rather than an object of TLS options (for a client,
+`true` also asks for the defaults). Any other object is an object of options: a literal, a class
+instance, an `Object.create` object or a module namespace object, whatever its
+`Symbol.toStringTag`. Without this check such a value reached the options' property reads and
+failed there with a bare `TypeError`, or was taken as TLS with no options at all.
 
 Like [MLLP\_TLS\_CREDENTIAL\_CONFLICT](#mllp_tls_credential_conflict), this one is thrown by the constructor
 (`createClient`, `createServer`, `new MllpClient`, `new MllpServer`). The message never carries

@@ -163,12 +163,13 @@ export const MLLP_TLS_PFX_REJECTED = "MLLP_TLS_PFX_REJECTED";
 export const MLLP_TLS_CREDENTIAL_CONFLICT = "MLLP_TLS_CREDENTIAL_CONFLICT";
 
 /**
- * `tls` was `null`, an array, another kind of object (a byte array, a `Map`, a `Date`, a boxed
- * primitive) or a value that is no object, rather than an object of TLS options (for a client,
- * `true` also asks for the defaults). An object of options is one whose built-in tag is `Object`:
- * a literal, a class instance or an `Object.create` object. Without this check such a value reached
- * the options' property reads and failed there with a bare `TypeError`, or was taken as TLS with no
- * options at all.
+ * `tls` was `null`, an array, a byte array (a `Buffer`, any other typed array, a `DataView`, an
+ * `ArrayBuffer` or a `SharedArrayBuffer`), a `Map`, a `Set`, a `Date`, a `Promise`, a boxed
+ * primitive or a value that is no object, rather than an object of TLS options (for a client,
+ * `true` also asks for the defaults). Any other object is an object of options: a literal, a class
+ * instance, an `Object.create` object or a module namespace object, whatever its
+ * `Symbol.toStringTag`. Without this check such a value reached the options' property reads and
+ * failed there with a bare `TypeError`, or was taken as TLS with no options at all.
  *
  * Like {@link MLLP_TLS_CREDENTIAL_CONFLICT}, this one is thrown by the constructor
  * (`createClient`, `createServer`, `new MllpClient`, `new MllpServer`). The message never carries
