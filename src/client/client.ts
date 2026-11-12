@@ -1128,11 +1128,20 @@ export class MllpClient extends EventEmitter {
    * subscriber would unwind into it and kill the process, and on several paths it would also skip
    * the work queued after the emit (the `resolve()` of `connect()`, the backoff scheduling).
    *
-   * See `src/internal/safe-emit.ts`. The throw is re-surfaced on `'error'`.
+   * See `src/internal/safe-emit.ts`. The throw is re-surfaced on `'error'` as
+   * `{ connectionId, error }`, like every other error this client reports.
    */
   private _emitContained(event: string, payload: unknown): void {
     safeEmit(this, event, payload, (err) => {
-      safeEmitError(this, Object.freeze({ error: err }));
+      safeEmitError(
+        this,
+        Object.freeze({
+          /* v8 ignore next -- every event is emitted once a connection is attached, so one is stored */
+          // Stryker disable next-line OptionalChaining,StringLiteral: equivalent. Every event is emitted once a connection is attached, so the fallback is never read.
+          connectionId: this._connection?.connectionId ?? "<none>",
+          error: err,
+        }),
+      );
     });
   }
 
