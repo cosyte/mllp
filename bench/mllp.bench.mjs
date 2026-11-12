@@ -13,9 +13,10 @@
 // loopback transport defined below. The same traffic over a real 127.0.0.1 socket, where a send
 // resolves only when its ACK arrives, is `bench/socket.mjs` (`pnpm bench:socket`).
 //
-// The peak heap @cosyte/bench reports is the V8 heap. A Buffer's bytes live outside it, so for this
-// package that column shows the bookkeeping around each frame, not the frame. `bench/socket.mjs`
-// reports the memory outside the heap as well.
+// The peak @cosyte/bench reports counts the V8 heap and, beside it, the memory outside it that
+// holds a Buffer's bytes (`peakExternalBytes`), and the two together (`peakTotalBytes`): for this
+// package a frame is almost all the second. `bench/socket.mjs` and `bench/socket-cases.mjs` read
+// both parts over a real socket.
 //
 // The suite is handed the module under test rather than importing it, so one file measures both
 // builds. Every message is synthetic and built in code by `corpus.mjs`.
