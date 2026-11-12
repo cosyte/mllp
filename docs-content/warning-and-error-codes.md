@@ -93,7 +93,9 @@ Security warnings are emitted on the client's or the server's `securityWarning` 
 | `MLLP_BIND_ALL_INTERFACES` | a server created with `allowWildcardBind: true` binds a wildcard host                  |
 
 TLS configuration errors reject `connect()` or `listen()` with an
-[`MllpTlsConfigurationError`](./api/src.md#mllptlsconfigurationerror) before any socket exists:
+[`MllpTlsConfigurationError`](./api/src.md#mllptlsconfigurationerror) before any socket exists. The
+exception is `MLLP_TLS_CREDENTIAL_CONFLICT`, which the constructor throws, from `createClient` or
+`createServer`:
 
 | Code                                   | Raised when                                                                                                         |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |

@@ -104,6 +104,11 @@ server given `pfx` together with `cert` or `key` throws `MllpTlsConfigurationErr
 values. Before this check a mixed configuration was accepted, so code that passed all three must
 now drop either `pfx` or the `cert` and `key` pair.
 
+A client or a server copies its `tls` options when it is created, and the check above runs on that
+copy. A change you make to your `tls` object afterwards, or a new object you put in your options'
+`tls`, has no effect: a client reconnects with the options it was created with. To connect with
+different TLS options, create a new client.
+
 When TLS is configured, the server consumes `tls.Server`'s `'secureConnection'` event (post-handshake
 sockets) instead of `net.Server`'s `'connection'`, and the client's `onConnect` transport hook maps
 to `'secureConnect'` (handshake complete) rather than the raw TCP `'connect'`.
