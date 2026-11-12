@@ -153,8 +153,9 @@ close at once:
 With no handler still running the connection is destroyed at once, as before. The refused frame
 itself is never delivered and never answered (see the next section). On a bare `Connection` the
 same wait applies to the work you pass to `conn.holdOpenFor(work)`; `MllpServer` passes every
-message's work itself. `server.close()` waits the same way on every connection, manual-mode rule
-included; see [Connection, reconnect and
+message's work itself. Unlike `server.close()`, this wait includes a custom-ACK mode `onMessage`
+observer. `server.close()` waits the same way on every connection, manual-mode rule included, but
+not for that observer; see [Connection, reconnect and
 backpressure](./reliability.md#shutdown-and-what-it-does-and-does-not-do-for-in-flight-messages).
 
 This holds even when _your_ code is the thing that throws. Node calls event listeners

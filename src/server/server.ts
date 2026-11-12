@@ -448,8 +448,10 @@ export interface ServerOptions {
   /**
    * Graceful drain timeout passed to `conn.close()` during `server.close()`: the longest
    * `close()` waits for the handlers still running and their acknowledgements. A handler still
-   * running then is abandoned, its acknowledgement is not sent, and an `MllpConnectionError`
-   * with `phase: 'close'` on `'error'` says so. Default: 30 000 ms.
+   * running then is abandoned, and an `MllpConnectionError` with `phase: 'close'` on `'error'`
+   * says how many messages were delivered without their acknowledgement being sent (in manual
+   * mode, how many handlers may not have sent theirs). In custom-ACK mode the `onMessage`
+   * observer is not waited for, since it writes no acknowledgement. Default: 30 000 ms.
    *
    * It also bounds the wait after a fatal framing error: frames delivered before the refused one
    * are still answered, and a connection waits at most this long for their handlers before it is
@@ -634,6 +636,11 @@ export class MllpServer extends EventEmitter {
   private readonly _isTls: boolean;
 
   private _listening = false;
+  /**
+   * `true` from a `close()` until the next `listen()`: a socket accepted meanwhile (a TLS
+   * handshake that began before the close and finished during it) is closed at once, never served.
+   */
+  private _closing = false;
   /** Single-flight guard: `true` while a `listen()` call is settling. */
   private _listenInFlight = false;
   /**
@@ -994,6 +1001,7 @@ export class MllpServer extends EventEmitter {
     }
 
     this._listenInFlight = true;
+    this._closing = false;
 
     return new Promise<void>((resolve, reject) => {
       // ONE idempotent settle point for every outcome of this listen()
@@ -1217,17 +1225,23 @@ export class MllpServer extends EventEmitter {
    * Stop accepting new connections and gracefully close all active connections.
    *
    * Sequence:
-   * 1. `net.Server.close()`, stops accepting new connections immediately
+   * 1. `net.Server.close()`, stops accepting new connections immediately. A socket the listener
+   *    still hands over (a TLS handshake that began before `close()` and ends during it) is
+   *    destroyed at once, before any byte of it is read.
    * 2. If `_connections` is empty: resolves immediately (no drain needed)
    * 3. Every connection stops reading: bytes the peer sends from now on are dropped unread, so no
    *    new message reaches a handler.
    * 4. Every connection waits for its handlers still running and the acknowledgements they write
    *    (`AA`, a negative ACK for a handler that rejects, a custom builder's bytes), then ends its
    *    socket gracefully so those acknowledgements reach the sender. In manual mode the wait lasts
-   *    until the handler's promise settles: a `conn.send()` made after that is not waited for.
+   *    until the handler's promise settles: a `conn.send()` made after that is not waited for. In
+   *    custom-ACK mode the `onMessage` observer is not waited for: it writes no acknowledgement.
    * 5. The wait is bounded by `drainTimeoutMs`. A connection still waiting then is destroyed, and
    *    the server's `'error'` event carries an `MllpConnectionError` with `phase: 'close'` saying
-   *    how many handlers were still running and that their acknowledgements were not sent.
+   *    how many messages were delivered without their acknowledgement being sent, how many
+   *    manual-mode handlers may not have sent theirs, and how many observers were still running.
+   *    The same report is made when the sender closes the connection, or half-closes it (the
+   *    server's sockets are not half-open, so our side ends with it), before that work settles.
    *
    * Calling `close()` while a `listen()` is still in flight proactively
    * settles that `listen()` with a typed `MllpConnectionError` rejection
@@ -1265,7 +1279,8 @@ export class MllpServer extends EventEmitter {
     // stuck single-flight guard would reject every later listen().
     this._pendingListenSettle?.();
 
-    // Stop accepting new connections
+    // Stop accepting new connections, and close any socket the listener still hands over
+    this._closing = true;
     this._netServer.close();
     this._listening = false;
 
@@ -1430,6 +1445,12 @@ export class MllpServer extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   private _onSocketAccepted(socket: Socket | TLSSocket): void {
+    // Accepted after close() began, so close() has not listed it and would never close it: it is
+    // closed now, before any byte is read from it, so no message on it goes unanswered.
+    if (this._closing) {
+      socket.destroy();
+      return;
+    }
     // TCP keepalive, must be set on the raw socket BEFORE passing to NetTransport
     if (this._opts.keepaliveIntervalMs !== undefined) {
       socket.setKeepAlive(true, this._opts.keepaliveIntervalMs);
@@ -1563,11 +1584,12 @@ export class MllpServer extends EventEmitter {
           conn.holdOpenFor(this._sendCommitAck(payload, meta, conn));
         } else if (autoAck !== undefined) {
           // Custom-ACK mode: onMessage is observation only; the fn owns the ACK bytes.
-          this._observeMessage(payload, meta, conn);
+          // close() waits for the builder and its ACK, not for the observer, which owes nothing.
+          this._observeMessage(payload, meta, conn, "observer");
           conn.holdOpenFor(this._sendCustomAck(autoAck, payload, meta, conn));
         } else {
           // Manual mode: onMessage owns the response via conn.send().
-          this._observeMessage(payload, meta, conn);
+          this._observeMessage(payload, meta, conn, "manual");
         }
       },
     );
@@ -1818,10 +1840,16 @@ export class MllpServer extends EventEmitter {
    * connection (a handler error never crashes the server) rather than escaping as
    * an unhandled rejection. The error text is never placed on the wire.
    */
-  private _observeMessage(payload: Buffer, meta: MessageMeta, conn: Connection): void {
+  private _observeMessage(
+    payload: Buffer,
+    meta: MessageMeta,
+    conn: Connection,
+    kind: "manual" | "observer",
+  ): void {
     const handler = this._opts.onMessage;
     if (handler === undefined) return;
-    // Held by the connection: in manual mode the handler writes the response itself.
+    // Held by the connection: in manual mode the handler writes the response itself, so close()
+    // waits for it; in custom-ACK mode it writes nothing, so close() does not.
     const work = Promise.resolve()
       .then(() => handler(payload, meta, conn))
       .catch((err: unknown) => {
@@ -1831,7 +1859,7 @@ export class MllpServer extends EventEmitter {
         // (unhandled rejection → process death).
         safeEmitError(conn, Object.freeze({ connectionId: conn.connectionId, error: connErr }));
       });
-    conn.holdOpenFor(work);
+    conn.holdOpenFor(work, { kind });
   }
 
   /**

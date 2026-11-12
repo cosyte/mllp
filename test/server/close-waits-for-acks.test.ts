@@ -224,9 +224,10 @@ describe("server.close() with a handler still running", () => {
     expect(seen.errors).toHaveLength(1);
     const [report] = seen.errors;
     expect(report?.phase).toBe("close");
-    expect(report?.message).toMatch(/close\(\) ended after \d+ ms \(drain timeout\)/);
-    expect(report?.message).toMatch(/1 handler still running/);
-    expect(report?.message).toMatch(/acknowledgement was not sent/);
+    expect(report?.message).toMatch(/^close\(\) ended after \d+ ms \(drain timeout\): /);
+    expect(report?.message).toMatch(
+      /: 1 message was delivered and its acknowledgement was not sent$/,
+    );
     expect(seen.server.getStats().connections).toBe(0);
   });
 
@@ -408,5 +409,208 @@ describe("the bound server.close() gives each connection", () => {
     await peer.closed;
 
     expect(states.at(-1)).toEqual({ from: "DRAINING", to: "CLOSED", reason: "drain timeout" });
+  });
+});
+
+describe("what close() reports it abandoned", () => {
+  it("does not wait for a custom-ACK observer that never settles once the ACK is out", async () => {
+    const seen = await start({
+      autoAck: (payload) => buildRawAck(payload, "AA"),
+      onMessage: () => new Promise<never>(() => undefined),
+      drainTimeoutMs: 2_000,
+    });
+    const peer = await connect(seen.port);
+    peer.sock.write(frame("SYNMSG0001"));
+    for (let i = 0; i < 400 && msas(peer.received()).length === 0; i++) await pause(5);
+    expect(msas(peer.received())).toEqual(["MSA|AA|SYNMSG0001"]);
+
+    const began = Date.now();
+    await seen.server.close();
+    const closeTook = Date.now() - began;
+    await peer.closed;
+
+    expect(closeTook).toBeLessThan(1_000);
+    expect(seen.errors).toEqual([]);
+  });
+
+  it("counts one message, not two, when its builder and its observer are both still running", async () => {
+    const started = latch();
+    const seen = await start({
+      autoAck: () => {
+        started.open();
+        return new Promise<never>(() => undefined);
+      },
+      onMessage: () => new Promise<never>(() => undefined),
+    });
+    const peer = await connect(seen.port);
+    peer.sock.write(frame("SYNMSG0001"));
+    await started.opened;
+
+    await seen.server.close({ drainTimeoutMs: 200 });
+    await peer.closed;
+
+    expect(peer.received()).toBe("");
+    expect(seen.errors).toHaveLength(1);
+    const [report] = seen.errors;
+    expect(report?.phase).toBe("close");
+    expect(report?.message).toMatch(/^close\(\) ended after \d+ ms \(drain timeout\): /);
+    expect(report?.message).toMatch(/1 message was delivered and its acknowledgement was not sent/);
+    expect(report?.message).toMatch(/1 observer that owes no acknowledgement was still running/);
+    expect(report?.message).not.toMatch(/\b2\b/);
+  });
+
+  it("says a manual-mode handler's acknowledgement may not have been sent", async () => {
+    const started = latch();
+    const seen = await start({
+      onMessage: (payload, _meta, conn) => {
+        conn.send(encodeFrame(buildRawAck(payload, "AA")));
+        started.open();
+        return new Promise<never>(() => undefined);
+      },
+    });
+    const peer = await connect(seen.port);
+    peer.sock.write(frame("SYNMSG0001"));
+    await started.opened;
+
+    await seen.server.close({ drainTimeoutMs: 200 });
+    await peer.closed;
+
+    expect(msas(peer.received())).toEqual(["MSA|AA|SYNMSG0001"]);
+    expect(seen.errors).toHaveLength(1);
+    expect(seen.errors[0]?.message).toMatch(
+      /1 manual-mode handler was still running, so its acknowledgement may not have been sent/,
+    );
+    expect(seen.errors[0]?.message).not.toMatch(/was not sent/);
+  });
+
+  it("counts every message on the connection", async () => {
+    const handled: string[] = [];
+    const seen = await start(
+      {
+        autoAck: "AA",
+        onMessage: (payload) => {
+          handled.push(idOf(payload));
+          return new Promise<never>(() => undefined);
+        },
+      },
+      handled,
+    );
+    const peer = await connect(seen.port);
+    peer.sock.write(Buffer.concat([frame("SYNMSG0001"), frame("SYNMSG0002"), frame("SYNMSG0003")]));
+    await untilHandled(seen, 3);
+
+    await seen.server.close({ drainTimeoutMs: 200 });
+    await peer.closed;
+
+    expect(seen.errors).toHaveLength(1);
+    expect(seen.errors[0]?.message).toMatch(
+      /3 messages were delivered and their acknowledgements were not sent/,
+    );
+  });
+});
+
+describe("a connection accepted after close() began", () => {
+  it("is closed, though every connection listed when close() began finished early", async () => {
+    const { buildServerCertFixture } = await import("../helpers/tls-fixtures.js");
+    const net = await import("node:net");
+    const tls = await import("node:tls");
+    const { cert, key } = buildServerCertFixture();
+    const started = latch();
+    const handled: string[] = [];
+    const seen = await start(
+      {
+        tls: { cert, key },
+        autoAck: "AA",
+        drainTimeoutMs: 30_000,
+        onMessage: async (payload) => {
+          handled.push(idOf(payload));
+          started.open();
+          await pause(300);
+        },
+      },
+      handled,
+    );
+    const first = tls.connect({
+      host: "127.0.0.1",
+      port: seen.port,
+      ca: cert,
+      servername: "localhost",
+    });
+    first.on("error", () => undefined);
+    await new Promise<void>((resolve) => first.once("secureConnect", () => resolve()));
+    first.resume();
+    first.write(frame("SYNMSG0001"));
+    await started.opened;
+
+    // Connected before close() began, its handshake not yet started: the server accepts it only
+    // once close() is already waiting.
+    const raw = await new Promise<Socket>((resolve, reject) => {
+      const s = net.createConnection({ host: "127.0.0.1", port: seen.port });
+      s.once("connect", () => resolve(s));
+      s.once("error", reject);
+    });
+    const closing = seen.server.close();
+    const late = tls.connect({ socket: raw, ca: cert, servername: "localhost" });
+    late.on("error", () => undefined);
+    const lateClosed = new Promise<void>((resolve) => late.once("close", () => resolve()));
+
+    await closing;
+    const outcome = await Promise.race([
+      lateClosed.then(() => "closed"),
+      pause(1_500).then(() => "still open"),
+    ]);
+    late.destroy();
+    first.destroy();
+
+    expect(outcome).toBe("closed");
+    expect(seen.server.getStats().connections).toBe(0);
+  });
+});
+
+describe("a server listening again after close()", () => {
+  it("serves the connections it accepts", async () => {
+    const seen = await start({ autoAck: "AA" });
+    await seen.server.close();
+    await seen.server.listen(0, "127.0.0.1");
+    const peer = await connect(must(seen.server.getStats().port));
+    peer.sock.write(frame("SYNMSG0001"));
+    for (let i = 0; i < 400 && msas(peer.received()).length === 0; i++) await pause(5);
+    expect(msas(peer.received())).toEqual(["MSA|AA|SYNMSG0001"]);
+    peer.sock.destroy();
+  });
+});
+
+describe("a sender that half-closes while close() waits", () => {
+  it("is reported as unable to receive the ACK, not as backpressure", async () => {
+    const started = latch();
+    let settled!: () => void;
+    const handlerDone = new Promise<void>((resolve) => {
+      settled = resolve;
+    });
+    const seen = await start({
+      autoAck: "AA",
+      onMessage: async () => {
+        started.open();
+        await pause(300);
+        setImmediate(settled);
+      },
+    });
+    const peer = await connect(seen.port);
+    peer.sock.write(frame("SYNMSG0001"));
+    await started.opened;
+
+    const closing = seen.server.close();
+    await pause(50);
+    peer.sock.end();
+    await closing;
+    await handlerDone;
+    await pause(50);
+
+    const messages = seen.errors.map((e) => e.message);
+    expect(messages.some((m) => /backpressure/.test(m))).toBe(false);
+    expect(messages.some((m) => /write after end/i.test(m))).toBe(false);
+    expect(messages).toContain(
+      "close() ended when the sender closed the connection: 1 message was delivered and its acknowledgement was not sent",
+    );
   });
 });

@@ -263,15 +263,25 @@ none is answered. It then waits for every handler still running and the acknowle
 (`AA` on a commit, `AE` or `AR` on a handler that rejects, a custom builder's bytes), and only then
 ends the socket, so the sender gets the answer to a message you committed during the shutdown and
 does not resend it. A manual-mode handler's acknowledgement is waited for only until the handler's
-promise settles: send it before you return or resolve.
+promise settles: send it before you return or resolve. In custom-ACK mode the `onMessage` observer
+is not waited for at all, since it writes no acknowledgement: once the builder's bytes are written
+the connection closes, and the observer keeps running in your process. A connection accepted after
+`close()` began (a TLS handshake that started before it and finished during it) is closed at once,
+before anything on it is read.
 
 The wait is bounded by `drainTimeoutMs` (default 30 s, or `server.close({ drainTimeoutMs })` for
-one call). A handler still running then is abandoned: its acknowledgement is not sent, the socket is
-destroyed, and the server's `'error'` event carries an `MllpConnectionError` with `phase: 'close'`
-saying how many handlers were still running. If one of them settles later anyway, its
-acknowledgement is reported on `'error'` as not sent because the connection closed, not as
-backpressure. The sender will resend those messages, so durability is still your handler's job, and
-de-duplication the receiver's.
+one call). Work still running then is abandoned, the socket is destroyed, and the server's `'error'`
+event carries an `MllpConnectionError` with `phase: 'close'` that counts per message what it left:
+how many messages were delivered and their acknowledgement was not sent (an auto-ACK handler or a
+custom builder still running), how many manual-mode handlers were still running, whose
+acknowledgement may or may not have gone out, and, separately, how many observers that owe no
+acknowledgement were still running. Only the first two make a report; observers are named in it, never
+reported alone. The same report is made if the sender closes the connection before that work
+settles, including a half-close: the server's sockets are not half-open, so when the sender ends its
+side ours ends too, and an acknowledgement written after that could not reach it. If abandoned work
+settles later anyway, its acknowledgement is reported on `'error'` as not sent because the
+connection closed, not as backpressure. The sender will resend those messages, so durability is
+still your handler's job, and de-duplication the receiver's.
 
 ## Observability
 
