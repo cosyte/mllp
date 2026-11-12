@@ -351,8 +351,11 @@ bounded segment reads above it does not inspect it. It writes nothing to disk: t
 write-ahead log, no replay store, and no cache anywhere in this package. Library code calls no logger
 and no `console` method.
 
-**What its diagnostics can carry.** Shape rather than content: no error, warning, event payload or
-stats object ever echoes a run of message content.
+**What its diagnostics can carry.** Shape rather than content: no error, warning, stats object or
+event payload ever echoes a run of message content, except the `message` and `ack` events and the
+`onCommitAck` report, which hand you a message or an acknowledgment by design. The
+[options page](https://github.com/cosyte/mllp/blob/main/docs-content/options-and-events.md#what-is-safe-to-log)
+says, field by field, what is safe to log.
 
 - A **framing error** carries at most the single byte at the structural violation, plus that byte's
   offset.
@@ -399,7 +402,7 @@ pnpm test
 pnpm format:check
 pnpm check:no-emdash
 pnpm check:no-internal-refs
-pnpm check:documents   # the README, CLAUDE.md and catalog line
+pnpm check:documents   # the README, CLAUDE.md, catalog line and docs-content
 pnpm phi-scan
 pnpm build
 pnpm changeset   # every meaningful change carries one

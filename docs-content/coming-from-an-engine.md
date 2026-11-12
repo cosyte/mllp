@@ -207,8 +207,12 @@ const original = await sender.send(
   ),
 );
 
-enhanced.toString("latin1").split("\r")[1]; // => "MSA|CA|MAP00006"
-original.toString("latin1").split("\r")[1]; // => "MSA|AA|MAP00007"
+// MSA-1 of each acknowledgment: the code, never the whole segment.
+const msa1 = (ack: Buffer): string | undefined =>
+  ack.toString("latin1").split("\r")[1]?.split("|")[1];
+msa1(enhanced); // => "CA"
+msa1(original); // => "AA"
+enhanced.toString("latin1").includes("MSA|CA|MAP00006"); // => true
 
 await sender.close();
 await listener.close();

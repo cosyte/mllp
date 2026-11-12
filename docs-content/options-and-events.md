@@ -168,8 +168,9 @@ function, and the `meta` field of the server's `message` event. The object is fr
 ## Events
 
 Every event payload is frozen before it is emitted, and none carries a byte of the payload except
-the `message` and `ack` events, which hand you the message itself. A subscriber that throws does not
-stop the server or the client; the throw is reported on `error`.
+the `message` and `ack` events, which hand you the message or its acknowledgment itself, and the
+`ack` event's `controlId`. A subscriber that throws does not stop the server or the client; the throw
+is reported on `error`. [What is safe to log](#what-is-safe-to-log) goes through every field.
 
 ### Server events
 
@@ -184,25 +185,25 @@ stop the server or the client; the throw is reported on `error`.
 | `tlsClientError`     | `{ remoteAddress, remotePort, message, code, timestamp }`                                                                                    | A TLS handshake failed; the server keeps serving                                            |
 | `tlsNegotiated`      | [`NegotiatedTlsParameters`](./api/src.md#negotiatedtlsparameters): `{ protocolVersion, cipherSuite, host, port, timestamp }`                 | A TLS handshake completed                                                                   |
 | `securityWarning`    | [`SecurityWarning`](./api/src.md#securitywarning): `{ code, message, host, port, timestamp }`                                                | A wildcard host was bound with `allowWildcardBind`                                          |
-| `error`              | an error                                                                                                                                     | A server error, or a subscriber that threw                                                  |
+| `error`              | an `Error` for the server itself or a subscriber that threw, or `{ connectionId, error }` for an error on one connection                     | A server error, a connection error, or a subscriber that threw                              |
 | `close`              | `{}`                                                                                                                                         | The server has closed                                                                       |
 
 ### Client events
 
-| Event             | Payload                                                                                     | When                                                                                       |
-| ----------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `stateChange`     | [`StateChangeEvent`](./api/src.md#statechangeevent): `{ from, to, reason? }`                | The connection changed state                                                               |
-| `connect`         | `{ connectionId }`                                                                          | A connection reached `CONNECTED`, the first time and after each reconnect                  |
-| `disconnect`      | `{ connectionId }`                                                                          | The connection reached `DISCONNECTED`                                                      |
-| `reconnecting`    | [`ReconnectingEvent`](./api/src.md#reconnectingevent): `{ connectionId, attempt, delayMs }` | A reconnect was scheduled; `attempt` counts from 0                                         |
-| `close`           | `{ connectionId }`                                                                          | The connection reached `CLOSED`                                                            |
-| `message`         | `{ payload, connectionId, byteOffset, warnings }`                                           | A frame arrived from the peer, an acknowledgment or any other message                      |
-| `ack`             | `{ payload, controlId, latencyMs }`                                                         | An acknowledgment was matched to a send; `controlId` is `null` in first-in, first-out mode |
-| `drain`           | `{ queueDepth, queueBytes }`                                                                | The queue fell below `highWaterMark`                                                       |
-| `warning`         | `MllpWarning`, `AckCorrelationWarning` or `AckModeWarning`                                  | A framing, correlation or acknowledgment-mode warning; narrow on `code`                    |
-| `tlsNegotiated`   | [`NegotiatedTlsParameters`](./api/src.md#negotiatedtlsparameters)                           | A TLS handshake completed                                                                  |
-| `securityWarning` | [`SecurityWarning`](./api/src.md#securitywarning)                                           | A TLS connection was made with `allowUnverified: true`                                     |
-| `error`           | an error, often an [`MllpConnectionError`](./api/src.md#mllpconnectionerror)                | A connection or correlation error; with no listener it is not thrown                       |
+| Event             | Payload                                                                                                                                                     | When                                                                                       |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `stateChange`     | [`StateChangeEvent`](./api/src.md#statechangeevent): `{ from, to, reason? }`                                                                                | The connection changed state                                                               |
+| `connect`         | `{ connectionId }`                                                                                                                                          | A connection reached `CONNECTED`, the first time and after each reconnect                  |
+| `disconnect`      | `{ connectionId }`                                                                                                                                          | The connection reached `DISCONNECTED`                                                      |
+| `reconnecting`    | [`ReconnectingEvent`](./api/src.md#reconnectingevent): `{ connectionId, attempt, delayMs }`                                                                 | A reconnect was scheduled; `attempt` counts from 0                                         |
+| `close`           | `{ connectionId }`                                                                                                                                          | The connection reached `CLOSED`                                                            |
+| `message`         | `{ payload, connectionId, byteOffset, warnings }`                                                                                                           | A frame arrived from the peer, an acknowledgment or any other message                      |
+| `ack`             | `{ payload, controlId, latencyMs }`                                                                                                                         | An acknowledgment was matched to a send; `controlId` is `null` in first-in, first-out mode |
+| `drain`           | `{ queueDepth, queueBytes }`                                                                                                                                | The queue fell below `highWaterMark`                                                       |
+| `warning`         | `MllpWarning`, `AckCorrelationWarning` or `AckModeWarning`                                                                                                  | A framing, correlation or acknowledgment-mode warning; narrow on `code`                    |
+| `tlsNegotiated`   | [`NegotiatedTlsParameters`](./api/src.md#negotiatedtlsparameters)                                                                                           | A TLS handshake completed                                                                  |
+| `securityWarning` | [`SecurityWarning`](./api/src.md#securitywarning)                                                                                                           | A TLS connection was made with `allowUnverified: true`                                     |
+| `error`           | `{ connectionId, error }`, the `error` often an [`MllpConnectionError`](./api/src.md#mllpconnectionerror); `connectionId` is absent when a subscriber threw | A connection or correlation error; with no listener it is not thrown                       |
 
 A [`Connection`](./api/src.md#connection) on its own emits `stateChange`, `connect`, `disconnect`,
 `reconnecting` (with `connectionId` only), `close`, `message`, `warning` and `error`, with the
@@ -293,3 +294,86 @@ typeof JSON.stringify(clientStats); // => "string"
 await client.close();
 await server.close();
 ```
+
+## What is safe to log
+
+The package calls no logger. What reaches yours is what you pass it, and a handler on a live link is
+where that is decided. Below, for every event, hook, error and report, are the fields that can hold
+the bytes of a message, and the fields that hold only codes, counts, byte lengths, offsets, times and
+your own configuration. A field in the middle column is message content under your PHI handling:
+keep it out of logs, metrics and error reports. The fields in the last column can be logged as they
+are, with the two exceptions below.
+
+- **Error text.** A few fields carry the text of an error: an `MllpConnectionError`'s `message` and
+  `cause`, a `stateChange` event's `reason`, a `RetryContext`'s `lastError`. The text this package
+  writes holds no run of message content: a framing error names its code and offset, and for two
+  codes the hex of one byte. A socket or TLS error from Node.js names an address or a TLS reason.
+  An error you pass in yourself, to `destroy(reason)` or by throwing from a subscriber or a hook,
+  carries whatever you put in it.
+- **One byte.** `MLLP_MISSING_LEADING_VT` and `MLLP_FS_WITHOUT_CR` render in their `message` the hex
+  of the single byte found where a framing byte was expected. On a stream with no leading `VT`, that
+  is the first byte of the message. If one byte is more than you allow, log `code` and `byteOffset`.
+
+### Events
+
+| Event                                                                      | Can hold message bytes                                                          | Safe to log                                                                                                                   |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `message`                                                                  | `payload`: the whole message (server) or the whole frame the peer sent (client) | `meta` on the server; `connectionId`, `byteOffset` and `warnings` on a client or a `Connection`                               |
+| `ack`                                                                      | `payload`: the whole acknowledgment; `controlId`: your `MSH-10`, as text        | `latencyMs`                                                                                                                   |
+| `warning`                                                                  | none                                                                            | every field of the warning: see `MllpWarning`, `AckCorrelationWarning` and `AckModeWarning` below                             |
+| `nack`, `ackModeWarning`                                                   | none                                                                            | every field                                                                                                                   |
+| `stateChange`                                                              | none                                                                            | `from`, `to`; `reason` is error text                                                                                          |
+| `connect`, `disconnect`, `close`, `reconnecting`, `drain`, `listening`     | none                                                                            | every field                                                                                                                   |
+| `connection`                                                               | none                                                                            | `connectionId`, `remoteAddress`, `remotePort`; `peerCertificate`, whose names are those of the peer system's certificate      |
+| `connectionRejected`, `tlsClientError`, `tlsNegotiated`, `securityWarning` | none                                                                            | every field; a `tlsClientError` `message` is the TLS library's text about a handshake, which fails before any message is sent |
+| `error`                                                                    | none of ours                                                                    | the error's fields, in the errors table below                                                                                 |
+
+### Hooks
+
+| Hook                                              | Can hold message bytes                   | Safe to log                                                                                                 |
+| ------------------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `onMessage` and an `autoAck` function on a server | `payload`: the whole message             | `meta`, and `payload.length`                                                                                |
+| `onMessage` on a starter client or a `Connection` | `payload`: the whole frame the peer sent | `payload.length`                                                                                            |
+| `onFrame` of a `FrameReader`                      | `payload`: the whole frame's content     | `byteOffset`, `warnings`, and `payload.length`                                                              |
+| `onWarning`                                       | none                                     | every field of the `MllpWarning`                                                                            |
+| `onCommitAck`                                     | the `CommitAckReport`'s `payload`        | `code`, `latencyMs`                                                                                         |
+| `retryStrategy`, with its `RetryContext`          | none                                     | `attempt`, `lastDelayMs`, `totalElapsedMs`, `sinceLastSuccessMs`, `classifiedAs`; `lastError` is error text |
+| `onData` of an `InMemoryTransport` end            | the chunk: raw bytes off the wire        | the chunk's `length`                                                                                        |
+
+### Errors
+
+| Error                                | Can hold message bytes                                                                                                   | Safe to log                                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `MllpFramingError`                   | `snippet`: at most the one byte that broke the frame, empty for `MLLP_FRAME_TOO_LARGE`; `message` names that byte in hex | `code`, `byteOffset`                                                                        |
+| `MllpConnectionError`                | none of its own                                                                                                          | `phase`, `connectionCause`; `message` and `cause` are error text                            |
+| `MllpTimeoutError`                   | none                                                                                                                     | `message`, `messageControlIdBytes`, `elapsedMs`, `sentAt`                                   |
+| `MllpApplicationAckError`            | none                                                                                                                     | `message`, `reason`, `commitCode`, `messageControlIdBytes`, `elapsedMs`, `commitReceivedAt` |
+| `MllpCommitRejectedError`            | none                                                                                                                     | `message`, `commitCode`, `messageControlIdBytes`, `elapsedMs`                               |
+| `MllpUnreadableAckError`             | none                                                                                                                     | `message`, `msa1Bytes`, `byteOffset`, `elapsedMs`                                           |
+| `MllpBackpressureError`              | none                                                                                                                     | `message`, `queueDepth`, `queueBytes`, `highWaterMark`                                      |
+| `MllpNeverDeliveredError`            | none                                                                                                                     | `message`, a fixed text; `byteCount`, `messageControlIdBytes`                               |
+| `MllpUnknownFateError`               | none                                                                                                                     | `message`, a fixed text; `flushedAt`, `elapsedMs`, `byteCount`, `messageControlIdBytes`     |
+| `MllpAckError`                       | what you put in its `message` and `cause`: you throw it, and the server never sends or emits that text                   | `ackCode`                                                                                   |
+| `MllpTlsConfigurationError`          | none                                                                                                                     | `message`, `code`; `cause` is the TLS library's error about your own settings               |
+| `MllpDifferentialConfigurationError` | none                                                                                                                     | `message`, `code`, `value`: the peer address you configured                                 |
+| `MllpPeerMissingError`               | none                                                                                                                     | `message`, `code`                                                                           |
+
+### Reports and results
+
+The shutdown report is a client's `MllpNeverDeliveredError` and `MllpUnknownFateError`, one per
+unresolved send, and a server's `MllpConnectionError` with `phase: "close"`, which counts what was
+left by kind and names no message. All three are in the table above.
+
+| Report                                               | Can hold message bytes                                                                                 | Safe to log                                                                                                                                                                                 |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MessageMeta`                                        | none                                                                                                   | `connectionId`, `byteOffset`, `warnings`                                                                                                                                                    |
+| `NackEvent`                                          | none                                                                                                   | `connectionId`, `ackCode`, `reason`                                                                                                                                                         |
+| `MllpWarning`                                        | none                                                                                                   | `code`, `message` (one byte, above), `byteOffset`, `connectionId`, `timestamp`                                                                                                              |
+| `AckCorrelationWarning`                              | none                                                                                                   | the `MllpWarning` fields, `code`, `controlIdBytes`, `elapsedSinceSendMs`; its `message` is a fixed text for the code                                                                        |
+| `AckModeWarning`                                     | none                                                                                                   | `code`, `message` (a fixed text for the code), `byteOffset`, `msa1Bytes`, `ackCode`, `controlIdBytes`, `elapsedSinceSendMs`, `connectionId`, `timestamp`                                    |
+| `CommitAckReport`                                    | `payload`: the whole accept acknowledgment                                                             | `code`, `latencyMs`                                                                                                                                                                         |
+| `getStats()` of a client, a server or a `Connection` | none                                                                                                   | every field                                                                                                                                                                                 |
+| `DifferentialReport`                                 | none: it is built to attach to a ticket                                                                | `peer` (the address you configured), `result`, `skipReason`, `exchanges`, `exchangesAttempted`, `exchangesAnswered`, `deadlineMs`, `startedAt`, `finishedAt`                                |
+| `DifferentialExchangeReport`                         | none                                                                                                   | `exchangeId`, `outcome`, `byteParity`, `correlation`, `warningCodes`, `deviations`, `requestByteCount`, `responseByteCount`, `deadlineMs`, `elapsedMs`                                      |
+| `MllpAck`, from `@cosyte/mllp/ack-from-hl7`          | `frame`, `payload` and `ack`: the whole acknowledgment; `correlationId`: the inbound `MSH-10`, as text | `code`, `requestedCode`, `mode`, and each of the `warnings` by its `code`; a warning's `message` holds byte lengths only for an `MLLP_` code, and is `@cosyte/hl7`'s own text for any other |
+| `canonicalExchanges()`                               | `payload`: a whole synthetic message                                                                   | `id`, `description`, `controlId`: they name the corpus, never a patient                                                                                                                     |
