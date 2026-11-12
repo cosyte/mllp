@@ -1136,9 +1136,10 @@ export class MllpClient extends EventEmitter {
       safeEmitError(
         this,
         Object.freeze({
-          /* v8 ignore next -- every event is emitted once a connection is attached, so one is stored */
+          /* v8 ignore start -- every event is emitted once a connection is attached, so one is stored */
           // Stryker disable next-line OptionalChaining,StringLiteral: equivalent. Every event is emitted once a connection is attached, so the fallback is never read.
           connectionId: this._connection?.connectionId ?? "<none>",
+          /* v8 ignore stop */
           error: err,
         }),
       );
