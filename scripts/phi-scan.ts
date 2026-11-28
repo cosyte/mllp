@@ -533,10 +533,19 @@ const KNOWN_SEGMENTS = new Set<string>([
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * A finding: the place and the rule, and nothing else.
+ *
+ * It has no field for the text a detector matched, so no report built from one
+ * can print that text. The report goes to stderr, CI keeps stderr as a log, and
+ * a report about a leak that quotes the leak is a second copy of it in a worse
+ * place. A detector decides with the text in hand and passes on only where it
+ * looked and which rule fired. To act on a finding, open the named file at the
+ * named place.
+ */
 interface Hit {
   path: string;
   segment: string; // segment id + field (e.g. "PID-5") or "(text)"
-  value: string;
   reason: string;
   /**
    * WHERE the bytes came from, set only when they are NOT the working-tree file
@@ -2076,7 +2085,6 @@ function checkNameField(
           hits.push({
             path,
             segment: `${segId}-${String(fieldNo)}`,
-            value: tok,
             reason: "person-name token not in synthetic allow-list",
           });
         }
@@ -2120,7 +2128,6 @@ function checkDobField(
       hits.push({
         path,
         segment: `${segId}-${String(fieldNo)}`,
-        value: dob,
         reason: "date of birth not in synthetic allow-list",
       });
     }
@@ -2144,7 +2151,6 @@ function checkAddressField(
       hits.push({
         path,
         segment: `${segId}-${String(fieldNo)}`,
-        value: street,
         reason: "street address not in synthetic allow-list",
       });
     }
@@ -2167,7 +2173,6 @@ function checkPhoneField(
       hits.push({
         path,
         segment: `${segId}-${String(fieldNo)}`,
-        value: rep,
         reason: "phone number without the 555 fake-exchange convention",
       });
     }
@@ -2195,7 +2200,6 @@ function checkCxField(
         hits.push({
           path,
           segment: `${segId}-${String(fieldNo)}`,
-          value: id,
           reason: "SSN-typed identifier (CX type SS) not in synthetic allow-list",
         });
       }
@@ -2208,7 +2212,6 @@ function checkCxField(
       hits.push({
         path,
         segment: `${segId}-${String(fieldNo)}`,
-        value: id,
         reason: "bare-numeric MRN / account identifier not in synthetic allow-list",
       });
     }
@@ -2228,7 +2231,6 @@ function checkSsnStField(
     hits.push({
       path,
       segment: `${segId}-${String(fieldNo)}`,
-      value,
       reason: "SSN (9-digit) not in synthetic allow-list",
     });
   }
@@ -2268,7 +2270,6 @@ function checkUnknownSegment(
             hits.push({
               path,
               segment: `${segId}-${String(f)}`,
-              value: tok,
               reason: "person-name token in site-defined segment not in synthetic allow-list",
             });
           }
@@ -2285,15 +2286,16 @@ function checkUnknownSegment(
 function scanCommonShapes(path: string, content: string, allow: AllowList, hits: Hit[]): void {
   // Dashed SSN anywhere (covers OBX-5 / NTE free text and non-HL7 targets). The
   // regex is deliberately anchored on \b digit groups so it does not read as a
-  // literal SSN to code-scanning tools.
-  for (const m of content.matchAll(/\b\d{3}-\d{2}-\d{4}\b/g)) {
-    hits.push({ path, segment: "(ssn)", value: m[0], reason: "dashed SSN pattern" });
+  // literal SSN to code-scanning tools. One hit per occurrence, and the
+  // occurrence itself is not kept.
+  for (const _occurrence of content.matchAll(/\b\d{3}-\d{2}-\d{4}\b/g)) {
+    hits.push({ path, segment: "(ssn)", reason: "dashed SSN pattern" });
   }
   // Emails whose domain is not an allow-listed reserved / test domain.
   for (const m of content.matchAll(/\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g)) {
     const domain = (m[1] ?? "").toLowerCase();
     if (!allow.emailDomains.has(domain)) {
-      hits.push({ path, segment: "(email)", value: m[0], reason: "email with non-test domain" });
+      hits.push({ path, segment: "(email)", reason: "email with non-test domain" });
     }
   }
 }
@@ -2498,9 +2500,9 @@ function report(hits: Hit[]): void {
     const where = first.origin === undefined ? "" : ` (${first.origin})`;
     process.stderr.write(`[phi-scan] HIT: ${first.path}${where}\n`);
     for (const h of group) {
-      process.stderr.write(
-        `  segment=${h.segment} value=${JSON.stringify(h.value)} (${h.reason})\n`,
-      );
+      // The place and the rule, and that is the whole line. See `Hit` for why
+      // the text that matched is not in it.
+      process.stderr.write(`  segment=${h.segment} (${h.reason})\n`);
     }
   }
   process.stderr.write(
