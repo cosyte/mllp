@@ -22,9 +22,9 @@
  * so the full CLI path (argv parse, exit code, stderr) is exercised.
  *
  * SECURITY: every subprocess call here uses spawnSync with array args. No exec,
- * no shell-form. PHI-shaped literals (SSN etc.) are assembled from parts and the
- * assertion regexes are digit-group-anchored, so no literal identifier lives in
- * this source and no code-scanning tool reads one.
+ * no shell-form. PHI-shaped literals (SSN etc.) are assembled from parts and no
+ * assertion matches on one, so no literal identifier lives in this source and
+ * no code-scanning tool reads one.
  *
  * RUNNER: the sweep spawns `node` directly on the `.ts` scanner and relies on
  * node's native type stripping, because this file is spawn-bound and a `tsx`
@@ -129,6 +129,29 @@ function scanBin(name: string, content: Buffer): RunResult {
   const path = join(dir, name);
   writeFileSync(path, content);
   return runScanner([path]);
+}
+
+// The rule each detector reports under. A finding names a place and a rule and never the text
+// that matched, so a case proves a detector fired by reading its rule at the place it fired.
+const NAME_RULE = "person-name token not in synthetic allow-list";
+const SITE_NAME_RULE = "person-name token in site-defined segment not in synthetic allow-list";
+const DOB_RULE = "date of birth not in synthetic allow-list";
+const ADDRESS_RULE = "street address not in synthetic allow-list";
+const PHONE_RULE = "phone number without the 555 fake-exchange convention";
+const MRN_RULE = "bare-numeric MRN / account identifier not in synthetic allow-list";
+const TYPED_SSN_RULE = "SSN-typed identifier (CX type SS) not in synthetic allow-list";
+const PLAIN_SSN_RULE = "SSN (9-digit) not in synthetic allow-list";
+const DASHED_SSN_RULE = "dashed SSN pattern";
+const EMAIL_RULE = "email with non-test domain";
+
+/** The finding lines of a report, each exactly as printed: `  segment=<place> (<rule>)`. */
+function findingLines(r: RunResult): string[] {
+  return r.stderr.split("\n").filter((line) => line.startsWith("  segment="));
+}
+
+/** How many findings a report carries at one place under one rule. */
+function findingsAt(r: RunResult, place: string, rule: string): number {
+  return findingLines(r).filter((line) => line === `  segment=${place} (${rule})`).length;
 }
 
 beforeAll(() => {
@@ -243,8 +266,7 @@ describe("phi-scan: MLLP frame unwrap catches PHI inside the frame", () => {
     );
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toMatch(/PID-5/);
-    expect(r.stderr).toMatch(/Anderson/);
-    expect(r.stderr).toMatch(/Michael/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("does NOT bypass when the end-block (FS CR) is missing", () => {
@@ -256,7 +278,7 @@ describe("phi-scan: MLLP frame unwrap catches PHI inside the frame", () => {
     ]);
     const r = scanBin("no-end.frame.bin", noEnd);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toMatch(/Anderson/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("does NOT bypass a double-framed message", () => {
@@ -266,7 +288,7 @@ describe("phi-scan: MLLP frame unwrap catches PHI inside the frame", () => {
     const doubled = Buffer.concat([Buffer.from([VT]), inner, Buffer.from([FS, CR])]);
     const r = scanBin("double.frame.bin", doubled);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toMatch(/Anderson/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("catches a bare-numeric MRN inside an MLLP frame (CX MRN detector)", () => {
@@ -276,7 +298,7 @@ describe("phi-scan: MLLP frame unwrap catches PHI inside the frame", () => {
     );
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toMatch(/PID-3/);
-    expect(r.stderr).toMatch(/48291043/);
+    expect(findingsAt(r, "PID-3", MRN_RULE)).toBe(1);
   });
 });
 
@@ -340,7 +362,7 @@ describe("phi-scan: extension-agnostic test/ capture scanning (refuter regressio
       const r = runScanner([p]);
       expect(r.code, `stderr: ${r.stderr}`).toBe(1);
       expect(r.stderr).toMatch(/PID-5/);
-      expect(r.stderr).toMatch(/Anderson/);
+      expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
       expect(r.stderr).toMatch(/PID-7/);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
@@ -371,8 +393,7 @@ describe("phi-scan: names", () => {
     const r = scan("name.hl7", msg(MSH, "PID|1||MRN1^^^HOSP^MR||Anderson^Michael||19800115|M"));
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/PID-5/);
-    expect(r.stderr).toMatch(/Anderson/);
-    expect(r.stderr).toMatch(/Michael/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("skips a single-letter middle initial (not identifying)", () => {
@@ -391,7 +412,7 @@ describe("phi-scan: names", () => {
     );
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/PV1-7/);
-    expect(r.stderr).toMatch(/Kowalski/);
+    expect(findingsAt(r, "PV1-7", NAME_RULE)).toBe(2); // family and given
   });
 
   it("catches a name hidden in a site-defined Z-segment", () => {
@@ -405,7 +426,7 @@ describe("phi-scan: names", () => {
     );
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/ZCA-5/);
-    expect(r.stderr).toMatch(/Okafor/);
+    expect(findingsAt(r, "ZCA-5", SITE_NAME_RULE)).toBe(2); // family and given
   });
 });
 
@@ -414,14 +435,14 @@ describe("phi-scan: date of birth (PID-7)", () => {
     const r = scan("dob.hl7", msg(MSH, "PID|1||MRN1^^^HOSP^MR||Doe^John||19770707|M"));
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/PID-7/);
-    expect(r.stderr).toMatch(/19770707/);
+    expect(findingsAt(r, "PID-7", DOB_RULE)).toBe(1);
   });
 
   it("catches a 6-digit YYYYMM date of birth", () => {
     const r = scan("dob6.hl7", msg(MSH, "PID|1||MRN1^^^HOSP^MR||Doe^John||197711|M"));
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/PID-7/);
-    expect(r.stderr).toMatch(/197711/);
+    expect(findingsAt(r, "PID-7", DOB_RULE)).toBe(1);
   });
 });
 
@@ -436,7 +457,7 @@ describe("phi-scan: address (PID-11)", () => {
     );
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/PID-11/);
-    expect(r.stderr).toMatch(/Evergreen/);
+    expect(findingsAt(r, "PID-11", ADDRESS_RULE)).toBe(1);
   });
 });
 
@@ -456,11 +477,11 @@ describe("phi-scan: identifiers", () => {
     const r = scan("mrn.hl7", msg(MSH, "PID|1||48291043^^^HOSP^MR||Doe^John||19800115|M"));
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/PID-3/);
-    expect(r.stderr).toMatch(/48291043/);
+    expect(findingsAt(r, "PID-3", MRN_RULE)).toBe(1);
   });
 
   it("catches an SSN-typed CX identifier (PID-3 type SS)", () => {
-    // Build the 9-digit value from parts; assertion is digit-group-anchored.
+    // Build the 9-digit value from parts.
     const ssn = ["123", "456", "789"].join("");
     const r = scan(
       "ssn-cx.hl7",
@@ -468,7 +489,7 @@ describe("phi-scan: identifiers", () => {
     );
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/PID-3/);
-    expect(r.stderr).toMatch(/\b\d{9}\b/);
+    expect(findingsAt(r, "PID-3", TYPED_SSN_RULE)).toBe(1);
   });
 
   it("passes an SSN CX rep whose id is a placeholder, not a 9-digit number", () => {
@@ -510,6 +531,67 @@ describe("phi-scan: free-text shape checks (OBX-5 / NTE)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// What a finding prints: the place and the rule, never the text that matched
+// ---------------------------------------------------------------------------
+
+describe("phi-scan: a finding never prints the text that matched", () => {
+  it("names the place and the rule for every detector and prints no planted value", () => {
+    // The report goes to stderr, and CI keeps stderr as a log, so a finding that quoted what it
+    // matched would copy a patient's value into that log. Every detector gets one value it flags
+    // here. SSN shapes are assembled from parts, as everywhere in this file.
+    const mrn = "48291043";
+    const typedSsn = ["123", "456", "789"].join("");
+    const plainSsn = ["900", "66", "0000"].join("");
+    const dashedSsn = ["900", "55", "0000"].join("-");
+    const email = "clinician@northgate-clinic.invalid";
+    // Where each finding is raised, under which rule, and a part of the planted value that
+    // nothing else in the fixture or in the report's own wording shares.
+    const planted: readonly (readonly [place: string, rule: string, part: string])[] = [
+      ["PID-3", MRN_RULE, mrn],
+      ["PID-3", TYPED_SSN_RULE, typedSsn],
+      ["PID-5", NAME_RULE, "Anderson"],
+      ["PID-5", NAME_RULE, "Michael"],
+      ["PID-7", DOB_RULE, "19770707"],
+      ["PID-11", ADDRESS_RULE, "Evergreen"],
+      ["PID-13", PHONE_RULE, "8675309"],
+      ["PID-19", PLAIN_SSN_RULE, plainSsn],
+      ["PV1-7", NAME_RULE, "Fitzgerald"],
+      ["PV1-7", NAME_RULE, "Ronan"],
+      ["ZCA-5", SITE_NAME_RULE, "Okafor"],
+      ["ZCA-5", SITE_NAME_RULE, "Chidi"],
+      ["(ssn)", DASHED_SSN_RULE, dashedSsn],
+      ["(email)", EMAIL_RULE, "northgate-clinic"],
+    ];
+    // A throwaway repo and a relative path, so the only path text in the report is this file's
+    // name and nothing but a quoted finding could put a planted value in the output.
+    const repo = makeScanRepo({ git: false });
+    writeFileSync(
+      join(repo, "test", "finding.hl7"),
+      msg(
+        MSH,
+        `PID|1||${mrn}^^^HOSP^MR~${typedSsn}^^^USA^SS||Anderson^Michael||19770707|M|||` +
+          `742 Evergreen Terrace^^Springfield^IL^62704||^PRN^PH^^^312^8675309||||||${plainSsn}`,
+        "PV1|1|I|W^1^A||||1234^Fitzgerald^Ronan^^^^MD",
+        "ZCA|1|1|PRIMARY|PROV-9|Okafor^Chidi^MD",
+        `OBX|1|TX|N^Note^L||SSN on file ${dashedSsn}, reach ${email}||||||F`,
+      ),
+    );
+    const r = runScannerIn(repo, null, undefined, ["test/finding.hl7"]);
+    expect(r.code, `stderr: ${r.stderr}`).toBe(1);
+
+    // The whole output, both channels, whatever the case it was printed in.
+    const output = `${r.stdout}\n${r.stderr}`.toLowerCase();
+    for (const [, , part] of planted) expect(output).not.toContain(part.toLowerCase());
+
+    // Every detector did fire, so the absence above is not the absence of a finding, and each
+    // line ends at the rule.
+    expect(findingLines(r).sort()).toEqual(
+      planted.map(([place, rule]) => `  segment=${place} (${rule})`).sort(),
+    );
+  });
+});
+
 describe("phi-scan: delimiter handling", () => {
   it("reads custom delimiters from MSH-1/MSH-2 and still catches PHI", () => {
     // Field sep `@`, component sep `~`.
@@ -518,7 +600,7 @@ describe("phi-scan: delimiter handling", () => {
       "MSH@~&#\\@A@B@C@D@20260101@@ADT~A01@M1@P@2.5\rPID@1@@MRN1~~~HOSP~MR@@Anderson~Michael@@19800115@M",
     );
     expect(r.code).toBe(1);
-    expect(r.stderr).toMatch(/Anderson/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 });
 
@@ -557,7 +639,7 @@ describe("phi-scan: structured scan is not silently bypassed (refuter regression
     );
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/PD1-4/);
-    expect(r.stderr).toMatch(/Fitzgerald/);
+    expect(findingsAt(r, "PD1-4", NAME_RULE)).toBe(2); // family and given
   });
 
   it("keeps a header-only .ts example clean (MSH carries no PHI field)", () => {
@@ -661,7 +743,7 @@ describe("phi-scan: --allow-fixture override gate", () => {
       // The finding it DID make, printed before the refusal.
       expect(r.stderr).toMatch(/HIT: /);
       expect(r.stderr).toContain(rel(violator));
-      expect(r.stderr).toContain("Anderson");
+      expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
       // And the refusal, naming the target that went unread.
       expect(r.stderr).toMatch(/never read/);
       expect(r.stderr).toContain(rel(decoy));
@@ -974,7 +1056,7 @@ describe("phi-scan: enumeration TOCTOU", () => {
     );
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toMatch(/Anderson/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("still CATCHES a violator inside a transient that is NOT removed", () => {
@@ -989,7 +1071,7 @@ describe("phi-scan: enumeration TOCTOU", () => {
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toMatch(/PID-5/);
-    expect(r.stderr).toMatch(/Anderson/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 });
 
@@ -1230,7 +1312,7 @@ describe("phi-scan: --staged refuses a non-regular staged entry", () => {
     const r = runScannerIn(repo, null, undefined, ["--staged"]);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toMatch(/PID-5/);
-    expect(r.stderr).toMatch(/Kowalczyk/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("names a staged GITLINK by its kind (the arm the base commit refused by accident)", () => {
@@ -1297,7 +1379,7 @@ describe("phi-scan: --staged refuses a non-regular staged entry", () => {
     gitIn(repo, ["add", "test/leak.hl7"]);
     const r = runScannerIn(repo, null, undefined, ["--staged"]);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toMatch(/Anderson/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 });
 
@@ -1659,11 +1741,10 @@ describe("phi-scan: HL7 embedded in a TypeScript source", () => {
       ].join("\n"),
     );
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toContain("MERKELSON");
-    expect(r.stderr).toContain("GWENDOLYN");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
     expect(r.stderr).toMatch(/PID-7/);
-    expect(r.stderr).toContain("18 Cranbrook Ter");
-    expect(r.stderr).toContain("998877");
+    expect(findingsAt(r, "PID-11", ADDRESS_RULE)).toBe(1);
+    expect(findingsAt(r, "PID-3", MRN_RULE)).toBe(1);
   });
 
   it("finds a SECOND segment behind an \\r escape inside the same literal", () => {
@@ -1672,8 +1753,7 @@ describe("phi-scan: HL7 embedded in a TypeScript source", () => {
       'const raw = "MSH|^~\\\\&|S|F|R|F2|20240101||ADT^A01|1|P|2.5.1\\rPID|1||||NDIAYE^AMINATA||19640518|F\\r";\n',
     );
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toContain("NDIAYE");
-    expect(r.stderr).toContain("AMINATA");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
     expect(r.stderr).toMatch(/PID-7/);
   });
 
@@ -1688,8 +1768,7 @@ describe("phi-scan: HL7 embedded in a TypeScript source", () => {
     );
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     // Componentised on `^`, so family and given come out as separate tokens.
-    expect(r.stderr).toContain("OKONKWO");
-    expect(r.stderr).toContain("ADAEZE");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2);
   });
 
   it("does NOT read prose or identifiers as segments", () => {
@@ -1744,9 +1823,9 @@ describe("phi-scan: HL7 embedded in a TypeScript source", () => {
         "PID|1||447281^^^HOSP^MR||HALVORSEN^INGRID^M||19620914|F|||42 Larkspur Way^^ALB^NY^12203`;\n",
     );
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toContain("HALVORSEN");
-    expect(r.stderr).toContain("447281");
-    expect(r.stderr).toContain("42 Larkspur Way");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
+    expect(findingsAt(r, "PID-3", MRN_RULE)).toBe(1);
+    expect(findingsAt(r, "PID-11", ADDRESS_RULE)).toBe(1);
   });
 
   it("does not truncate a name at an APOSTROPHE inside a double-quoted literal", () => {
@@ -1757,8 +1836,7 @@ describe("phi-scan: HL7 embedded in a TypeScript source", () => {
       `const raw = "PID|1||||O'HALLORAN^SIOBHAN||19620914|F";\n`,
     );
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toContain("HALLORAN");
-    expect(r.stderr).toContain("SIOBHAN");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
     expect(r.stderr).toMatch(/PID-7/);
   });
 
@@ -1774,7 +1852,7 @@ describe("phi-scan: HL7 embedded in a TypeScript source", () => {
     );
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toMatch(/ZDS/);
-    expect(r.stderr).toContain("Kowalczyk");
+    expect(findingsAt(r, "ZDS-2", SITE_NAME_RULE)).toBe(2); // family and given
   });
 
   it("but ordinary English after a pipe is NOT read as a name", () => {
@@ -1817,8 +1895,8 @@ describe("phi-scan: a .ts source under test/ is enumerated by both routes", () =
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toContain("test/leak.test.ts");
-    expect(r.stderr).toContain("HALVORSEN");
-    expect(r.stderr).toContain("447281");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
+    expect(findingsAt(r, "PID-3", MRN_RULE)).toBe(1);
   });
 
   it("--staged REPORTS a staged .ts test source, which is the pre-commit gate", () => {
@@ -1828,7 +1906,7 @@ describe("phi-scan: a .ts source under test/ is enumerated by both routes", () =
     const r = runScannerIn(repo, null, undefined, ["--staged"]);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toContain("test/leak.test.ts");
-    expect(r.stderr).toContain("HALVORSEN");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("keeps src/ on the conservative pass, which this work does not reverse", () => {
@@ -1934,7 +2012,7 @@ describe("phi-scan: the index corpus (the bytes git carries)", () => {
     writeFileSync(join(repo, "test", "corpus.hl7"), INDEX_CLEAN);
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toContain("Anderson");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
     expect(r.stderr).toContain("the working tree differs");
   });
 
@@ -1945,7 +2023,7 @@ describe("phi-scan: the index corpus (the bytes git carries)", () => {
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toContain("test/phi.hl7");
-    expect(r.stderr).toContain("19770707");
+    expect(findingsAt(r, "PID-7", DOB_RULE)).toBe(1);
   });
 
   it("REPORTS a tracked message under an UNDECLARED top-level directory", () => {
@@ -1969,7 +2047,7 @@ describe("phi-scan: the index corpus (the bytes git carries)", () => {
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toContain("test/phi.hl7");
-    expect(r.stderr).toContain("Anderson");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("REPORTS PHI when the walk root ITSELF is a symlink to a directory of decoys", () => {
@@ -1984,7 +2062,7 @@ describe("phi-scan: the index corpus (the bytes git carries)", () => {
     symlinkSync("decoy", join(repo, "test"));
     const r = runScannerIn(repo, null);
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
-    expect(r.stderr).toContain("Anderson");
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
   });
 
   it("REFUSES a tracked SYMLINK outside every walk root, without printing its target", () => {
@@ -2178,7 +2256,7 @@ describe("phi-scan: the shipped corpus under src/ earns the structured HL7 scan"
     expect(r.code, `stderr: ${r.stderr}`).toBe(1);
     expect(r.stderr).toContain(CORPUS_SOURCE_REL);
     expect(r.stderr).toMatch(/PID-5/);
-    expect(r.stderr).toMatch(/Kowalczyk/);
+    expect(findingsAt(r, "PID-5", NAME_RULE)).toBe(2); // family and given
     expect(r.stderr).toMatch(/PID-7/);
   });
 
