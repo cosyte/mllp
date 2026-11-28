@@ -22,9 +22,8 @@
  * so the full CLI path (argv parse, exit code, stderr) is exercised.
  *
  * SECURITY: every subprocess call here uses spawnSync with array args. No exec,
- * no shell-form. PHI-shaped literals (SSN etc.) are assembled from parts and no
- * assertion matches on one, so no literal identifier lives in this source and
- * no code-scanning tool reads one.
+ * no shell-form. PHI-shaped literals (SSN etc.) are assembled from parts, so no
+ * literal identifier lives in this source and no code-scanning tool reads one.
  *
  * RUNNER: the sweep spawns `node` directly on the `.ts` scanner and relies on
  * node's native type stripping, because this file is spawn-bound and a `tsx`
